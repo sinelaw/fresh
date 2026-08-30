@@ -20,42 +20,21 @@ use ratatui::{
     Frame,
 };
 
-/// Compute the centred modal rectangle for the keybinding editor within
-/// `area`.
+/// Render the keybinding editor modal into the box the tree placed.
 ///
-/// The result is offset by `area.x`/`area.y` so the modal centres within
-/// the area it was handed — not the whole screen. When the orchestrator
-/// left dock is open the editor passes the post-dock-split `chrome_area`
-/// (whose `x` starts to the right of the dock); without these offsets the
-/// modal would be placed relative to column 0 and bleed left under the
-/// dock, leaving it partially obscured and off-centre.
-fn keybinding_modal_area(area: Rect) -> Rect {
-    // Modal dimensions: 90% width, 90% height
-    let modal_width = (area.width as f32 * 0.90).min(120.0) as u16;
-    let modal_height = (area.height as f32 * 0.90) as u16;
-    let modal_width = modal_width.max(60).min(area.width.saturating_sub(2));
-    let modal_height = modal_height.max(20).min(area.height.saturating_sub(2));
-
-    let x = area.x + (area.width.saturating_sub(modal_width)) / 2;
-    let y = area.y + (area.height.saturating_sub(modal_height)) / 2;
-
-    Rect {
-        x,
-        y,
-        width: modal_width,
-        height: modal_height,
-    }
-}
-
-/// Render the keybinding editor modal
+/// `modal_area` used to be computed here — ninety percent of the area handed
+/// in, capped at 120 columns, floored at 60 by 20, centred with `area.x` added
+/// back so it landed beside the orchestrator dock rather than under it — and
+/// then filed in `editor.layout.modal_area` for the mouse handler to compare
+/// against. It is `view::shell::keybinding`'s now, and this is handed the
+/// answer: one statement of where the box is, for the painter and the handler
+/// both.
 pub fn render_keybinding_editor(
     frame: &mut Frame,
-    area: Rect,
+    modal_area: Rect,
     editor: &mut KeybindingEditor,
     theme: &Theme,
 ) {
-    let modal_area = keybinding_modal_area(area);
-
     // Clear background
     frame.render_widget(Clear, modal_area);
 
@@ -1725,57 +1704,12 @@ mod tests {
     use crate::input::buffer_mode::ModeRegistry;
     use crate::input::command_registry::CommandRegistry;
 
-    /// The modal must stay fully inside the area it is handed and be
-    /// horizontally centred within it. Regression test for the
-    /// orchestrator-dock case where the editor passes the post-dock-split
-    /// `chrome_area` (with a non-zero `x`): the modal used to be placed
-    /// relative to column 0, bleeding left under the dock and ending up
-    /// off-centre.
-    #[test]
-    fn modal_centres_within_offset_area_left_of_dock() {
-        // Full screen 120x40 with a 34-column left dock carved off, so the
-        // chrome area starts at x = 34.
-        let chrome = Rect::new(34, 0, 120 - 34, 40);
-        let modal = keybinding_modal_area(chrome);
-
-        // Fully contained within the chrome area — never bleeds under the
-        // dock (left edge) or past the right/bottom edges.
-        assert!(modal.x >= chrome.x, "modal bleeds left under the dock");
-        assert!(
-            modal.x + modal.width <= chrome.x + chrome.width,
-            "modal overflows the right edge"
-        );
-        assert!(
-            modal.y + modal.height <= chrome.y + chrome.height,
-            "modal overflows the bottom edge"
-        );
-
-        // Horizontally centred within the chrome area: left and right
-        // margins are equal (within one column for odd remainders).
-        let left_margin = modal.x - chrome.x;
-        let right_margin = (chrome.x + chrome.width) - (modal.x + modal.width);
-        assert!(
-            left_margin.abs_diff(right_margin) <= 1,
-            "modal not centred: left={left_margin} right={right_margin}"
-        );
-    }
-
-    /// With no dock (area at origin) the modal is still centred — the
-    /// offsets must not regress the common full-screen case.
-    #[test]
-    fn modal_centres_within_full_screen() {
-        let area = Rect::new(0, 0, 120, 40);
-        let modal = keybinding_modal_area(area);
-
-        let left_margin = modal.x;
-        let right_margin = area.width - (modal.x + modal.width);
-        assert!(
-            left_margin.abs_diff(right_margin) <= 1,
-            "modal not centred on full screen: left={left_margin} right={right_margin}"
-        );
-        assert!(modal.x + modal.width <= area.width);
-        assert!(modal.y + modal.height <= area.height);
-    }
+    // **The two placement tests moved with the placement.** They pinned that
+    // the modal stays inside the area it is handed and centres in it — the
+    // orchestrator-dock regression, where it was placed relative to column 0
+    // and bled left under the dock. That is `view::shell::keybinding`'s now
+    // (`the_box_centres_beside_the_dock`), stated against the region the layer
+    // names rather than against a rectangle a caller passed in.
 
     fn make_editor() -> KeybindingEditor {
         let config = Config::default();

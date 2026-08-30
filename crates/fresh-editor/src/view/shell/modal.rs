@@ -1,5 +1,11 @@
-//! The full-screen modals: Settings, the keybinding editor, the calibration
-//! wizard, and the floating plugin panel.
+//! The full-screen modals: Settings, the keybinding editor, and the floating
+//! plugin panel.
+//!
+//! The calibration wizard was here and is not any more — its interior had no
+//! mouse and no recorded rectangles, so once its box became a description
+//! there was nothing left behind the seam and it carries its own exclusivity
+//! (`view::shell::calibration`). That is what each of the remaining three is
+//! for.
 //!
 //! Each owned the whole mouse channel through `ChromeComponent::capture_mouse`
 //! — a band ahead of every walk, the shell's included, and the reason
@@ -34,7 +40,6 @@ use super::msg::{UiFact, UiMsg};
 pub enum Slot {
     Settings,
     KeybindingEditor,
-    Calibration,
     FloatingPanel,
 }
 

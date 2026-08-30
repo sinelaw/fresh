@@ -1398,9 +1398,6 @@ impl Editor {
                 let r = match slot {
                     Slot::Settings => self.handle_settings_mouse(ev, double),
                     Slot::KeybindingEditor => self.handle_keybinding_editor_mouse(ev),
-                    // Keyboard-driven: it owns the band and ignores the
-                    // pointer, which the layer's claim already arranges.
-                    Slot::Calibration => Ok(false),
                     Slot::FloatingPanel => self.handle_floating_modal_mouse(ev),
                 };
                 if let Err(e) = r {

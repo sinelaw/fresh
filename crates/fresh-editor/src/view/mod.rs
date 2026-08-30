@@ -62,7 +62,6 @@ pub mod workspace_trust_dialog;
 #[cfg(feature = "runtime")]
 pub mod bracket_highlight_overlay;
 #[cfg(feature = "runtime")]
-pub mod calibration_wizard;
 #[cfg(feature = "runtime")]
 pub mod cursor_line_overlay;
 #[cfg(feature = "runtime")]
