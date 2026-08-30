@@ -11,7 +11,7 @@
 
 #![cfg(feature = "plugins")]
 
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -32,11 +32,18 @@ fn composed(content: &str, width: u16, height: u16) -> (EditorTestHarness, tempf
     let md_path = project_root.join("flow.md");
     std::fs::write(&md_path, content).unwrap();
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    // `with_full_grammar_registry` is what makes the editor resolve embedded
+    // regions, which is how a line inside a fenced block reports `region` at
+    // all. Without it every line comes back unclassified, the code frames never
+    // draw, and the plugin falls through to its textual fence tracking — so the
+    // tests would pass while never exercising the path that actually runs.
+    let mut harness = EditorTestHarness::create(
         width,
         height,
-        Default::default(),
-        project_root,
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
     )
     .unwrap();
     harness.open_file(&md_path).unwrap();
@@ -785,4 +792,72 @@ Cursor home line.
         "`Home` after `End` should return to the row's start, not land right of \
          where the caret began ({start:?}); got {home:?}",
     );
+}
+
+/// A fenced block inside a list item is framed inside the item, not back at
+/// the page's left edge.
+///
+/// The indent is the OPENING delimiter's, not each row's own: a line indented
+/// further within the block is code, and letting it move the frame would bend
+/// the box around one row. Corners, rails and rows all read the same number,
+/// and the block's measure shrinks by it — or a row breaks where the frame
+/// does not end.
+#[test]
+fn a_fence_inside_a_list_item_is_framed_at_the_item_s_column() {
+    const MD: &str = "\
+Cursor home line.
+
+1. An item with a fenced block under it:
+
+   ```sh
+   cargo build --release
+       nested_line_indented_further
+   ```
+";
+    let (mut harness, _tmp) = composed(MD, 90, 20);
+    settle(&mut harness);
+
+    let screen = harness.screen_to_string();
+    let column_of = |needle: &str| {
+        let row = screen
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("{needle:?} not on screen.\nScreen:\n{screen}"));
+        row.chars().take_while(|c| c.is_whitespace()).count()
+    };
+
+    // Where the item's TEXT starts — not the row's leading whitespace, which is
+    // the marker's column. That is where the frame's corners belong.
+    let item_row = screen
+        .lines()
+        .find(|l| l.contains("An item with"))
+        .expect("the item should be on screen");
+    let text_col = item_row
+        .chars()
+        .collect::<String>()
+        .find("An item with")
+        .map(|byte| item_row[..byte].chars().count())
+        .expect("the item's text");
+    assert_eq!(
+        column_of("┌"),
+        text_col,
+        "the frame's top corner should sit at the item's text column \
+         ({text_col}).\nScreen:\n{screen}",
+    );
+    assert_eq!(
+        column_of("└"),
+        text_col,
+        "the frame's bottom corner should sit at the item's text column \
+         ({text_col}).\nScreen:\n{screen}",
+    );
+    // Every rail agrees with the corners, including the row indented further
+    // inside the block — that row's extra indent is code, not block indent.
+    for needle in ["cargo build", "nested_line_indented_further"] {
+        assert_eq!(
+            column_of(needle),
+            text_col,
+            "the rail beside {needle:?} should sit at the item's text column \
+             ({text_col}).\nScreen:\n{screen}",
+        );
+    }
 }
