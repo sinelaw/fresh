@@ -1067,6 +1067,67 @@ fn divider(id: ContainerId, dir: SplitDirection) -> Node<UiMsg> {
         }))
 }
 
+/// Every container the description could have put a divider node for.
+///
+/// Ids and directions only — both are model facts. Where each divider *is* is
+/// layout's answer, read back by [`separator_rects`].
+fn container_ids(n: &SplitNode, out: &mut Vec<(ContainerId, SplitDirection)>) {
+    match n {
+        SplitNode::Leaf { .. } => {}
+        SplitNode::Grouped { layout, .. } => container_ids(layout, out),
+        SplitNode::Split {
+            direction,
+            first,
+            second,
+            split_id,
+            ..
+        } => {
+            out.push((*split_id, *direction));
+            container_ids(first, out);
+            container_ids(second, out);
+        }
+    }
+}
+
+/// Where each split separator is, read off the tree.
+///
+/// **This replaces a second layout.** `SplitManager::get_separators_with_ids`
+/// walked the split tree computing rectangles from ratios and fixed extents —
+/// the same arithmetic `node_of` hands to `split_rect_ext`, run again against
+/// a rectangle the caller had to supply — and the grouped subtrees' separators
+/// were not in it at all: the painter recorded those as it drew them and the
+/// two lists were concatenated. Goal 5 allows one source of geometry.
+///
+/// A container with no divider element — the frame is maximized, or the pane
+/// hosting the group is not visible — simply has no rectangle, and drops out.
+/// That is the same answer the maximized early-return gave, derived instead of
+/// stated.
+pub fn separator_rects(
+    ui: &fresh_ui::Ui<UiMsg>,
+    s: &Splits,
+    size: ratatui::layout::Rect,
+) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
+    let mut ids = Vec::new();
+    container_ids(&s.root, &mut ids);
+    // A pane showing a buffer group holds that group's own grid, whose
+    // containers are nodes here like any other.
+    for g in s.groups.values() {
+        container_ids(g, &mut ids);
+    }
+    ids.into_iter()
+        .filter_map(|(id, dir)| {
+            let r = super::rect_of(ui, &divider_key(id), size)?;
+            // The length runs along the separator: a horizontal split's line is
+            // as wide as the box, a vertical one as tall.
+            let length = match dir {
+                SplitDirection::Horizontal => r.width,
+                SplitDirection::Vertical => r.height,
+            };
+            Some((id, dir, r.x, r.y, length))
+        })
+        .collect()
+}
+
 /// A pane's interior with the parts that answer for themselves wired up.
 ///
 /// The shape is `pane_interior`'s — one statement of it, which the model also

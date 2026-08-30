@@ -1765,8 +1765,15 @@ impl SplitManager {
         self.root.get_separators(viewport_rect)
     }
 
-    /// Get all split separator positions with their split IDs (for mouse hit testing)
-    /// Returns (container_id, direction, x, y, length) tuples
+    /// Where the separators are, computed from the model.
+    ///
+    /// **Not the editor's answer any more** — the shell tree places the
+    /// dividers and `view::shell::splits::separator_rects` reads them back, so
+    /// this is a second derivation of the same rectangles and using it would
+    /// be the thing goal 5 forbids. It is kept because
+    /// `the_dividers_are_where_the_separators_are` uses it as the oracle the
+    /// tree is checked against, which is the one job a second derivation is
+    /// good for.
     pub fn get_separators_with_ids(
         &self,
         viewport_rect: Rect,

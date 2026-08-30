@@ -195,6 +195,10 @@ pub struct Frame {
     /// `None` is "one unnamed window", which is what every test that does not
     /// care about workspaces gets from `Frame::default`.
     pub window: Option<u64>,
+    /// The floating plugin panel's frame, when one is mounted. Its *interior*
+    /// is still the widget runtime's; what the tree owns is the box — where it
+    /// goes, its ring, its title and its `[×]`.
+    pub panel: Option<super::panel::Panel>,
 }
 
 impl Default for Frame {
@@ -220,6 +224,7 @@ impl Default for Frame {
             modal: None,
             splits: None,
             window: None,
+            panel: None,
         }
     }
 }
@@ -282,6 +287,15 @@ impl Frame {
     }
 }
 
+/// The chrome column: everything right of the dock.
+///
+/// Named so a layer can be confined to it. The painter said "beside the dock"
+/// by being handed `chrome_area` instead of the whole frame; a layer says it
+/// with `within`, which puts the statement where the placing happens.
+pub fn chrome_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("chrome_column".into())
+}
+
 /// The name of a window's identity key and persistence scope.
 ///
 /// One function because two callers have to agree and neither can check the
@@ -337,7 +351,7 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             region(HostRegion::Explorer).w(Sizing::Cells(0)),
         ]),
     };
-    let chrome = col().flex(1).children([
+    let chrome = col().flex(1).key(chrome_key()).children([
         // Native: the bar's own row. It keeps the region key so every caller
         // that asks for `HostRegion::MenuBar`'s rectangle still gets one — a
         // region that has gone native is still a region.
@@ -461,6 +475,16 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // outranks every one of them and is the security gate that must.
     let frame = match f.modal {
         Some(slot) => frame.child(super::modal::layer(slot)),
+        None => frame,
+    };
+    // The floating plugin panel's frame, over the modal slot that routes its
+    // pointer. **After it, deliberately**: layers are offered the pointer in
+    // reverse declaration order, so the `[×]` here is asked before the modal's
+    // claim-everything surface, and every other node of the frame is
+    // transparent and falls through to it. That is what lets one button
+    // migrate without the interior having to.
+    let frame = match &f.panel {
+        Some(p) => frame.child(super::panel::layer_for(p)),
         None => frame,
     };
     // The trust prompt, over everything the frame holds. It is drawn dead last

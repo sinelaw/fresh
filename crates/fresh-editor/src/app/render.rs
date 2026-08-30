@@ -806,7 +806,6 @@ impl Editor {
             tab_layouts,
             view_line_mappings,
             horizontal_scrollbar_areas,
-            grouped_separator_areas,
         } = body.finish();
         self.shell_ui = Some(ui);
 
@@ -1063,14 +1062,18 @@ impl Editor {
         // apply_all runs at the end of render) so the first frame of the
         // effect lands on the same paint that made the buffer visible.
         self.drain_pending_vb_animations();
-        let mut separator_areas = self
-            .split_manager_mut()
-            .get_separators_with_ids(editor_content_area);
-        // Grouped subtrees live in a side-map outside the main split tree, so
-        // their inner separators are not visited by `get_separators_with_ids`
-        // above. The renderer collected them (using the same content rect it
-        // drew them at) — merge so clicks on those rendered columns register.
-        separator_areas.extend(grouped_separator_areas.iter().copied());
+        // Where the dividers are, read off the tree that placed them. Two
+        // derivations met here: a second layout walk over the split tree
+        // (`get_separators_with_ids`, running `split_rect_ext` again against a
+        // rectangle the caller supplied) for the main grid, and the painter's
+        // own recording for the grouped subtrees, which the first one could not
+        // see. One list now, from the nodes.
+        let separator_areas = match (self.shell_ui.as_ref(), shell.splits.as_ref()) {
+            (Some(ui), Some(splits)) => {
+                crate::view::shell::splits::separator_rects(ui, splits, size)
+            }
+            _ => Vec::new(),
+        };
         self.active_layout_mut().separator_areas = separator_areas;
         self.active_layout_mut().last_editor_content_area = Some(editor_content_area);
 
@@ -2718,6 +2721,7 @@ impl Editor {
             height: self.active_chrome().last_frame.height,
         });
         crate::view::shell::frame::Frame {
+            panel: self.panel_description(),
             // Which workspace the window-owned half of the frame belongs to.
             // One retained tree, N windows: without this the two match each
             // other and window B's first pane inherits window A's element
@@ -5572,9 +5576,11 @@ impl Editor {
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
+        // `width_pct`, `height_pct`, `title` and `closable` are gone from
+        // here: they describe the *box*, and the box is the tree's
+        // (`Editor::panel_description`). What is left is what the interior
+        // needs.
         let (
-            width_pct,
-            height_pct,
             entries,
             focus_cursor,
             embeds,
@@ -5584,13 +5590,9 @@ impl Editor {
             panel_focused,
             scrollbar_zone_hovered,
             scrollbar_flash_until,
-            title,
-            closable,
             popup,
         ) = match self.panel(slot) {
             Some(fwp) => (
-                fwp.width_pct,
-                fwp.height_pct,
                 fwp.entries.clone(),
                 fwp.focus_cursor,
                 fwp.embeds.clone(),
@@ -5600,8 +5602,6 @@ impl Editor {
                 fwp.focused,
                 fwp.scrollbar_zone_hovered,
                 fwp.scrollbar_flash_until,
-                fwp.title.clone(),
-                fwp.closable,
                 fwp.popup.clone(),
             ),
             None => return,
@@ -5628,73 +5628,26 @@ impl Editor {
         // modal overlay. The centered placement keeps the historical
         // fit-to-content + background-dim behaviour.
         let is_dock = matches!(placement, super::PanelPlacement::LeftDock { .. });
-        let overlay_rect = match placement {
-            super::PanelPlacement::LeftDock { .. } => area,
-            super::PanelPlacement::Anchored { x, y } => {
-                // Size to the rendered content (not a percentage): an
-                // unobtrusive popup hugs its items. Width = widest entry +
-                // borders; height = entry count + borders. Then clamp the
-                // top-left so the whole box stays on screen.
-                use crate::primitives::display_width::str_width;
-                let content_w = entries
-                    .iter()
-                    .map(|e| str_width(&e.text) as u16)
-                    .max()
-                    .unwrap_or(0);
-                let w = content_w.saturating_add(2).clamp(6, area.width);
-                let needed_h = (entries.len() as u16).saturating_add(2);
-                let h = needed_h.clamp(3, area.height);
-                let max_x = area.x + area.width.saturating_sub(w);
-                let max_y = area.y + area.height.saturating_sub(h);
-                ratatui::layout::Rect {
-                    x: x.clamp(area.x, max_x),
-                    y: y.clamp(area.y, max_y),
-                    width: w,
-                    height: h,
-                }
-            }
-            super::PanelPlacement::Centered => {
-                let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
-                let needed_h = (entries.len() as u16).saturating_add(2);
-                // Fit the content in BOTH directions: the requested height is
-                // a hint, never a guillotine. Shorter content shrinks the box
-                // (the original Bug 7 fix); content taller than the requested
-                // percentage GROWS it, up to the frame. Capping at the request
-                // silently amputated the tail of the spec — on a 24-row
-                // terminal the dock's delete confirmation (mounted at 44%,
-                // i.e. 10 rows) lost its `[ Cancel ] [ Confirm Delete ]` row
-                // entirely, so the modal read as "up but not focused" while
-                // the (invisible) focused button still answered Enter.
-                // Clipping is only acceptable when the frame itself is too
-                // small, which `area.height` already expresses.
-                let effective_h = needed_h.clamp(3, area.height.max(3));
-                ratatui::layout::Rect {
-                    x: requested.x,
-                    y: area.y + (area.height.saturating_sub(effective_h)) / 2,
-                    width: requested.width,
-                    height: effective_h,
-                }
-            }
-        };
-
-        // Native modal-frame chrome (the declarative dialog's *shell*) is a
-        // centered-modal-only affordance: a title bar drawn into the top
-        // border and a `[×]` close button one cell in from the top-right
-        // corner. The dock draws only a right divider and the anchored popup
-        // hugs its content, so neither wears this chrome. The button rect is
-        // computed here — before the draw / no-draw split below — so the web
-        // projection and the mouse hit-test both see it even when we compute
-        // geometry without painting cells (`suppress_chrome_cells`).
-        let is_centered = matches!(placement, super::PanelPlacement::Centered);
-        let close_button_rect = if is_centered && closable && overlay_rect.width >= 5 {
-            Some(ratatui::layout::Rect {
-                x: overlay_rect.x + overlay_rect.width - 4,
-                y: overlay_rect.y,
-                width: 3,
-                height: 1,
-            })
-        } else {
-            None
+        // **The box is the tree's.** `view::shell::panel` describes it and
+        // layout places it; this reads the answer. What was here was the
+        // placement arithmetic — a percentage of the area for the width, the
+        // content row count plus borders for the height, a clamp so an
+        // anchored popup stays on screen — computed by the painter and then
+        // recomputed, in part, by a mouse handler.
+        //
+        // The dock keeps its own: its placement is the carved column it was
+        // handed, and its frame is one divider rather than a box (C.5b).
+        let overlay_rect = match is_dock {
+            true => area,
+            false => match self.panel_rect(&crate::view::shell::panel::key()) {
+                Some(r) => r,
+                // The description is built and laid out earlier in this same
+                // frame, so this is unreachable while a panel is mounted. No
+                // fallback arithmetic: a second derivation kept "just in case"
+                // is the thing being removed, and it would be the copy nobody
+                // notices going stale.
+                None => return,
+            },
         };
 
         // Web renders this panel natively from `widgets_view`; compute geometry
@@ -5703,72 +5656,51 @@ impl Editor {
         let draw = !self.suppress_chrome_cells;
         // Only the centered modal dims the background; the dock and the
         // anchored context-menu popup paint over the editor without it.
+        //
+        // Still here rather than a `Scrim` on the panel's layer, and the
+        // reason is paint order: the dock's own panel is painted *after* the
+        // tree's overlay band, so a scrim declared in the tree would be
+        // overpainted by the dock and the frame would read half-dimmed. It
+        // moves when the dock's content does.
         if draw && matches!(placement, super::PanelPlacement::Centered) {
             crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
         }
-        if draw {
-            frame.render_widget(Clear, overlay_rect);
-        }
-        // The dock draws ONLY a right border (a thin draggable divider) —
-        // no top/left/bottom — so it reclaims those rows/cols for content
-        // and reads as a panel attached to the left edge. The centered
-        // modal keeps a full box.
+        // **The dock's frame only.** It draws ONLY a right border (a thin
+        // draggable divider) — no top/left/bottom — so it reclaims those
+        // rows/cols for content and reads as a panel attached to the left
+        // edge. A focused dock lights that divider with the accent
+        // `theme.cursor`, the same colour the file explorer's focused border
+        // wears, so exactly one chrome region wears it at a time.
         //
-        // A focused dock lights its divider with the accent `theme.cursor`
-        // (the same colour the file explorer uses for its focused border),
-        // so exactly one chrome region wears the accent at a time. A blurred
-        // dock falls back to the muted `popup_border_fg`, matching every
-        // other unfocused panel and making "who has the keyboard" obvious.
-        let dock_border_fg = if is_dock && panel_focused {
-            theme.cursor
-        } else {
-            theme.popup_border_fg
+        // The floating panel's ring, its ground and its title are the tree's
+        // now (`view::shell::panel`), painted in the overlay band before this
+        // runs. What is left here is the dock, and the content rectangle both
+        // of them need.
+        let dock_border_fg = match is_dock && panel_focused {
+            true => theme.cursor,
+            false => theme.popup_border_fg,
         };
-        let mut block = Block::default()
-            .borders(if is_dock {
-                Borders::RIGHT
-            } else {
-                Borders::ALL
-            })
-            .border_style(ratatui::style::Style::default().fg(dock_border_fg))
-            .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
-        // Native modal-frame title bar: a centered modal with a `title`
-        // renders it left-aligned into the top border (` My Dialog `),
-        // styled like the frame. Ratatui reserves the border cells the
-        // title overlaps, and a `closable` panel's `[×]` is painted after
-        // the block so it always sits on top at the top-right corner.
-        if is_centered {
-            if let Some(t) = title.as_deref() {
-                block = block.title(ratatui::text::Span::styled(
-                    format!(" {t} "),
-                    ratatui::style::Style::default()
-                        .fg(theme.popup_border_fg)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ));
+        let inner = match is_dock {
+            false => match self.panel_rect(&crate::view::shell::panel::body_key()) {
+                Some(r) => r,
+                None => return,
+            },
+            true => {
+                let block = Block::default()
+                    .borders(Borders::RIGHT)
+                    .border_style(ratatui::style::Style::default().fg(dock_border_fg))
+                    .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
+                let inner = block.inner(overlay_rect);
+                if draw {
+                    frame.render_widget(Clear, overlay_rect);
+                    frame.render_widget(block, overlay_rect);
+                }
+                inner
             }
-        }
-        let inner = block.inner(overlay_rect);
-        if draw {
-            frame.render_widget(block, overlay_rect);
-            // Paint the `[×]` close button over the top border, after the
-            // block so it wins the corner cells. Its screen rect was
-            // recorded above for the mouse hit-test / web projection.
-            if let Some(cbr) = close_button_rect {
-                frame.buffer_mut().set_string(
-                    cbr.x,
-                    cbr.y,
-                    "[×]",
-                    ratatui::style::Style::default()
-                        .fg(theme.popup_border_fg)
-                        .bg(theme.suggestion_bg),
-                );
-            }
-        }
-
+        };
         if inner.width == 0 || inner.height == 0 {
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
-                fwp.close_button_rect = close_button_rect;
             }
             return;
         }
@@ -5778,7 +5710,6 @@ impl Editor {
         if !draw {
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
-                fwp.close_button_rect = close_button_rect;
             }
             return;
         }
@@ -6121,7 +6052,6 @@ impl Editor {
 
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.last_inner_rect = Some(inner);
-            fwp.close_button_rect = close_button_rect;
             fwp.scrollbar_tracks = scrollbar_tracks;
             fwp.scrollbar_hover_zones = scrollbar_hover_zones;
             fwp.popup_hits = popup_hits;
@@ -6587,6 +6517,70 @@ fn byte_to_screen_col(text: &str, target_byte: usize) -> usize {
         byte += ch.len_utf8();
     }
     col
+}
+
+/// Building the floating plugin panel's frame from live state.
+impl Editor {
+    /// The box around the panel: where it goes, its title, its `[×]`.
+    ///
+    /// The *interior* is not here — it is nineteen `WidgetSpec` variants that
+    /// `render_floating_widget_panel` still paints. What this resolves is
+    /// everything the painter was deriving twice: the rectangle (once to draw
+    /// the `Block`, once to place the close button), and the button's own
+    /// rectangle, which it filed for a mouse arm to compare against.
+    ///
+    /// The dock's slot has no entry here. Its placement is the dock column,
+    /// which is already a region, and its frame is one divider rather than a
+    /// box — see C.5b.
+    /// Where layout put a keyed node of the panel's frame.
+    ///
+    /// The painter used to compute these — the box's rectangle twice (once to
+    /// draw the `Block`, once to place `[×]`) and the content rect by asking
+    /// the block for its inner. Layout computes; this reads.
+    pub(crate) fn panel_rect(&self, key: &fresh_ui::Key) -> Option<ratatui::layout::Rect> {
+        let ui = self.shell_ui.as_ref()?;
+        let f = self.active_chrome().last_frame;
+        crate::view::shell::rect_of(ui, key, ratatui::layout::Rect::new(0, 0, f.width, f.height))
+    }
+
+    pub(crate) fn panel_description(&self) -> Option<crate::view::shell::panel::Panel> {
+        use crate::primitives::display_width::str_width;
+        use crate::view::shell::panel::{Panel, Spot};
+
+        let p = self.panel(crate::app::PanelSlot::Floating)?;
+        // Every row the spec produced, borders excluded — `WindowEmbed`
+        // reservations included, since each contributes its blank entries and
+        // an `EmbedRect` painted over them. This is the count the painter's
+        // `entries.len() + 2` used, kept as the one measurement the tree needs
+        // from the runtime.
+        let content_rows = p.entries.len() as u16;
+        let spot = match p.placement {
+            super::PanelPlacement::Centered => Spot::Centered {
+                width_pct: p.width_pct,
+                content_rows,
+            },
+            super::PanelPlacement::Anchored { x, y } => Spot::Anchored {
+                x,
+                y,
+                content_cols: p
+                    .entries
+                    .iter()
+                    .map(|e| str_width(&e.text) as u16)
+                    .max()
+                    .unwrap_or(0),
+                content_rows,
+            },
+            // The dock panel's frame is the dock column's, not this box's.
+            super::PanelPlacement::LeftDock { .. } => return None,
+        };
+        Some(Panel {
+            spot,
+            title: p.title.clone(),
+            closable: p.closable,
+            focused: p.focused,
+            fullscreen: p.fullscreen,
+        })
+    }
 }
 
 /// Building the status bar's description from live state.

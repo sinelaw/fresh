@@ -9,7 +9,7 @@
 
 use fresh_i18n::t;
 
-use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
+use crate::model::event::{BufferId, LeafId, SplitId};
 use crate::view::folding::CollapsedFoldLineRange;
 use crate::view::split::{SplitViewState, TabTarget};
 
@@ -410,9 +410,22 @@ impl Editor {
         }
     }
 
-    /// Get cached separator areas for testing
-    /// Returns (split_id, direction, x, y, length) tuples
-    pub fn get_separator_areas(&self) -> &[(ContainerId, SplitDirection, u16, u16, u16)] {
+    /// The frame's separator rectangles, for tests.
+    ///
+    /// Reads `WindowLayoutCache::separator_areas`, which is
+    /// `view::shell::splits::separator_rects`' answer — the divider nodes'
+    /// own rectangles — rather than the second layout walk it used to be. The
+    /// e2e drag tests assert against this, so they are now asserting against
+    /// the tree.
+    pub fn get_separator_areas(
+        &self,
+    ) -> &[(
+        crate::model::event::ContainerId,
+        crate::model::event::SplitDirection,
+        u16,
+        u16,
+        u16,
+    )] {
         &self.active_layout().separator_areas
     }
 

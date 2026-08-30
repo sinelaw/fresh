@@ -1256,7 +1256,12 @@ impl Editor {
                 hits,
                 title: fwp.title.clone(),
                 closable: fwp.closable,
-                close_rect: fwp.close_button_rect.map(RectView::from),
+                // Read off the tree, like every other rectangle the web
+                // consumes: the `[×]` is a keyed node now, not a rectangle the
+                // painter filed for two consumers to compare against.
+                close_rect: self
+                    .panel_rect(&crate::view::shell::panel::close_key())
+                    .map(RectView::from),
             });
         }
         out

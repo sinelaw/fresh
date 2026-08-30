@@ -5635,7 +5635,6 @@ impl Editor {
             // draw a title bar or close button, so drop the chrome there.
             title: if as_dock { None } else { title },
             closable: !as_dock && closable,
-            close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
             popup: None,

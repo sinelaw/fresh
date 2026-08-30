@@ -1808,7 +1808,6 @@ mod wave_dismiss_tests {
             focus_marker: false,
             title: None,
             closable: false,
-            close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
             popup: None,

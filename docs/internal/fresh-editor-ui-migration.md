@@ -221,13 +221,96 @@ provided at is the scope they belong to.
 | C.4 | `WidgetMutation`'s fast path — a channel that patches retained state in place. | An ordinary rebuild. Goal 3: a rebuild costs one allocation per node, so the incentive the fast path answers does not exist. | Keeping it as an optimisation without measuring it against 0.4's benchmark. |
 | C.5 | Buffer-mounted panels (`mountWidgetPanel`). | A subtree in the pane's content slot; the virtual buffer stays as a text mirror for search, copy and the `lines_changed` hooks. Removes the documented limitation that mounted panels drop overlays and popups. | Deciding it by which is less work. It is the only open *design* question left in the whole migration: it was deferred deliberately, to be taken with C.1's experience in hand, not settled by default. |
 | C.5b | **The dock is editor-global UI built from `Editor.windows`, not from the active window.** Its content is the orchestrator's `WidgetSpec`; its column, grip and blur observer are already nodes. | Its content lands like any other panel (C.1), mounted *outside* the window key per 0.5. Its own two remainders go with it: `chrome::Dock::on_layer_key` (A.2) and the scrollbar-reveal hover, which reads zones the plugin publishes from inside the panel. | Building its description from `active_window()`. `shell_frame` does that for nearly everything else, and the dock is the one surface for which it is wrong. |
-| C.6 | The floating panel's frame — scrim, border, title, `[×]`, placement. | An ordinary bordered node with a `Host` content leaf, like every other migrated frame. **Free today**, ahead of the rest of C. | — |
+| ~~C.6~~ **Done.** | The floating panel's frame — border, title, `[×]`, placement. | `view::shell::panel`: layout places the box, the fold paints it, the painter reads its rectangle and its content rectangle back with no fallback arithmetic. `[×]` is a node that stops its own press, so `close_button_rect` — a rectangle the painter filed for a mouse arm to compare against — is gone from the state, the arm and the web projection. **The scrim did not move**, and the reason is paint order: the dock's own panel is painted after the tree's overlay band, so a `Scrim` here would be overpainted and the frame would read half-dimmed. It goes with C.5b. | — |
+
+#### What C and B actually weigh
+
+Stated here because the plan describes both as a mapping and a form, and the
+numbers change how they should be scheduled — neither is a wave that lands in
+one change.
+
+| | Lines | What it is |
+|---|---|---|
+| **C.1–C.4** | **~17,200** | `crates/fresh-editor/src/widgets/`: `render.rs` alone is 7,832, `kinds/*` another 7,000, plus `registry`, `actions`, `layout_box`, `text_click`. This is a complete widget runtime — layout, paint, hit-testing, focus and event routing — and C.1 replaces it rather than adapting it. |
+| **B.1–B.3** | **~24,000** | Settings (`view/settings/`, ~20k with `render.rs` at 4,040 and `widget_map.rs` at 1,303), the keybinding editor, the calibration wizard. |
+
+**And they are not independent — B.1 largely rides on C.1.** Settings'
+*controls* are already `WidgetSpec`: `view/settings/widget_map.rs` maps a
+`SettingControl` onto a widget kind ("Once Settings renders the resulting tree
+through `widgets::render_spec`, the two frameworks are one" — its own module
+doc, phase 3 of a unification that has landed), `render.rs` calls
+`render_spec_no_autofocus` and paints its `RenderOutput`, and `mouse.rs`
+hit-tests through `WidgetTextClickGeometry::from_render_output`. So the
+control layer of the settings dialog — rendering *and* hit-testing — is the
+widget runtime, and C.1 carries it.
+
+What stays B-specific is the dialog around the controls: the category
+navigation, the search, the item rows, and the editing input path. The
+~24,000 figure is therefore the *file* count, not the migration's; **the
+remaining bulk is C.1's ~17,200, and B.1 shrinks to the page chrome once it
+lands.** That reverses the plan's implicit ordering, which listed B before C
+and treated them as separable.
+
+**Why this matters for sequencing.** Both have to land whole. A panel is
+either described as a `Node` or painted by the runtime; there is no frame in
+which half of it is each, and a partial C.1 is precisely the "second widget
+runtime host-side" that C.1's own *Avoid* column forbids. So neither can be
+sliced by variant — they slice by *surface*: one panel slot, or one settings
+page, migrated end to end with the old path still serving the rest.
+
+Everything else in this document is gated on one of these two. That is the
+honest shape of what is left: the ungated items are done, and the remainder is
+two subsystem replacements plus the deletions they unblock.
+
+#### C.1 in full: the nineteen variants, and where each one lands
+
+Written down because C.1 is the largest remaining item and every other
+ungated item is behind it, and because the mapping is the decision — once it
+is settled the work is mechanical. `WidgetSpec` does not change: the plugin
+API is frozen, and this is a change of what the host does with it.
+
+| `WidgetSpec` | `fresh-ui` | Note |
+|---|---|---|
+| `Row { wrap }` | `row()`, `.wrap_children()` when `wrap` | The one variant with no counterpart until [#3108](https://github.com/sinelaw/fresh/pull/3108) added wrapping boxes. Its rule — break at a child boundary, never split a child — is the library's now. |
+| `Col` | `col()` | |
+| `Spacer` | `widgets::spacer` | |
+| `Divider` | `widgets::divider` | |
+| `Text` | `text()` / `text_runs()` | Styled spans are runs. |
+| `Raw` | `text_runs()` | The escape hatch is `TextPropertyEntry[]`, which is already a run list; nothing interprets it, which is the point. |
+| `HintBar` | `row()` of runs | Composition, not a widget: a hint bar is `<keys> <label>` pairs with a separator. |
+| `LabeledSection` | `col().border()` + a title strip | The shape `popup::border_strip` already has. |
+| `Toggle` | `widgets::Toggle` | `label_first` / `label_width` are the row's order and a `Sizing::Cells` on the label. `indeterminate` needs a third glyph state — the one small library change this table implies. |
+| `Number` | `widgets::Number` | |
+| `Dropdown` | `widgets::Dropdown` | Its pop-over is a `Layer`; the `screen_space` escape below is the same mechanism. |
+| `DualList` | `widgets::DualList` | |
+| `Button` | `widgets::Button` | |
+| `List` | `widgets::List` | |
+| `Tree` | `widgets::Tree` | |
+| `Component` | `focus_scope()` + `key()` | Its two jobs are exactly those: trap Tab inside the subtree, and name it. Not a component in the library's sense, and it should not become one — it owns no state. |
+| `Overlay` | `layer()` anchored to its own position | "Anchors at the row it would have occupied but the rows below do not shift" is `Place::Over` on a layer whose anchor is the node's slot. |
+| `Popup { anchor, screen_space }` | `layer()`, `Anchor::Point` or the node, `within` the panel unless `screen_space` | `screen_space` is precisely "not confined to the panel's region", which is the `within` the base PR added. |
+| `WindowEmbed` | a `Host` leaf | A real editor window inside a panel: cells, like every other `Host`. G's rule applies — this one never migrates. |
+
+**Three things the table settles that were open.**
+
+* **`indeterminate` is the only library gap left in the set**, and it is one
+  glyph state on `Toggle`, not a new widget.
+* **`Component` is not a `Component`.** It is a focus scope with a key, and
+  reading it as the library's `Component` would give a plugin's subtree host
+  state it never asked for. The name collides; the concept does not.
+* **`Popup`'s two modes are one node**, because a layer already distinguishes
+  "confined to a region" from "confined to the frame". Before #3108 they
+  would have been two mechanisms.
+
+What the table does *not* settle is C.5 — whether a buffer-mounted panel is a
+subtree in the pane's content slot or stays a virtual buffer. That was
+deferred deliberately, to be taken with C.1's experience in hand.
 
 ### D. Paint arrangements still mixed
 
 | # | What | How | Avoid |
 |---|---|---|---|
-| D.1 | The status bar's *prompt* states — the last cells `Editor::render` paints outside the fold. **Free today.** | Into the fold's arm, exactly as the prompt row went (G2). | — |
+| ~~D.1~~ **Already done, and the entry was stale.** | The status bar's *prompt* states. | Checked against the source: `StatusBarRenderer::render_prompt` and `render_file_open_prompt` reach the buffer only through `Editor::render_prompt_line`, whose sole caller is `paint_host`'s `HostRegion::PromptLine` arm. G2 closed this when it moved the prompt row into the fold; the entry described the half that had already landed. | — |
 | D.2 | `render_panels_and_modals` paints after the caret commits. | Closes with B and C; nothing to design. | Another deferral field. B.5 is what one costs. |
 | D.3 | `suppress_chrome_cells` / `Paints::HostsOnly` — the web's parallel path. | The web is a **consumer of the display list**, not a mode that suppresses half the fold. Goal 7. End state: one list, two backends, and `Paints` is deleted. | A third `Paints` mode. Each one is a place the two frontends can disagree about what exists. |
 
@@ -235,8 +318,8 @@ provided at is the scope they belong to.
 
 | # | What | How | Avoid |
 |---|---|---|---|
-| E.1 | `WindowLayoutCache` is 40 fields. | Apply one rule: **a record is legitimate iff it cannot be derived from layout.** Measured text, scroll state and the view-line mapping stay; rectangles go. | Re-recording a rectangle for speed. 0.4's benchmark is the answer, and every rectangle recorded twice is a chance to disagree. |
-| E.2 | `separator_areas` — derivable from the divider nodes now. | Kept only for the hover-highlight paint and the drag; both go with E.3. | — |
+| E.1 | ~~`WindowLayoutCache` is 40 fields.~~ **Eight**, and the rule sorts them. | Apply one rule: **a record is legitimate iff it cannot be derived from layout.** Stay: `tab_layouts` and `view_line_mappings` (measured text). Go: `split_areas`' content and scrollbar rectangles — `content_key`, `vscroll_key` and `hscroll_key` are keyed nodes, so the painter is recording what layout already placed; only `thumb_start`/`thumb_end` are its own. Likewise `file_explorer_area` (`HostRegion::Explorer`). `last_editor_content_area` is the one honest record and its doc says why: `apply_layout` asks before the frame that would set it. | Re-recording a rectangle for speed. 0.4's benchmark is the answer, and every rectangle recorded twice is a chance to disagree. |
+| ~~E.2~~ **Done.** | `separator_areas` was assembled from **two** producers: a second layout walk (`get_separators_with_ids`, re-running `split_rect_ext` against a rectangle the caller supplied) for the main grid, and the painter's own recording for grouped subtrees, which the first could not see. | `separator_rects` — the model says which containers exist and which way each splits, layout says where each divider landed. Grouped subtrees need no special case (their dividers have been ordinary nodes since S5) and neither does maximization (a maximized frame describes no divider, so it has no rectangle). The removed walk stays as the oracle `the_dividers_are_where_the_separators_are` checks the tree against — the one job a second derivation is good for. | — |
 | E.3 | `PointerGrab` — the drag state machine. | The library's pointer capture, which is already there and is what B.4 also needs. | Porting the state machine. It is the thing capture exists to replace. |
 
 ### F. Library-side (both are `fresh-ui` changes, not editor ones)

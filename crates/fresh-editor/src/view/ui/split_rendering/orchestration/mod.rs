@@ -33,7 +33,7 @@ use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
-use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
+use crate::model::event::{BufferId, EventLog, LeafId};
 use crate::state::EditorState;
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
@@ -156,14 +156,6 @@ pub(crate) struct PaneAreas {
     pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
     /// Rect plus `max_content_width`, `thumb_start`, `thumb_end`.
     pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
-    /// Hit areas for the separators inside active `Grouped` subtrees.
-    pub grouped_separator_areas: Vec<(
-        crate::model::event::ContainerId,
-        SplitDirection,
-        u16,
-        u16,
-        u16,
-    )>,
 }
 
 /// Paint every pane in `area`, and every separator between them.
@@ -215,13 +207,6 @@ pub(crate) fn render_content(
     HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
     HashMap<LeafId, Vec<ViewLineMapping>>,             // view line mappings for mouse clicks
     Vec<(LeafId, BufferId, Rect, usize, usize, usize)>, // horizontal scrollbar areas (rect + max_content_width + thumb_start + thumb_end)
-    Vec<(
-        crate::model::event::ContainerId,
-        SplitDirection,
-        u16,
-        u16,
-        u16,
-    )>, // hit areas for separators inside active Grouped subtrees
 ) {
     let _span = tracing::trace_span!("render_content").entered();
 
@@ -282,15 +267,7 @@ pub(crate) fn render_content(
             pending_hardware_cursor,
         );
     }
-    paint_separators(
-        buf,
-        area,
-        split_manager,
-        &base_visible,
-        &facts,
-        &stores,
-        &mut out,
-    );
+    paint_separators(buf, area, split_manager, &base_visible, &facts, &stores);
     // Record vertical-scrollbar theme keys for the inspector, from the
     // thumb/track geometry the panes just computed.
     record_scrollbar_theme_runs(&out.split_areas, stores.cell_theme_map, screen_width);
@@ -300,20 +277,17 @@ pub(crate) fn render_content(
         tab_layouts,
         view_line_mappings,
         horizontal_scrollbar_areas,
-        grouped_separator_areas,
     } = out;
     (
         split_areas,
         tab_layouts,
         view_line_mappings,
         horizontal_scrollbar_areas,
-        grouped_separator_areas,
     )
 }
 
 /// Paint every separator in the frame — the main tree's and, inside each pane
-/// showing an active buffer group, that group's own — and record the grouped
-/// ones' hit areas.
+/// showing an active buffer group, that group's own.
 ///
 /// **Not a pane's**, which is why it is here rather than in [`paint_leaf`]: a
 /// separator is the gap *between* two panes and belongs to neither. It cannot
@@ -325,7 +299,6 @@ pub(crate) fn paint_separators(
     base_visible: &[(LeafId, BufferId, Rect)],
     f: &FrameFacts<'_>,
     s: &Stores<'_>,
-    out: &mut PaneAreas,
 ) {
     for (direction, x, y, length) in split_manager.get_separators(area) {
         render_separator(buf, direction, x, y, length, f.style.theme);
@@ -333,7 +306,7 @@ pub(crate) fn paint_separators(
     // Walk the visible splits again to render internal separators of any
     // active buffer groups (their Split nodes live in the side-map, not the
     // main split tree, so `split_manager` doesn't know about them).
-    out.grouped_separator_areas = render_grouped_separators(
+    render_grouped_separators(
         buf,
         base_visible,
         s.split_view_states.as_deref(),
@@ -1256,14 +1229,7 @@ fn render_grouped_separators(
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
     theme: &crate::view::theme::Theme,
     pane_chrome: &HashMap<LeafId, PaneChrome>,
-) -> Vec<(
-    crate::model::event::ContainerId,
-    SplitDirection,
-    u16,
-    u16,
-    u16,
-)> {
-    let mut grouped_separator_areas = Vec::new();
+) {
     for (main_split_id, _main_buffer_id, split_area) in base_visible {
         let active_group = split_view_states
             .and_then(|svs| svs.get(main_split_id))
@@ -1277,15 +1243,17 @@ fn render_grouped_separators(
             pane_chrome.get(main_split_id).copied().unwrap_or_default(),
         );
         if let crate::view::split::SplitNode::Grouped { layout, .. } = grouped {
-            for (id, direction, x, y, length) in
+            // Painted, not recorded. Where these are is the tree's answer
+            // now — `view::shell::splits::separator_rects` reads the same
+            // divider nodes the main grid's come from, so a grouped subtree's
+            // separators stopped being the one list assembled by a painter.
+            for (_id, direction, x, y, length) in
                 layout.get_separators_with_ids(main_layout.content_rect)
             {
                 render_separator(buf, direction, x, y, length, theme);
-                grouped_separator_areas.push((id, direction, x, y, length));
             }
         }
     }
-    grouped_separator_areas
 }
 
 /// Record vertical-scrollbar theme keys (thumb vs. track) for the theme

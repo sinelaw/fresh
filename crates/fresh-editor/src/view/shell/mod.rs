@@ -25,6 +25,7 @@ pub mod menu;
 pub mod modal;
 pub mod msg;
 pub mod overlay_prompt;
+pub mod panel;
 pub mod popup;
 pub mod prompt;
 pub mod search_options;

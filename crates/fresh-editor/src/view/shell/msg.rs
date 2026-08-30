@@ -35,6 +35,15 @@ pub enum UiMsg {
 /// comparable, and tests compare facts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiFact {
+    /// The floating plugin panel's `[×]` was pressed.
+    ///
+    /// It dismisses exactly as Esc and Cancel do, firing the panel's `cancel`
+    /// widget event. This replaces `close_button_rect` — a rectangle the
+    /// painter computed, filed on the panel, and a mouse arm compared against
+    /// before the general panel hit-test so the press could not also focus a
+    /// widget underneath. The node stops the event, which says the same thing
+    /// without the ordering.
+    PanelClosed,
     /// Dismiss the open context menu.
     CloseContextMenu,
     /// Move the open context menu's highlight to a row (hover).
