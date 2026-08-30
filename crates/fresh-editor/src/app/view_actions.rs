@@ -91,20 +91,19 @@ impl Window {
     /// pushes in from the right; -1 = the new tab is to the left,
     /// view pushes in from the left; 0 = no animation.
     ///
-    /// The split's Rect is resolved from the cached layout captured
-    /// in the last render pass. If the split isn't on screen yet
-    /// (freshly created) the call is a no-op — animation is a purely
-    /// decorative layer and missing it does not affect correctness.
-    pub(crate) fn animate_tab_switch(&mut self, split_id: LeafId, direction: i32) {
+    /// `area` is where the pane — or, for a buffer group, the union of its
+    /// panels — sits, which the caller asks the shell tree for: a `Window`
+    /// cannot see the tree, and this used to resolve it from the painter's
+    /// record of the last render pass. A pane not on screen yet (freshly
+    /// created) has no rectangle and the call is a no-op, as before:
+    /// animation is a decorative layer and missing it costs nothing.
+    pub(crate) fn animate_tab_switch(&mut self, area: ratatui::layout::Rect, direction: i32) {
         if direction == 0 {
             return;
         }
         if !self.config().editor.animations {
             return;
         }
-        let Some(area) = self.split_or_group_content_rect(split_id) else {
-            return;
-        };
         if area.width == 0 || area.height == 0 {
             return;
         }
@@ -122,54 +121,32 @@ impl Window {
             },
         );
     }
+}
 
-    /// Resolve the on-screen Rect that covers the split `split_id` from
-    /// the cached layout.
+impl super::Editor {
+    /// Where a pane's content is — or, when the pane is showing a buffer
+    /// group, the box its panels cover between them.
     ///
-    /// Normally a split_id maps 1:1 to a single entry in
-    /// `WindowLayoutCache::split_areas` (the split's content rect). When a
-    /// buffer-group tab is active, however, the split renders the
-    /// group's inner subtree — split_areas then has one entry per
-    /// inner panel (log / detail / toolbar etc.) and NO entry for the
-    /// outer split id. In that case we walk the stashed group subtree
-    /// to collect every inner LeafId, look each one up in split_areas,
-    /// and return the bounding box. That gives us the overall area the
-    /// group occupies on screen.
-    fn split_or_group_content_rect(&self, split_id: LeafId) -> Option<ratatui::layout::Rect> {
-        if let Some(rect) = self
-            .layout_cache
-            .split_areas
-            .iter()
-            .find(|(sid, _, _, _, _, _)| *sid == split_id)
-            .map(|(_, _, content_rect, _, _, _)| *content_rect)
-        {
+    /// A grouped pane renders its *inner* subtree, so the tree has a
+    /// rectangle per panel (log / detail / toolbar) and none under the outer
+    /// leaf's key. The union of the inner ones is the area the group
+    /// occupies, which is what a tab-switch animation slides.
+    pub(crate) fn pane_or_group_content_rect(
+        &self,
+        split_id: LeafId,
+    ) -> Option<ratatui::layout::Rect> {
+        if let Some(rect) = self.pane_content_rect(split_id) {
             return Some(rect);
         }
-
-        // Fallback: is this split hosting a buffer-group tab? If so,
-        // walk the group's inner subtree to collect its leaf ids and
-        // union their cached content rects.
-        let (_, vs_map) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let win = self.windows.get(&self.active_window)?;
+        let (_, vs_map) = win.buffers.splits()?;
         let group_leaf = vs_map.get(&split_id).and_then(|vs| vs.active_group_tab)?;
-        let subtree = self.grouped_subtrees.get(&group_leaf)?;
-
-        let mut inner_leaves: Vec<LeafId> = Vec::new();
-        collect_leaf_ids(subtree, &mut inner_leaves);
-
-        let mut union: Option<ratatui::layout::Rect> = None;
-        for (sid, _, content, _, _, _) in &self.layout_cache.split_areas {
-            if !inner_leaves.contains(sid) {
-                continue;
-            }
-            union = Some(match union {
-                None => *content,
-                Some(prev) => rect_union(prev, *content),
-            });
-        }
-        union
+        let mut inner: Vec<LeafId> = Vec::new();
+        collect_leaf_ids(win.grouped_subtrees.get(&group_leaf)?, &mut inner);
+        inner
+            .into_iter()
+            .filter_map(|leaf| self.pane_content_rect(leaf))
+            .reduce(rect_union)
     }
 }
 

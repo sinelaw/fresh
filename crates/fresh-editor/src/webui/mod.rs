@@ -1922,9 +1922,22 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // (so titles + their dropdowns align); only the container is full-width.
     let menubar_rect = (content.y > 0).then(|| Rect::new(0, 0, w, content.y));
 
+    // **The rectangles are the tree's here too.** The web is a consumer of
+    // the same layout the TUI folds (D.3), so a pane's content and its
+    // scrollbar come from the nodes under `content_key` / `vscroll_key`; what
+    // is still read from the record is the thumb, which is a read of the
+    // scroll state rather than of layout. A pane the tree has no rectangle
+    // for is dropped, which is what a zero-size entry meant.
     let panes: Vec<Value> = layout
         .split_areas
         .iter()
+        .filter_map(|(leaf, bufid, _content, _bar, thumb_s, thumb_e)| {
+            let content_rect = &editor.pane_content_rect(*leaf)?;
+            let scrollbar_rect = &editor
+                .pane_vscroll_rect(*leaf)
+                .unwrap_or(Rect::new(0, 0, 0, 0));
+            Some((leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e))
+        })
         .map(
             |(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
                 // Tabs are derived once in the core (`Editor::tab_bar_view`).

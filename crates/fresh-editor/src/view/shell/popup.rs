@@ -203,6 +203,44 @@ pub struct Keys {
     pub bound: Vec<(fresh_ui::KeyPress, crate::input::keybindings::Action)>,
 }
 
+/// Which keymap section a popup of this kind reads, and which of that
+/// section's actions are the popup's own.
+///
+/// **One section per kind, and only the actions that section is for.** The
+/// `popup` section binds Enter to `popup_confirm`; a completion list must
+/// never see that binding, because Enter there means "close this and insert a
+/// newline" and the newline is the buffer's — which is the whole reason
+/// [`keyboard`] declares no `Confirm` intent on it. Letting the `popup`
+/// section ride down alongside `completion` put the confirm back in through
+/// the side door, and Enter accepted the selected row again.
+///
+/// `router::completion_popup_action` said the same thing and said it in its
+/// doc: "only `CompletionAccept` and `CompletionDismiss` are recognised here
+/// — every other key falls through to the popup's own handler".
+pub fn key_section(
+    kind: crate::view::popup::PopupKind,
+) -> (
+    crate::input::keybindings::KeyContext,
+    &'static [crate::input::keybindings::Action],
+) {
+    use crate::input::keybindings::{Action, KeyContext};
+    use crate::view::popup::PopupKind as PK;
+    match kind {
+        PK::Completion => (
+            KeyContext::Completion,
+            &[Action::CompletionAccept, Action::CompletionDismiss],
+        ),
+        _ => (
+            KeyContext::Popup,
+            &[
+                Action::PopupConfirm,
+                Action::PopupCancel,
+                Action::PopupFocus,
+            ],
+        ),
+    }
+}
+
 /// A popup's content, as the shell describes it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
@@ -1338,6 +1376,36 @@ mod tests {
         let d = press(&mut ui, KeyCode::Char('x'), Mods::NONE);
         assert_eq!(steps(&d), vec![PopupKey::Close]);
         assert!(d.claimed, "and the key is spent doing it");
+    }
+
+    /// **A completion list does not read the `popup` section.** That section
+    /// binds Enter to `popup_confirm`, and Enter over a completion list means
+    /// "close this and insert a newline" — the popup was never in the way of
+    /// the keystroke. Letting the section ride down alongside `completion`
+    /// made Enter accept the selected row again, past a layer that declares
+    /// no `Confirm` precisely so it would not.
+    #[test]
+    fn a_completion_list_reads_only_its_own_keymap_section() {
+        use crate::input::keybindings::{Action, KeyContext};
+        let (ctx, wanted) = key_section(PopupKind::Completion);
+        assert_eq!(ctx, KeyContext::Completion);
+        assert!(!wanted.contains(&Action::PopupConfirm), "{wanted:?}");
+        assert_eq!(
+            wanted,
+            &[Action::CompletionAccept, Action::CompletionDismiss]
+        );
+
+        // Every other kind is answered by `popup`, where confirm belongs.
+        for kind in [
+            PopupKind::Action,
+            PopupKind::List,
+            PopupKind::Text,
+            PopupKind::Hover,
+        ] {
+            let (ctx, wanted) = key_section(kind);
+            assert_eq!(ctx, KeyContext::Popup, "{kind:?}");
+            assert!(wanted.contains(&Action::PopupConfirm), "{kind:?}");
+        }
     }
 
     /// **The keymap's own binding reaches the popup**, which is the whole

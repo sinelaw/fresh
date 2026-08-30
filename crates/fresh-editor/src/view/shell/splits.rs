@@ -699,7 +699,8 @@ mod tests {
                 pane: LeafId(SplitId(0)),
                 x: 5,
                 y: 0,
-                clicks: 1
+                clicks: 1,
+                mods: fresh_ui::Mods::NONE,
             }],
             "the content's, not the strip's"
         );
@@ -1225,6 +1226,7 @@ fn content_surface(id: LeafId) -> Node<UiMsg> {
                     x,
                     y,
                     clicks: e.clicks,
+                    mods: e.mods,
                 }))
             }),
         )

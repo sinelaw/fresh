@@ -44,8 +44,9 @@ impl Editor {
             .and_then(|at| self.active_window().detect_terminal_link_at(col, row, at))
             .map(|(_, _, link, cwd)| (link, cwd))
             .or_else(|| {
+                let at = self.pane_content_at(col, row)?;
                 self.active_window()
-                    .detect_terminal_scrollback_link_at(col, row)
+                    .detect_terminal_scrollback_link_at(col, row, at)
                     .map(|(_, link, cwd)| (link, cwd))
             })?;
         let resolved = self.resolve_terminal_path(&link.path, term_cwd.as_deref())?;

@@ -319,22 +319,22 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<AnyhowResult<()>> {
-        // **Which pane is the node's**, so this looks its entry up by name
-        // rather than by asking every recorded rectangle whether it contains
-        // the point. What is still looked up is the bar's own geometry — the
-        // thumb's extent is a read of the scroll state at paint time, and that
-        // is genuinely recorded.
-        let (split_id, buffer_id, scrollbar_rect, is_on_thumb) =
-            self.active_layout().split_areas.iter().find_map(
-                |(split_id, buffer_id, _content, scrollbar_rect, thumb_start, thumb_end)| {
-                    if *split_id != pane || scrollbar_rect.width == 0 {
-                        return None;
-                    }
+        // **Which pane is the node's, and so is where its bar is.** What is
+        // still looked up is the *thumb's* extent, which is a read of the
+        // scroll state at paint time and is genuinely recorded.
+        let (split_id, scrollbar_rect) = (pane, self.pane_vscroll_rect(pane)?);
+        let buffer_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.pane_buffer(pane))?;
+        let is_on_thumb = self.active_layout().split_areas.iter().find_map(
+            |(split_id, .., thumb_start, thumb_end)| {
+                (*split_id == pane).then(|| {
                     let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                    let on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-                    Some((*split_id, *buffer_id, *scrollbar_rect, on_thumb))
-                },
-            )?;
+                    relative_row >= *thumb_start && relative_row < *thumb_end
+                })
+            },
+        )?;
 
         self.focus_split(split_id, buffer_id);
         // Grabbing the scrollbar of a drag-parked terminal scrollback view is
@@ -397,32 +397,25 @@ impl Editor {
         col: u16,
         _row: u16,
     ) -> Option<AnyhowResult<()>> {
-        let (split_id, buffer_id, hscrollbar_rect, max_content_width, is_on_thumb) = self
+        // The bar is the tree's and the buffer is the window's; the thumb's
+        // extent and the content's width are reads of the scroll state at
+        // paint time, so those stay recorded.
+        let (split_id, hscrollbar_rect) = (pane, self.pane_hscroll_rect(pane)?);
+        let buffer_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.pane_buffer(pane))?;
+        let (max_content_width, is_on_thumb) = self
             .active_layout()
             .horizontal_scrollbar_areas
             .iter()
             .find_map(
-                |(
-                    split_id,
-                    buffer_id,
-                    hscrollbar_rect,
-                    max_content_width,
-                    thumb_start,
-                    thumb_end,
-                )| {
-                    if *split_id == pane && hscrollbar_rect.width > 0 {
+                |(split_id, _, _, max_content_width, thumb_start, thumb_end)| {
+                    (*split_id == pane).then(|| {
                         let relative_col = col.saturating_sub(hscrollbar_rect.x) as usize;
                         let on_thumb = relative_col >= *thumb_start && relative_col < *thumb_end;
-                        Some((
-                            *split_id,
-                            *buffer_id,
-                            *hscrollbar_rect,
-                            *max_content_width,
-                            on_thumb,
-                        ))
-                    } else {
-                        None
-                    }
+                        (*max_content_width, on_thumb)
+                    })
                 },
             )?;
 
@@ -485,6 +478,7 @@ impl Editor {
         col: u16,
         row: u16,
         clicks: u8,
+        modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
         // The pane's content is a live terminal that wants the mouse, or a
         // Ctrl+Click on a path it printed. Both are the content's, and both
@@ -511,13 +505,7 @@ impl Editor {
             return Ok(());
         };
         match clicks {
-            1 => {
-                let modifiers = self
-                    .shell_pointer_event
-                    .map(|(ev, _)| ev.modifiers)
-                    .unwrap_or_else(crossterm::event::KeyModifiers::empty);
-                self.handle_editor_click(col, row, pane, buffer_id, content_rect, modifiers)
-            }
+            1 => self.handle_editor_click(col, row, pane, buffer_id, content_rect, modifiers),
             2 => self.handle_split_double_click(pane, buffer_id, content_rect, col, row),
             _ => self.handle_split_triple_click(pane, buffer_id, content_rect, col, row),
         }
@@ -525,9 +513,32 @@ impl Editor {
 
     /// Where the shell laid this pane's content out.
     pub(crate) fn pane_content_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
+        self.pane_part_rect(crate::view::shell::splits::content_key(pane))
+    }
+
+    /// Where the shell laid this pane's vertical scrollbar, or `None` when the
+    /// pane has no bar.
+    ///
+    /// **`None` is "no bar", which is what a zero-width record meant.**
+    /// `pane_interior` places all three parts whether or not the pane has
+    /// them and gives the missing ones a width of zero; `rect_of` drops a
+    /// zero-size element. So the two spellings of "there is no scrollbar
+    /// here" — a zero-width `Rect` in `split_areas` and a `None` from the
+    /// tree — say the same thing, and every caller of these already had to
+    /// handle it.
+    pub(crate) fn pane_vscroll_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
+        self.pane_part_rect(crate::view::shell::splits::vscroll_key(pane))
+    }
+
+    /// The same, for the horizontal bar.
+    pub(crate) fn pane_hscroll_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
+        self.pane_part_rect(crate::view::shell::splits::hscroll_key(pane))
+    }
+
+    fn pane_part_rect(&self, key: fresh_ui::Key) -> Option<ratatui::layout::Rect> {
         crate::view::shell::rect_of(
             self.shell_ui.as_ref()?,
-            &crate::view::shell::splits::content_key(pane),
+            &key,
             ratatui::layout::Rect::new(
                 0,
                 0,
@@ -598,6 +609,31 @@ impl Editor {
         })
     }
 
+    /// Where the pane showing this buffer laid its content out.
+    ///
+    /// The three callers that wanted this scanned `split_areas` for an entry
+    /// whose buffer matched and took the rectangle beside it — a lookup that
+    /// answered "which pane" from the painter's record of the last frame when
+    /// the split model already knows. The model says which pane, the tree says
+    /// where it is.
+    ///
+    /// A buffer mounted in no visible pane has no rectangle, which is what an
+    /// absent entry meant.
+    pub(crate) fn pane_content_rect_for_buffer(
+        &self,
+        buffer_id: crate::app::BufferId,
+    ) -> Option<ratatui::layout::Rect> {
+        let pane = self
+            .windows
+            .get(&self.active_window)?
+            .buffers
+            .splits()
+            .map(|(mgr, _)| mgr.visible_leaves())?
+            .into_iter()
+            .find_map(|(pane, bid)| (bid == buffer_id).then_some(pane))?;
+        self.pane_content_rect(pane)
+    }
+
     /// The pane a screen cell belongs to, counting its scrollbar column.
     ///
     /// The wider question than [`Self::pane_content_at`], and the one
@@ -650,11 +686,12 @@ impl Editor {
 
     /// Whether the pointer is on a pane's scrollbar thumb or its track.
     ///
-    /// The pane comes from the node; the thumb's extent is the recorded read
-    /// of the scroll state, which is what makes this a lookup rather than a
-    /// calculation.
+    /// The pane comes from the node, **and so does the bar**; the thumb's
+    /// extent is the recorded read of the scroll state, which is what makes
+    /// this a lookup rather than a calculation.
     pub(crate) fn scrollbar_hover(&self, pane: LeafId, row: u16) -> Option<HoverTarget> {
-        let (_, _, _, bar, thumb_start, thumb_end) = self
+        let bar = self.pane_vscroll_rect(pane)?;
+        let (.., thumb_start, thumb_end) = self
             .active_layout()
             .split_areas
             .iter()
@@ -846,8 +883,9 @@ impl Editor {
                         }
                     })
                     .unwrap_or(0);
-                self.active_window_mut()
-                    .animate_tab_switch(split_id, direction);
+                if let Some(area) = self.pane_or_group_content_rect(split_id) {
+                    self.active_window_mut().animate_tab_switch(area, direction);
+                }
                 match target {
                     crate::view::split::TabTarget::Buffer(buffer_id) => {
                         self.focus_split(split_id, buffer_id);
@@ -1015,33 +1053,32 @@ impl Editor {
     /// thumb drag or track jump on the grabbed split.
     pub(crate) fn handle_vscrollbar_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
-            // Snapshot split_areas so we don't borrow `self.active_layout()` and
-            // `self.active_window_mut()` simultaneously below.
-            let split_areas = self.active_layout().split_areas.clone();
-            for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
-                &split_areas
-            {
-                if *split_id == dragging_split_id {
-                    // Check if we started dragging from the thumb (have drag_start_row)
-                    if self.active_window().mouse_state.drag_start_row.is_some() {
-                        // Relative drag from thumb
-                        self.active_window_mut().handle_scrollbar_drag_relative(
-                            row,
-                            *split_id,
-                            *buffer_id,
-                            *scrollbar_rect,
-                        )?;
-                    } else {
-                        // Jump drag (started from track)
-                        self.active_window_mut().handle_scrollbar_jump(
-                            col,
-                            row,
-                            *split_id,
-                            *buffer_id,
-                            *scrollbar_rect,
-                        )?;
-                    }
-                    return Ok(());
+            // The bar is where the tree put it, and the buffer is the one the
+            // pane is showing — neither is a fact about the last paint. The
+            // scan this replaces read both out of `split_areas`, one entry of
+            // which is the pane being dragged.
+            let bar = self.pane_vscroll_rect(dragging_split_id);
+            let buffer = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.pane_buffer(dragging_split_id));
+            if let (Some(bar), Some(buffer_id)) = (bar, buffer) {
+                // A drag that started on the thumb moves relative to where it
+                // was grabbed; one that started on the track jumps.
+                match self.active_window().mouse_state.drag_start_row.is_some() {
+                    true => self.active_window_mut().handle_scrollbar_drag_relative(
+                        row,
+                        dragging_split_id,
+                        buffer_id,
+                        bar,
+                    )?,
+                    false => self.active_window_mut().handle_scrollbar_jump(
+                        col,
+                        row,
+                        dragging_split_id,
+                        buffer_id,
+                        bar,
+                    )?,
                 }
             }
         }
@@ -1056,21 +1093,19 @@ impl Editor {
             .mouse_state
             .dragging_horizontal_scrollbar
         {
-            // Clone the scrollbar layout so the loop doesn't hold an
-            // immutable borrow on `self` while it mutates
-            // `self.split_view_states`. The active window's layout cache
-            // is repopulated each frame, so a one-frame snapshot is fine.
+            // The bar is the tree's. What is still snapshotted is the thumb
+            // and the content width — reads of the scroll state at paint time
+            // — cloned so the loop does not hold an immutable borrow on
+            // `self` while it mutates `self.split_view_states`.
+            let Some(bar) = self.pane_hscroll_rect(dragging_split_id) else {
+                return Ok(());
+            };
             let hscrollbar_areas = self.active_layout().horizontal_scrollbar_areas.clone();
-            for (
-                split_id,
-                _buffer_id,
-                hscrollbar_rect,
-                max_content_width,
-                thumb_start,
-                thumb_end,
-            ) in &hscrollbar_areas
+            for (split_id, _buffer_id, _bar, max_content_width, thumb_start, thumb_end) in
+                &hscrollbar_areas
             {
                 if *split_id == dragging_split_id {
+                    let hscrollbar_rect = &bar;
                     let track_width = hscrollbar_rect.width as f64;
                     if track_width <= 1.0 {
                         break;
@@ -1144,13 +1179,15 @@ impl Editor {
             return Ok(());
         };
 
-        // Find the buffer and content rect for this split in one pass
-        let Some((buffer_id, content_rect)) = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, _, _, _, _, _)| *sid == split_id)
-            .map(|(_, bid, rect, _, _, _)| (*bid, *rect))
+        // Where the pane is, and which buffer it shows. The scan this replaces
+        // read both from the painter's record of the last frame.
+        let Some(content_rect) = self.pane_content_rect(split_id) else {
+            return Ok(());
+        };
+        let Some(buffer_id) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.pane_buffer(split_id))
         else {
             return Ok(());
         };

@@ -473,13 +473,24 @@ impl<M: 'static> Ui<M> {
     pub fn move_focus(&mut self, dir: FocusDir) -> bool {
         let scope = self.focus_scope();
         match self.traversal.next(&scope, self.focus, dir) {
-            Some(n) => {
+            // **Landing where you started is not a move.**
+            //
+            // Reading order wraps, so a scope holding one focusable answers
+            // every direction with that same element. Returning true for it
+            // *claims the key* — `dispatch_key` stops at
+            // `default_for_intent` — so a modal with a single focusable in it
+            // swallowed every arrow and every Tab, and none of them reached
+            // the layer's `Dismiss` behind. The editor's completion popup is
+            // exactly one focusable inside one layer, which is why Left,
+            // Right and Shift+Tab there did nothing at all rather than
+            // closing it.
+            Some(n) if Some(n) != self.focus => {
                 let mut out = Vec::new();
                 self.focus_element(n, SelectionOnFocus::SelectAll, &mut out);
                 self.pending_messages.extend(out);
                 true
             }
-            None => false,
+            _ => false,
         }
     }
 

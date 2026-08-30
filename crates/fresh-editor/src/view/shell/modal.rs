@@ -105,6 +105,37 @@ pub fn layer(slot: Slot) -> Node<UiMsg> {
         .child(content)
 }
 
+/// A caption on a box's top border, where `Block::title` drew one.
+///
+/// **A caption is not a ring.** `Draw::Border` says "an outline around this
+/// rectangle" and carries no text, so a described box cannot put a title in
+/// its edge the way a `Block` did. Stacking a one-row strip over the box is
+/// how the floating panel's frame already does it, and it is the only form
+/// that keeps the box's *interior* the size the painter's was: a title given
+/// a row of its own is a row the content no longer has, and everything below
+/// it sits one line lower than the surface it replaced.
+///
+/// That is not cosmetic. The keybinding editor's table shifted down a row, so
+/// its scrollbar track began one row below where every caller computes it —
+/// clicking the top of the track hit nothing, and a drag from there never
+/// started.
+///
+/// One row, deliberately: a transparent node still produces a hit path, and a
+/// full-height strip would offer that path over the whole interior before the
+/// interior's own.
+pub fn title_strip(title: impl Into<String>, ink: String) -> Node<UiMsg> {
+    let clear = |n: Node<UiMsg>| n.pointer_mode(fresh_ui::PointerMode::Transparent);
+    row()
+        .h(fresh_ui::Sizing::Cells(1))
+        .pointer_mode(fresh_ui::PointerMode::Transparent)
+        .children([
+            // `Block::title` starts one cell in from the corner.
+            clear(row().w(fresh_ui::Sizing::Cells(1))),
+            clear(fresh_ui::text(title.into()).theme(ink)),
+            clear(row().flex(1)),
+        ])
+}
+
 fn surface(slot: Slot) -> Node<UiMsg> {
     let claim = move |e: &Event| {
         e.stop();

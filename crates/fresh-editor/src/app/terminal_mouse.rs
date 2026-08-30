@@ -208,10 +208,16 @@ impl Window {
     ///
     /// Returns the terminal buffer, the detected link, and the terminal's
     /// OSC 7 working directory (for resolving relative paths).
+    /// `at` is the pane the cell is over and where its content sits, which
+    /// the caller asks the shell tree for — the same parameter, for the same
+    /// reason, as its sibling [`Window::detect_terminal_link_at`]. A `Window`
+    /// cannot see the tree, and the scan this replaces answered "which pane
+    /// covers this cell" out of the painter's record of the last frame.
     pub(crate) fn detect_terminal_scrollback_link_at(
         &self,
         col: u16,
         row: u16,
+        at: (crate::model::event::LeafId, ratatui::layout::Rect),
     ) -> Option<(
         BufferId,
         crate::services::terminal::path_link::DetectedLink,
@@ -227,18 +233,13 @@ impl Window {
             return None;
         }
 
-        let (split_id, content_rect) =
-            self.layout_cache
-                .split_areas
-                .iter()
-                .find_map(|(sid, bid, rect, _, _, _)| {
-                    (*bid == active
-                        && col >= rect.x
-                        && col < rect.x + rect.width
-                        && row >= rect.y
-                        && row < rect.y + rect.height)
-                        .then_some((*sid, *rect))
-                })?;
+        // The scan also checked that the pane it found is showing the active
+        // terminal, which is a question about the model rather than about the
+        // paint.
+        let (split_id, content_rect) = at;
+        if self.pane_buffer(split_id) != Some(active) {
+            return None;
+        }
 
         let state = self.buffers.get(&active)?;
         let gutter_width = state.margins.left_total_width() as u16;
@@ -556,12 +557,19 @@ impl super::Editor {
         {
             return None;
         }
-        let content_rect = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, bid, _, _, _, _)| *sid == split_id && *bid == buffer_id)
-            .map(|(_, _, rect, _, _, _)| *rect)?;
+        // The pane is named, so its content rectangle is the tree's; the scan
+        // this replaces also checked that the pane still shows this buffer,
+        // which `pane_buffer` answers from the model rather than from the
+        // painter's record of the last frame.
+        let content_rect = self.pane_content_rect(split_id)?;
+        if self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.pane_buffer(split_id))
+            != Some(buffer_id)
+        {
+            return None;
+        }
 
         // Drop into read-only scrollback. The press already focused the
         // split, so the sync pins THIS split's viewport to the grid's row 0.
