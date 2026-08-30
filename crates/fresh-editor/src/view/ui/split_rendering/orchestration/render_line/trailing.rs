@@ -141,6 +141,7 @@ fn render_implicit_line_into(
         visual_to_char: Vec::new(),
         line_end_byte: ctx.state.buffer.len(),
         is_plugin_virtual: false,
+        end_exclusive: None,
     });
 
     // NOTE: We intentionally do NOT update last_line_end here; the
@@ -235,6 +236,7 @@ fn ensure_trailing_mapping(ctx: &PostRowContext<'_>, acc: &mut PostRowAccumulato
             visual_to_char: Vec::new(),
             line_end_byte: ctx.state.buffer.len(),
             is_plugin_virtual: false,
+            end_exclusive: None,
         });
     }
 }

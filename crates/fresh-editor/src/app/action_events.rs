@@ -436,7 +436,13 @@ impl crate::app::window::Window {
                         .layout_cache
                         .visual_line_end(split_id, position, allow_advance)
                     {
-                        Some(end_pos) => (end_pos, None),
+                        // The row reports its end as the last source byte it
+                        // drew, which is one cell short when that byte is a
+                        // content character — every row a compose-mode soft
+                        // break wrapped, since the break consumes the space it
+                        // fell on. The row owns and draws the position past it
+                        // (`end_exclusive`), so the caret stays on the row.
+                        Some(end_pos) => (self.step_past_row_end_char(end_pos), None),
                         None => return None,
                     }
                 }
@@ -512,6 +518,27 @@ impl crate::app::window::Window {
     /// Returns `Some((new_position, new_sticky))` on success, or `None`
     /// if wrap mode is off (delegate to caller default) or we're at a
     /// genuine buffer boundary.
+    /// Where `End` stops, given the byte a visual row reports as its end.
+    ///
+    /// That byte is the last source byte the row drew. For a row ending at its
+    /// line ending, or at whitespace a wrap consumed, it already is the
+    /// position after the row's text. For a row ending on a content character
+    /// it is one cell short, so step past that character.
+    fn step_past_row_end_char(&mut self, end_pos: usize) -> usize {
+        let buffer = &mut self.active_state_mut().buffer;
+        if end_pos >= buffer.len() {
+            return end_pos;
+        }
+        let bytes = buffer.slice_bytes(end_pos..buffer.len().min(end_pos + 4));
+        match std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|text| text.chars().next())
+        {
+            Some(ch) if !ch.is_whitespace() => end_pos + ch.len_utf8(),
+            _ => end_pos,
+        }
+    }
+
     fn compute_wrap_aware_visual_move_fallback(
         &mut self,
         from_pos: usize,

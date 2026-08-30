@@ -216,6 +216,66 @@ pub(crate) fn apply_soft_breaks(
     output
 }
 
+/// How many times the join estimate is allowed to re-measure. Each pass grows
+/// the window, which can bring more joins into view; two passes settle every
+/// realistic document (a paragraph's joins are found by the first), and the
+/// bound keeps a pathological one — a file that is one joined block — from
+/// walking the buffer.
+const JOIN_ESTIMATE_PASSES: usize = 2;
+
+/// Grow the visible-line estimate by the line breaks the viewport's conceals
+/// swallow.
+///
+/// A conceal whose range covers a newline renders the line below it as part of
+/// the line above — the mechanism compose mode reflows a paragraph with. N
+/// source lines then fill fewer than N rows, so a token build sized in source
+/// lines stops above the viewport's bottom and the frame ends in EOF tildes
+/// with the document still going. This counts the swallowed breaks and asks
+/// for that many lines more, re-measuring because the extra lines can carry
+/// joins of their own.
+///
+/// Returns `visible_count` unchanged for a non-composing split or an
+/// unconcealed buffer: every other conceal in the editor stays inside one
+/// line, so nothing else can pay for this query.
+pub(crate) fn join_adjusted_visible_count(
+    buffer: &crate::model::buffer::Buffer,
+    conceals: &crate::view::conceal::ConcealManager,
+    marker_list: &crate::model::marker::MarkerList,
+    cursor_positions: &[usize],
+    top_byte: usize,
+    visible_count: usize,
+    is_compose: bool,
+) -> usize {
+    if !is_compose || conceals.is_empty() || visible_count == 0 {
+        return visible_count;
+    }
+    let start_line = buffer.get_line_number(top_byte);
+    let mut total = visible_count;
+    for _ in 0..JOIN_ESTIMATE_PASSES {
+        let end_byte = buffer
+            .line_start_offset(start_line + total)
+            .unwrap_or_else(|| buffer.len());
+        if end_byte <= top_byte {
+            return total;
+        }
+        let swallowed: usize = conceals
+            .query_viewport(top_byte, end_byte, marker_list, cursor_positions)
+            .iter()
+            .map(|(range, _)| {
+                let from = buffer.get_line_number(range.start.max(top_byte));
+                let to = buffer.get_line_number(range.end.min(end_byte));
+                to.saturating_sub(from)
+            })
+            .sum();
+        let grown = visible_count.saturating_add(swallowed);
+        if grown <= total {
+            return total;
+        }
+        total = grown;
+    }
+    total
+}
+
 /// Apply conceal ranges to a token stream.
 ///
 /// Handles partial token overlap: if a Text token spans bytes that are

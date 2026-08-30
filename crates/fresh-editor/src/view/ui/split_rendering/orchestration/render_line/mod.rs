@@ -920,9 +920,28 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         }
 
         if !line_spans.is_empty() {
+            // Where the row's end position is, when no cell carries it — the
+            // same value `build_view_line_mapping` records as `end_exclusive`.
+            let row_end_exclusive = current_view_line
+                .char_source_bytes
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(idx, m)| m.map(|byte| (idx, byte)))
+                .and_then(|(idx, byte)| {
+                    current_view_line
+                        .text
+                        .chars()
+                        .nth(idx)
+                        .filter(|ch| !ch.is_whitespace())
+                        .map(|ch| byte + ch.len_utf8())
+                });
             if let Some(x) = locate_cursor_in_view_map(
                 &line_view_map,
                 primary_cursor_position,
+                cursor_line_start_byte,
+                cursor_line_end_byte,
+                row_end_exclusive,
                 is_on_cursor_line,
                 current_row,
                 &mut cursor,
@@ -1358,12 +1377,20 @@ fn place_line_end_cursor(
 fn locate_cursor_in_view_map(
     line_view_map: &[Option<usize>],
     primary_cursor_position: usize,
+    cursor_line_start_byte: usize,
+    cursor_line_end_byte: usize,
+    // One byte past the last character this row drew, when the row ends on a
+    // content character. That position is the row's own — it is where `End`
+    // goes — but no cell carries it, because the wrap consumed the separator.
+    row_end_exclusive: Option<usize>,
     is_on_cursor_line: bool,
     current_row: u16,
     cursor: &mut CursorTracker,
 ) -> Option<u16> {
     let mut nearest_fallback: Option<(u16, usize)> = None; // (screen_x, byte_distance)
     let mut last_visible_x: Option<u16> = None;
+    // Whether this row draws any byte of the cursor's own logical line.
+    let mut row_draws_cursor_line = false;
     for (screen_x, source_offset) in line_view_map.iter().enumerate() {
         if let Some(src) = source_offset {
             // Exact match: cursor byte is visible
@@ -1371,18 +1398,48 @@ fn locate_cursor_in_view_map(
                 cursor.place(screen_x as u16, current_row);
             }
             // Track nearest visible byte >= cursor position for fallback
-            if !cursor.found && is_on_cursor_line && *src >= primary_cursor_position {
+            if !cursor.found && *src >= primary_cursor_position {
                 let dist = *src - primary_cursor_position;
                 if nearest_fallback.is_none_or(|(_, best)| dist < best) {
                     nearest_fallback = Some((screen_x as u16, dist));
                 }
             }
+            if (cursor_line_start_byte..cursor_line_end_byte).contains(src) {
+                row_draws_cursor_line = true;
+            }
             last_visible_x = Some(screen_x as u16);
         }
     }
-    // Fallback: cursor byte was concealed — snap to nearest visible byte
+    // Fallback: cursor byte was concealed — snap to nearest visible byte.
+    //
+    // Gated so a row that has nothing to do with the cursor cannot snap a
+    // phantom onto itself when the cursor's own line is offscreen (#1965).
+    //
+    // `is_on_cursor_line` asks whether the row STARTS inside the cursor's
+    // logical line, which a conceal spanning a newline breaks: compose mode's
+    // reflow draws a paragraph's source lines as one row, so the row that holds
+    // the cursor's bytes starts in the line above and the gate reads false —
+    // leaving the caret undrawn wherever it sat in a byte no cell claims, which
+    // is every byte inside a join and the space a row break lands on. Asking
+    // instead whether the row DRAWS any of that line answers the same question
+    // where a row and a logical line still coincide, and keeps answering it
+    // when they do not. No wider for the phantom case: a row drawing none of
+    // the cursor's line cannot claim the cursor either way.
+    // The position just past this row's last character sits one cell to its
+    // right. Claimed ahead of the nearest-visible fallback, which would hand it
+    // to the row below — the caret jumping a line when `End` goes there.
+    if !cursor.found
+        && row_end_exclusive == Some(primary_cursor_position)
+        && (is_on_cursor_line || row_draws_cursor_line)
+    {
+        if let Some(x) = last_visible_x {
+            cursor.place(x.saturating_add(1), current_row);
+        }
+    }
     if let Some((fallback_x, _)) = nearest_fallback {
-        cursor.place(fallback_x, current_row);
+        if is_on_cursor_line || row_draws_cursor_line {
+            cursor.place(fallback_x, current_row);
+        }
     }
     last_visible_x
 }
@@ -1493,6 +1550,27 @@ fn build_view_line_mapping(
         prev_line_end_byte
     };
 
+    // One past the row's last character, when the row ends on a content
+    // character rather than on a separator — see `ViewLineMapping::
+    // end_exclusive`. `char_source_bytes` is indexed by character of `text`
+    // (its length is `text.chars().count()`), so the index of the last mapped
+    // byte is the index of its character.
+    let end_exclusive = view_line
+        .char_source_bytes
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(idx, m)| m.map(|byte| (idx, byte)))
+        .and_then(|(idx, byte)| {
+            view_line
+                .text
+                .chars()
+                .nth(idx)
+                .filter(|ch| !ch.is_whitespace())
+                .map(|ch| byte + ch.len_utf8())
+        })
+        .filter(|end| *end != line_end_byte);
+
     // Content mapping starts after the gutter
     let content_map = if line_view_map.len() >= gutter_width {
         line_view_map[gutter_width..].to_vec()
@@ -1513,5 +1591,6 @@ fn build_view_line_mapping(
         char_source_bytes: content_map,
         line_end_byte,
         is_plugin_virtual,
+        end_exclusive,
     }
 }

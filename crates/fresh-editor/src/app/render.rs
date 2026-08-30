@@ -12,6 +12,87 @@ pub(crate) struct BottomRowFlags {
     pub prompt_row_visible: bool,
 }
 
+/// How far the `lines_changed` walk will go to close a run of non-blank lines
+/// for a composing buffer, in either direction.
+///
+/// A reflowing renderer needs whole blocks: `markdown_compose` joins a
+/// paragraph's source lines into one flowed block and wraps them together, and
+/// it can only do that for lines it is offered in the same batch. So a batch
+/// for such a buffer is *run-closed* — it never carries a line without the rest
+/// of its blank-line-delimited run — and this bounds the extra walking that
+/// costs.
+///
+/// A run longer than this is left un-closed rather than dragged into every
+/// batch that touches it: prose paragraphs are a handful of lines, and a file
+/// whose lines never blank out (a wrapped log, a minified blob) would otherwise
+/// turn each one-line scroll into a walk over the whole run. The consumer then
+/// sees a line whose predecessor is missing, which it already has to treat as a
+/// block head.
+const FLOW_RUN_MAX_LINES: usize = 200;
+
+/// Whether a line separates two runs: empty, or nothing but whitespace.
+fn line_is_blank(content: &str) -> bool {
+    content.trim().is_empty()
+}
+
+/// How far back the run scan reads to find the blank line above the viewport.
+///
+/// A byte window rather than a line count so the scan is one read and one
+/// backwards pass per frame instead of one piece-tree lookup per line: a file
+/// whose lines never blank out would otherwise pay for the whole run on every
+/// frame, and this is the draw path.
+const FLOW_RUN_LOOKBEHIND_BYTES: usize = 8192;
+
+/// Start byte of the run of non-blank lines containing `top_byte`'s line.
+///
+/// Returns that line's own start when it opens the run, when it is itself
+/// blank, and when the run reaches further back than the scan window — the
+/// consumer then sees a line whose predecessor is absent from the batch, which
+/// is exactly the "treat it as a block head" case it already handles.
+fn flow_run_start(buffer: &crate::model::buffer::Buffer, top_byte: usize) -> usize {
+    let top_line = buffer.get_line_number(top_byte);
+    let Some(line_start) = buffer.line_start_offset(top_line) else {
+        return top_byte;
+    };
+    if line_start == 0 {
+        return line_start;
+    }
+    let window = line_start.min(FLOW_RUN_LOOKBEHIND_BYTES);
+    let from = line_start - window;
+    let bytes = buffer.slice_bytes(from..line_start);
+    if bytes.len() != window {
+        return line_start;
+    }
+    // Splitting on `\n` is UTF-8 safe: no continuation byte can equal it.
+    let mut run_start = line_start;
+    let mut end = window;
+    while end > 0 {
+        // `end` is one past the previous line's terminator.
+        let mut content_end = end - 1;
+        if content_end > 0 && bytes[content_end - 1] == b'\r' {
+            content_end -= 1;
+        }
+        let Some(nl) = bytes[..content_end].iter().rposition(|b| *b == b'\n') else {
+            // The window ran out mid-line, unless it starts at the buffer's
+            // own beginning — where there is no line above to look at.
+            if from == 0 && !bytes[..content_end].iter().all(u8::is_ascii_whitespace) {
+                run_start = from;
+            }
+            break;
+        };
+        let start = nl + 1;
+        if bytes[start..content_end]
+            .iter()
+            .all(u8::is_ascii_whitespace)
+        {
+            break;
+        }
+        run_start = from + start;
+        end = start;
+    }
+    run_start
+}
+
 impl Editor {
     /// Render the topmost global popup at its computed area and register its
     /// click region in `global_popup_areas`. Shared by the generic
@@ -333,36 +414,151 @@ impl Editor {
                         let top_byte = viewport_top_byte;
                         let seen_byte_ranges = seen_ranges_for_win.entry(buffer_id).or_default();
 
+                        // Where the walk starts. Normally the viewport's top
+                        // line; for a composing buffer, backed up to the start
+                        // of the blank-line-delimited run that line belongs to
+                        // — see `flow_run_start` for why a reflowing renderer
+                        // needs that and nothing else does.
+                        let walk_start = if composing_in_any_split {
+                            flow_run_start(&state.buffer, top_byte)
+                        } else {
+                            top_byte
+                        };
+
+                        // Every line the walk saw, in order, paired with
+                        // whether it had been offered before. Two passes over
+                        // it below: one to decide what to send, one to build
+                        // the payload. Only a composing buffer keeps more than
+                        // the viewport here.
+                        struct WalkedLine {
+                            line_number: usize,
+                            byte_start: usize,
+                            byte_end: usize,
+                            content: String,
+                            seen: bool,
+                        }
+                        // Source lines to cover the viewport with. One per row,
+                        // except that a conceal spanning a line break renders
+                        // two source lines as one row — which is how compose
+                        // mode reflows a paragraph. The renderer sizes its own
+                        // token build the same way, from the same helper, so
+                        // the lines this offers the plugin are exactly the ones
+                        // the frame will draw; without it the bottom block of a
+                        // reflowed viewport is never offered and so never
+                        // flows. Self-correcting rather than predictive: the
+                        // joins it measures are the ones already on screen, so
+                        // a document opens at one line per row and settles over
+                        // the next frames as its blocks join.
+                        let rows = crate::view::ui::split_rendering::transforms::join_adjusted_visible_count(
+                            &state.buffer,
+                            &state.conceals,
+                            &state.marker_list,
+                            &[],
+                            top_byte,
+                            visible_count,
+                            composing_in_any_split,
+                        );
+                        // A split with no rows draws nothing, so it has nothing
+                        // to offer — and the walk below has no stopping rule.
+                        if rows == 0 {
+                            return 0;
+                        }
+
+                        let mut walked: Vec<WalkedLine> = Vec::new();
+                        let mut line_number = state.buffer.get_line_number(walk_start);
+                        let mut iter = state.buffer.line_iterator(walk_start, estimated_line_length);
+                        // End of the last line walked, so the embedded-region
+                        // probe below covers exactly the lines we iterated.
+                        let mut walked_end = walk_start;
+                        // Lines walked ahead of the viewport's own top line:
+                        // the run's lead-in, which must not eat the viewport's
+                        // line budget.
+                        let mut lead_in = 0usize;
+                        loop {
+                            let Some((line_start, line_content)) = iter.next_line() else {
+                                break;
+                            };
+                            let byte_end = line_start + line_content.len();
+                            walked_end = byte_end;
+                            let blank = line_is_blank(&line_content);
+                            if line_start < top_byte {
+                                lead_in += 1;
+                            }
+                            walked.push(WalkedLine {
+                                line_number,
+                                byte_start: line_start,
+                                byte_end,
+                                seen: seen_byte_ranges.contains(&(line_start, byte_end)),
+                                content: line_content,
+                            });
+                            line_number += 1;
+
+                            if walked.len() < lead_in + rows {
+                                continue;
+                            }
+                            // The viewport is covered. A composing buffer walks
+                            // on to the end of the run it stopped inside, so a
+                            // batch never carries half a paragraph — bounded,
+                            // because a file whose lines never blank out must
+                            // not turn one frame into a walk over the buffer.
+                            if !composing_in_any_split
+                                || blank
+                                || walked.len() >= lead_in + rows + FLOW_RUN_MAX_LINES
+                            {
+                                break;
+                            }
+                        }
+
+                        // What to send. A line the plugin has not been offered
+                        // before, always; and for a composing buffer, every
+                        // other line of that line's run as well, so a per-line
+                        // pass that flows a paragraph sees all of it at once
+                        // (`markdown_compose`'s joins and block wrap). Runs are
+                        // delimited by blank lines, which is markdown's own
+                        // paragraph rule and the only one that does not need a
+                        // grammar.
+                        let mut send: Vec<bool> = walked.iter().map(|l| !l.seen).collect();
+                        if composing_in_any_split {
+                            let mut i = 0;
+                            while i < walked.len() {
+                                if line_is_blank(&walked[i].content) {
+                                    i += 1;
+                                    continue;
+                                }
+                                let start = i;
+                                while i < walked.len() && !line_is_blank(&walked[i].content) {
+                                    i += 1;
+                                }
+                                // A run longer than the cap is not closed here,
+                                // so it is left to the plain unseen-lines rule:
+                                // the consumer sees a line whose predecessor is
+                                // missing and treats it as a block head, which
+                                // is wrong-but-stable rather than unbounded work
+                                // on every scroll step.
+                                if i - start <= FLOW_RUN_MAX_LINES
+                                    && send[start..i].iter().any(|s| *s)
+                                {
+                                    send[start..i].iter_mut().for_each(|s| *s = true);
+                                }
+                            }
+                        }
+
                         let mut new_lines: Vec<crate::services::plugins::hooks::LineInfo> =
                             Vec::new();
                         let mut fresh_ranges: Vec<(usize, usize)> = Vec::new();
-                        let mut line_number = state.buffer.get_line_number(top_byte);
-                        let mut iter = state.buffer.line_iterator(top_byte, estimated_line_length);
-                        // End of the last line walked, so the embedded-region
-                        // probe below covers exactly the lines we iterated.
-                        let mut walked_end = top_byte;
-
-                        for _ in 0..visible_count {
-                            if let Some((line_start, line_content)) = iter.next_line() {
-                                let byte_end = line_start + line_content.len();
-                                let byte_range = (line_start, byte_end);
-                                walked_end = byte_end;
-
-                                if !seen_byte_ranges.contains(&byte_range) {
-                                    new_lines.push(crate::services::plugins::hooks::LineInfo {
-                                        line_number,
-                                        byte_start: line_start,
-                                        byte_end,
-                                        content: line_content,
-                                        region: None,
-                                        table: None,
-                                    });
-                                    fresh_ranges.push(byte_range);
-                                }
-                                line_number += 1;
-                            } else {
-                                break;
+                        for (line, send) in walked.into_iter().zip(send) {
+                            if !send {
+                                continue;
                             }
+                            fresh_ranges.push((line.byte_start, line.byte_end));
+                            new_lines.push(crate::services::plugins::hooks::LineInfo {
+                                line_number: line.line_number,
+                                byte_start: line.byte_start,
+                                byte_end: line.byte_end,
+                                content: line.content,
+                                region: None,
+                                table: None,
+                            });
                         }
 
                         let count = new_lines.len();
@@ -386,7 +582,7 @@ impl Editor {
                             // report.
                             let structure = state
                                 .highlighter
-                                .structure_lines_in(&state.buffer, top_byte..walked_end);
+                                .structure_lines_in(&state.buffer, walk_start..walked_end);
                             if !structure.regions.is_empty() {
                                 let mut next = 0usize;
                                 for line in new_lines.iter_mut() {
