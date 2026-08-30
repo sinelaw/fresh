@@ -94,7 +94,18 @@ impl Visible {
     }
 }
 
+/// The two documents the demo switches between.
+///
+/// The demo has one task list, deliberately: what changes with the project is
+/// not the model but the *scope* the view is built under, which is the whole
+/// point. `Ctrl-P` switches, and the scratch note beside the status bar is
+/// per-project incidental state — owned by the element, restored by
+/// `Persisted`, and never touched by this model.
+pub const PROJECTS: [&str; 2] = ["alpha", "beta"];
+
 pub struct App {
+    /// Index into [`PROJECTS`]. The view keys and scopes on it.
+    pub project: usize,
     pub tasks: Rc<Vec<Task>>,
     pub filter: Filter,
     pub selected: usize,
@@ -209,6 +220,7 @@ impl App {
     pub fn with_tasks(tasks: Vec<Task>) -> Self {
         let next_id = tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
         App {
+            project: 0,
             tasks: Rc::new(tasks),
             filter: Filter::All,
             selected: 0,
@@ -280,6 +292,9 @@ impl App {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Msg {
+    /// Switch documents. Nothing else in the model changes — the view's scope
+    /// does, and the element state under it goes with it.
+    NextProject,
     Draft(String),
     Add,
     Toggle(usize),
@@ -317,6 +332,10 @@ pub enum Msg {
 /// The whole of the application's behaviour, in one place.
 pub fn update(app: &mut App, msg: Msg) {
     match msg {
+        Msg::NextProject => {
+            app.project = (app.project + 1) % PROJECTS.len();
+            app.status = format!("project: {}", PROJECTS[app.project]);
+        }
         Msg::Clicked(i, n) => app.last_click = Some((i, n)),
         Msg::RibbonClear => {
             app.filter = Filter::All;

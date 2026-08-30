@@ -122,6 +122,43 @@ fn a_toggle_reports_the_value_it_would_move_to() {
     assert_eq!(click(&mut ui, 1, 0), vec![Msg::Toggled(false)]);
 }
 
+/// **The third state a checkbox has wherever a value can be unset.** A
+/// definite `[ ]` there reads as "the user turned this off", which is a
+/// different fact and usually the wrong one.
+#[test]
+fn an_indeterminate_toggle_shows_neither_on_nor_off() {
+    let mut ui: Ui<Msg> = Ui::new();
+    for value in [false, true] {
+        ui.frame(
+            Toggle::new("wrap", value)
+                .indeterminate(true)
+                .on_change(Msg::Toggled)
+                .node(),
+            FRAME,
+        );
+        assert!(
+            texts(&ui).iter().any(|t| t.contains("[-]")),
+            "the mark does not depend on the value it is hiding (value={value})"
+        );
+    }
+}
+
+/// It is display only, and the toggle still reports `!value`. What leaving
+/// the unset state *means* is the owner's question — "inherit" resolves to on
+/// for some fields and off for others — so the widget does not guess.
+#[test]
+fn an_indeterminate_toggle_still_reports_the_flip() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        Toggle::new("wrap", false)
+            .indeterminate(true)
+            .on_change(Msg::Toggled)
+            .node(),
+        FRAME,
+    );
+    assert_eq!(click(&mut ui, 1, 0), vec![Msg::Toggled(true)]);
+}
+
 // -- TextField ---------------------------------------------------------------
 
 #[test]
@@ -639,4 +676,200 @@ fn a_run_longer_than_its_item_is_clipped_to_it() {
         "0123    ",
         "four columns were given, four were painted"
     );
+}
+
+/// **A stable gutter is there whether the bar is or not.**
+///
+/// Without it the column appears with the bar and goes with it, so a list that
+/// grows past its window reflows its content by a cell — and a window whose
+/// gutter is part of the frame around it gets the bar drawn *beside* that
+/// frame instead of on it, because the column the bar wants is one the frame
+/// already owns.
+#[test]
+fn a_stable_gutter_reserves_its_column_with_no_bar_to_put_in_it() {
+    let list = |n: usize| -> Node<Msg> {
+        List::windowed(n, fresh_ui::Key::from, |i| {
+            fresh_ui::col()
+                .theme("list.row")
+                .child(fresh_ui::text(format!("row {i}")))
+        })
+        .scrollbar_gutter()
+        .node()
+    };
+    let frame = Size::new(20, 5);
+
+    // Short enough to fit: no bar is drawn.
+    let mut short: Ui<Msg> = Ui::new();
+    short.frame(list(3), frame);
+    assert!(
+        !short
+            .spec()
+            .items
+            .iter()
+            .any(|i| matches!(i.draw, Draw::Scrollbar { .. })),
+        "a list that fits draws no bar"
+    );
+
+    // Long enough to overflow: a bar appears in the last column.
+    let mut long: Ui<Msg> = Ui::new();
+    long.frame(list(500), frame);
+    let bar = long
+        .spec()
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Scrollbar { .. }))
+        .expect("an overflowing list shows a bar");
+    assert_eq!(bar.rect.x, frame.w as i32 - 1);
+
+    // And the rows are the same width either way: the gutter did not move.
+    let row_width = |ui: &Ui<Msg>| {
+        ui.spec()
+            .items
+            .iter()
+            .filter(|i| matches!(i.draw, Draw::Fill))
+            .map(|i| i.rect.w)
+            .max()
+            .expect("rows paint their ground")
+    };
+    assert_eq!(
+        row_width(&short),
+        row_width(&long),
+        "content must not reflow when the bar appears"
+    );
+    assert_eq!(row_width(&short), frame.w - 1, "the gutter is not content");
+}
+
+/// **The bar's appearance is named apart from the window's.**
+///
+/// `theme` tags a node *and its descendants*, and a region that names its
+/// appearance is a region that paints — so a window that named its bar that
+/// way would also fill itself in the bar's colours behind every row.
+#[test]
+fn a_bar_carries_its_own_theme_and_the_rows_keep_theirs() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(500, fresh_ui::Key::from, |i| {
+            fresh_ui::col()
+                .theme("list.row")
+                .child(fresh_ui::text(format!("row {i}")))
+        })
+        .scrollbar()
+        .scrollbar_theme("bar.thumb/bar.track")
+        .node(),
+        Size::new(20, 5),
+    );
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Scrollbar { .. }))
+        .expect("an overflowing list shows a bar");
+    assert_eq!(bar.theme.as_str(), "bar.thumb/bar.track");
+    assert!(
+        ui.spec()
+            .items
+            .iter()
+            .filter(|i| !matches!(i.draw, Draw::Scrollbar { .. }))
+            .all(|i| !i.theme.as_str().starts_with("bar.")),
+        "the bar's name reaches nothing but the bar"
+    );
+}
+
+/// **A card list is a list whose items are blocks.**
+///
+/// Each item takes a fixed band of rows, and everything else about the list —
+/// the window, the index the offset counts, the selection, the click — is
+/// unchanged, because an item is still an item. What would break it is rows
+/// that each decide their own height: then the window could not say which
+/// items it holds without measuring all of them.
+#[test]
+fn a_card_lists_items_take_a_band_of_rows_each() {
+    let card = |i: usize| -> Node<Msg> {
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("title {i}")))
+            .child(fresh_ui::text(format!("body {i}")))
+            .child(fresh_ui::text("────"))
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    // Nine rows of window, three rows per card: three cards fit.
+    ui.frame(
+        List::windowed(20, fresh_ui::Key::from, card)
+            .row_rows(3)
+            .scrollbar()
+            .node(),
+        Size::new(20, 9),
+    );
+    let band = |i: usize| {
+        let id = ui
+            .find_by_key(&fresh_ui::Key::from(i))
+            .unwrap_or_else(|| panic!("card {i}"));
+        let r = ui.rect_of(id);
+        (r.y, r.h)
+    };
+    assert_eq!(band(0), (0, 3), "the first card's band");
+    assert_eq!(band(1), (3, 3), "and they stack by their own height");
+    assert_eq!(band(2), (6, 3));
+    // The window is three cards tall; a fourth is built for overscan and lands
+    // below it, which is the whole of "the window knows what it holds".
+    assert_eq!(band(3).0, 9, "past the window's last row");
+}
+
+/// And the bar reads in items, not in cells. Nine cells of window over cards
+/// three rows tall is a window of *three* items — a thumb sized from the nine
+/// would claim the list is three times as visible as it is.
+#[test]
+fn a_card_lists_bar_measures_the_window_in_items() {
+    let card = |i: usize| -> Node<Msg> {
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("title {i}")))
+            .child(fresh_ui::text(format!("body {i}")))
+            .child(fresh_ui::text("────"))
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(20, fresh_ui::Key::from, card)
+            .row_rows(3)
+            .scrollbar()
+            .node(),
+        Size::new(20, 9),
+    );
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find_map(|i| match i.draw {
+            Draw::Scrollbar {
+                offset,
+                content,
+                window,
+            } => Some((offset, content, window)),
+            _ => None,
+        })
+        .expect("an overflowing card list shows a bar");
+    assert_eq!(bar, (0, 20, 3), "twenty items, three of them visible");
+}
+
+/// **Declining the focus ring is about the keyboard, not about being inert.**
+///
+/// A list driven from outside — its selection set by the caller each frame —
+/// should not be a stop on the way round, or Tab lands on a widget that has
+/// nothing to do with the key. Its rows still answer the mouse.
+#[test]
+fn a_list_that_declines_focus_still_answers_a_click() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(10, fresh_ui::Key::from, |i| {
+            fresh_ui::col().child(fresh_ui::text(format!("row {i}")))
+        })
+        .focusable(false)
+        .on_select(Msg::Selected)
+        .node(),
+        FRAME,
+    );
+    assert_eq!(click(&mut ui, 2, 3), vec![Msg::Selected(3)]);
+
+    // Tab does not stop here: with nothing focusable in the frame, the key is
+    // left for whoever else is listening.
+    let tab = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert!(tab.claimed == false && tab.msgs.is_empty());
 }

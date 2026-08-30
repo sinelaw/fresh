@@ -38,7 +38,7 @@ pub mod schedule;
 pub mod services;
 pub mod widgets;
 
-pub use ambient::{provide, Ambient, AmbientKey, ProvideProps};
+pub use ambient::{provide, provide_eq, scope, Ambient, AmbientKey, ProvideProps};
 pub use behavior::Behavior;
 pub use component::{AnyComponent, Component};
 pub use desc::{

@@ -828,3 +828,493 @@ fn a_layer_aligns_on_the_axis_its_placement_leaves_free() {
     // Stretch is the case `stretch_to_anchor` already spelled, unchanged.
     assert_eq!(at(Some(Align::Stretch)), (0, 30));
 }
+
+/// **A host can say where something inside it is, and an anchor can name it.**
+///
+/// The tree hands a host leaf a rectangle and knows nothing about its interior,
+/// so a layer anchored to a text caret names a thing the tree cannot locate.
+/// The alternative is a screen coordinate in the description, which is the
+/// caller doing the layout engine's job and carrying a number that goes stale.
+/// So the owner of the space answers where the thing is, and the description
+/// still names it.
+#[test]
+fn a_layer_can_anchor_to_a_rectangle_the_host_published() {
+    let caret = Key::Str("caret".into());
+    let popup = Key::Str("popup".into());
+    let tree = || -> Node<()> {
+        col().child(fresh_ui::host(1u64).flex(1)).child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Node(caret.clone()))
+                .place(fresh_ui::Place::Below)
+                .child(col().w(Sizing::Cells(10)).h(Sizing::Cells(3)).theme("p")),
+        )
+    };
+    let rect_of = |ui: &Ui<()>| ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+
+    // No element and no published rectangle: the anchor falls back, as a name
+    // nobody answers always has.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree(), FRAME);
+    let fallback = rect_of(&ui);
+
+    // The host says where its caret is; the layer lands on the row below it.
+    ui.set_host_anchor(caret.clone(), Rect::new(30, 8, 1, 1));
+    ui.place_layers(FRAME);
+    let placed = rect_of(&ui);
+    assert_eq!((placed.x, placed.y), (30, 9), "below the published cell");
+    assert_ne!(placed, fallback, "publishing an anchor moved the layer");
+
+    // It moves with the caret, without the description changing.
+    ui.set_host_anchor(caret.clone(), Rect::new(12, 3, 1, 1));
+    ui.place_layers(FRAME);
+    assert_eq!((rect_of(&ui).x, rect_of(&ui).y), (12, 4));
+
+    // Anchors are per-frame: a new frame with nothing published falls back
+    // again rather than reusing a caret that has since moved.
+    ui.frame(tree(), FRAME);
+    assert_eq!(rect_of(&ui), fallback, "a stale caret is worse than none");
+}
+
+/// An element carrying the key wins: a published rectangle fills a gap, it
+/// cannot shadow a real node.
+#[test]
+fn an_element_outranks_a_published_anchor_for_the_same_key() {
+    let k = Key::Str("thing".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col()
+            .child(col().key(k.clone()).w(Sizing::Cells(4)).h(Sizing::Cells(2)))
+            .child(
+                fresh_ui::layer()
+                    .key(popup.clone())
+                    .anchor(fresh_ui::Anchor::Node(k.clone()))
+                    .place(fresh_ui::Place::Below)
+                    .child(col().w(Sizing::Cells(6)).h(Sizing::Cells(1)).theme("p")),
+            ),
+        FRAME,
+    );
+    let with_element = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    ui.set_host_anchor(k.clone(), Rect::new(50, 20, 1, 1));
+    ui.place_layers(FRAME);
+    assert_eq!(
+        ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap(),
+        with_element,
+        "the real node still answers for its own key"
+    );
+}
+
+/// **A layer can be confined to a region rather than to the frame.**
+///
+/// A surface that floats over everything belongs to the frame. Some do not: a
+/// popup hanging off a status bar must not put its right border on the
+/// editor's scrollbar, and clamping to the frame lands it exactly there.
+/// Shrinking the layer is not the same statement — that changes how big the
+/// box is, when what is wanted is where it may go.
+#[test]
+fn a_layer_confined_to_a_region_clamps_to_that_region() {
+    let area = Key::Str("area".into());
+    let popup = Key::Str("popup".into());
+    // The layer wants to sit at x=70 and is 20 wide, so it overhangs both the
+    // frame (80) and the region (79) and has to be pulled back.
+    let tree = |within: Option<Key>| -> Node<()> {
+        let mut l = fresh_ui::layer()
+            .key(popup.clone())
+            .anchor(fresh_ui::Anchor::Point(70, 5))
+            .place(fresh_ui::Place::Over)
+            .fit(fresh_ui::Fit::CLAMP);
+        if let Some(k) = within {
+            l = l.within(k);
+        }
+        col().child(l.child(col().w(Sizing::Cells(20)).h(Sizing::Cells(2)).theme("p")))
+    };
+    let x_of = |ui: &Ui<()>| ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap().x;
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree(None), FRAME);
+    assert_eq!(x_of(&ui), 60, "clamped to the frame's right edge");
+
+    // The same layer, told it may only occupy the frame less its last column.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree(Some(area.clone())), FRAME);
+    ui.set_host_anchor(area.clone(), Rect::new(0, 0, FRAME.w - 1, FRAME.h));
+    ui.place_layers(FRAME);
+    assert_eq!(x_of(&ui), 59, "the reserved column is left alone");
+}
+
+/// A region also moves where a screen-anchored layer centres, and where it can
+/// start: the bounds are the whole coordinate space the placement works in, not
+/// just a right-hand limit.
+#[test]
+fn a_region_moves_the_origin_as_well_as_the_limit() {
+    let area = Key::Str("area".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Screen(Align::Center))
+                .within(area.clone())
+                .child(col().w(Sizing::Cells(10)).h(Sizing::Cells(2)).theme("p")),
+        ),
+        FRAME,
+    );
+    // A region 40 wide starting at x=20: the centre is 20 + (40-10)/2 = 35.
+    ui.set_host_anchor(area.clone(), Rect::new(20, 4, 40, 10));
+    ui.place_layers(FRAME);
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!((r.x, r.y), (35, 4 + (10 - 2) / 2));
+}
+
+/// And it moves where a *point* starts, which is what lets a caller state a
+/// coordinate in the space it already holds one in.
+///
+/// A plugin panel's dropdown anchors at a row and column inside the panel. The
+/// panel's own origin is the shell's business, not the description's, so the
+/// description names the region and the point — and before this, the point was
+/// read as a frame coordinate and the pop-over opened in the top-left corner
+/// whenever the panel was not already there.
+#[test]
+fn a_region_moves_where_a_point_anchor_starts() {
+    let area = Key::Str("area".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Point(3, 2))
+                .place(fresh_ui::Place::Over)
+                .within(area.clone())
+                .child(col().w(Sizing::Cells(10)).h(Sizing::Cells(2)).theme("p")),
+        ),
+        FRAME,
+    );
+    ui.set_host_anchor(area.clone(), Rect::new(20, 4, 40, 10));
+    ui.place_layers(FRAME);
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!((r.x, r.y), (23, 6), "the region's origin plus the point");
+}
+
+/// A layer that names no region is unaffected: the frame's origin is `(0, 0)`,
+/// so a screen coordinate stays a screen coordinate.
+#[test]
+fn a_point_with_no_region_is_still_a_frame_coordinate() {
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Point(12, 7))
+                .place(fresh_ui::Place::Over)
+                .child(col().w(Sizing::Cells(4)).h(Sizing::Cells(1)).theme("p")),
+        ),
+        FRAME,
+    );
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!((r.x, r.y), (12, 7));
+}
+
+/// A layer whose real anchor is inside a leaf places against *that*, not
+/// against the rectangle it could name.
+///
+/// The dropdown case: the trigger row is a node, the `[value ▼]` button inside
+/// it is not — a widget runtime laid the row's text out and the tree only
+/// knows where the row is. The offset says where the button is within it, and
+/// the pop-over opens under the button rather than under the row's left edge.
+#[test]
+fn an_offset_moves_the_anchor_the_layer_places_against() {
+    let trigger = Key::Str("trigger".into());
+    let popup = Key::Str("popup".into());
+    let tree = |dx: i16| -> Node<()> {
+        col().h(Sizing::Cells(1)).child(
+            row()
+                .key(trigger.clone())
+                .h(Sizing::Cells(1))
+                .w(Sizing::Cells(30))
+                .child(
+                    fresh_ui::layer()
+                        .key(popup.clone())
+                        .anchor(fresh_ui::Anchor::Parent)
+                        .place(fresh_ui::Place::Below)
+                        .offset(dx, 0)
+                        .child(col().w(Sizing::Cells(8)).h(Sizing::Cells(3)).theme("p")),
+                ),
+        )
+    };
+    let at = |dx: i16| {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(tree(dx), FRAME);
+        let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+        (r.x, r.y)
+    };
+    assert_eq!(at(0), (0, 1), "the row's left edge, the row after it");
+    assert_eq!(at(11), (11, 1), "the button's column, the row after it");
+}
+
+/// And the fit sees the moved anchor: a flip clears the button, not the row.
+#[test]
+fn an_offset_anchor_is_what_a_flip_clears() {
+    let trigger = Key::Str("trigger".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    // The trigger is on the last row of the frame, so a pop-over three rows
+    // tall cannot open below it and flips above.
+    ui.frame(
+        col().child(row().flex(1)).child(
+            row()
+                .key(trigger.clone())
+                .h(Sizing::Cells(1))
+                .w(Sizing::Cells(30))
+                .child(
+                    fresh_ui::layer()
+                        .key(popup.clone())
+                        .anchor(fresh_ui::Anchor::Parent)
+                        .place(fresh_ui::Place::Below)
+                        .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))
+                        .offset(4, 0)
+                        .child(col().w(Sizing::Cells(8)).h(Sizing::Cells(3)).theme("p")),
+                ),
+        ),
+        FRAME,
+    );
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!(
+        (r.x, r.y, r.h),
+        (4, FRAME.h as i32 - 1 - 3, 3),
+        "above the trigger's row, still under the button's column"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Wrapping boxes
+// ---------------------------------------------------------------------------
+
+/// `n` fixed-width children in a wrapping row of the given width.
+///
+/// Nested in a column so the row's own height is free: as the root it would be
+/// constrained to the frame, and the height is half of what these tests are
+/// about.
+fn wrapped(width: u16, gap: u16, widths: &[u16]) -> Ui<()> {
+    let mut ui = ui();
+    ui.frame(
+        col().child(
+            row()
+                .wrap_children()
+                .gap(gap)
+                .children(
+                    widths
+                        .iter()
+                        .map(|w| text("x").w(Sizing::Cells(*w)).h(Sizing::Cells(1)))
+                        .collect::<Vec<_>>(),
+                )
+                .w(Sizing::Cells(width)),
+        ),
+        Size::new(width, 24),
+    );
+    ui
+}
+
+/// The wrapping row's own rectangle.
+fn wrapper(ui: &Ui<()>) -> Rect {
+    ui.rect(ui.at(&[0]).unwrap())
+}
+
+fn rects(ui: &Ui<()>, n: usize) -> Vec<Rect> {
+    (0..n).map(|i| ui.rect(ui.at(&[0, i]).unwrap())).collect()
+}
+
+/// Children that fit are laid out exactly as a plain row lays them out — a
+/// wrapping box that never wraps is not a different box.
+#[test]
+fn a_wrapping_row_that_fits_is_an_ordinary_row() {
+    let ui = wrapped(30, 0, &[10, 10, 10]);
+    assert_eq!(
+        rects(&ui, 3),
+        vec![
+            Rect::new(0, 0, 10, 1),
+            Rect::new(10, 0, 10, 1),
+            Rect::new(20, 0, 10, 1)
+        ]
+    );
+}
+
+/// **The whole point.** The fourth child does not fit, so it starts a second
+/// line and the container is two rows tall instead of one row wide and
+/// overflowing.
+#[test]
+fn a_child_that_does_not_fit_starts_a_new_line() {
+    let ui = wrapped(30, 0, &[10, 10, 10, 10]);
+    assert_eq!(
+        rects(&ui, 4),
+        vec![
+            Rect::new(0, 0, 10, 1),
+            Rect::new(10, 0, 10, 1),
+            Rect::new(20, 0, 10, 1),
+            Rect::new(0, 1, 10, 1),
+        ]
+    );
+    assert_eq!(wrapper(&ui).h, 2, "the row grew a line");
+}
+
+/// The gap is spent inside a line and between lines, and the fit test counts
+/// it — two 10-wide children with a gap of 2 fit in 22, not in 21.
+#[test]
+fn the_gap_counts_toward_the_fit_and_between_the_lines() {
+    let tight = wrapped(21, 2, &[10, 10]);
+    assert_eq!(
+        rects(&tight, 2),
+        vec![Rect::new(0, 0, 10, 1), Rect::new(0, 3, 10, 1)],
+        "21 is one cell short, so the second child wraps — and the line gap is          the same two cells, so the second line starts at 1 + 2"
+    );
+
+    let roomy = wrapped(22, 2, &[10, 10]);
+    assert_eq!(
+        rects(&roomy, 2),
+        vec![Rect::new(0, 0, 10, 1), Rect::new(12, 0, 10, 1)],
+        "22 is exactly enough"
+    );
+}
+
+/// A child wider than the container gets a line to itself and overflows it.
+/// The alternative — shrinking it — would silently contradict what it said
+/// about its own width.
+#[test]
+fn a_child_too_wide_for_the_container_gets_its_own_line() {
+    let ui = wrapped(10, 0, &[4, 20, 4]);
+    let r = rects(&ui, 3);
+    assert_eq!(r[0], Rect::new(0, 0, 4, 1));
+    assert_eq!(r[1].y, 1, "the wide one starts a line");
+    assert_eq!(r[2], Rect::new(0, 2, 4, 1), "and the next starts another");
+}
+
+/// **`Flex` is `Auto` here, and this is the test that says so.** A flexible
+/// child would otherwise absorb the rest of its line, so nothing after it
+/// could ever share one — wrapping and filling are opposite requests.
+#[test]
+fn a_flexible_child_does_not_swallow_its_line() {
+    let mut ui = ui();
+    ui.frame(
+        col().child(
+            row()
+                .wrap_children()
+                .children([
+                    text("aaaa").flex(1).h(Sizing::Cells(1)),
+                    text("bbbb").w(Sizing::Cells(4)).h(Sizing::Cells(1)),
+                ])
+                .w(Sizing::Cells(20)),
+        ),
+        Size::new(20, 24),
+    );
+    let r = rects(&ui, 2);
+    assert_eq!(r[0].w, 4, "sized to its content, not to the line");
+    assert_eq!(r[1].y, 0, "so the two share a line");
+    assert_eq!(r[1].x, 4);
+}
+
+/// Within a line, a child that asked to fill the cross axis fills *that
+/// line's* height — not the container's, which would put a short child on one
+/// line at the height of a tall child on another.
+#[test]
+fn a_stretching_child_fills_its_own_line_and_not_the_container() {
+    let mut ui = ui();
+    ui.frame(
+        col().child(
+            row()
+                .wrap_children()
+                .align(Align::Stretch)
+                .children([
+                    text("a\nb\nc").w(Sizing::Cells(6)),
+                    text("d").w(Sizing::Cells(6)),
+                    text("e").w(Sizing::Cells(6)),
+                ])
+                .w(Sizing::Cells(12)),
+        ),
+        Size::new(12, 24),
+    );
+    let r = rects(&ui, 3);
+    assert_eq!(r[0].h, 3, "three lines of text");
+    assert_eq!(r[1].h, 3, "stretched to its line, which the tall one set");
+    assert_eq!(r[2].y, 3, "the third child is on the second line");
+    assert_eq!(r[2].h, 1, "whose height is its own content's");
+}
+
+/// It is a property of the box, not of rows: a wrapping column breaks into
+/// columns when it runs out of rows.
+#[test]
+fn a_wrapping_column_breaks_into_columns() {
+    let mut ui = ui();
+    ui.frame(
+        row().child(
+            col()
+                .wrap_children()
+                .children(
+                    (0..4)
+                        .map(|_| text("x").h(Sizing::Cells(2)).w(Sizing::Cells(3)))
+                        .collect::<Vec<_>>(),
+                )
+                .h(Sizing::Cells(4)),
+        ),
+        Size::new(40, 4),
+    );
+    assert_eq!(
+        rects(&ui, 4),
+        vec![
+            Rect::new(0, 0, 3, 2),
+            Rect::new(0, 2, 3, 2),
+            Rect::new(3, 0, 3, 2),
+            Rect::new(3, 2, 3, 2),
+        ]
+    );
+}
+
+/// A wrapping box with no children has no lines and no size, rather than one
+/// empty line's worth of height.
+#[test]
+fn an_empty_wrapping_box_has_no_lines() {
+    let ui = wrapped(10, 0, &[]);
+    assert_eq!(wrapper(&ui).h, 0);
+}
+
+/// **`min_w` means the same thing in a stack as in a row.** "Never narrower
+/// than this, whatever the sizing resolves to" — and a percentage that
+/// resolves below the floor is exactly where the two could differ, so it is
+/// exactly where an omission would hide.
+///
+/// A layer measures its child through the same path, which is how this was
+/// found: a dialog sized `Pct(10)` with a 20-cell floor came out ten wide.
+#[test]
+fn a_stack_honours_its_childs_size_floor() {
+    let mut ui = ui();
+    ui.frame(
+        fresh_ui::stack().child(text("x").w(Sizing::Pct(10)).min_w(20).h(Sizing::Cells(1))),
+        Size::new(100, 24),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).w, 20, "the floor wins");
+}
+
+/// And the floor does not *become* the size: a percentage above it resolves
+/// normally.
+#[test]
+fn a_stacks_floor_does_not_override_a_larger_size() {
+    let mut ui = ui();
+    ui.frame(
+        fresh_ui::stack().child(text("x").w(Sizing::Pct(50)).min_w(20).h(Sizing::Cells(1))),
+        Size::new(100, 24),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).w, 50);
+}
+
+/// The same on the cross axis, so `min_h` is not a second omission waiting.
+#[test]
+fn a_stack_honours_a_height_floor_too() {
+    let mut ui = ui();
+    ui.frame(
+        fresh_ui::stack().child(text("x").h(Sizing::Pct(10)).min_h(6).w(Sizing::Cells(4))),
+        Size::new(100, 20),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).h, 6);
+}

@@ -11,6 +11,7 @@
 //! bubble : target -> root           // each node may claim
 //! ```
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::desc::{resolve, Desc, ElemType};
@@ -66,6 +67,17 @@ impl<M: std::fmt::Debug> std::fmt::Debug for Dispatch<M> {
             .field("claimed", &self.claimed)
             .finish()
     }
+}
+
+/// What one stacked path did with a wheel notch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Chain {
+    /// A window moved.
+    Scrolled,
+    /// A floating surface stopped the search before anything moved.
+    Contained,
+    /// Nothing along this path could take it.
+    Nothing,
 }
 
 impl<M: 'static> Ui<M> {
@@ -127,8 +139,11 @@ impl<M: 'static> Ui<M> {
                 // that same press, so consuming it would cost the user a
                 // click. Same rule a viewport applies to the wheel: act, and
                 // claim only when the act was the whole of it.
-                let dismissed = self.dismiss_for_pointer(pos, out);
-                let dismiss_claims = dismissed && button == MouseButton::Left;
+                // Whether anything was dismissed, and whether any of it was
+                // spent on the dismissal.
+                let (dismissed, spent) = self.dismiss_for_pointer(pos, out);
+                let _ = dismissed;
+                let dismiss_claims = spent && button == MouseButton::Left;
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:
                 // a transparent overlay and what is behind it were both
@@ -215,11 +230,38 @@ impl<M: 'static> Ui<M> {
                 if !claimed && !prevented {
                     // Scroll chaining: the first viewport along the path whose
                     // offset can actually move takes it. One at its bound does
-                    // not claim, so the wheel continues outward.
-                    if let Some(p) = paths.first() {
+                    // not claim, so the wheel continues outward — and a wheel
+                    // that moved a window *is* claimed, or a host with its own
+                    // pipeline behind this tree scrolls something a second time
+                    // for the same notch. The editor found this the expensive
+                    // way: a wheel over a hover popup scrolled the popup here
+                    // and then scrolled the buffer underneath, which also
+                    // dismissed the popup it had just scrolled.
+                    // Every stacked path, in the order the routing produced
+                    // them — the same order `propagate_all` uses, and for the
+                    // same reason: a transparent region is *why* there is more
+                    // than one path, so a decorative strip lying over a
+                    // scrollable window must not be where the search stops.
+                    // Every stacked path, in the order the routing produced
+                    // them — the same order `propagate_all` uses, and for the
+                    // same reason: a transparent region is *why* there is more
+                    // than one path, so a decorative strip lying over a
+                    // scrollable window must not be where the search stops.
+                    //
+                    // Containment is decided after all of them, never during:
+                    // a strip's own path reaches the layer immediately, and
+                    // absorbing there would leave the window behind it — the
+                    // one the wheel was aimed at — never asked.
+                    let mut contained = false;
+                    for p in paths.iter() {
                         let p = p.clone();
-                        self.scroll_chain(&p, wheel);
+                        match self.scroll_chain(&p, wheel) {
+                            Chain::Scrolled => return true,
+                            Chain::Contained => contained = true,
+                            Chain::Nothing => {}
+                        }
                     }
+                    return contained;
                 }
                 claimed
             }
@@ -243,9 +285,20 @@ impl<M: 'static> Ui<M> {
         out: &mut Vec<M>,
     ) -> (bool, bool) {
         let mut prevented = false;
+        // **One event, one call per listener.** Stacked paths share their
+        // upper reaches: a transparent region and whatever is behind it hang
+        // off the same ancestors, so walking each path in full would offer the
+        // event to those ancestors once per path. A capture-phase observer
+        // near the root — the kind an application uses to watch a channel
+        // without claiming it — would then fire two or three times for one
+        // click. What the extra paths are for is the elements *behind* the
+        // transparent one, and those are exactly the elements the earlier
+        // paths did not contain.
+        let mut seen: HashSet<(ElementId, bool)> = HashSet::new();
         for path in paths {
-            let (claimed, p) =
-                self.propagate(path, kind, pos, button, mods, wheel, None, clicks, out);
+            let (claimed, p) = self.propagate(
+                path, kind, pos, button, mods, wheel, None, clicks, out, &mut seen,
+            );
             prevented |= p;
             if claimed {
                 return (true, prevented);
@@ -431,6 +484,9 @@ impl<M: 'static> Ui<M> {
         key: Option<KeyPress>,
         clicks: u8,
         out: &mut Vec<M>,
+        // Elements this event has already been offered to, across the stacked
+        // paths of one dispatch. See `propagate_all`.
+        seen: &mut HashSet<(ElementId, bool)>,
     ) -> (bool, bool) {
         let Some(&target) = path.last() else {
             return (false, false);
@@ -446,6 +502,9 @@ impl<M: 'static> Ui<M> {
             for n in order {
                 let handlers = self.listeners(n, kind, capture);
                 if handlers.is_empty() {
+                    continue;
+                }
+                if !seen.insert((n, capture)) {
                     continue;
                 }
                 let rect = self.rect_of(n);
@@ -604,52 +663,109 @@ impl<M: 'static> Ui<M> {
     /// The viewport whose scrollbar gutter is under a point, if any. The gutter
     /// is the node's last column, which its content does not cover, so a hit
     /// there is unambiguous.
+    /// The scrollable window whose gutter is under this point, if any.
+    ///
+    /// Every stacked path, not just the topmost: a transparent region lying
+    /// over a window — a strip carrying a popup's title — is exactly the case
+    /// that produces a second path, and the gutter is on the second one. The
+    /// deepest match within a path wins, which is the innermost window.
     fn scrollbar_hit(&self, pos: Point) -> Option<RenderId> {
-        let mut found = None;
-        for e in self.hit_test(pos) {
-            let Some(r) = self.arena.get(e).and_then(|el| el.render) else {
-                continue;
-            };
-            let Some(n) = self.render.get(r) else {
-                continue;
-            };
-            if n.scrollbar && n.clips && n.data.scroll_max.y > 0 {
-                let rect = n.data.rect;
-                if pos.x == rect.right() - 1 && rect.y <= pos.y && pos.y < rect.bottom() {
-                    found = Some(r);
+        for path in self.hit_paths(pos) {
+            let mut found = None;
+            for e in path {
+                let Some(r) = self.arena.get(e).and_then(|el| el.render) else {
+                    continue;
+                };
+                let Some(n) = self.render.get(r) else {
+                    continue;
+                };
+                if n.scrollbar && n.clips && n.data.scroll_max.y > 0 {
+                    let rect = n.data.rect;
+                    if pos.x == rect.right() - 1 && rect.y <= pos.y && pos.y < rect.bottom() {
+                        found = Some(r);
+                    }
                 }
             }
+            if found.is_some() {
+                return found;
+            }
         }
-        found
+        None
     }
 
     /// Map a pointer row on the scrollbar track to a scroll offset and apply it.
-    /// The top of the window follows the pointer across the track's travel.
+    ///
+    /// **The thumb's top lands on the row pointed at.** Its travel is the part
+    /// of the track it can reach — `track - len`, not the whole track — and
+    /// dividing by the track instead leaves the thumb short of the row by
+    /// `len` cells at the bottom and the last row of the track unable to reach
+    /// the end of the content. So the same `len` [`Draw::scrollbar_thumb`]
+    /// paints with is what this divides by; press and drag both come here, so
+    /// they agree by construction.
     fn scroll_to_pointer(&mut self, r: RenderId, y: i32) {
         let (rect, max) = {
             let Some(n) = self.render.get(r) else { return };
             (n.data.rect, n.data.scroll_max.y)
         };
-        let travel = (rect.h.max(1) as i32 - 1).max(1);
-        let rel = (y - rect.y).clamp(0, travel);
-        let off = (rel * max) / travel;
+        use crate::render::spec::Draw;
+        let track = rect.h.max(1);
+        let content = max.max(0) as u32 + track as u32;
+        let top_of = |off: i32| Draw::scrollbar_thumb(off.max(0) as u32, content, track).0 as i32;
+        let (_, len) = Draw::scrollbar_thumb(0, content, track);
+        let travel = (track as i32 - len as i32).max(0);
+        let off = if travel == 0 || max <= 0 {
+            0
+        } else {
+            let rel = (y - rect.y).clamp(0, travel);
+            // `scrollbar_thumb` *floors* offset -> row, so dividing back the
+            // same way lands the thumb a row above the one pointed at whenever
+            // the quotient has a fraction. Take the smallest offset that
+            // reaches the row instead, and keep the one below it as a
+            // candidate: with fewer scroll positions than track rows not every
+            // row is reachable, and there the nearer of the two wins.
+            let hi = ((rel * max + travel - 1) / travel).min(max);
+            let lo = (hi - 1).max(0);
+            if (top_of(lo) - rel).abs() < (top_of(hi) - rel).abs() {
+                lo
+            } else {
+                hi
+            }
+        };
         if let Some(n) = self.render.get_mut(r) {
             n.data.scroll.y = off.clamp(0, max);
         }
         self.mark_render_dirty(r);
     }
 
-    fn scroll_chain(&mut self, path: &[ElementId], wheel: Wheel) {
+    /// What one path did with the wheel.
+    ///
+    /// **The chain stops at a layer.** Walking outward past a floating surface
+    /// would hand the wheel to whatever it is floating over — so a popup
+    /// scrolled to its last line would start scrolling the document behind it,
+    /// which is not what the wheel was aimed at and, in an editor, dismisses
+    /// the popup that was being read. Every platform contains overscroll at an
+    /// overlay's edge; the web spells it `overscroll-behavior: contain`. A
+    /// layer that scrolled nothing still absorbs the notch — but only once
+    /// every path has been asked, which is the caller's job.
+    fn scroll_chain(&mut self, path: &[ElementId], wheel: Wheel) -> Chain {
         for &n in path.iter().rev() {
             let Some(r) = self.render_for(n) else {
                 continue;
             };
-            let (scroll, max, clips) = {
+            let (scroll, max, clips, floating) = {
                 let Some(node) = self.render.get(r) else {
                     continue;
                 };
-                (node.data.scroll, node.data.scroll_max, node.clips)
+                (
+                    node.data.scroll,
+                    node.data.scroll_max,
+                    node.clips,
+                    node.out_of_flow,
+                )
             };
+            if floating {
+                return Chain::Contained;
+            }
             if !clips {
                 continue;
             }
@@ -666,9 +782,10 @@ impl<M: 'static> Ui<M> {
                     }
                 }
                 self.mark_render_dirty(r);
-                return;
+                return Chain::Scrolled;
             }
         }
+        Chain::Nothing
     }
 
     /// The one part of a layer that cannot live on the render object: a
@@ -680,10 +797,12 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    /// Reports whether any layer was dismissed.
-    fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) -> bool {
+    /// Reports whether any layer was dismissed, and whether any of those spent
+    /// the press on it — see [`crate::desc::Dismiss::pass_through`].
+    fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) -> (bool, bool) {
         let mut dismissed = false;
-        let path = self.hit_test(pos);
+        let mut spent = false;
+        let paths = self.hit_paths(pos);
         let layers: Vec<ElementId> = self
             .pending_layers
             .iter()
@@ -697,8 +816,11 @@ impl<M: 'static> Ui<M> {
                 continue;
             }
             // An ancestor test over the existing tree: inside the layer's
-            // subtree, or not.
-            if path.contains(&lid) {
+            // subtree, or not. Every stacked path, because a layer whose own
+            // chrome is transparent — a strip carrying its title — puts the
+            // press on a path that reaches *behind* it as well, and only one
+            // of the two says the press was inside.
+            if paths.iter().any(|p| p.contains(&lid)) {
                 continue;
             }
             if let Some(h) = self.dismiss_handler(lid) {
@@ -726,10 +848,19 @@ impl<M: 'static> Ui<M> {
             // A layer that declared the dismissal was dismissed, whether or
             // not it also had something to say about it.
             dismissed = true;
+            // One layer that spends the press is enough to spend it: a menu
+            // and a tooltip open at once, and the click closing the menu was
+            // aimed at the menu.
+            spent |= !geom.dismiss.pass_through;
         }
-        dismissed
+        (dismissed, spent)
     }
 
+    /// Reports whether any dismissed layer *spent* the key on its dismissal —
+    /// see [`crate::desc::Dismiss::pass_through`], which reads the same here as
+    /// it does for the pointer. Escape closing a menu is the menu's reply and
+    /// belongs to nothing else; a key that hides a tooltip should still be
+    /// typed, or the tooltip has charged the user a keystroke to get rid of it.
     pub(crate) fn dismiss_for_key(&mut self, k: KeyPress, out: &mut Vec<M>) -> bool {
         use crate::event::KeyCode;
         let layers: Vec<ElementId> = self
@@ -737,7 +868,7 @@ impl<M: 'static> Ui<M> {
             .iter()
             .filter_map(|(l, _)| self.element_of(*l))
             .collect();
-        let mut any = false;
+        let mut spent = false;
         for lid in layers {
             let Some(geom) = self.render_for(lid).and_then(|r| self.layer_geom(r)) else {
                 continue;
@@ -769,10 +900,13 @@ impl<M: 'static> Ui<M> {
                 if let Some(m) = h(&ev) {
                     out.push(m);
                 }
-                any = true;
             }
+            // Dismissed whether or not it also had something to say about it,
+            // and one layer that spends the key is enough to spend it — both
+            // the same rules `dismiss_for_pointer` states.
+            spent |= !geom.dismiss.pass_through;
         }
-        any
+        spent
     }
 }
 

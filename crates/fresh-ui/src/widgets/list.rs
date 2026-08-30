@@ -147,8 +147,11 @@ pub struct List<M> {
     focusable: bool,
     autofocus: bool,
     scrollbar: bool,
+    stable_gutter: bool,
+    bar_theme: Option<String>,
     #[allow(clippy::type_complexity)]
     row_theme: Option<Rc<dyn Fn(usize, RowState) -> String>>,
+    row_rows: u16,
 }
 
 impl<M: 'static> List<M> {
@@ -189,7 +192,10 @@ impl<M: 'static> List<M> {
             focusable: true,
             autofocus: false,
             scrollbar: false,
+            stable_gutter: false,
+            bar_theme: None,
             row_theme: None,
+            row_rows: 1,
         }
     }
 
@@ -223,6 +229,14 @@ impl<M: 'static> List<M> {
         self
     }
 
+    /// Whether the list joins the focus ring.
+    ///
+    /// A list that is driven from outside — its selection set by the caller
+    /// each frame, its keys handled by whatever *does* hold the keyboard —
+    /// should say no. Otherwise it is a stop on the way round, and Tab lands
+    /// on a widget that has nothing to do with the key it was pressed for.
+    /// The rows keep answering the mouse either way: this is about the
+    /// keyboard, not about being inert.
     pub fn focusable(mut self, yes: bool) -> Self {
         self.focusable = yes;
         self
@@ -251,6 +265,35 @@ impl<M: 'static> List<M> {
     /// Show how far through the list the window is.
     pub fn scrollbar(mut self) -> Self {
         self.scrollbar = true;
+        self
+    }
+
+    /// The same, with the bar's column reserved whether the bar is there or
+    /// not — see [`Node::scrollbar_gutter`](crate::Node::scrollbar_gutter).
+    pub fn scrollbar_gutter(mut self) -> Self {
+        self.scrollbar = true;
+        self.stable_gutter = true;
+        self
+    }
+
+    /// Name the bar's appearance — see
+    /// [`Node::scrollbar_theme`](crate::Node::scrollbar_theme).
+    pub fn scrollbar_theme(mut self, name: impl AsRef<str>) -> Self {
+        self.bar_theme = Some(name.as_ref().to_string());
+        self
+    }
+
+    /// How many cells one row occupies. One by default, which is what a list
+    /// of lines is.
+    ///
+    /// **Uniform, and that is the point.** A card list — each item a little
+    /// block rather than a line — is still addressable by index: the window
+    /// knows which items it holds without measuring any of them, which is what
+    /// keeps a window onto a million of them possible. Rows that each decide
+    /// their own height are a different widget and would need a different
+    /// answer.
+    pub fn row_rows(mut self, cells: u16) -> Self {
+        self.row_rows = cells.max(1);
         self
     }
 }
@@ -289,19 +332,27 @@ impl<M: 'static> Component<M> for List<M> {
         let row_theme = self.row_theme.clone();
         // Clicking a row selects it, the same selection the keyboard drives.
         // Built here so it rides along with each visible row the reader emits.
-        let click: Option<RowClick<M>> = if self.focusable {
+        //
+        // A list that is not focusable still has a mouse: declining the focus
+        // ring says the *keyboard* is somewhere else, not that the rows stop
+        // answering. The click asks for focus only where there is focus to
+        // ask for.
+        let click: Option<RowClick<M>> = {
             let up = up.clone();
             let anchor = anchor.clone();
             let on_select = self.on_select.clone();
             let on_activate = self.on_activate.clone();
             let activate_on = self.activate_on;
+            let takes_focus = self.focusable;
             Some(Rc::new(move |i: usize| {
                 let up = up.clone();
                 let anchor = anchor.clone();
                 let on_select = on_select.clone();
                 let on_activate = on_activate.clone();
                 let handler: crate::desc::Handler<M> = Rc::new(move |e: &Event| {
-                    e.request_focus(crate::event::SelectionOnFocus::Preserve);
+                    if takes_focus {
+                        e.request_focus(crate::event::SelectionOnFocus::Preserve);
+                    }
                     up.set(move |st: &mut ListState| st.selected = i);
                     let _ = &anchor;
                     // A click always moves the selection; whether it also
@@ -320,8 +371,6 @@ impl<M: 'static> Component<M> for List<M> {
                 });
                 handler
             }))
-        } else {
-            None
         };
 
         // The row under the pointer tints itself. Enter and Leave are mirrored
@@ -348,6 +397,7 @@ impl<M: 'static> Component<M> for List<M> {
 
         // The window comes from the viewport, which owns it. This component
         // decides only which rows fill it.
+        let row_rows = self.row_rows;
         let reader = layout_reader(move |info| {
             let win = info.scroll_window.unwrap_or_default();
             let visible = (win.h as usize).max(1);
@@ -372,7 +422,7 @@ impl<M: 'static> Component<M> for List<M> {
                     Some(f) => f(i, state),
                     None => state.theme().to_string(),
                 };
-                let content = row.key(k).theme(theme).h(Sizing::Cells(1));
+                let content = row.key(k).theme(theme).h(Sizing::Cells(row_rows));
                 let g = gesture(content).on_enter(hover(i)).on_leave(hover(i));
                 match &click {
                     Some(mk) => g.on(GestureKind::Click, mk(i)),
@@ -381,12 +431,17 @@ impl<M: 'static> Component<M> for List<M> {
             }))
         });
 
-        let mut body = viewport(reader).items(n as u32);
+        let mut body = viewport(reader).items(n as u32).item_rows(row_rows);
         if let Some(a) = anchor.clone() {
             body = body.anchor_to(a);
         }
-        if self.scrollbar {
+        if self.stable_gutter {
+            body = body.scrollbar_gutter();
+        } else if self.scrollbar {
             body = body.scrollbar();
+        }
+        if let Some(t) = &self.bar_theme {
+            body = body.scrollbar_theme(t);
         }
 
         if !self.focusable {

@@ -368,6 +368,82 @@ fn styling_does_not_change_where_text_breaks() {
     assert_eq!(plain, styled);
 }
 
+/// **A wrapped list entry stays inside its own entry.**
+///
+/// `Wrap::Hanging` starts every continuation row at the line's own leading
+/// whitespace. Only the thing that wraps knows where it broke, so only it can
+/// say what the next row starts with — a caller wanting this had to wrap the
+/// text itself, which means deciding the width, which is layout's answer.
+#[test]
+fn a_hanging_wrap_indents_every_row_after_the_first() {
+    let rows = |node: Node<()>| -> Vec<String> {
+        let mut ui: Ui<()> = Ui::new();
+        painted_rows(ui.frame(node, Size::new(20, 6)))
+    };
+    let entry = "    sep  a string put between the values";
+
+    assert_eq!(
+        rows(text(entry).wrap_hanging().w(Sizing::Cells(20))),
+        vec![
+            "    sep  a string".to_string(),
+            "    put between the".to_string(),
+            "    values".to_string(),
+        ],
+        "the four leading spaces carry to every continuation row"
+    );
+    // Plain wrapping is unchanged: the continuation rows start at the edge.
+    assert_eq!(
+        rows(text(entry).wrap().w(Sizing::Cells(20))),
+        vec![
+            "    sep  a string".to_string(),
+            "put between the".to_string(),
+            "values".to_string(),
+        ],
+    );
+}
+
+/// **Wrapping is not allowed to normalise the text it wraps.**
+///
+/// `split(' ')` yields an empty piece per space, and skipping empties quietly
+/// turned `"    sep  a string"` into `"sep a string"` — so a wrapped popup lost
+/// the indent on its *first* row and the double space that separated a
+/// parameter name from its description. The break still eats the space it
+/// broke at; everything else survives.
+#[test]
+fn wrapping_keeps_the_spaces_the_text_came_with() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        text("    sep  a string here").wrap().w(Sizing::Cells(20)),
+        Size::new(20, 4),
+    );
+    assert_eq!(
+        painted_rows(spec),
+        vec!["    sep  a string".to_string(), "here".to_string()],
+        "the leading four and the inner two are the text's, not the wrapper's"
+    );
+}
+
+/// The indent is dropped when it would leave the text almost nothing — a
+/// deeply indented line in a narrow box reads better flush left than one word
+/// per row.
+#[test]
+fn a_hanging_indent_yields_when_it_would_starve_the_text() {
+    let mut ui: Ui<()> = Ui::new();
+    // 8 spaces of indent in 12 columns leaves 4 for the text, under the
+    // `HANGING_MIN_TEXT` floor of 10.
+    let spec = ui.frame(
+        text("        alpha beta gamma")
+            .wrap_hanging()
+            .w(Sizing::Cells(12)),
+        Size::new(12, 6),
+    );
+    let rows = painted_rows(spec);
+    assert!(
+        rows.iter().skip(1).all(|r| !r.starts_with(' ')),
+        "no room for the indent, so it is not applied: {rows:?}"
+    );
+}
+
 // -- the in-flow / out-of-flow split -----------------------------------------
 
 /// **What `layers_from` is for.** A backend that draws content of its own

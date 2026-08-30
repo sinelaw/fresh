@@ -196,6 +196,9 @@ pub struct BoxProps {
     /// [`border`](Node::border) turns it on, because a frame its own content
     /// can paint over is not a frame.
     pub clip: bool,
+    /// Break onto a new line when the next child would not fit, instead of
+    /// letting the row overflow. See [`Node::wrap_children`].
+    pub wrap: bool,
 }
 
 /// How a run gives up cells it was not given.
@@ -220,6 +223,34 @@ pub enum Elide {
     Head,
 }
 
+/// How a run breaks lines too long for the width it is given.
+///
+/// **Hanging is a text-layout rule, not a caller's post-process.** Only the
+/// thing that wraps knows where it broke, so only it can say what the next row
+/// starts with — a caller that wanted this had to wrap the text itself, which
+/// means deciding the width, which is the layout's answer and not the
+/// caller's. (The editor's popups did exactly that, and lost the indent the
+/// moment their content became nodes.)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Wrap {
+    /// Lines break only where the text says `\n`.
+    #[default]
+    None,
+    /// Greedy word wrap; a word too long for a line of its own is broken.
+    Word,
+    /// Word wrap, with each continuation row starting at the line's own
+    /// leading whitespace — so a wrapped list item or parameter description
+    /// stays visually inside its own entry instead of merging into the next.
+    ///
+    /// The indent is dropped when it would leave the text almost no room:
+    /// below [`HANGING_MIN_TEXT`] columns for the text itself, a continuation
+    /// row starts at the left edge instead.
+    Hanging,
+}
+
+/// The columns a hanging indent must leave for the text, or it is not applied.
+pub const HANGING_MIN_TEXT: usize = 10;
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct TextProps {
     /// The run's content, in pieces. One piece for ordinary text; several when
@@ -230,9 +261,9 @@ pub struct TextProps {
     /// the difference between this and laying separate `TextRun`s side by side,
     /// which wrap and truncate independently.
     pub runs: Rc<[Run]>,
-    pub wrap: bool,
+    pub wrap: Wrap,
     /// Which end survives when the run is given less than it measured at.
-    /// Ignored when `wrap` is set: wrapped text has no overflow to mark.
+    /// Ignored when the run wraps: wrapped text has no overflow to mark.
     pub elide: Elide,
     /// Where the text cursor sits within this run, in columns. Set by whatever
     /// is being edited; the library places it and the backend shows it.
@@ -286,7 +317,13 @@ pub enum ScrollMode {
     /// Items. The child renders only the window, so nothing is translated; the
     /// offset is an index. This is what lets a window onto a million rows exist
     /// at all: a cell extent that large does not fit a coordinate.
-    Items(u32),
+    ///
+    /// `height` is how many cells one item occupies, and it is uniform because
+    /// that is what makes an index answerable without measuring: a window that
+    /// has to measure every row to know which ones it holds is not a window
+    /// onto a million rows. A card list — items that are little blocks rather
+    /// than lines — is the case it exists for.
+    Items { count: u32, height: u16 },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -301,6 +338,10 @@ pub struct ViewportProps {
     pub max_h: Option<u16>,
     /// Emit a scrollbar item when the content exceeds the window.
     pub scrollbar: bool,
+    /// Keep the bar's gutter reserved even when no bar is drawn.
+    pub stable_gutter: bool,
+    /// Appearance of the bar itself, named apart from the window's.
+    pub bar_theme: Option<Rc<str>>,
     pub mode: ScrollMode,
 }
 
@@ -374,6 +415,15 @@ pub enum Anchor {
     Node(Key),
     /// A position with no extent. A click happened *at* a coordinate, and a
     /// menu placed `Over` it starts there.
+    ///
+    /// **In the coordinate space the layer is placed in**, which is the frame
+    /// unless the layer names a region with [`crate::desc::LayerProps::within`]
+    /// — then it is that region's, origin included. The bounds are "the whole
+    /// coordinate space the placement works in, not just a right-hand limit",
+    /// and a point is the one anchor that used to ignore it: a caller with
+    /// panel-inner coordinates had to add the panel's origin by hand, which is
+    /// the geometry duplication naming a region exists to remove. A layer that
+    /// names no region is unaffected — the frame's origin is `(0, 0)`.
     Point(u16, u16),
     /// A single cell, which is what a caret or a hovered cell is.
     ///
@@ -384,6 +434,8 @@ pub enum Anchor {
     /// click position has no extent, a caret occupies one — and a completion
     /// popup that opens on top of the character it is completing is the bug
     /// that comes of having only the first.
+    ///
+    /// Region-relative like [`Anchor::Point`], for the same reason.
     Cell(u16, u16),
     Screen(Align),
 }
@@ -453,13 +505,26 @@ pub enum Scrim {
     Opaque,
 }
 
-/// What dismisses a layer.
+/// What dismisses a layer, and whether closing it is the whole gesture.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Dismiss {
     pub outside_pointer: bool,
     pub escape: bool,
     pub any_key: bool,
     pub any_input: bool,
+    /// Whether the input that dismissed this layer goes on to whatever it was
+    /// aimed at. `false` — the default, and what every layer did before this
+    /// existed — spends it on the dismissal.
+    ///
+    /// A click outside a menu is spent closing the menu: that *is* the
+    /// gesture, and the menu was in the way of it. A tooltip is not in the
+    /// way of anything — clicking into the document while one is showing
+    /// should hide it *and* put the caret where the user clicked, or the
+    /// tooltip has charged them a click to get rid of it.
+    ///
+    /// The same rule the wheel follows: act, and claim only when the act was
+    /// the whole of it.
+    pub pass_through: bool,
 }
 
 impl Dismiss {
@@ -468,6 +533,7 @@ impl Dismiss {
         escape: false,
         any_key: false,
         any_input: false,
+        pass_through: false,
     };
     pub const OUTSIDE_POINTER: Dismiss = Dismiss {
         outside_pointer: true,
@@ -492,6 +558,16 @@ impl Dismiss {
             escape: self.escape | o.escape,
             any_key: self.any_key | o.any_key,
             any_input: self.any_input | o.any_input,
+            pass_through: self.pass_through | o.pass_through,
+        }
+    }
+
+    /// Let the input that dismissed this layer go on to what it was aimed at.
+    /// See [`Dismiss::pass_through`].
+    pub const fn passing_through(self) -> Dismiss {
+        Dismiss {
+            pass_through: true,
+            ..self
         }
     }
 }
@@ -527,6 +603,41 @@ pub struct LayerProps<M> {
     /// Fired when a declared dismissal condition is met. The layer is described
     /// by the application, so closing it is the application's move.
     pub on_dismiss: Option<Handler<M>>,
+    /// The region this layer is placed *inside*. `None` is the frame, which is
+    /// where every layer went before this existed.
+    ///
+    /// A layer is measured, aligned and fitted against the whole frame, and for
+    /// a surface that floats over everything that is right. Some do not: a
+    /// popup that hangs off the status bar must not put its right border on the
+    /// editor's scrollbar, so the region it may occupy is the frame *less that
+    /// column*. Clamping to the frame lands it exactly there.
+    ///
+    /// It is not something the caller can correct afterwards — the tree places
+    /// the layer, and by the time the host can read the rectangle back the
+    /// placement has happened. Nor is shrinking the layer the same thing: that
+    /// changes how big the box is, when what is wanted is where it may go.
+    ///
+    /// Names a key, and resolves the way [`Anchor::Node`] does — an element
+    /// carrying it, else a rectangle the host published for it, else the frame.
+    /// So a region the tree does not contain yet can still be named.
+    pub within: Option<crate::key::Key>,
+    /// Where the thing this layer hangs off actually is, relative to the
+    /// anchor rectangle the tree can name.
+    ///
+    /// **For an anchor inside a leaf.** A dropdown hangs off the `[value ▼]`
+    /// button inside a row a widget runtime laid out; a completion list hangs
+    /// off a row of a sub-render that has no node of its own. Neither has an
+    /// element to name, and both are known *relative* to something that does —
+    /// which is the same fact [`crate::Ui::set_host_anchor`] publishes, for a
+    /// caller that holds the offset rather than the absolute rectangle.
+    ///
+    /// The anchor rectangle is shifted by this before the placement runs, so
+    /// `Place`, `align_to_anchor` and `Fit` all see the real anchor: a
+    /// dropdown that flips above still clears the button it hangs off.
+    ///
+    /// It does not move [`Anchor::Screen`], which is placed against the
+    /// bounds and has no anchor rectangle to shift.
+    pub offset: (i16, i16),
 }
 
 impl<M> Default for LayerProps<M> {
@@ -536,6 +647,8 @@ impl<M> Default for LayerProps<M> {
             place: Place::default(),
             fit: Fit::default(),
             align: None,
+            within: None,
+            offset: (0, 0),
             modality: Modality::default(),
             scrim: None,
             dismiss: Dismiss::default(),
@@ -555,6 +668,8 @@ impl<M> Clone for LayerProps<M> {
             scrim: self.scrim,
             dismiss: self.dismiss,
             on_dismiss: self.on_dismiss.clone(),
+            within: self.within.clone(),
+            offset: self.offset,
         }
     }
 }
@@ -567,6 +682,8 @@ impl<M> LayerProps<M> {
             && self.place == o.place
             && self.fit == o.fit
             && self.align == o.align
+            && self.within == o.within
+            && self.offset == o.offset
     }
 }
 
@@ -827,7 +944,7 @@ pub fn stack<M>() -> Node<M> {
 pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
         runs: Rc::from(vec![Run::plain(s)]),
-        wrap: false,
+        wrap: Wrap::None,
         elide: Elide::None,
         cursor: None,
     }))
@@ -847,7 +964,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
 pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
         runs: Rc::from(runs.into_iter().collect::<Vec<_>>()),
-        wrap: false,
+        wrap: Wrap::None,
         elide: Elide::None,
         cursor: None,
     }))
@@ -961,6 +1078,45 @@ impl<M> Node<M> {
         self
     }
 
+    /// Keep the bar's column whether or not the bar is there.
+    ///
+    /// By default the gutter appears with the bar and goes with it, so a list
+    /// that grows past its window reflows its content by a cell. Two things
+    /// want the column reserved regardless: content that must not move when a
+    /// row is added, and a window whose gutter is part of the frame around it
+    /// — there the frame keeps drawing in the column when the bar does not,
+    /// and a gutter that came and went would leave the bar beside the frame
+    /// rather than on it. CSS spells the same thing `scrollbar-gutter:
+    /// stable`.
+    ///
+    /// Implies [`scrollbar`](Node::scrollbar): a gutter is the bar's column,
+    /// so asking for one asks for the bar.
+    pub fn scrollbar_gutter(mut self) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => {
+                p.scrollbar = true;
+                p.stable_gutter = true;
+            }
+            _ => panic!("scrollbar_gutter() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Name the bar's appearance, apart from the window's.
+    ///
+    /// [`theme`](Node::theme) tags a node *and its descendants*, so a window
+    /// that named its bar that way would name its content too — and, because a
+    /// region that names its appearance is a region that paints, would fill
+    /// itself in the bar's colours behind everything in it. The bar is one
+    /// item among the window's; this names that item and nothing else.
+    pub fn scrollbar_theme(mut self, name: impl AsRef<str>) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.bar_theme = Some(Rc::from(name.as_ref())),
+            _ => panic!("scrollbar_theme() applies to Viewport nodes only"),
+        }
+        self
+    }
+
     /// Mark the region as text-selectable in the display list. The library
     /// holds no selection model; a backend that supports one reads this.
     pub fn selectable(mut self) -> Self {
@@ -990,11 +1146,30 @@ impl<M> Node<M> {
         self
     }
 
-    /// Scroll by item index rather than by cell, over `count` items.
+    /// Scroll by item index rather than by cell, over `count` items one cell
+    /// tall. See [`Node::item_rows`] for taller ones.
     pub fn items(mut self, count: u32) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => p.mode = ScrollMode::Items(count),
+            Desc::Viewport(p) => p.mode = ScrollMode::Items { count, height: 1 },
             _ => panic!("items() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// How many cells one item occupies. Applies after [`Node::items`], which
+    /// sets the count; uniform, and at least one.
+    pub fn item_rows(mut self, height: u16) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => match p.mode {
+                ScrollMode::Items { count, .. } => {
+                    p.mode = ScrollMode::Items {
+                        count,
+                        height: height.max(1),
+                    }
+                }
+                ScrollMode::Cells => panic!("item_rows() applies after items()"),
+            },
+            _ => panic!("item_rows() applies to Viewport nodes only"),
         }
         self
     }
@@ -1088,6 +1263,29 @@ impl<M> Node<M> {
         self
     }
 
+    /// Break onto a new line when the next child would not fit.
+    ///
+    /// CSS calls this `flex-wrap: wrap`, and the shape is the same: children
+    /// are never split — a break happens at a child boundary — so a group that
+    /// must stay together is a nested non-wrapping box. A child wider than the
+    /// whole container gets a line to itself and overflows it, which is the
+    /// honest answer; the alternative is silently shrinking something that
+    /// said how wide it was.
+    ///
+    /// **`Flex` on the main axis is treated as `Auto` in a wrapping box.** A
+    /// flexible child absorbs the remainder of its line, so one of them makes
+    /// every line the full width and there is nothing left to wrap. The two
+    /// features answer opposite questions — "fill the row" and "let the row
+    /// become as many rows as it needs" — and a container honouring both would
+    /// silently do neither.
+    ///
+    /// No effect on a [`stack`](crate::stack), whose children all get the
+    /// whole rect.
+    pub fn wrap_children(mut self) -> Self {
+        self.box_props().wrap = true;
+        self
+    }
+
     /// Bound what descendants may paint and hit to this box's content rect.
     ///
     /// Implied by [`border`](Node::border); set it explicitly for an unbordered
@@ -1122,9 +1320,20 @@ impl<M> Node<M> {
         self
     }
 
-    pub fn wrap(mut self) -> Self {
+    /// Break lines too long for the width, at word boundaries.
+    pub fn wrap(self) -> Self {
+        self.wrapping(Wrap::Word)
+    }
+
+    /// Wrap, and start every continuation row at the line's own leading
+    /// indent — see [`Wrap::Hanging`].
+    pub fn wrap_hanging(self) -> Self {
+        self.wrapping(Wrap::Hanging)
+    }
+
+    pub fn wrapping(mut self, w: Wrap) -> Self {
         match &mut self.desc {
-            Desc::TextRun(p) => p.wrap = true,
+            Desc::TextRun(p) => p.wrap = w,
             _ => panic!("wrap() applies to TextRun nodes only"),
         }
         self
@@ -1301,6 +1510,20 @@ impl<M> Node<M> {
 
     pub fn fit(mut self, f: Fit) -> Self {
         self.layer_props().fit = f;
+        self
+    }
+
+    /// Confine this layer to the region carrying `key`, rather than the frame.
+    /// See [`LayerProps::within`].
+    pub fn within(mut self, key: crate::key::Key) -> Self {
+        self.layer_props().within = Some(key);
+        self
+    }
+
+    /// Where this layer's real anchor is relative to the rectangle it named.
+    /// See [`LayerProps::offset`].
+    pub fn offset(mut self, dx: i16, dy: i16) -> Self {
+        self.layer_props().offset = (dx, dy);
         self
     }
 

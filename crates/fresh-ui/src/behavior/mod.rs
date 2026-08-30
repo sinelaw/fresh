@@ -26,7 +26,7 @@ pub mod misc;
 pub mod tasks;
 
 pub use anchor::Anchor;
-pub use misc::{Cache, Controller, Persisted, Store, Ticker, PERSISTENCE_SCOPE};
+pub use misc::{Cache, Controller, MemStore, Persisted, Store, Ticker, PERSISTENCE_SCOPE};
 pub use tasks::{TaskHandle, Tasks};
 
 pub trait Behavior {

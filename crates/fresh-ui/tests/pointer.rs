@@ -173,6 +173,48 @@ fn a_transparent_region_runs_its_handlers_then_lets_the_hit_continue() {
     );
 }
 
+/// **An observer above a transparent region hears the event once.**
+///
+/// Stacked paths share their upper reaches. Walking each in full offered the
+/// event to those shared ancestors once per path, so a capture-phase observer
+/// near the root — the way an application watches a channel without claiming
+/// it — fired two, three, however many times the point happened to stack. The
+/// extra paths exist for the elements *behind* the transparent one; the ones
+/// above it are the same elements either way.
+#[test]
+fn an_observer_above_a_transparent_region_hears_one_event_once() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    let l = log.clone();
+    ui.frame(
+        gesture(
+            stack().children([
+                traced("behind", &log, text("xxxxxxxx"))
+                    .w(Sizing::Cells(8))
+                    .h(Sizing::Cells(1)),
+                gesture(Node::nil())
+                    .pointer_mode(PointerMode::Transparent)
+                    .w(Sizing::Cells(8))
+                    .h(Sizing::Cells(1)),
+            ]),
+        )
+        .on_capture(
+            GestureKind::Click,
+            Rc::new(move |_: &Event| note(&l, "observer".into())),
+        ),
+        FRAME,
+    );
+    click(&mut ui, 2, 0);
+    assert_eq!(
+        log.borrow().iter().filter(|s| *s == "observer").count(),
+        1,
+        "one click, one call: {:?}",
+        log.borrow()
+    );
+    // And what the extra path is for still happens.
+    assert!(log.borrow().iter().any(|s| s.starts_with("behind")));
+}
+
 #[test]
 fn capture_survives_the_pointer_leaving_the_rectangle() {
     let moves: Rc<RefCell<Vec<Point>>> = Rc::default();
@@ -749,4 +791,161 @@ fn a_bound_keeps_a_press_from_reaching_what_was_clipped_away() {
         log.borrow().is_empty(),
         "the name's cells are not the slot's"
     );
+}
+
+/// **The thumb's top lands on the row pressed.**
+///
+/// Its travel is the part of the track it can reach — `track - len`, not the
+/// whole track — and dividing by the track instead leaves the thumb short of
+/// the row by up to `len` cells and the last row of the track unable to reach
+/// the end of the content. A one-cell thumb hides the bug (`track - 1` and
+/// `track - len` agree there), so this uses a window big enough for a thumb
+/// several rows tall.
+#[test]
+fn pressing_a_track_row_puts_the_thumb_on_that_row() {
+    let mut ui: Ui<()> = Ui::new();
+    // Twice the window's height of content: the thumb is half the track.
+    let rows: Vec<Node<()>> = (0..(FRAME.h as usize * 2))
+        .map(|i| text(format!("row {i}")))
+        .collect();
+    ui.frame(viewport(col().children(rows)).scrollbar(), FRAME);
+
+    let thumb = |ui: &Ui<()>| -> (u16, u16) {
+        let bar = ui
+            .spec()
+            .items
+            .iter()
+            .find_map(|i| match i.draw {
+                fresh_ui::Draw::Scrollbar {
+                    offset, content, ..
+                } => Some((offset, content, i.rect.h)),
+                _ => None,
+            })
+            .expect("an overflowing viewport shows a bar");
+        fresh_ui::Draw::scrollbar_thumb(bar.0, bar.1, bar.2)
+    };
+
+    let (_, len) = thumb(&ui);
+    assert!(
+        len > 1,
+        "the thumb must be taller than one cell to be a test"
+    );
+    let gutter = FRAME.w as i32 - 1;
+    for target in 0..=(FRAME.h - len) {
+        ui.dispatch(Input::press(
+            Point::new(gutter, target as i32),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        ui.dispatch(Input::release(
+            Point::new(gutter, target as i32),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        ui.tick();
+        assert_eq!(
+            thumb(&ui).0,
+            target,
+            "pressing track row {target} must put the thumb there"
+        );
+    }
+}
+
+/// **Closing a layer is not always the whole gesture.**
+///
+/// A click outside a menu is spent closing it — the menu was in the way. A
+/// tooltip is in the way of nothing: clicking into the document while one is
+/// showing should hide it *and* put the caret where the click landed, or the
+/// tooltip has charged the user a click to get rid of it.
+#[test]
+fn a_pass_through_dismissal_leaves_the_press_for_what_it_was_aimed_at() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let build = |pass: bool, log: &Log| -> Node<()> {
+        let l = log.clone();
+        let d = match pass {
+            true => fresh_ui::Dismiss::OUTSIDE_POINTER.passing_through(),
+            false => fresh_ui::Dismiss::OUTSIDE_POINTER,
+        };
+        let ll = log.clone();
+        stack().children([
+            // What the press was aimed at, behind the layer.
+            gesture(col().theme("doc")).on(
+                GestureKind::Press,
+                Rc::new(move |_: &Event| note(&ll, "document".into())),
+            ),
+            fresh_ui::layer()
+                .anchor(fresh_ui::Anchor::Point(0, 0))
+                .place(fresh_ui::Place::Over)
+                .dismiss(d)
+                .on_dismiss_handler(Rc::new(move |_: &Event| note(&l, "dismissed".into())))
+                .child(col().w(Sizing::Cells(4)).h(Sizing::Cells(2)).theme("pop")),
+        ])
+    };
+
+    // The claim is what the *host* is told — a host with its own pipeline
+    // behind this tree reads it to decide whether the press is still going.
+    // The tree's own handlers run either way, which is why the document's
+    // press is logged in both.
+    let press = |ui: &mut Ui<()>| {
+        ui.dispatch(Input::press(
+            Point::new(10, 6),
+            MouseButton::Left,
+            Mods::NONE,
+        ))
+        .claimed
+    };
+
+    // Spending the press: the host is told it is gone.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(false, &log), FRAME);
+    assert!(press(&mut ui), "closing the layer was the whole gesture");
+    assert_eq!(*log.borrow(), vec!["dismissed", "document"]);
+
+    // Passing it through: dismissed, and the host still has the press.
+    log.borrow_mut().clear();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(true, &log), FRAME);
+    assert!(!press(&mut ui), "the press is still going somewhere");
+    assert_eq!(*log.borrow(), vec!["dismissed", "document"]);
+}
+
+/// **And the same rule for the key that dismissed it.**
+///
+/// `pass_through` said "the input that dismissed this layer goes on to whatever
+/// it was aimed at", and the pointer honoured it while the keyboard did not:
+/// any dismissal at all reported the key as claimed. So a tooltip that hides on
+/// the next keystroke ate that keystroke — the tooltip charging the user a key
+/// to get rid of it, which is exactly the case the flag exists for.
+#[test]
+fn a_pass_through_dismissal_leaves_the_key_for_what_it_was_aimed_at() {
+    let build = |pass: bool| -> Node<()> {
+        let d = match pass {
+            true => fresh_ui::Dismiss::ANY_KEY.passing_through(),
+            false => fresh_ui::Dismiss::ANY_KEY,
+        };
+        stack().children([
+            col().theme("doc"),
+            fresh_ui::layer()
+                .anchor(fresh_ui::Anchor::Point(0, 0))
+                .place(fresh_ui::Place::Over)
+                .dismiss(d)
+                .on_dismiss_handler(Rc::new(|_: &Event| None))
+                .child(col().w(Sizing::Cells(4)).h(Sizing::Cells(2)).theme("pop")),
+        ])
+    };
+    let typed = |ui: &mut Ui<()>| {
+        ui.dispatch(Input::Key(fresh_ui::KeyPress::with(
+            fresh_ui::KeyCode::Char('j'),
+            Mods::NONE,
+        )))
+        .claimed
+    };
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(false), FRAME);
+    assert!(typed(&mut ui), "closing the layer was the whole keystroke");
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(true), FRAME);
+    assert!(!typed(&mut ui), "the key is still going somewhere");
 }

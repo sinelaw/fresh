@@ -7,7 +7,9 @@
 
 use std::rc::Rc;
 
-use crate::desc::{Align, BoxProps, Dir, LayerProps, Sizing, TextProps, ViewportProps};
+use crate::desc::{
+    Align, BoxProps, Dir, LayerProps, Sizing, TextProps, ViewportProps, Wrap, HANGING_MIN_TEXT,
+};
 use crate::render::geom::{distribute, Constraints, Point, Rect, Size};
 use crate::render::object::{FocusReg, Geom, LayerGeom, LayoutCx, LayoutInfo, RenderObject};
 use crate::render::spec::{Draw, DrawList};
@@ -92,42 +94,141 @@ fn align_offset(align: Align, extent: u16, size: u16) -> i32 {
     }
 }
 
+/// One wrapped row: what it shows, and how it lines up with the source.
+///
+/// Wrapping is not a pure slicing of the input — it drops the space it broke
+/// at and, for [`Wrap::Hanging`], puts spaces of its own at the front. A
+/// caller that has to map rows back onto the pieces they came from needs both
+/// of those numbers, so the row carries them rather than leaving the caller to
+/// guess (it used to guess: "step past one space if there is one", which is
+/// right only when exactly one was dropped).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub text: String,
+    /// Leading chars of `text` that wrapping *added*, with no source behind them.
+    pub indent: usize,
+    /// Source chars dropped before this row's first character — the whitespace
+    /// the break consumed.
+    pub skipped: usize,
+}
+
+/// The chunks a line breaks into: each carries the spaces that precede it, so
+/// a run of spaces inside the line survives a wrap and the line's own leading
+/// indent belongs to its first chunk.
+///
+/// `split(' ')` loses both. It yields an empty piece per space, and a wrapper
+/// that skips empties has silently normalised `"    sep  a string"` to
+/// `"sep a string"` — which is how the migrated popups lost the indent on
+/// their *first* row as well as their continuations.
+fn chunks(para: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    let mut seen_word = false;
+    for (i, c) in para.char_indices() {
+        if c == ' ' {
+            if seen_word {
+                out.push(&para[start..i]);
+                start = i;
+                seen_word = false;
+            }
+        } else {
+            seen_word = true;
+        }
+    }
+    if start < para.len() || out.is_empty() {
+        out.push(&para[start..]);
+    }
+    out
+}
+
 /// Greedy word wrap, breaking a word too long for a line of its own.
 ///
 /// Measure and paint call this same function, so the height layout reserves is
 /// exactly the number of rows paint emits.
-pub fn wrap_text(text: &str, width: u16) -> Vec<String> {
+pub fn wrap_text(text: &str, width: u16, mode: Wrap) -> Vec<String> {
+    wrap_rows(text, width, mode)
+        .into_iter()
+        .map(|r| r.text)
+        .collect()
+}
+
+/// [`wrap_text`], keeping each row's alignment with the source.
+pub fn wrap_rows(text: &str, width: u16, mode: Wrap) -> Vec<Row> {
     use unicode_width::UnicodeWidthStr;
     if width == 0 {
         return Vec::new();
     }
+    let w = |s: &str| UnicodeWidthStr::width(s);
     let width = width as usize;
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<Row> = Vec::new();
     for para in text.split('\n') {
-        let mut line = String::new();
-        for word in para.split(' ') {
-            if line.is_empty() {
-                line.push_str(word);
-            } else if UnicodeWidthStr::width(line.as_str()) + 1 + UnicodeWidthStr::width(word)
-                <= width
-            {
-                line.push(' ');
-                line.push_str(word);
-            } else {
-                out.push(std::mem::take(&mut line));
-                line.push_str(word);
+        // What every row after the first starts with. Dropped when it would
+        // leave the text almost nothing — a deeply indented line in a narrow
+        // box is better flush left than one word per row.
+        let indent = match mode {
+            Wrap::Hanging => {
+                let n = para.chars().take_while(|c| *c == ' ').count();
+                match n + HANGING_MIN_TEXT <= width {
+                    true => n,
+                    false => 0,
+                }
             }
-            while UnicodeWidthStr::width(line.as_str()) > width {
-                let head: String = line.chars().take(width).collect();
-                let tail: String = line.chars().skip(width).collect();
-                out.push(head);
-                line = tail;
+            _ => 0,
+        };
+        let pad = " ".repeat(indent);
+        let mut row = Row {
+            text: String::new(),
+            indent: 0,
+            skipped: 0,
+        };
+        let mut first = true;
+        for chunk in chunks(para) {
+            // The line's own leading whitespace is source text and stays.
+            if first {
+                row.text.push_str(chunk);
+                first = false;
+            } else if w(&row.text) + w(chunk) <= width {
+                row.text.push_str(chunk);
+            } else {
+                // The break eats the spaces before the chunk, and the next row
+                // opens with the hanging indent instead.
+                let body = chunk.trim_start_matches(' ');
+                let eaten = chunk.chars().count() - body.chars().count();
+                out.push(std::mem::replace(
+                    &mut row,
+                    Row {
+                        text: pad.clone(),
+                        indent,
+                        skipped: eaten,
+                    },
+                ));
+                row.text.push_str(body);
+            }
+            // A chunk too long for a row of its own is cut, and the remainder
+            // opens the next row — still behind the indent.
+            while w(&row.text) > width {
+                let head: String = row.text.chars().take(width).collect();
+                let tail: String = row.text.chars().skip(width).collect();
+                out.push(Row {
+                    text: head,
+                    indent: row.indent,
+                    skipped: row.skipped,
+                });
+                row = Row {
+                    text: format!("{pad}{tail}"),
+                    indent,
+                    skipped: 0,
+                };
             }
         }
-        out.push(line);
+        out.push(row);
     }
     if out.is_empty() {
-        out.push(String::new());
+        out.push(Row {
+            text: String::new(),
+            indent: 0,
+            skipped: 0,
+        });
     }
     out
 }
@@ -147,27 +248,67 @@ pub struct Frag {
 /// is then cut back into fragments along the original piece boundaries. A wrap
 /// point inside a piece splits it; a row crossing three pieces is three
 /// fragments.
-pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<Frag>> {
-    use unicode_width::UnicodeWidthStr;
-
+pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: Wrap) -> Vec<Vec<Frag>> {
     let whole: String = runs.iter().map(|r| &*r.text).collect();
-    let rows: Vec<String> = if wrap {
-        wrap_text(&whole, width)
-    } else {
-        whole.split('\n').map(|s| s.to_string()).collect()
+    let rows: Vec<Row> = match wrap {
+        Wrap::None => whole
+            .split('\n')
+            .map(|s| Row {
+                text: s.to_string(),
+                indent: 0,
+                skipped: 0,
+            })
+            .collect(),
+        mode => wrap_rows(&whole, width, mode),
     };
 
-    // Walk the pieces alongside the rows. Wrapping can drop a separator at a
-    // break, so rows are matched by content length rather than by byte offset
-    // into the original.
+    // Walk the pieces alongside the rows. A row is not a slice of the source —
+    // the break ate whitespace, and a hanging indent added some — so each row
+    // says how much of each, and this steps by those numbers rather than
+    // guessing at them.
     let mut piece = 0usize;
     let mut used = 0usize; // chars of the current piece already emitted
     let mut out: Vec<Vec<Frag>> = Vec::with_capacity(rows.len());
 
+    // Step over source characters the wrap consumed and nothing shows.
+    let skip = |n: usize, piece: &mut usize, used: &mut usize| {
+        let mut left = n;
+        while left > 0 && *piece < runs.len() {
+            let chars = runs[*piece].text.chars().count();
+            let here = chars.saturating_sub(*used).min(left);
+            *used += here;
+            left -= here;
+            if *used >= chars {
+                *piece += 1;
+                *used = 0;
+            }
+        }
+    };
+
     for row in &rows {
+        skip(row.skipped, &mut piece, &mut used);
         let mut frags: Vec<Frag> = Vec::new();
-        let mut want: usize = row.chars().count();
-        let mut at = 0usize; // chars of this row already taken
+        let mut at = row.indent; // chars of this row already taken
+        let mut want: usize = row.text.chars().count().saturating_sub(row.indent);
+
+        // The indent has no source behind it, so it takes the theme of the
+        // text it is indenting — the row it belongs to, not the one before.
+        if row.indent > 0 {
+            let mut theme = None;
+            let mut p = piece;
+            while p < runs.len() {
+                if runs[p].text.chars().count() > used || p > piece {
+                    theme = runs[p].theme.clone();
+                    break;
+                }
+                p += 1;
+            }
+            let pad: String = row.text.chars().take(row.indent).collect();
+            frags.push(Frag {
+                text: Rc::from(pad.as_str()),
+                theme,
+            });
+        }
 
         while want > 0 && piece < runs.len() {
             let piece_chars: Vec<char> = runs[piece].text.chars().collect();
@@ -180,7 +321,7 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<F
             let take = left.min(want);
             // Take the text from the *row*, not the piece: the row is what
             // wrapping produced, and it is what must appear on screen.
-            let seg: String = row.chars().skip(at).take(take).collect();
+            let seg: String = row.text.chars().skip(at).take(take).collect();
             if !seg.is_empty() {
                 frags.push(Frag {
                     text: Rc::from(seg.as_str()),
@@ -196,22 +337,6 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<F
             }
         }
 
-        // A separator consumed by the wrap: step past it so the next row starts
-        // at the right place in the piece list.
-        if want == 0 && piece < runs.len() {
-            let piece_chars = runs[piece].text.chars().count();
-            if used < piece_chars {
-                let next: Option<char> = runs[piece].text.chars().nth(used);
-                if next == Some(' ') {
-                    used += 1;
-                    if used >= piece_chars {
-                        piece += 1;
-                        used = 0;
-                    }
-                }
-            }
-        }
-
         if frags.is_empty() {
             frags.push(Frag {
                 text: Rc::from(""),
@@ -221,7 +346,6 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<F
         out.push(frags);
     }
 
-    let _ = UnicodeWidthStr::width("");
     if out.is_empty() {
         out.push(vec![Frag {
             text: Rc::from(""),
@@ -229,6 +353,147 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<F
         }]);
     }
     out
+}
+
+/// Lay children out along the main axis, breaking onto a new line whenever the
+/// next child would not fit.
+///
+/// CSS calls this `flex-wrap: wrap`, and the shape is the same: children are
+/// never split — a break happens at a child boundary — so a group that must
+/// stay together is a nested non-wrapping box. A child wider than the whole
+/// container gets a line to itself and overflows it, which is the honest
+/// answer: the alternative is silently shrinking something that said how wide
+/// it was.
+///
+/// **`Flex` on the main axis is treated as `Auto` here**, deliberately. A
+/// flexible child absorbs the remainder of its line, so one of them makes
+/// every line the full width and there is nothing left to wrap; the two
+/// features answer opposite questions ("fill the row" and "let the row become
+/// as many rows as it needs") and a container that tried to honour both would
+/// silently do neither. Cross-axis sizing is unaffected.
+fn wrap_in(
+    c: Constraints,
+    cx: &mut dyn LayoutCx,
+    dir: Dir,
+    align: Align,
+    gap: u16,
+    inset: Point,
+) -> Size {
+    let kids = cx.children();
+    let n = kids.len();
+    let avail = main_of(dir, c.max());
+    let cross_extent = cross_of(dir, c.max());
+
+    // Every child at its natural main extent. Nothing here depends on which
+    // line a child lands on, so this is one pass — the lines are decided from
+    // the answers.
+    let mut mains = vec![0u16; n];
+    let mut crosses = vec![0u16; n];
+    for i in 0..n {
+        let (sw, sh) = cx.sizing(kids[i]);
+        let (s_main, s_cross) = match dir {
+            Dir::Row => (sw, sh),
+            Dir::Col => (sh, sw),
+        };
+        let floor = main_floor(dir, cx.floor(kids[i]));
+        let main = match s_main {
+            Sizing::Cells(v) => (v.min(avail), v.min(avail)),
+            Sizing::Pct(p) => {
+                let v = pct(avail, p);
+                (v, v)
+            }
+            // See above: flexible means "as big as it needs" in a wrapping box.
+            Sizing::Auto | Sizing::Flex(_) => (0, avail),
+        };
+        let main = (main.0.max(floor), main.1.max(floor));
+        // The cross axis is never definite per-child here: a line's extent is
+        // not known until the line is full, so a child that wants to fill it
+        // is stretched afterwards rather than measured against a guess.
+        let cross = range(s_cross, cross_extent, false, Align::Start);
+        let s = cx.measure(kids[i], axes(dir, main, cross));
+        mains[i] = main_of(dir, s);
+        crosses[i] = cross_of(dir, s);
+    }
+
+    // Greedy fill. `used` is the line's main extent including the gaps already
+    // spent inside it, so the fit test is the same arithmetic as the placement.
+    let mut lines: Vec<(usize, usize)> = Vec::new(); // [start, end)
+    let mut start = 0usize;
+    let mut used = 0u16;
+    for i in 0..n {
+        let with_gap = match i == start {
+            true => mains[i],
+            false => mains[i].saturating_add(gap),
+        };
+        if i > start && used.saturating_add(with_gap) > avail {
+            lines.push((start, i));
+            start = i;
+            used = mains[i];
+        } else {
+            used = used.saturating_add(with_gap);
+        }
+    }
+    if start < n {
+        lines.push((start, n));
+    }
+
+    let line_cross: Vec<u16> = lines
+        .iter()
+        .map(|&(a, b)| crosses[a..b].iter().copied().max().unwrap_or(0))
+        .collect();
+    let content_main = lines
+        .iter()
+        .map(|&(a, b)| {
+            let sum = mains[a..b].iter().fold(0u16, |x, y| x.saturating_add(*y));
+            sum.saturating_add(gap.saturating_mul((b - a).saturating_sub(1) as u16))
+        })
+        .max()
+        .unwrap_or(0);
+    let content_cross = line_cross
+        .iter()
+        .fold(0u16, |x, y| x.saturating_add(*y))
+        .saturating_add(gap.saturating_mul(lines.len().saturating_sub(1) as u16));
+
+    // A child that asked to fill its line's cross extent is measured again now
+    // that the line is full — the same second pass the non-wrapping path makes
+    // when the cross extent was not known in advance, per line instead of per
+    // container.
+    if align == Align::Stretch {
+        for (li, &(a, b)) in lines.iter().enumerate() {
+            for i in a..b {
+                let (sw, sh) = cx.sizing(kids[i]);
+                let s_cross = match dir {
+                    Dir::Row => sh,
+                    Dir::Col => sw,
+                };
+                if s_cross == Sizing::Auto && crosses[i] != line_cross[li] {
+                    let s = cx.measure(
+                        kids[i],
+                        axes(dir, (mains[i], mains[i]), (line_cross[li], line_cross[li])),
+                    );
+                    mains[i] = main_of(dir, s);
+                    crosses[i] = cross_of(dir, s);
+                }
+            }
+        }
+    }
+
+    let mut cross_at = 0u16;
+    for (li, &(a, b)) in lines.iter().enumerate() {
+        let mut main_at = 0u16;
+        for i in a..b {
+            let at = point_of(
+                dir,
+                main_at as i32,
+                cross_at as i32 + align_offset(align, line_cross[li], crosses[i]),
+            );
+            cx.place(kids[i], Point::new(at.x + inset.x, at.y + inset.y));
+            main_at = main_at.saturating_add(mains[i]).saturating_add(gap);
+        }
+        cross_at = cross_at.saturating_add(line_cross[li]).saturating_add(gap);
+    }
+
+    c.constrain(size_of(dir, content_main, content_cross))
 }
 
 /// Lay children out one on top of another, each honouring its own size
@@ -241,8 +506,17 @@ fn stack_in(c: Constraints, cx: &mut dyn LayoutCx, align: Align, inset: Point) -
     let mut sizes = Vec::with_capacity(kids.len());
     for &k in &kids {
         let (sw, sh) = cx.sizing(k);
+        // **The floor wins over the sizing, here as in a row.** `min_w` says
+        // "never narrower than this, whatever the sizing resolves to", and a
+        // stack honouring the sizing but not the floor made that a promise
+        // that held in flow layout and quietly did not in a stack — or in a
+        // layer, which measures its child through this. A percentage below the
+        // floor is exactly where the two differ, so it is exactly where the
+        // omission hid.
+        let (fw, fh) = cx.floor(k);
         let wc = range(sw, c.max_w, w_definite, align);
         let hc = range(sh, c.max_h, h_definite, align);
+        let (wc, hc) = ((wc.0.max(fw), wc.1.max(fw)), (hc.0.max(fh), hc.1.max(fh)));
         let s = cx.measure(k, Constraints::new(wc.0, wc.1, hc.0, hc.1));
         sizes.push(s);
         size = Size::new(size.w.max(s.w), size.h.max(s.h));
@@ -296,6 +570,21 @@ impl RenderObject for BoxRender {
 
         if p.stack {
             let content = stack_in(inner, cx, p.align, Point::new(ins_x as i32, ins_y as i32));
+            return c.constrain(Size::new(
+                content.w.saturating_add(2 * ins_x),
+                content.h.saturating_add(2 * ins_y),
+            ));
+        }
+
+        if p.wrap {
+            let content = wrap_in(
+                inner,
+                cx,
+                p.dir,
+                p.align,
+                p.gap,
+                Point::new(ins_x as i32, ins_y as i32),
+            );
             return c.constrain(Size::new(
                 content.w.saturating_add(2 * ins_x),
                 content.h.saturating_add(2 * ins_y),
@@ -609,16 +898,16 @@ impl RenderObject for TextRender {
         // logical run, so styling never changes where the text breaks.
         let whole = self.props.plain();
         let natural = UnicodeWidthStr::width(whole.as_str()) as u16;
-        if self.props.wrap {
+        if self.props.wrap != Wrap::None {
             let w = if c.min_w > 0 {
                 c.max_w
             } else {
                 c.max_w.min(natural.max(1))
             };
-            self.rows = wrap_runs(&self.props.runs, w, true);
+            self.rows = wrap_runs(&self.props.runs, w, self.props.wrap);
             c.constrain(Size::new(w, self.rows.len().min(u16::MAX as usize) as u16))
         } else {
-            self.rows = wrap_runs(&self.props.runs, 0, false);
+            self.rows = wrap_runs(&self.props.runs, 0, Wrap::None);
             c.constrain(Size::new(natural, self.rows.len().max(1) as u16))
         }
     }
@@ -628,17 +917,17 @@ impl RenderObject for TextRender {
         // mark, and `Elide::None` is the whole of today's behaviour, so both
         // pass straight through.
         let elided: Vec<Vec<Frag>>;
-        let rows: &[Vec<Frag>] = if self.props.wrap || self.props.elide == crate::desc::Elide::None
-        {
-            &self.rows
-        } else {
-            elided = self
-                .rows
-                .iter()
-                .map(|r| elide_row(r, g.rect.w, self.props.elide))
-                .collect();
-            &elided
-        };
+        let rows: &[Vec<Frag>] =
+            if self.props.wrap != Wrap::None || self.props.elide == crate::desc::Elide::None {
+                &self.rows
+            } else {
+                elided = self
+                    .rows
+                    .iter()
+                    .map(|r| elide_row(r, g.rect.w, self.props.elide))
+                    .collect();
+                &elided
+            };
 
         // An unstyled run is one item, exactly as before. A styled one emits an
         // item per fragment, each carrying its own theme — so the display list
@@ -782,8 +1071,13 @@ impl RenderObject for ViewportRender {
                 own = c.constrain(Size::new(content.w.max(c.min_w), content.h));
                 // A vertical scrollbar takes a one-column gutter when the
                 // content is taller than the window; re-measure the content in
-                // the narrower area so it is not painted over the bar.
-                let gutter = u16::from(self.props.scrollbar && content.h > own.h);
+                // the narrower area so it is not painted over the bar. A
+                // stable gutter keeps the column whether the bar is drawn or
+                // not, so the content does not reflow when the list crosses
+                // the length that makes it overflow.
+                let gutter = u16::from(
+                    self.props.scrollbar && (self.props.stable_gutter || content.h > own.h),
+                );
                 if gutter > 0 {
                     let inner_w = own.w.saturating_sub(gutter);
                     let narrow = if c.min_w == c.max_w {
@@ -811,7 +1105,7 @@ impl RenderObject for ViewportRender {
                     translate: true,
                 });
             }
-            ScrollMode::Items(n) => {
+            ScrollMode::Items { count: n, height } => {
                 // The child renders only the window, so nothing is translated
                 // and the offset is an index. A cell extent over a million rows
                 // would not fit a coordinate; an index does.
@@ -827,19 +1121,26 @@ impl RenderObject for ViewportRender {
                     }
                     own.w = c.constrain(Size::new(natural, own.h)).w;
                 }
-                own = c.constrain(Size::new(own.w, (n.min(u16::MAX as u32)) as u16));
-                let rows = own.h as u32;
+                // Given a loose height, the viewport is as tall as its items —
+                // which is `count * height` cells, not `count` rows.
+                let want = (n.saturating_mul(height as u32)).min(u16::MAX as u32) as u16;
+                own = c.constrain(Size::new(own.w, want));
+                // The window is stated in *items*, because that is what the
+                // offset counts and what the builder inside it asks for. Cells
+                // enter only here, dividing.
+                let rows = (own.h / height) as u32;
                 self.items = n;
                 // When the content overflows and a scrollbar is asked for, the
                 // last column is a gutter the scrollbar owns: content laid out
                 // over it would paint the bar away, since a node's own paint is
-                // under its children.
-                let gutter = u16::from(self.props.scrollbar && n > rows);
+                // under its children. A stable gutter reserves it either way.
+                let gutter =
+                    u16::from(self.props.scrollbar && (self.props.stable_gutter || n > rows));
                 let inner_w = own.w.saturating_sub(gutter);
-                self.window = Rect::new(0, scroll.y, inner_w, own.h);
+                self.window = Rect::new(0, scroll.y, inner_w, rows.min(u16::MAX as u32) as u16);
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
-                    content: Size::new(inner_w, own.h),
+                    content: Size::new(inner_w, rows.min(u16::MAX as u32) as u16),
                     max: Point::new(0, n.saturating_sub(rows) as i32),
                     translate: false,
                 });
@@ -864,20 +1165,26 @@ impl RenderObject for ViewportRender {
         }
         let (offset, content) = match self.props.mode {
             ScrollMode::Cells => (self.window.y.max(0) as u32, self.content.h as u32),
-            ScrollMode::Items(n) => (self.window.y.max(0) as u32, n),
+            ScrollMode::Items { count, .. } => (self.window.y.max(0) as u32, count),
         };
-        if content <= g.rect.h as u32 {
+        // The window is in the same unit the offset and the content are: cells
+        // for `Cells`, items for `Items`. They differ once an item is more than
+        // one cell tall, and taking the rectangle's height for both is what
+        // made a card list's thumb read as a line list's.
+        let window = self.window.h;
+        if content <= window as u32 {
             return;
         }
-        out.push_at(
-            Draw::Scrollbar {
-                offset,
-                content,
-                window: g.rect.h,
-            },
-            Rect::new(g.rect.right() - 1, g.rect.y, 1, g.rect.h),
-            g.clip,
-        );
+        let bar = Draw::Scrollbar {
+            offset,
+            content,
+            window,
+        };
+        let rect = Rect::new(g.rect.right() - 1, g.rect.y, 1, g.rect.h);
+        match &self.props.bar_theme {
+            Some(t) => out.push_themed(bar, rect, g.clip, crate::ThemeKey(Some(t.clone()))),
+            None => out.push_at(bar, rect, g.clip),
+        }
     }
 
     fn relayout_boundary(&self) -> bool {
@@ -967,6 +1274,8 @@ impl LayerRender {
                 modality: p.modality,
                 scrim: p.scrim,
                 dismiss: p.dismiss,
+                within: p.within.clone(),
+                offset: p.offset,
             },
         }
     }

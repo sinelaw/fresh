@@ -450,3 +450,41 @@ fn moving_focus_directly_is_available_without_a_key() {
     assert!(ui.move_focus(FocusDir::Next));
     assert_eq!(ui.focused(), Some(ui.at(&[0]).unwrap()));
 }
+
+/// **A direction needs somewhere to move from; Tab does not.**
+///
+/// `dispatch_key` resolves a key to an `Intent` and falls back to default
+/// traversal even when nothing is focused, so an arrow key used to move focus
+/// "from nowhere" onto the first focusable — and *claim* the key. In a host
+/// that offers its keys to this tree before its own handlers, that key was the
+/// application's: the editor's command palette lost a `Right` to it the moment
+/// its frame gained a focusable, moving focus instead of the text cursor.
+///
+/// Tab is the gesture that means "enter the interface", and still does.
+#[test]
+fn an_arrow_key_with_nothing_focused_is_not_traversal() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        col().children([focusable(text("one")), focusable(text("two"))]),
+        FRAME,
+    );
+    assert!(ui.focused().is_none(), "nothing is focused to begin with");
+
+    for code in [KeyCode::Right, KeyCode::Left, KeyCode::Up, KeyCode::Down] {
+        let got = ui.dispatch(Input::Key(KeyPress::new(code)));
+        assert!(
+            !got.claimed,
+            "{code:?} with nothing focused belongs to the application"
+        );
+        assert!(ui.focused().is_none(), "{code:?} moved focus from nowhere");
+    }
+
+    // Tab does enter, and from then on the directions work as they always did.
+    assert!(ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab))).claimed);
+    assert!(ui.focused().is_some(), "Tab enters the interface");
+    assert!(
+        ui.dispatch(Input::Key(KeyPress::new(KeyCode::Down)))
+            .claimed,
+        "with a starting point, a direction traverses"
+    );
+}

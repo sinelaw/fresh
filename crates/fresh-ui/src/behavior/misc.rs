@@ -202,13 +202,81 @@ pub trait Store {
     fn set(&self, key: &str, value: Rc<dyn std::any::Any>);
 }
 
-/// A value read from the host store at construction and written back at
-/// teardown.
+/// The in-memory [`Store`]: a `HashMap` that lives as long as it is held.
+///
+/// Every host that adopts [`Persisted`] needs one of these before it needs
+/// anything cleverer, and the twelve lines are the same twelve lines each
+/// time — so they are here rather than in each host. A host that wants values
+/// to outlive the process puts its own implementation behind the trait; this
+/// one is the floor, not a placeholder.
+///
+/// [`forget_scope`](MemStore::forget_scope) is the piece a map alone does not
+/// give you. A scope's values are dead the moment the thing the scope names is
+/// gone — a closed document, a closed workspace — and nothing else can know
+/// that: the tree only ever sees a subtree it is not currently showing, which
+/// is precisely the case where the values must be *kept*. So the host says so,
+/// and until it does the map grows for the life of the process.
+#[derive(Default)]
+pub struct MemStore {
+    values: RefCell<std::collections::HashMap<String, Rc<dyn std::any::Any>>>,
+}
+
+impl MemStore {
+    pub fn new() -> Self {
+        MemStore::default()
+    }
+
+    /// Drop every value belonging to `scope`, and nothing else.
+    ///
+    /// A [`Persisted`] key is `"{scope}/{key}"`, so this is the prefix — with
+    /// the separator, which is what keeps `"window:1"` from taking
+    /// `"window:10"` with it.
+    pub fn forget_scope(&self, scope: &str) {
+        let prefix = format!("{scope}/");
+        self.values
+            .borrow_mut()
+            .retain(|k, _| !k.starts_with(&prefix));
+    }
+
+    /// How many values are held. For a host that wants to assert its own
+    /// cleanup ran, and for tests.
+    pub fn len(&self) -> usize {
+        self.values.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Store for MemStore {
+    fn get(&self, key: &str) -> Option<Rc<dyn std::any::Any>> {
+        self.values.borrow().get(key).cloned()
+    }
+
+    fn set(&self, key: &str, value: Rc<dyn std::any::Any>) {
+        self.values.borrow_mut().insert(key.into(), value);
+    }
+}
+
+/// A value read from the host store at construction and written through on
+/// every change.
 ///
 /// Unmount still destroys the state object; the value is restored at the next
 /// construction. Keys are anchored to the enclosing `PersistenceScope` rather
 /// than to tree position, so moving a widget does not lose its value and two
 /// widgets at the same position under different documents do not share one.
+///
+/// **Why [`Persisted::set`] writes through rather than the value being saved
+/// at teardown.** Disposal is deferred to the end of a flush, on purpose —
+/// reconcile is transactional and must be unwindable — so a replacement
+/// subtree is *constructed before* the outgoing one is disposed. A value
+/// written only at teardown is therefore not yet in the store when anything
+/// mounted in the same flush reads it, and a widget that moves in a way
+/// reconciliation cannot match by key reads the default and then has the old
+/// instance's value written over the top of it. Writing on change removes the
+/// ordering question: the store is current whenever anyone looks. Teardown
+/// still writes, so a store that only sees a final flush is unaffected.
 ///
 /// Scope: **new incidental state only.** Existing serialized view state stays
 /// application state.
@@ -233,9 +301,21 @@ impl<T: Clone + 'static> Persisted<T> {
         self.value.borrow().clone()
     }
 
+    /// Set the value, and write it through to the host store.
+    ///
+    /// See the type's documentation: the write is here rather than only in
+    /// [`Behavior::teardown`] because disposal is deferred past the
+    /// construction of whatever replaces this element.
     pub fn set(&self, v: T) {
         *self.value.borrow_mut() = v;
+        if let Some(s) = self.store.borrow().as_ref() {
+            s.set(&self.key, Rc::new(v_clone(&self.value)));
+        }
     }
+}
+
+fn v_clone<T: Clone>(v: &RefCell<T>) -> T {
+    v.borrow().clone()
 }
 
 impl<T: Clone + 'static> Behavior for Persisted<T> {

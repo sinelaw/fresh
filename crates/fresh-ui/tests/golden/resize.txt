@@ -11,17 +11,17 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === at 30x8
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…    Add
 (o) All░░░░░│ ribbon: click th
-( ) Open    │»[x] build the re
-( ) Done    │»[ ] lay it out
-┌──────────┐│»[ ] route the po
-└──────────┘│»[ ] wire up focu
+( ) Open    │»[x] build the r█
+( ) Done    │»[ ] lay it out #
+            │»[ ] route the p│
+ alpha · visit 1
 5 tasks · light · synced 0 · r
 
 === at 90x6
@@ -29,7 +29,7 @@ Filter      │new task…    Add
 Filter      │new task…                                                                Add
 (o) All░░░░░│ ribbon: click the text, it falls through · last press: — ░░░ [clear filter]
 ( ) Open    │»[x] build the reconciler                                                 #2│
-( ) Done    │»[ ] lay it out                                                           #3│
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === back to 56x14
@@ -45,6 +45,6 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 

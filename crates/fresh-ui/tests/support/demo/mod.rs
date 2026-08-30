@@ -52,6 +52,10 @@ impl Demo {
     pub fn with_app(app: App, size: Size) -> Self {
         let mut ui = Ui::new();
         ui.set_shortcuts(shortcuts());
+        // The host's half of `Persisted`: without a store the values are
+        // per-element defaults and a document switch loses them, which is
+        // exactly the failure the demo is here to not have.
+        ui.set_store(std::rc::Rc::new(fresh_ui::behavior::MemStore::new()));
         let mut demo = Demo {
             app,
             ui,
