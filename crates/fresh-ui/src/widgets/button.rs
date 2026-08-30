@@ -136,6 +136,7 @@ impl<M: 'static> Component<M> for Button<M> {
 pub struct Toggle<M> {
     label: Rc<str>,
     value: bool,
+    indeterminate: bool,
     on_change: Option<Rc<dyn Fn(bool) -> M>>,
 }
 
@@ -144,8 +145,26 @@ impl<M: 'static> Toggle<M> {
         Toggle {
             label: Rc::from(label.as_ref()),
             value,
+            indeterminate: false,
             on_change: None,
         }
+    }
+
+    /// Neither on nor off: `[-]`, and the value means nothing.
+    ///
+    /// The third state a checkbox has wherever a value can be *unset* — the
+    /// web platform spells it `input.indeterminate`, and a settings form needs
+    /// it wherever a field inherits from a layer below rather than being
+    /// chosen. A definite `[ ]` there reads as "the user turned this off",
+    /// which is a different fact and usually the wrong one.
+    ///
+    /// It is display only. Toggling still reports `!value`, so the owner
+    /// decides what leaving the unset state means — which is the owner's
+    /// question: "inherit" resolves to on for some fields and off for others,
+    /// and a widget that guessed would be wrong half the time.
+    pub fn indeterminate(mut self, yes: bool) -> Self {
+        self.indeterminate = yes;
+        self
     }
 
     pub fn on_change(mut self, f: impl Fn(bool) -> M + 'static) -> Self {
@@ -158,7 +177,11 @@ impl<M: 'static> Component<M> for Toggle<M> {
     type State = FocusMirror;
 
     fn build(&self, s: &FocusMirror, cx: &mut BuildCx<'_, M>) -> Node<M> {
-        let mark = if self.value { "[x] " } else { "[ ] " };
+        let mark = match (self.indeterminate, self.value) {
+            (true, _) => "[-] ",
+            (false, true) => "[x] ",
+            (false, false) => "[ ] ",
+        };
         let theme = if s.focused {
             "toggle.focused"
         } else if s.hovered {

@@ -122,6 +122,43 @@ fn a_toggle_reports_the_value_it_would_move_to() {
     assert_eq!(click(&mut ui, 1, 0), vec![Msg::Toggled(false)]);
 }
 
+/// **The third state a checkbox has wherever a value can be unset.** A
+/// definite `[ ]` there reads as "the user turned this off", which is a
+/// different fact and usually the wrong one.
+#[test]
+fn an_indeterminate_toggle_shows_neither_on_nor_off() {
+    let mut ui: Ui<Msg> = Ui::new();
+    for value in [false, true] {
+        ui.frame(
+            Toggle::new("wrap", value)
+                .indeterminate(true)
+                .on_change(Msg::Toggled)
+                .node(),
+            FRAME,
+        );
+        assert!(
+            texts(&ui).iter().any(|t| t.contains("[-]")),
+            "the mark does not depend on the value it is hiding (value={value})"
+        );
+    }
+}
+
+/// It is display only, and the toggle still reports `!value`. What leaving
+/// the unset state *means* is the owner's question — "inherit" resolves to on
+/// for some fields and off for others — so the widget does not guess.
+#[test]
+fn an_indeterminate_toggle_still_reports_the_flip() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        Toggle::new("wrap", false)
+            .indeterminate(true)
+            .on_change(Msg::Toggled)
+            .node(),
+        FRAME,
+    );
+    assert_eq!(click(&mut ui, 1, 0), vec![Msg::Toggled(true)]);
+}
+
 // -- TextField ---------------------------------------------------------------
 
 #[test]
