@@ -775,6 +775,80 @@ fn a_bar_carries_its_own_theme_and_the_rows_keep_theirs() {
     );
 }
 
+/// **A card list is a list whose items are blocks.**
+///
+/// Each item takes a fixed band of rows, and everything else about the list —
+/// the window, the index the offset counts, the selection, the click — is
+/// unchanged, because an item is still an item. What would break it is rows
+/// that each decide their own height: then the window could not say which
+/// items it holds without measuring all of them.
+#[test]
+fn a_card_lists_items_take_a_band_of_rows_each() {
+    let card = |i: usize| -> Node<Msg> {
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("title {i}")))
+            .child(fresh_ui::text(format!("body {i}")))
+            .child(fresh_ui::text("────"))
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    // Nine rows of window, three rows per card: three cards fit.
+    ui.frame(
+        List::windowed(20, fresh_ui::Key::from, card)
+            .row_rows(3)
+            .scrollbar()
+            .node(),
+        Size::new(20, 9),
+    );
+    let band = |i: usize| {
+        let id = ui
+            .find_by_key(&fresh_ui::Key::from(i))
+            .unwrap_or_else(|| panic!("card {i}"));
+        let r = ui.rect_of(id);
+        (r.y, r.h)
+    };
+    assert_eq!(band(0), (0, 3), "the first card's band");
+    assert_eq!(band(1), (3, 3), "and they stack by their own height");
+    assert_eq!(band(2), (6, 3));
+    // The window is three cards tall; a fourth is built for overscan and lands
+    // below it, which is the whole of "the window knows what it holds".
+    assert_eq!(band(3).0, 9, "past the window's last row");
+}
+
+/// And the bar reads in items, not in cells. Nine cells of window over cards
+/// three rows tall is a window of *three* items — a thumb sized from the nine
+/// would claim the list is three times as visible as it is.
+#[test]
+fn a_card_lists_bar_measures_the_window_in_items() {
+    let card = |i: usize| -> Node<Msg> {
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("title {i}")))
+            .child(fresh_ui::text(format!("body {i}")))
+            .child(fresh_ui::text("────"))
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(20, fresh_ui::Key::from, card)
+            .row_rows(3)
+            .scrollbar()
+            .node(),
+        Size::new(20, 9),
+    );
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find_map(|i| match i.draw {
+            Draw::Scrollbar {
+                offset,
+                content,
+                window,
+            } => Some((offset, content, window)),
+            _ => None,
+        })
+        .expect("an overflowing card list shows a bar");
+    assert_eq!(bar, (0, 20, 3), "twenty items, three of them visible");
+}
+
 /// **Declining the focus ring is about the keyboard, not about being inert.**
 ///
 /// A list driven from outside — its selection set by the caller each frame —

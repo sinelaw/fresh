@@ -1105,7 +1105,7 @@ impl RenderObject for ViewportRender {
                     translate: true,
                 });
             }
-            ScrollMode::Items(n) => {
+            ScrollMode::Items { count: n, height } => {
                 // The child renders only the window, so nothing is translated
                 // and the offset is an index. A cell extent over a million rows
                 // would not fit a coordinate; an index does.
@@ -1121,8 +1121,14 @@ impl RenderObject for ViewportRender {
                     }
                     own.w = c.constrain(Size::new(natural, own.h)).w;
                 }
-                own = c.constrain(Size::new(own.w, (n.min(u16::MAX as u32)) as u16));
-                let rows = own.h as u32;
+                // Given a loose height, the viewport is as tall as its items —
+                // which is `count * height` cells, not `count` rows.
+                let want = (n.saturating_mul(height as u32)).min(u16::MAX as u32) as u16;
+                own = c.constrain(Size::new(own.w, want));
+                // The window is stated in *items*, because that is what the
+                // offset counts and what the builder inside it asks for. Cells
+                // enter only here, dividing.
+                let rows = (own.h / height) as u32;
                 self.items = n;
                 // When the content overflows and a scrollbar is asked for, the
                 // last column is a gutter the scrollbar owns: content laid out
@@ -1131,10 +1137,10 @@ impl RenderObject for ViewportRender {
                 let gutter =
                     u16::from(self.props.scrollbar && (self.props.stable_gutter || n > rows));
                 let inner_w = own.w.saturating_sub(gutter);
-                self.window = Rect::new(0, scroll.y, inner_w, own.h);
+                self.window = Rect::new(0, scroll.y, inner_w, rows.min(u16::MAX as u32) as u16);
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
-                    content: Size::new(inner_w, own.h),
+                    content: Size::new(inner_w, rows.min(u16::MAX as u32) as u16),
                     max: Point::new(0, n.saturating_sub(rows) as i32),
                     translate: false,
                 });
@@ -1159,15 +1165,20 @@ impl RenderObject for ViewportRender {
         }
         let (offset, content) = match self.props.mode {
             ScrollMode::Cells => (self.window.y.max(0) as u32, self.content.h as u32),
-            ScrollMode::Items(n) => (self.window.y.max(0) as u32, n),
+            ScrollMode::Items { count, .. } => (self.window.y.max(0) as u32, count),
         };
-        if content <= g.rect.h as u32 {
+        // The window is in the same unit the offset and the content are: cells
+        // for `Cells`, items for `Items`. They differ once an item is more than
+        // one cell tall, and taking the rectangle's height for both is what
+        // made a card list's thumb read as a line list's.
+        let window = self.window.h;
+        if content <= window as u32 {
             return;
         }
         let bar = Draw::Scrollbar {
             offset,
             content,
-            window: g.rect.h,
+            window,
         };
         let rect = Rect::new(g.rect.right() - 1, g.rect.y, 1, g.rect.h);
         match &self.props.bar_theme {

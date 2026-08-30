@@ -317,7 +317,13 @@ pub enum ScrollMode {
     /// Items. The child renders only the window, so nothing is translated; the
     /// offset is an index. This is what lets a window onto a million rows exist
     /// at all: a cell extent that large does not fit a coordinate.
-    Items(u32),
+    ///
+    /// `height` is how many cells one item occupies, and it is uniform because
+    /// that is what makes an index answerable without measuring: a window that
+    /// has to measure every row to know which ones it holds is not a window
+    /// onto a million rows. A card list — items that are little blocks rather
+    /// than lines — is the case it exists for.
+    Items { count: u32, height: u16 },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1140,11 +1146,30 @@ impl<M> Node<M> {
         self
     }
 
-    /// Scroll by item index rather than by cell, over `count` items.
+    /// Scroll by item index rather than by cell, over `count` items one cell
+    /// tall. See [`Node::item_rows`] for taller ones.
     pub fn items(mut self, count: u32) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => p.mode = ScrollMode::Items(count),
+            Desc::Viewport(p) => p.mode = ScrollMode::Items { count, height: 1 },
             _ => panic!("items() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// How many cells one item occupies. Applies after [`Node::items`], which
+    /// sets the count; uniform, and at least one.
+    pub fn item_rows(mut self, height: u16) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => match p.mode {
+                ScrollMode::Items { count, .. } => {
+                    p.mode = ScrollMode::Items {
+                        count,
+                        height: height.max(1),
+                    }
+                }
+                ScrollMode::Cells => panic!("item_rows() applies after items()"),
+            },
+            _ => panic!("item_rows() applies to Viewport nodes only"),
         }
         self
     }
