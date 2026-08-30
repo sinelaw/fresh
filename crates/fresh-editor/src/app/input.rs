@@ -277,12 +277,23 @@ impl Editor {
         // caller inferring it from the messages: a modal swallow produces no
         // message at all, and inferring claim from "said something" would let
         // those keys straight through.
-        if let Some(input) =
-            crate::view::shell::input::key(&fresh_input_parser::KeyPress::new(key_event))
-        {
-            if self.shell_dispatch(input).claimed {
+        self.shell_key_event = Some(key_event);
+        match crate::view::shell::input::key(&fresh_input_parser::KeyPress::new(key_event)) {
+            Some(input) => {
+                if self.shell_dispatch(input).claimed {
+                    return Ok(());
+                }
+            }
+            // **A key the tree has no vocabulary for still cannot walk past a
+            // surface that owns the keyboard.** Declining to translate it
+            // costs the key its *routing*; letting it fall to the walk below
+            // would cost a modal its containment, and the media key would
+            // reach whatever the modal is covering. `keyboard_owned` is the
+            // same containment question the claim above answers.
+            None if self.shell_ui.as_ref().is_some_and(|ui| ui.keyboard_owned()) => {
                 return Ok(());
             }
+            None => {}
         }
 
         // THE derived key walk: every registered overlay layer —

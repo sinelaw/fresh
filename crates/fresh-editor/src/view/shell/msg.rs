@@ -328,7 +328,6 @@ pub enum UiFact {
     /// The `×` on the panel's title line.
     ExplorerClose,
     /// A press on the panel's right-edge grip: start a width drag from here.
-    /// The drag itself is still the legacy one — see `shell::file_explorer`.
     ExplorerResizeBegin {
         x: u16,
         y: u16,
@@ -361,9 +360,25 @@ pub enum UiFact {
         x: u16,
         y: u16,
     },
-    /// A press on the dock's right-edge grip: start a width drag. The drag
-    /// itself is still the legacy grab — see `shell::dock`.
+    /// A press on the dock's right-edge grip: start a width drag.
     DockResizeBegin,
+    /// The pointer moved while a grip holds it.
+    ///
+    /// **The grip captured the pointer on its press**, so this arrives
+    /// wherever the pointer has travelled to — which is the whole of what
+    /// `chrome::PointerGrab` and its ladder were arranging by hand. It fires
+    /// on a bare hover over the grip too; whether a drag is actually in
+    /// progress is state the applier holds, and it is the applier that says
+    /// so.
+    GripDrag {
+        which: Grip,
+        x: u16,
+        y: u16,
+    },
+    /// The press that started a grip's drag has been released.
+    GripRelease {
+        which: Grip,
+    },
     /// A left press landed outside the dock column. Blurs a focused dock and
     /// does nothing to one already blurred; either way the press goes on.
     DockBlur,
@@ -411,7 +426,7 @@ pub enum UiFact {
     /// The node knows which container it is, so nothing hit-tests a recorded
     /// list of separator rectangles to find out — which is what
     /// `handle_click_split_separator` did, comparing the click against each in
-    /// turn. The drag itself is still the legacy grab.
+    /// turn.
     SeparatorPress {
         container: crate::model::event::ContainerId,
         direction: crate::model::event::SplitDirection,
@@ -430,6 +445,22 @@ pub enum UiFact {
     /// still a painter's and hit-tests rectangles that painter recorded. The
     /// event itself never left the host — see `shell::modal`.
     ModalPointer(super::modal::Slot),
+    /// A key belongs to this surface, whose interior owns what it means.
+    ///
+    /// **The keyboard's half of `ModalPointer`, and the same seam.** Each of
+    /// these had a `ChromeComponent::on_layer_key` that the ranked overlay
+    /// walk offered every key to while its layer was up — a capture-all with
+    /// a bespoke dispatcher apiece, ordered by `layer_rank`. Which surface a
+    /// key belongs to is containment now: the layer owns the keyboard, focus
+    /// is inside it, and no rank decides anything. What the key *means* is
+    /// still the interior's, which is the ruling that let the pointer cross
+    /// the same seam.
+    ///
+    /// The event does not travel with the fact, for the reason `shell::modal`
+    /// gives about the pointer: the editor already has the crossterm event,
+    /// and the tree's own `KeyPress` is a smaller vocabulary than the one the
+    /// interiors read.
+    ModalKey(super::modal::KeySlot),
     /// A press on one of the keybinding editor's dialogs.
     ///
     /// **The dialogs answer for themselves, the table does not — yet.** Five
@@ -540,6 +571,21 @@ pub enum PopupKey {
     /// A completion list's filter.
     TypeChar(char),
     Backspace,
+}
+
+/// Which grip a drag belongs to.
+///
+/// The node knows which it is, so nothing has to rank a set of app-side flags
+/// to find out — which is what `chrome::pointer_grab` did, in an order its own
+/// doc had to justify.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grip {
+    /// The dock column's right edge.
+    DockWidth,
+    /// A divider between two split panes.
+    Separator,
+    /// The file explorer's right edge.
+    ExplorerWidth,
 }
 
 /// What a menu-bar navigation step does to the open chain.

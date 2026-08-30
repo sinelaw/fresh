@@ -197,43 +197,48 @@ pub fn layer(c: &Chrome, t: Option<&Table>) -> Node<UiMsg> {
         // What the capture band was: nothing outside the modal is
         // interactive, so a press on the editor behind it goes nowhere.
         .modality(Modality::Exclusive)
-        .child(layout_reader(move |info: LayoutInfo| {
-            let (w, h) = fit(info);
-            // `Layout::vertical([Length(3), Min(5), Length(1)])` inside a
-            // bordered block — the painter's own three bands, and the border
-            // it drew around them. A **column**: it was a `row()` while the box
-            // was empty and it did not matter, and it would have laid the
-            // header band beside the table rather than above it.
-            let body = match &t {
-                Some(t) => col().flex(1).children([table(t)]),
-                // A dialog covers the table, so there is nothing to build: the
-                // band is a claim surface, keeping a press off whatever is
-                // behind the modal.
-                None => claim().flex(1),
-            };
-            let inner = col().theme(ring()).border().children([
-                line(
-                    format!(" {} ", c.title),
-                    attrs("ui.popup_border_fg", "ui.popup_bg", &["bold"]),
-                ),
-                col().h(Sizing::Cells(3)).children([
-                    row().h(Sizing::Cells(1)).children(spans(&c.path)),
-                    search_row(&c.search),
-                    row().h(Sizing::Cells(1)).children(spans(&c.filters)),
-                ]),
-                body,
-                row().h(Sizing::Cells(1)).children(spans(&c.footer)),
-            ]);
-            // **The box consumes what its parts do not.** A modal absorbs every
-            // press inside it — the capture band's whole job — and the parts
-            // that mean something stop the flow before it reaches here. The
-            // size and the key go on the outside, or the box would be a
-            // full-bounds wrapper with a small child parked in its corner.
-            swallow(inner)
-                .w(Sizing::Cells(w))
-                .h(Sizing::Cells(h))
-                .key(key())
-        }))
+        // The keyboard is this modal's too, by the same containment: a key
+        // nothing in the box answered is the editor's own dispatcher's.
+        .child(super::modal::keys(
+            super::modal::KeySlot::KeybindingEditor,
+            layout_reader(move |info: LayoutInfo| {
+                let (w, h) = fit(info);
+                // `Layout::vertical([Length(3), Min(5), Length(1)])` inside a
+                // bordered block — the painter's own three bands, and the border
+                // it drew around them. A **column**: it was a `row()` while the box
+                // was empty and it did not matter, and it would have laid the
+                // header band beside the table rather than above it.
+                let body = match &t {
+                    Some(t) => col().flex(1).children([table(t)]),
+                    // A dialog covers the table, so there is nothing to build: the
+                    // band is a claim surface, keeping a press off whatever is
+                    // behind the modal.
+                    None => claim().flex(1),
+                };
+                let inner = col().theme(ring()).border().children([
+                    line(
+                        format!(" {} ", c.title),
+                        attrs("ui.popup_border_fg", "ui.popup_bg", &["bold"]),
+                    ),
+                    col().h(Sizing::Cells(3)).children([
+                        row().h(Sizing::Cells(1)).children(spans(&c.path)),
+                        search_row(&c.search),
+                        row().h(Sizing::Cells(1)).children(spans(&c.filters)),
+                    ]),
+                    body,
+                    row().h(Sizing::Cells(1)).children(spans(&c.footer)),
+                ]);
+                // **The box consumes what its parts do not.** A modal absorbs every
+                // press inside it — the capture band's whole job — and the parts
+                // that mean something stop the flow before it reaches here. The
+                // size and the key go on the outside, or the box would be a
+                // full-bounds wrapper with a small child parked in its corner.
+                swallow(inner)
+                    .w(Sizing::Cells(w))
+                    .h(Sizing::Cells(h))
+                    .key(key())
+            }),
+        ))
 }
 
 /// The dialogs as layers over the editor's box.
@@ -259,27 +264,37 @@ pub fn dialog_layer(d: &Dialog) -> Node<UiMsg> {
         .place(Place::Over)
         .modality(Modality::Exclusive)
         .scrim(scrim)
-        .child(layout_reader(move |info: LayoutInfo| {
-            // The painter's own `min(area - 4)`, against the box it centres in.
-            let node = node.clone();
-            node.w(Sizing::Cells(
-                w.min(info.constraints.max_w.saturating_sub(4)),
-            ))
-            .h(Sizing::Cells(
-                h.min(info.constraints.max_h.saturating_sub(4)),
-            ))
-        }))
+        // A dialog is the topmost exclusive layer while it is up, so the
+        // claim rides on it too — the editor's dispatcher answers its keys
+        // the same way it answers the table's.
+        .child(super::modal::keys(
+            super::modal::KeySlot::KeybindingEditor,
+            layout_reader(move |info: LayoutInfo| {
+                // The painter's own `min(area - 4)`, against the box it
+                // centres in.
+                let node = node.clone();
+                node.w(Sizing::Cells(
+                    w.min(info.constraints.max_w.saturating_sub(4)),
+                ))
+                .h(Sizing::Cells(
+                    h.min(info.constraints.max_h.saturating_sub(4)),
+                ))
+            }),
+        ))
 }
 
 /// Take every pointer event that reaches this node and do nothing with it.
+///
+/// **The wheel is not on the list, and must not be.** Scrolling is
+/// framework-owned: the library runs its scroll chain only for a notch
+/// *nothing claimed*, so a catch-all that stops the wheel stops the table
+/// inside this box from scrolling at all. There is nothing to replace it
+/// with, either — a notch that scrolls nothing inside an `Exclusive` layer is
+/// already absorbed by that layer, which is what the chain's `Contained`
+/// says. Claiming it here only took the scroll away.
 fn swallow(n: Node<UiMsg>) -> Node<UiMsg> {
     let mut g = gesture(n);
-    for kind in [
-        GestureKind::Press,
-        GestureKind::Release,
-        GestureKind::Move,
-        GestureKind::Wheel,
-    ] {
+    for kind in [GestureKind::Press, GestureKind::Release, GestureKind::Move] {
         g = g.on(
             kind,
             Rc::new(|e: &Event| {

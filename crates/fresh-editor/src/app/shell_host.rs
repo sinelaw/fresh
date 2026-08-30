@@ -1574,6 +1574,60 @@ impl Editor {
                 self.handle_floating_widget_panel_wheel(crate::app::PanelSlot::Dock, x, y, delta);
             }
             UiFact::DockResizeBegin => self.dock_resizing = true,
+            // **The grip captured the pointer, so this is its move.** The
+            // ladder these three replace read `chrome::pointer_grab` on every
+            // event to decide whose drag it was; the node says so.
+            //
+            // The gate is still here and still belongs here: a grip's `Move`
+            // fires on a bare hover too, and whether a drag is in progress is
+            // state the editor holds. What is gone is deciding *which* drag
+            // from that state.
+            UiFact::GripDrag { which, x, y } => {
+                use crate::view::shell::msg::Grip;
+                match which {
+                    Grip::DockWidth if self.dock_resizing => self.handle_dock_resize_drag(x),
+                    Grip::Separator => {
+                        if let Some((id, dir)) = self.active_window().mouse_state.dragging_separator
+                        {
+                            if let Err(e) = self.handle_separator_drag(x, y, id, dir) {
+                                tracing::warn!("separator drag failed: {e}");
+                            }
+                        }
+                    }
+                    Grip::ExplorerWidth => {
+                        if let Err(e) = self.handle_file_explorer_border_drag(x) {
+                            tracing::warn!("explorer width drag failed: {e}");
+                        }
+                    }
+                    Grip::DockWidth => {}
+                }
+            }
+            UiFact::GripRelease { which } => {
+                use crate::view::shell::msg::Grip;
+                match which {
+                    // End a dock-resize drag and persist the chosen width so
+                    // it survives toggling the dock off and on.
+                    Grip::DockWidth => {
+                        self.dock_resizing = false;
+                        if let Some(crate::app::PanelPlacement::LeftDock { width_cols }) =
+                            self.dock.as_ref().map(|f| f.placement)
+                        {
+                            self.dock_width = Some(width_cols);
+                        }
+                    }
+                    // A finished separator drag changed the ratios, so the
+                    // frame reflows through the one layout funnel.
+                    Grip::Separator => {
+                        self.active_window_mut().mouse_state.dragging_separator = None;
+                        self.relayout();
+                    }
+                    Grip::ExplorerWidth => {
+                        let ms = &mut self.active_window_mut().mouse_state;
+                        ms.dragging_file_explorer = false;
+                        ms.drag_start_explorer_width = None;
+                    }
+                }
+            }
             UiFact::DockBlur => {
                 if self.dock.as_ref().is_some_and(|f| f.focused) {
                     self.blur_floating_panel(crate::app::PanelSlot::Dock);
@@ -1795,6 +1849,29 @@ impl Editor {
                     Target::ConfirmCancel => e.showing_confirm_dialog = false,
                 }
                 self.keybinding_editor = Some(e);
+            }
+            // **Which surface a key belongs to is containment; what it means
+            // is the surface's.** Each of these had a `ChromeComponent`
+            // offering it every key in `layer_rank` order; the layer owns the
+            // keyboard, focus is inside it, and a key nothing inside answered
+            // arrives here.
+            UiFact::ModalKey(slot) => {
+                use crate::view::shell::modal::KeySlot;
+                let Some(ev) = self.shell_key_event else {
+                    return;
+                };
+                match slot {
+                    KeySlot::Settings => self.dispatch_settings_key(&ev),
+                    KeySlot::KeybindingEditor => {
+                        let _ = self.handle_keybinding_editor_input(&ev);
+                    }
+                    KeySlot::Calibration => {
+                        let _ = self.handle_calibration_input(&ev);
+                    }
+                    KeySlot::WorkspaceTrust => {
+                        let _ = self.handle_workspace_trust_key(&ev);
+                    }
+                }
             }
             UiFact::ModalPointer(slot) => {
                 use crate::view::shell::modal::Slot;

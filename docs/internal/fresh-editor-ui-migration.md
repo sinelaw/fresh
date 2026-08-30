@@ -196,9 +196,27 @@ provided at is the scope they belong to.
 |---|---|---|---|
 | A.1 | ~~`context_menu`~~, ~~`menu`~~, ~~`popups`~~ done; `base` and `prompt` still implement `on_layer_key`. | The surface declares `focusable()` / `focus_scope()`; its bindings ride down as `Shortcut { key, intent }` data and the library's Shortcuts → Intents → Actions chain resolves them. **The menu closed the gap that kept a surface half-migrated**: its navigation had been intents since decision 1, but a whole input handler stayed alive to *swallow* the keys it declined, because `Modality` was one knob for two channels and the chain could not take the keyboard without taking the pointer from the bar it hangs off. `Modality::Keyboard` says the one without the other; `blocks_pointer` and `owns_keyboard` are what the framework now asks, per channel, at each site. **The popups then needed the opposite** — a layer that owns the keyboard and can still step out of the way of one key — which is `Dismiss::passing_through` beating the modal claim, and is what a completion list's Enter has always meant. `view/ui/menu_input.rs`, `view/popup_input.rs`, `view/popup/input/` (four files), `Menu::on_layer_key` and the three capturing rungs of `dispatch_popup_keys` are gone. | Resolving key → action *before* dispatch and handing the tree an `Action`. §6.2 decision 1 settled this the other way: bindings flow down as data, the tree resolves. |
 | A.2 | `dock` + `floating_modal` `on_layer_key` hand the key to the widget dispatcher. | Rides with C. | Migrating them early behind a shim that calls the old dispatcher from a `GestureKind::Key` handler. That is the walk with a new caller. |
-| A.3 | The four `modals` `on_layer_key` hand it to painter interiors. | Rides with B. | As A.2. |
+| ~~A.3~~ **Done.** | The four `modals` handed the key to painter interiors through a capture-all `on_layer_key` apiece, offered in `layer_rank` order. | Containment, the same way the pointer crossed: each is a `Modality::Exclusive` layer, so it owns the keyboard, focus goes inside it, and `modal::keys` — an `on_key` at the top of that subtree — sees what the subtree declined. `UiFact::ModalKey(KeySlot)` names the surface; the interior is unchanged, which is the ruling that let `ModalPointer` cross the same seam. **The claim goes on every exclusive layer the surface can raise**, not only the band underneath: with a dialog or an entry level up, the band is no longer on the focus path. And on the *trust* prompt it is gated by `Trust::captures`, because an exclusive layer with nobody listening inside it stops a key rather than routing it — whether to claim has to be decided where the claim is made. |
 | A.4 | `layer_rank` — a central ordered list of surfaces. | Delete it. Precedence is *derived*: layer order, `Modality::Exclusive`, focus-scope containment — all already in the tree. | A `key_rank` property on layers, or a `Behavior` that walks them in order. Goal 2 forbids the central list by name; a renamed one is the same list. |
 | A.5 | `KeyContext` — the mode enum the walk keyed on, and the largest remnant by reference count. | "Which bindings apply" becomes *where focus is*: a scope provides its shortcut set as an ambient, resolution walks the focus path up. | Keeping `KeyContext` as an ambient. That is the enum with a new home; the point is that containment already answers it. |
+
+**Why `base`, `prompt`, `dock` and `floating_modal` are the ones left, and
+what actually blocks them.** Not effort — a rule. Every surface that has
+crossed *claims* the keys it declines: a menu, a popup and a modal are each in
+the way of the keystroke, so the tree can answer "this is yours" before
+anything runs. The four that remain **decline**: an unhandled prompt key falls
+through to keymap resolution (that is how the file browser's Alt toggles and
+Ctrl+P reach their bindings), an unhandled dock shortcut blurs the dock, and
+the base *is* the fall-through. A claim in the tree is made during dispatch;
+whether those four consumed a key is only known after their interior has run,
+in the host. So the tree cannot say it for them — which is exactly the sense
+in which A.1 and A.2 "ride with B and C": what unblocks them is not a shim
+around the dispatcher but the interior itself becoming nodes that answer, at
+which point declining is a node not stopping the flow rather than a handler
+returning `Ignored` afterwards.
+
+That is also why A.4 and A.5 cannot come yet: `layer_rank` still orders the
+walk those four are on, and the PTY gate and `get_key_context` still read it.
 
 ### B. The modal interiors
 
@@ -556,7 +574,7 @@ deferred deliberately, to be taken with C.1's experience in hand.
 
 **`split_areas` needs an oracle first, and that is the whole of what is left here.** Its rects are written at paint time and read by mouse handlers *between* frames, which is the staleness the rule is about — but they route every click in the editor, and the parity that would make the swap safe is an integration-level question (a live `Editor` with panes), not a unit one. The pattern is E.2's: derive both, assert they agree, then delete the recorded one. Note also that `split_layout` lays `pane_interior` out in a **throwaway `Ui` per pane per frame** while the shell tree already contains the same description under the same keys — that is a duplicate *derivation* rather than a duplicate record, so it cannot disagree, but it is the same rectangle computed twice and it goes with this. | Re-recording a rectangle for speed. 0.4's benchmark is the answer, and every rectangle recorded twice is a chance to disagree. |
 | ~~E.2~~ **Done.** | `separator_areas` was assembled from **two** producers: a second layout walk (`get_separators_with_ids`, re-running `split_rect_ext` against a rectangle the caller supplied) for the main grid, and the painter's own recording for grouped subtrees, which the first could not see. | `separator_rects` — the model says which containers exist and which way each splits, layout says where each divider landed. Grouped subtrees need no special case (their dividers have been ordinary nodes since S5) and neither does maximization (a maximized frame describes no divider, so it has no rectangle). The removed walk stays as the oracle `the_dividers_are_where_the_separators_are` checks the tree against — the one job a second derivation is good for. | — |
-| E.3 | `PointerGrab` — the drag state machine. | The library's pointer capture, which is already there and is what B.4 also needs. | Porting the state machine. It is the thing capture exists to replace. |
+| E.3 | `PointerGrab` — the drag state machine. **Three of its ten are gone**: the dock's width, a split separator and the file explorer's width. | The library's pointer capture, which is already there and is what B.4 also needs. **A grip that calls `capture_pointer` on its press keeps every move and the release wherever the pointer travels**, which is what the ladder was arranging by hand — and the tell that it was imitating capture is in its own doc: "checked in the old drag ladder's order so precedence is unchanged when (rarely) two flags coexist", a tie-break between things that cannot legitimately be true at once. `view::shell::grip::draggable` is the one statement of it; `UiFact::GripDrag`/`GripRelease` name *which* grip from the node rather than by ranking flags. What stays app-side is the state — whether a drag is running — because a grip's `Move` fires on a bare hover too and that is not geometry. **The seven left are the drags whose press is not a node's** (text and terminal selection, the widget scrollbars, a tab drag): they retire with their surfaces, exactly as these three did. `WidgetScrollbar` is the one with a date already: `try_widget_scrollbar_press` walks `scrollbar_tracks`, which a *described* panel never fills — the interior returns before the painter's scrollbar pass — so the floating panel stopped arming it when M6a landed, and what is left arming it is the dock (C.5b) and the buffer-mounted panels. | Porting the state machine. It is the thing capture exists to replace. |
 
 ### F. Library-side (both are `fresh-ui` changes, not editor ones)
 
@@ -768,6 +786,18 @@ are described.** The wide settings layout was being told apart from the narrow
 one by "are the categories described" — true until a search takes the tree
 away without making the box narrow, at which point the wide layout's search
 results were laid out at the box's left edge. `Chrome::wide` says it.
+
+**An exclusive layer with nobody listening inside it is a trap.** Once a
+modal layer owns the keys it declines, a surface that declared exclusivity for
+the *pointer* alone silently starts swallowing its own keyboard — and it does
+so only when something inside it happens to be focusable, so the failure
+appears the day an unrelated list stops passing `focusable(false)`. The rule
+that falls out: **a layer that takes a channel has to say where that channel
+goes.** Every exclusive layer in the editor now carries a key claim, on every
+level it can raise (a dialog over a dialog is a new topmost scope, and the
+band underneath is no longer on the focus path), and the one that is
+conditionally listening says so at the point of the claim rather than after
+the key arrives.
 
 **A property that is only ever read one way is not yet a property.** The
 popup's keyboard needed the *opposite* of the menu's: a layer that owns every

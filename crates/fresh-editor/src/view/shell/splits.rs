@@ -1036,35 +1036,34 @@ fn dressed(n: &SplitNode, s: &Rc<Splits>) -> Node<UiMsg> {
     }
 }
 
-/// One divider: it starts the width drag, and it says when it is hovered.
+/// One divider: it takes the pointer for the whole drag, and it says when it
+/// is hovered.
 ///
 /// It paints nothing — the split renderer still draws the separator glyph and
 /// its hover highlight, from `separator_areas`, which is itself a read of this
 /// same layout.
 fn divider(id: ContainerId, dir: SplitDirection) -> Node<UiMsg> {
-    gesture(row())
-        .key(divider_key(id))
-        .on(
-            GestureKind::Press,
-            Rc::new(move |e: &Event| {
-                if e.button != MouseButton::Left {
-                    return None;
-                }
-                e.stop();
-                Some(UiMsg::Ui(UiFact::SeparatorPress {
-                    container: id,
-                    direction: dir,
-                    x: e.pos.x.max(0) as u16,
-                    y: e.pos.y.max(0) as u16,
-                }))
-            }),
-        )
-        .on_enter(Rc::new(move |_: &Event| {
-            Some(UiMsg::Ui(UiFact::SeparatorHover(Some((id, dir)))))
-        }))
-        .on_leave(Rc::new(move |_: &Event| {
-            Some(UiMsg::Ui(UiFact::SeparatorHover(None)))
-        }))
+    super::grip::draggable(
+        super::msg::Grip::Separator,
+        row(),
+        Rc::new(move |e: &Event| {
+            Some(UiMsg::Ui(UiFact::SeparatorPress {
+                container: id,
+                direction: dir,
+                x: e.pos.x.max(0) as u16,
+                y: e.pos.y.max(0) as u16,
+            }))
+        }),
+    )
+    // On the outside: the gesture node `draggable` returns is the one that
+    // hit-tests, and the one `separator_areas` reads back.
+    .key(divider_key(id))
+    .on_enter(Rc::new(move |_: &Event| {
+        Some(UiMsg::Ui(UiFact::SeparatorHover(Some((id, dir)))))
+    }))
+    .on_leave(Rc::new(move |_: &Event| {
+        Some(UiMsg::Ui(UiFact::SeparatorHover(None)))
+    }))
 }
 
 /// Every container the description could have put a divider node for.

@@ -149,24 +149,54 @@ pub fn layer(d: &Dialog) -> Node<UiMsg> {
         .place(Place::Over)
         .modality(Modality::Exclusive)
         .scrim(Some(Scrim::Dim))
-        .child(layout_reader(move |info: LayoutInfo| {
-            // The painter's own figures, against the settings box it centres
-            // in: eighty-five percent of the width between fifty and ninety,
-            // ninety percent of the height with a floor of fifteen.
-            let w = (info.constraints.max_w * 85 / 100).clamp(50, 90);
-            let h = (info.constraints.max_h * 90 / 100).max(15);
-            let ring = match d.dirty {
-                true => pair("ui.diagnostic_warning_fg", "ui.popup_bg"),
-                false => pair("ui.popup_border_fg", "ui.popup_bg"),
-            };
-            col()
-                .w(Sizing::Cells(w))
-                .h(Sizing::Cells(h))
-                .key(key(d.level))
-                .theme(ring)
-                .border()
-                .child(body(&d))
-        }))
+        // The stack's topmost level is where focus is, so each level carries
+        // the claim; they all name the settings slot because the settings
+        // dispatcher is what answers an entry dialog's keys.
+        .child(super::modal::keys(
+            super::modal::KeySlot::Settings,
+            layout_reader(move |info: LayoutInfo| {
+                // The painter's own figures, against the settings box it centres
+                // in: eighty-five percent of the width between fifty and ninety,
+                // ninety percent of the height with a floor of fifteen.
+                let w = (info.constraints.max_w * 85 / 100).clamp(50, 90);
+                let h = (info.constraints.max_h * 90 / 100).max(15);
+                // One name for the ring and its caption: a dirty form rings
+                // and titles in the warning colour together.
+                let ring_fg = match d.dirty {
+                    true => "ui.diagnostic_warning_fg",
+                    false => "ui.popup_border_fg",
+                };
+                let ring = pair(ring_fg, "ui.popup_bg");
+                let boxed = col().theme(ring).border().child(body(&d));
+                fresh_ui::stack()
+                    .w(Sizing::Cells(w))
+                    .h(Sizing::Cells(h))
+                    .key(key(d.level))
+                    .children([boxed, title_strip(&d.title, ring_fg)])
+            }),
+        ))
+}
+
+/// The title, in the top border where `Block::title` drew it.
+///
+/// **It is an overlay, not a row.** `Draw::Border` says "a ring around this
+/// rectangle" and carries no caption, and a caption is not a ring: it is text
+/// that happens to sit on one of its cells. So the box and the strip are two
+/// children of a stack, exactly as the floating panel's frame does it — and
+/// the strip is *one row tall*, because a taller transparent node still
+/// produces a path over the whole interior and offers it before the
+/// interior's own.
+fn title_strip(title: &str, ring_fg: &str) -> Node<UiMsg> {
+    let clear = |n: Node<UiMsg>| n.pointer_mode(PointerMode::Transparent);
+    row()
+        .h(Sizing::Cells(1))
+        .pointer_mode(PointerMode::Transparent)
+        .children([
+            // `Block::title` starts one cell in from the corner.
+            clear(row().w(Sizing::Cells(1))),
+            clear(text(title.to_string()).theme(attrs(ring_fg, "ui.popup_bg", &["bold"]))),
+            clear(row().flex(1)),
+        ])
 }
 
 /// Everything inside the border: the fields in their window, then the three
@@ -510,6 +540,24 @@ mod tests {
             .collect();
         out.sort_by_key(|(y, _)| *y);
         out
+    }
+
+    /// **The title is on the top border, not in a row of its own.**
+    ///
+    /// `Block::title` wrote it into the ring's top edge, and every test that
+    /// waits for this stack — thirteen of them wait for the words "Edit
+    /// Value" — reads the screen for it. Describing the box without it
+    /// painted a nameless frame: the dialog was up, and nothing on screen
+    /// said which.
+    #[test]
+    fn the_title_rides_the_top_border() {
+        let ui = laid_out(dialog(3), 160, 50);
+        let boxed = ui.rect_of(ui.find_by_key(&key(0)).expect("the dialog"));
+        let (y, painted) = rows(&ui)
+            .into_iter()
+            .find(|(_, t)| t == "Rust")
+            .expect("the title on screen");
+        assert_eq!(y, boxed.y, "on the box's own top row: {painted}");
     }
 
     /// **The legend is inside the box.** The painter wrote it at

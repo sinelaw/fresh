@@ -234,17 +234,6 @@ impl Editor {
                 // finalizer just fall to the blanket clear below.
                 let grab = super::chrome::pointer_grab(self);
                 match grab {
-                    // End a dock-resize drag and persist the chosen
-                    // width so it survives toggling the dock off/on.
-                    Some(super::chrome::PointerGrab::DockResize) => {
-                        self.dock_resizing = false;
-                        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-                            self.dock.as_ref().map(|f| f.placement)
-                        {
-                            self.dock_width = Some(width_cols);
-                        }
-                        return Ok(true);
-                    }
                     // Complete a tab drop before the drag state clears.
                     Some(super::chrome::PointerGrab::TabDrag) => {
                         if let Some(drag_state) =
@@ -272,12 +261,9 @@ impl Editor {
                 self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
 
-                // A finished split-separator drag changed the ratios:
-                // reflow through the single layout funnel (after the
-                // sweep, as before).
-                if matches!(grab, Some(super::chrome::PointerGrab::SplitSeparator)) {
-                    self.relayout();
-                }
+                // The separator's reflow was here, keyed on its grab. It is
+                // the divider node's own release now — the grip keeps the
+                // pointer it took, so its release never reaches this walk.
 
                 needs_render = true;
             }
@@ -883,20 +869,11 @@ impl Editor {
         // duration of the drag, so nothing reaches this walk to be let
         // through.
         if self.overlay_prompt_active()
-            && !matches!(
-                grab,
-                PointerGrab::DockResize | PointerGrab::WidgetText | PointerGrab::WidgetScrollbar
-            )
+            && !matches!(grab, PointerGrab::WidgetText | PointerGrab::WidgetScrollbar)
         {
             return Ok(());
         }
         match grab {
-            // Dock resize drag: track the pointer column as the new dock
-            // width (the right border follows the cursor), clamped so it
-            // can't swallow the chrome.
-            PointerGrab::DockResize => {
-                self.handle_dock_resize_drag(col);
-            }
             // Drag-to-select on a widget markdown/text document: armed by the
             // press that placed the caret; every Drag extends the selection to
             // the pointer.
@@ -920,18 +897,9 @@ impl Editor {
             PointerGrab::HScrollbar => {
                 self.handle_hscrollbar_drag(col, row)?;
             }
-            // Split-separator drag: update the split ratio.
-            PointerGrab::SplitSeparator => {
-                if let Some((split_id, direction)) =
-                    self.active_window_mut().mouse_state.dragging_separator
-                {
-                    self.handle_separator_drag(col, row, split_id, direction)?;
-                }
-            }
-            // File-explorer border drag: update its width.
-            PointerGrab::ExplorerWidth => {
-                self.handle_file_explorer_border_drag(col)?;
-            }
+            // The split separator's and the file explorer's width drags were
+            // here. Both are grips that capture the pointer, so their moves
+            // arrive as `UiFact::GripDrag` and never reach this walk.
             // A drag whose press landed on a live terminal grid: this is
             // selection intent (a bare click only focuses — see
             // `handle_editor_click`). Drop the split into read-only scrollback

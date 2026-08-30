@@ -1297,45 +1297,53 @@ pub fn dialog_layer(d: &Dialog) -> Node<UiMsg> {
         .place(Place::Over)
         .modality(Modality::Exclusive)
         .scrim(Some(Scrim::Dim))
-        .child(layout_reader(move |info: LayoutInfo| {
-            // 50 wide, and as tall as it needs within 20 — the painter's own
-            // two lines, with its `saturating_sub(4)` margin.
-            let want_w = match &d {
-                Dialog::EntryDiscard(k) | Dialog::EntryDelete(k) => k.width,
-                _ => 50,
-            };
-            let w = want_w.min(info.constraints.max_w.saturating_sub(4));
-            let want = match &d {
-                Dialog::Help { .. } => 20,
-                // Two borders, the title, the prompt, the blank under it,
-                // the rule, the buttons and the help line — then a row per
-                // change. The painter's own figure was seven, because it hung
-                // its title *in* the top border and this box gives it a row of
-                // its own; at seven the changes list was squeezed to nothing
-                // and the prompt promised a list that was not there.
-                Dialog::Confirm(c) | Dialog::Reset(c) => (8 + c.changes.len() as u16).min(20),
-                Dialog::EntryDiscard(_) | Dialog::EntryDelete(_) => 7,
-            };
-            let h = want.min(info.constraints.max_h.saturating_sub(4));
-            let warn = pair("ui.status_warning_fg", "ui.popup_bg");
-            let (ring, node) = match &d {
-                Dialog::Help { title, lines } => (
-                    pair("ui.menu_highlight_fg", "ui.popup_bg"),
-                    help_box(title, lines),
-                ),
-                Dialog::Confirm(c) => (warn.clone(), choice_box(c, Target::Confirm)),
-                Dialog::Reset(c) => (warn.clone(), choice_box(c, Target::Reset)),
-                Dialog::EntryDiscard(k) => (ring_of(k), grave_box(k, Target::EntryDiscard)),
-                Dialog::EntryDelete(k) => (ring_of(k), grave_box(k, Target::EntryDelete)),
-            };
-            col()
-                .theme(ring)
-                .border()
-                .w(Sizing::Cells(w))
-                .h(Sizing::Cells(h))
-                .key(dialog_key())
-                .children([node])
-        }))
+        // **The topmost exclusive layer is where focus is**, so the claim has
+        // to be on each of them, not only on the modal band underneath: with
+        // a dialog up, the band is no longer on the focus path. They all name
+        // the same slot because they are all the same interior — the settings
+        // dispatcher answers its own sub-dialogs by priority.
+        .child(super::modal::keys(
+            super::modal::KeySlot::Settings,
+            layout_reader(move |info: LayoutInfo| {
+                // 50 wide, and as tall as it needs within 20 — the painter's own
+                // two lines, with its `saturating_sub(4)` margin.
+                let want_w = match &d {
+                    Dialog::EntryDiscard(k) | Dialog::EntryDelete(k) => k.width,
+                    _ => 50,
+                };
+                let w = want_w.min(info.constraints.max_w.saturating_sub(4));
+                let want = match &d {
+                    Dialog::Help { .. } => 20,
+                    // Two borders, the title, the prompt, the blank under it,
+                    // the rule, the buttons and the help line — then a row per
+                    // change. The painter's own figure was seven, because it hung
+                    // its title *in* the top border and this box gives it a row of
+                    // its own; at seven the changes list was squeezed to nothing
+                    // and the prompt promised a list that was not there.
+                    Dialog::Confirm(c) | Dialog::Reset(c) => (8 + c.changes.len() as u16).min(20),
+                    Dialog::EntryDiscard(_) | Dialog::EntryDelete(_) => 7,
+                };
+                let h = want.min(info.constraints.max_h.saturating_sub(4));
+                let warn = pair("ui.status_warning_fg", "ui.popup_bg");
+                let (ring, node) = match &d {
+                    Dialog::Help { title, lines } => (
+                        pair("ui.menu_highlight_fg", "ui.popup_bg"),
+                        help_box(title, lines),
+                    ),
+                    Dialog::Confirm(c) => (warn.clone(), choice_box(c, Target::Confirm)),
+                    Dialog::Reset(c) => (warn.clone(), choice_box(c, Target::Reset)),
+                    Dialog::EntryDiscard(k) => (ring_of(k), grave_box(k, Target::EntryDiscard)),
+                    Dialog::EntryDelete(k) => (ring_of(k), grave_box(k, Target::EntryDelete)),
+                };
+                col()
+                    .theme(ring)
+                    .border()
+                    .w(Sizing::Cells(w))
+                    .h(Sizing::Cells(h))
+                    .key(dialog_key())
+                    .children([node])
+            }),
+        ))
 }
 
 fn ink() -> String {

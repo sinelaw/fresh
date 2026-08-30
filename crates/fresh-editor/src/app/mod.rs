@@ -1199,6 +1199,16 @@ pub struct Editor {
     /// *which surface* the event belongs to and the event itself stays here:
     /// it is routed, not transported. Retires with those interiors.
     pub(crate) shell_pointer_event: Option<(crossterm::event::MouseEvent, bool)>,
+    /// The key the tree is being offered, for the same reason and on the same
+    /// terms.
+    ///
+    /// Set immediately before the tree is offered the key, and read only by
+    /// `UiFact::ModalKey`. A modal's interior reads a crossterm `KeyEvent` —
+    /// a larger vocabulary than the tree's `KeyPress`, which has no variant
+    /// for a media key or a modifier-only press — so the tree decides *which
+    /// surface* the key belongs to and the key itself stays here. Retires with
+    /// those interiors.
+    pub(crate) shell_key_event: Option<crossterm::event::KeyEvent>,
 
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.

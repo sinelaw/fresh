@@ -50,6 +50,7 @@ pub fn key_code(code: CtKey) -> Option<KeyCode> {
         CtKey::BackTab => KeyCode::BackTab,
         CtKey::Backspace => KeyCode::Backspace,
         CtKey::Delete => KeyCode::Delete,
+        CtKey::Insert => KeyCode::Insert,
         CtKey::Up => KeyCode::Up,
         CtKey::Down => KeyCode::Down,
         CtKey::Left => KeyCode::Left,
@@ -59,8 +60,10 @@ pub fn key_code(code: CtKey) -> Option<KeyCode> {
         CtKey::PageUp => KeyCode::PageUp,
         CtKey::PageDown => KeyCode::PageDown,
         CtKey::F(n) => KeyCode::F(n),
-        // Insert, media keys, modifier-only presses, and everything the
-        // library has no variant for.
+        // Media keys, modifier-only presses, and everything else the library
+        // has no variant for. A surface that owns the keyboard still swallows
+        // them — `handle_key` asks `Ui::keyboard_owned` — so declining here
+        // costs a key its *routing*, never its containment.
         _ => return None,
     })
 }
@@ -202,9 +205,14 @@ mod tests {
 
     /// A key with no counterpart stays on the existing path rather than being
     /// approximated as something else.
+    ///
+    /// `Insert` used to be the example here and is a real editing key that a
+    /// modal owning the keyboard has to be able to see, so it has a
+    /// counterpart now. What is left without one is the class nobody binds.
     #[test]
     fn a_key_without_a_counterpart_declines() {
-        assert!(key(&press(CtKey::Insert, KeyModifiers::NONE)).is_none());
+        assert!(key(&press(CtKey::CapsLock, KeyModifiers::NONE)).is_none());
+        assert!(key_code(CtKey::Insert).is_some());
         assert!(key_code(CtKey::Char('x')).is_some());
     }
 

@@ -67,8 +67,6 @@ use anyhow::Result as AnyhowResult;
 /// hand-ordered flag ladder. Derived from live drag state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PointerGrab {
-    /// Dock width resize from its right border.
-    DockResize,
     /// Drag-to-select in a widget markdown/text document.
     WidgetText,
     /// A floating/dock panel's list scrollbar drag.
@@ -77,10 +75,6 @@ pub(crate) enum PointerGrab {
     VScrollbar,
     /// A split's horizontal scrollbar.
     HScrollbar,
-    /// Split-separator resize.
-    SplitSeparator,
-    /// File-explorer width resize from its border.
-    ExplorerWidth,
     /// A press on a live terminal grid whose first motion converts to
     /// scrollback text selection (selection intent).
     TerminalSelectPending,
@@ -96,10 +90,15 @@ pub(crate) enum PointerGrab {
 /// and the Drag arm dispatches on it. Checked in the old drag
 /// ladder's order so precedence is unchanged when (rarely) two flags
 /// coexist.
+///
+/// **Three grabs have left, and they left by becoming what this imitates.**
+/// The dock's width, a split separator and the file explorer's width are all
+/// dragged by a *node*, and a node that calls `capture_pointer` on its press
+/// keeps every move and the release wherever the pointer goes — so there is
+/// nothing to rank and nothing to keep in sync. What is left below are the
+/// drags whose press is not a node's: they retire with their surfaces, the
+/// same way these did (`view::shell::grip`).
 pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
-    if ed.dock_resizing {
-        return Some(PointerGrab::DockResize);
-    }
     if ed.widget_text_drag.is_some() {
         return Some(PointerGrab::WidgetText);
     }
@@ -125,12 +124,6 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     }
     if ms.dragging_horizontal_scrollbar.is_some() {
         return Some(PointerGrab::HScrollbar);
-    }
-    if ms.dragging_separator.is_some() {
-        return Some(PointerGrab::SplitSeparator);
-    }
-    if ms.dragging_file_explorer || ms.drag_start_explorer_width.is_some() {
-        return Some(PointerGrab::ExplorerWidth);
     }
     if ms.terminal_drag_pending.is_some() {
         return Some(PointerGrab::TerminalSelectPending);
