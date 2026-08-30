@@ -282,14 +282,91 @@ API is frozen, and this is a change of what the host does with it.
 | `Toggle` | `widgets::Toggle` | `label_first` / `label_width` are the row's order and a `Sizing::Cells` on the label. `indeterminate` needs a third glyph state — the one small library change this table implies. |
 | `Number` | `widgets::Number` | |
 | `Dropdown` | `widgets::Dropdown` | Its pop-over is a `Layer`; the `screen_space` escape below is the same mechanism. |
-| `DualList` | `widgets::DualList` | |
+| `DualList` | ~~`widgets::DualList`~~ **the adapter, unchanged** | **The table was wrong here too, twice over.** The library's `DualList` is two `List`s side by side, each with its own scroll; `WidgetSpec::DualList` is a *two-column table of paired rows*, one hit per cell in the same row. And it does not scroll at all — its body is `max(available, included, visible_rows)` tall with no offset anywhere — so it needs no substitution and has no bar to lose. It crosses through the adapter, and the only thing it needed was for a row to stop being one target. |
 | `Button` | `widgets::Button` | |
 | `List` | `widgets::List` | |
-| `Tree` | `widgets::Tree` | |
+| `Tree` | ~~`widgets::Tree`~~ **`widgets::List`** | **The table was wrong here.** `WidgetSpec::Tree` is already *flat* — `nodes: Vec<TreeNode>` with a `depth` and a `has_children` flag — and its expansion is the **plugin's**: `expanded_keys` comes down in the spec and goes back through `WidgetMutation`. `widgets::Tree` builds its own nesting from recursive roots and owns `expanded` in element state, so it would fight the plugin for the one fact the plugin is authoritative for. The spec's tree is a controlled list of pre-rendered rows, and that is what it maps onto. |
 | `Component` | `focus_scope()` + `key()` | Its two jobs are exactly those: trap Tab inside the subtree, and name it. Not a component in the library's sense, and it should not become one — it owns no state. |
 | `Overlay` | `layer()` anchored to its own position | "Anchors at the row it would have occupied but the rows below do not shift" is `Place::Over` on a layer whose anchor is the node's slot. |
 | `Popup { anchor, screen_space }` | `layer()`, `Anchor::Point` or the node, `within` the panel unless `screen_space` | `screen_space` is precisely "not confined to the panel's region", which is the `within` the base PR added. |
 | `WindowEmbed` | a `Host` leaf | A real editor window inside a panel: cells, like every other `Host`. G's rule applies — this one never migrates. |
+
+**The mapping is done.** `view/shell/widgets.rs` describes every variant but
+`WindowEmbed` — which is a `Host` leaf by G's rule and never migrates — each
+asserted against `render_spec`'s own answer. Nine are written out
+(`Row` with `wrap`, `Col`, `Spacer`, `Divider`, `HintBar`, `Raw`,
+`LabeledSection`, `Button`, `Toggle`), four are thin (`Component`, `Overlay`,
+`Popup`, `Number`), and five go through the adapter described above.
+
+**The coverage boundary is not the mapping's edge.** Every variant is
+described; not every one is *mounted*. The scrollable kinds — `List`, `Tree`,
+`DualList`, `Dropdown`, and multi-line `Text` — own their scroll in the
+runtime: the collector windows the rows itself and reports the offset on a
+`LayoutBox`, and the painter draws a bar over the rightmost column from that.
+The adapter turns rows into nodes and has nothing to say about a bar, so
+describing one of them today would render it correctly and **silently lose its
+scrollbar**, which is worse than painting it whole. Wrapping already-windowed
+rows in a `viewport` does not fix it either: there would be nothing to scroll,
+so the bar would be wrong rather than missing.
+
+**`List` has already crossed, and it is the proof of the shape.**
+`widgets::List` windows its rows out of a `viewport`, so the scroll is the
+element's and `scrollbar()` *is* the bar — the thing the adapter could not
+describe comes free once the window belongs to the tree. Selection stays
+controlled, which is what keeps the plugin API frozen: the plugin sets it, the
+host's keys move it, and the list's own `Anchor` reveals it whenever it moves,
+"the owner passing a new one down" included — the auto-clamp the runtime did
+by hand, for free. The rows themselves are still the runtime's, because what a
+row *says* is not this migration's business.
+
+**That is why C.2 comes before full coverage, not after.** `widgets::List` and
+`widgets::Tree` own their scroll, and then the bar is the viewport's and comes
+free. These kinds cross the boundary when their state does. The panels that
+are mounted today are the ones made of controls — forms, confirmations,
+button rows — which is most of what the dock's dialogs are.
+
+**What is left of C is no longer the mapping.** It is: mounting a panel on the
+described path behind `covered()`; deleting `LayoutBox` and the byte-range
+scan once nothing reads them (C.3); and replacing the collectors' formatting
+with `widgets::List` / `widgets::Tree` so a plugin's list is the settings
+form's list, which is where `WidgetInstanceState` becomes element state (C.2).
+Two things the first variants settled:
+
+* **The hit becomes a payload.** `deliver_widget_hit` — the dispatch all three
+  frontends share — takes a `HitArea` and does the rest: focus the owner, run
+  the kind's `on_pointer`, fire the plugin's `widget_event`. It does not
+  change. What changes is that the tree *finds* the widget, by hit-testing a
+  rectangle it laid out, instead of the host reconstructing it from a row and
+  a byte offset. So `UiFact::WidgetHit` carries the same `HitArea` the runtime
+  recorded, and a byte range stops being a hit-test. A toggle in form layout
+  shows what that buys: its hit was restricted to the chip by a pair of byte
+  offsets, and it is now restricted by where the nodes are.
+* **Not every variant can be parity-checked on its cells.** `LabeledSection`
+  draws its frame as *text* — `╭─ label ─…─╮` in an entry, `│ … │` around
+  every child row — because entries are all the runtime has. The tree has a
+  border and uses it, so the cells differ on purpose and the assertion is
+  **geometric**: the child gets `panel_width - 4`, one row down and two
+  columns in, which is `inner_width` plus what `shift_channels` shifted six
+  recorded channels by. Chrome variants are checked that way; leaf and text
+  variants are checked cell for cell.
+
+**The route for the five heavy variants** (`Text`, `List`, `Tree`,
+`Dropdown`, `DualList`), which is different from the nine already done and
+worth stating before it is discovered twice. Each of them ends in a
+`CollectedOutput` — entries, hits, overlays, a focus cursor — produced by a
+collector that already exists and already knows the kind's rendering. So the
+step that unlocks all five at once is a generic **`CollectedOutput` → `Node`**
+adapter: rows become nodes, each hit becomes a gesture on the sub-range it
+covers, each overlay becomes a layer. That is what deletes `LayoutBox` and the
+byte-range scan (C.3) for every variant simultaneously, rather than five times.
+
+**It is a stage, not the end.** After it, the runtime is a *formatter*: it
+still decides what a list row looks like, and the tree owns where it is and
+what a press on it means. Replacing that formatting with `widgets::List` and
+`widgets::Tree` — so a plugin's list is the list the settings form uses, which
+is goal 1 — is the step after, and it is where `WidgetInstanceState` becomes
+element state (C.2). Doing the adapter first is what makes that step a
+substitution rather than a rewrite.
 
 **Three things the table settles that were open.**
 
@@ -456,6 +533,21 @@ immediate-mode one costs.
    expensive to rebuild" is claiming a number; the number exists. *Prevents:*
    C.4's mutation fast path being kept on intuition, and its opposite — a
    `.shared()` cache guarding something cheaper than the guard.
+
+**And one rule about layers, learned the same way.** Layers are hit-tested
+top down and **the first layer with any path at the point wins** — and a
+`PointerMode::Transparent` node still produces a path. So "transparent" means
+*the hit continues behind me within this layer*, not *across* layers: a
+decorative layer laid over a claim-everything one does not fall through to it,
+it swallows the press and nothing handles it. A layer therefore has to say what
+a press anywhere on it means, or not be a layer. `PointerMode::Ignore` does not
+rescue this either — it skips the node's whole subtree, so a container using it
+takes its own buttons out with it.
+
+C.6 shipped with exactly that mistake and its own tests caught it, which is the
+argument for writing the tests at the same time rather than after: the panel's
+frame was a transparent layer above the modal's claim, and every press on the
+box's chrome and content area went nowhere.
 
 And one rule of this migration's own, learned the expensive way and worth
 keeping at the top: **the tree runs first, so anything that used to sit between

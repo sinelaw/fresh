@@ -107,7 +107,7 @@ pub(crate) fn focus_gutter_prefix(focused: bool, marker_gutter: bool) -> &'stati
 /// existing colours alone: the overlay carries a background and nothing
 /// else, so a checked toggle's accent glyph and a row's own styling
 /// survive underneath the pointer.
-pub(crate) fn apply_hover_band(entry: &mut TextPropertyEntry) {
+pub fn apply_hover_band(entry: &mut TextPropertyEntry) {
     let end = entry.text.len();
     if end == 0 {
         return;
@@ -825,12 +825,7 @@ pub(crate) fn render_collected(
 /// Padding goes through the shared column helper: menu labels carry
 /// `…`, `▾` and box glyphs, and byte-counted padding both misaligns the
 /// row and risks slicing a multi-byte char.
-pub(crate) fn fill_button_label(
-    label: &str,
-    bare: bool,
-    marker_gutter: bool,
-    panel_width: u32,
-) -> String {
+pub fn fill_button_label(label: &str, bare: bool, marker_gutter: bool, panel_width: u32) -> String {
     let chrome = if bare {
         0
     } else {
@@ -2490,7 +2485,7 @@ pub fn render_button(
 /// immediate signal, and the one the user is actively driving. `hovered`
 /// without a declared style falls back to the shared hover band, so even
 /// a glyph affordance lights up under the pointer.
-pub(crate) fn render_bare_button(
+pub fn render_bare_button(
     label: &str,
     focused: bool,
     kind: ButtonKind,

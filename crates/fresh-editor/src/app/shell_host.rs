@@ -1026,6 +1026,19 @@ impl Editor {
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
         use crate::view::shell::msg::UiFact;
         match fact {
+            // The tree found the widget; the dispatch behind this is the one
+            // all three frontends already share, and it does not change.
+            // `None` for the clicked byte: the byte range in the hit is a
+            // payload now, not a position the caller resolved.
+            UiFact::WidgetHit { slot, hit } => {
+                let slot = match slot {
+                    crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
+                    crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
+                };
+                if let Some(panel_key) = self.panel(slot).map(|p| p.panel_key.clone()) {
+                    self.deliver_widget_hit(&panel_key, &hit, None);
+                }
+            }
             UiFact::PanelClosed => {
                 self.dismiss_floating_panel_with_cancel(crate::app::PanelSlot::Floating);
             }

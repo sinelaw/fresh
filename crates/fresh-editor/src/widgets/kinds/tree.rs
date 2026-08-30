@@ -1073,7 +1073,7 @@ fn render_widget_tree(
 /// a node shows iff every ancestor on its depth path is expanded.
 /// Shared by the renderer-side wheel bound and the app-side selection
 /// movement / paging (`app/widget_runtime.rs`).
-pub(crate) fn collect_visible_tree_indices(
+pub fn collect_visible_tree_indices(
     nodes: &[fresh_core::api::TreeNode],
     item_keys: &[String],
     expanded: &std::collections::HashSet<String>,

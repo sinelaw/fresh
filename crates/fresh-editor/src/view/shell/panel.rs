@@ -63,7 +63,7 @@ pub enum Spot {
 }
 
 /// The panel's frame, with everything resolved from live state.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Panel {
     pub spot: Spot,
     /// Rendered into the top border when centred. An anchored popup wears no
@@ -79,6 +79,26 @@ pub struct Panel {
     /// beside the dock. The orchestrator's global modals opt into the former
     /// so they are not cramped into the region right of their own dock.
     pub fullscreen: bool,
+    /// **The interior, when it is described rather than painted.**
+    ///
+    /// `Some` when the panel's spec uses only variants
+    /// `view::shell::widgets` describes; `None` sends the whole panel down
+    /// the runtime's path, which is what still paints a `WindowEmbed`. A
+    /// panel is one or the other and never half of each — see
+    /// `widgets::covered`.
+    pub interior: Option<Interior>,
+}
+
+/// A described interior: the spec, and the host state it reads.
+#[derive(Clone, Debug)]
+pub struct Interior {
+    pub spec: std::rc::Rc<fresh_core::api::WidgetSpec>,
+    pub states: std::rc::Rc<std::collections::HashMap<String, crate::widgets::WidgetInstanceState>>,
+    pub focus_key: String,
+    pub hovered_key: Option<String>,
+    pub hovered_item_key: String,
+    pub marker_gutter: bool,
+    pub avail_height: Option<u32>,
 }
 
 /// The box itself. Its rectangle is what the painter used to call
@@ -161,16 +181,42 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
 }
 
 /// The ring, its ground, and the strip that sits on its top edge.
+///
+/// **The box claims its own presses**, and it has to. Layers are hit-tested
+/// top down and the *first one with any path at the point wins* — a
+/// transparent node still produces a path — so a decorative layer over the
+/// modal's claim-everything surface does not fall through to it, it swallows
+/// the press and nothing handles it. Only a press *outside* this box reaches
+/// the layer below.
+///
+/// So the box says what a press on it means: the interior's, when the
+/// interior is a painter that hit-tests itself through `UiFact::ModalPointer`;
+/// nobody's, when the interior is described and its widgets have already
+/// declined it. Either way the press stops here rather than reaching the
+/// buffer behind.
 fn frame_box(p: &Panel) -> Node<UiMsg> {
     let ring = ring_theme(p);
-    let framed = col()
-        .theme(ring)
-        .border()
-        .pointer_mode(PointerMode::Transparent)
-        .child(body());
-    fresh_ui::stack()
-        .pointer_mode(PointerMode::Transparent)
-        .children([framed, border_strip(p)])
+    let framed = col().theme(ring).border().child(body(p));
+    let described = p.interior.is_some();
+    let claim = move |e: &Event| {
+        e.stop();
+        match described {
+            true => None,
+            false => Some(UiMsg::Ui(UiFact::ModalPointer(
+                super::modal::Slot::FloatingPanel,
+            ))),
+        }
+    };
+    let mut g = gesture(fresh_ui::stack().children([framed, border_strip(p)]));
+    for kind in [
+        GestureKind::Press,
+        GestureKind::Release,
+        GestureKind::Move,
+        GestureKind::Wheel,
+    ] {
+        g = g.on(kind, Rc::new(claim));
+    }
+    g
 }
 
 fn ring_theme(p: &Panel) -> String {
@@ -239,14 +285,42 @@ fn close_button(p: &Panel) -> Node<UiMsg> {
         )
 }
 
-/// The content area, transparent: the interior is a painter that hit-tests
-/// itself through `UiFact::ModalPointer`, the same seam the other modal
-/// interiors use.
-fn body() -> Node<UiMsg> {
-    row()
-        .flex(1)
-        .pointer_mode(PointerMode::Transparent)
-        .key(body_key())
+/// The content area.
+///
+/// **Transparent when the interior is a painter**, because that painter
+/// hit-tests itself through `UiFact::ModalPointer` — the same seam the other
+/// modal interiors use. **Opaque when it is described**, because then the
+/// widgets answer their own presses and a press that reaches the area but no
+/// widget is the panel's to swallow, not the buffer's.
+fn body(p: &Panel) -> Node<UiMsg> {
+    let area = row().flex(1).key(body_key());
+    let Some(i) = p.interior.clone() else {
+        return area.pointer_mode(PointerMode::Transparent);
+    };
+    // **The width the widgets are laid out at is layout's answer, not the
+    // caller's.** A centred panel is a percentage of its bounds, so nobody
+    // knows the content width until the box has been measured — and the
+    // collectors need it as a number before they can render a row. That is
+    // what `layout_reader` is for: build the subtree from the constraints the
+    // node was given. The alternative is the caller computing the percentage
+    // itself, which is the second layout this migration exists to remove.
+    area.child(fresh_ui::layout_reader(
+        move |info: fresh_ui::LayoutInfo| {
+            super::widgets::node(
+                &i.spec,
+                info.constraints.max_w.max(1),
+                &super::widgets::Ctx {
+                    slot: super::widgets::Slot::Floating,
+                    states: &i.states,
+                    focus_key: i.focus_key.clone(),
+                    hovered_key: i.hovered_key.clone(),
+                    marker_gutter: i.marker_gutter,
+                    hovered_item_key: i.hovered_item_key.clone(),
+                    avail_height: i.avail_height,
+                },
+            )
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -319,6 +393,7 @@ mod tests {
             closable: true,
             focused: true,
             fullscreen: true,
+            interior: None,
         }
     }
 
@@ -516,6 +591,96 @@ mod tests {
             content_rows: 4,
         })));
         assert!(rect(&ui, &close_key()).is_none());
+    }
+
+    /// **The interior is in the tree.** A described panel's widget rows are
+    /// laid out inside the content area — not painted over it afterwards by a
+    /// second pass — so they have rectangles the pointer can be tested
+    /// against, which is the whole point of describing them.
+    #[test]
+    fn a_described_interior_lands_inside_the_content_area() {
+        use fresh_core::api::WidgetSpec;
+        let spec = WidgetSpec::Col {
+            children: vec![WidgetSpec::Raw {
+                entries: vec![
+                    fresh_core::text_property::TextPropertyEntry::text("alpha"),
+                    fresh_core::text_property::TextPropertyEntry::text("beta"),
+                ],
+                key: None,
+            }],
+            key: None,
+        };
+        let mut p = panel(Spot::Centered {
+            width_pct: 60,
+            content_rows: 4,
+        });
+        p.interior = Some(Interior {
+            spec: std::rc::Rc::new(spec),
+            states: Default::default(),
+            focus_key: String::new(),
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+        });
+        let ui = laid_out(Some(p));
+        let body = rect(&ui, &body_key()).expect("a content area");
+        for text in ["alpha", "beta"] {
+            // The panel is a layer, so its content is in the layer band —
+            // which is the whole point: it is placed, not painted afterwards.
+            let at = ui
+                .spec()
+                .in_flow()
+                .iter()
+                .chain(ui.spec().layers().iter())
+                .find_map(|i| match &i.draw {
+                    fresh_ui::Draw::Lines(l) if l.iter().any(|s| &**s == text) => Some(i.rect),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no row for {text}"));
+            assert!(
+                at.x >= body.x as i32
+                    && at.y >= body.y as i32
+                    && at.y < (body.y + body.height) as i32,
+                "{text} at {at:?} is outside the content area {body:?}"
+            );
+        }
+    }
+
+    /// A described panel's content area is **opaque**: the widgets answer
+    /// their own presses, and one that reaches the area but no widget is the
+    /// panel's to swallow. An undescribed one is transparent, because the
+    /// painter behind it hit-tests itself through `ModalPointer`.
+    #[test]
+    fn a_described_content_area_does_not_let_presses_through() {
+        use fresh_core::api::WidgetSpec;
+        let mut p = panel(Spot::Centered {
+            width_pct: 60,
+            content_rows: 4,
+        });
+        p.interior = Some(Interior {
+            spec: std::rc::Rc::new(WidgetSpec::Raw {
+                entries: vec![fresh_core::text_property::TextPropertyEntry::text("x")],
+                key: None,
+            }),
+            states: Default::default(),
+            focus_key: String::new(),
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+        });
+        let mut ui = laid_out(Some(p));
+        let body = rect(&ui, &body_key()).expect("a content area");
+        let got = facts(ui.dispatch(Input::press(
+            Point::new(body.x as i32 + 1, body.y as i32 + 1),
+            MouseButton::Left,
+            Mods::NONE,
+        )));
+        assert!(
+            !got.iter().any(|f| matches!(f, UiFact::ModalPointer(_))),
+            "the described area keeps the press, got {got:?}"
+        );
     }
 
     /// No panel, no box.

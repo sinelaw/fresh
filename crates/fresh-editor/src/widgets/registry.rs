@@ -56,7 +56,10 @@ impl std::fmt::Display for PanelKey {
 /// range is in UTF-8 bytes within the row's text, matching the
 /// coordinate space `mouse_click` already delivers
 /// (`HookArgs::MouseClick::buffer_col`).
-#[derive(Debug, Clone)]
+// `PartialEq` because a hit travels as a `UiFact` now — the tree finds the
+// widget a press landed on and the fact carries what the byte-range scan used
+// to reconstruct — and facts are compared in tests.
+#[derive(Debug, Clone, PartialEq)]
 pub struct HitArea {
     /// Stable widget key from the spec, or empty when the spec did
     /// not assign one.

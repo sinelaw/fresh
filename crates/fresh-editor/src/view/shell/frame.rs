@@ -105,9 +105,13 @@ impl HostTarget {
 /// decisions that today read `size` at the top of `render` — the dock's
 /// bail-out, the explorer's column count — are resolved from state before the
 /// description is built. See [`Frame::resolve_dock`].
-// Not `Eq`: a popup carries its content, and a markdown span's `Style` is only
-// `PartialEq`. Nothing compares frames for total equality.
-#[derive(Clone, Debug, PartialEq)]
+// Neither `Eq` nor `PartialEq`. Nothing compared frames — the doc comment here
+// said so while the derive stayed — and now something cannot: a mounted plugin
+// panel carries its `WidgetSpec`, which is `Clone + Debug` and not comparable,
+// because comparing two of them is not a question anything asks. A frame is
+// built fresh and handed to `frame_tree`; identity short-circuiting is
+// `.shared()`'s job (0.1), on subtrees, not on the whole description.
+#[derive(Clone, Debug)]
 pub struct Frame {
     pub menu_bar: bool,
     pub status_bar: bool,

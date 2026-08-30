@@ -5628,6 +5628,10 @@ impl Editor {
         // modal overlay. The centered placement keeps the historical
         // fit-to-content + background-dim behaviour.
         let is_dock = matches!(placement, super::PanelPlacement::LeftDock { .. });
+        // Whether the tree describes this panel's interior. One question, one
+        // answer, asked where the description was built — `panel_description`
+        // put the same interior in the frame.
+        let described = !is_dock && self.panel_interior(slot).is_some();
         // **The box is the tree's.** `view::shell::panel` describes it and
         // layout places it; this reads the answer. What was here was the
         // placement arithmetic — a percentage of the area for the width, the
@@ -5708,6 +5712,22 @@ impl Editor {
         // Web path: record the rect for native rendering / click routing, then
         // stop before painting any content cells.
         if !draw {
+            if let Some(fwp) = self.panel_mut(slot) {
+                fwp.last_inner_rect = Some(inner);
+            }
+            return;
+        }
+
+        // **Described panels stop here.** Everything below paints the
+        // interior — the rows, the scrollbars, the floated overlays, the open
+        // dropdown's pop-over — and for a described panel the tree already
+        // did, in the overlay band. Painting it twice would be the duplicate
+        // this migration removes, arriving by the back door.
+        //
+        // The rectangle is still recorded: `last_inner_rect` is what the web
+        // projection and the widget-runtime hit helpers read, and it is
+        // layout's answer either way.
+        if described {
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
             }
@@ -6543,6 +6563,50 @@ impl Editor {
         crate::view::shell::rect_of(ui, key, ratatui::layout::Rect::new(0, 0, f.width, f.height))
     }
 
+    /// The panel's interior as a description, when every variant of its spec
+    /// is one the tree describes.
+    ///
+    /// **All of it is host state the spec does not carry** — the focused
+    /// widget, the widget and row under the pointer, whether the focus-marker
+    /// gutter is reserved, the auto-size row budget, and the instance state
+    /// the stateful kinds are authoritative for. The runtime read the same
+    /// list off a `RenderContext`; here it is resolved once, where the
+    /// description is built, and handed down.
+    ///
+    /// `None` sends the whole panel down the runtime's path. A panel is
+    /// described or painted and never half of each, so `covered` asks the
+    /// whole tree — see `view::shell::widgets::covered`.
+    pub(crate) fn panel_interior(
+        &self,
+        slot: crate::app::PanelSlot,
+    ) -> Option<crate::view::shell::panel::Interior> {
+        use std::rc::Rc;
+        let panel = self.panel(slot)?;
+        let key = panel.panel_key.clone();
+        let spec = self.widget_registry.get(&key)?.spec.clone();
+        if !crate::view::shell::widgets::covered(&spec) {
+            return None;
+        }
+        Some(crate::view::shell::panel::Interior {
+            spec: Rc::new(spec),
+            states: Rc::new(
+                self.widget_registry
+                    .instance_states(&key)
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            focus_key: self
+                .widget_registry
+                .focus_key(&key)
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
+            hovered_item_key: panel.hovered_item_key.clone(),
+            marker_gutter: panel.focus_marker,
+            avail_height: self.floating_panel_inner_height(slot),
+        })
+    }
+
     pub(crate) fn panel_description(&self) -> Option<crate::view::shell::panel::Panel> {
         use crate::primitives::display_width::str_width;
         use crate::view::shell::panel::{Panel, Spot};
@@ -6574,6 +6638,11 @@ impl Editor {
             super::PanelPlacement::LeftDock { .. } => return None,
         };
         Some(Panel {
+            // Described when every variant of the spec is one the tree
+            // describes, and painted whole otherwise — a panel is one or the
+            // other. `WindowEmbed` is the variant that keeps some panels on
+            // the old path for good; it is a `Host` leaf by rule.
+            interior: self.panel_interior(crate::app::PanelSlot::Floating),
             spot,
             title: p.title.clone(),
             closable: p.closable,
