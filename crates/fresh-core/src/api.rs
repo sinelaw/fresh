@@ -3469,7 +3469,12 @@ pub enum PluginCommand {
     /// `editor.indentation_guide` default. Used by tool views (e.g. the Git Log
     /// commit-detail diff) that show non-editable content where the guides are
     /// noise.
-    SetIndentationGuide { buffer_id: BufferId, enabled: bool },
+    SetIndentationGuide {
+        buffer_id: BufferId,
+        /// `None` withdraws the override, so the buffer falls back to its
+        /// language gate and the global setting.
+        enabled: Option<bool>,
+    },
 
     /// Set the view mode for a buffer ("source" or "compose")
     SetViewMode { buffer_id: BufferId, mode: String },

@@ -529,13 +529,21 @@ impl crate::app::window::Window {
         if end_pos >= buffer.len() {
             return end_pos;
         }
-        let bytes = buffer.slice_bytes(end_pos..buffer.len().min(end_pos + 4));
-        match std::str::from_utf8(&bytes)
-            .ok()
-            .and_then(|text| text.chars().next())
-        {
-            Some(ch) if !ch.is_whitespace() => end_pos + ch.len_utf8(),
-            _ => end_pos,
+        let Some(ch) = char_at(buffer, end_pos) else {
+            return end_pos;
+        };
+        if ch.is_whitespace() {
+            return end_pos;
+        }
+        // Only when the byte past it is a separator the wrap consumed. A wrap
+        // can also split a run with no whitespace in it — CJK text, a long URL
+        // — and there the next byte is the first character of the row BELOW,
+        // which that row draws: stepping onto it would take `End` off the row.
+        let after = end_pos + ch.len_utf8();
+        match char_at(buffer, after) {
+            Some(next) if next.is_whitespace() => after,
+            None => after,
+            Some(_) => end_pos,
         }
     }
 
@@ -807,4 +815,23 @@ fn step_before_line_break(buffer: &crate::model::buffer::Buffer, pos: usize) -> 
         }
     }
     pos - 1
+}
+
+/// The character starting at `pos`, or `None` when `pos` is not a character
+/// boundary or the buffer ends there.
+///
+/// The width comes from the leading byte rather than from decoding a fixed
+/// window: a four-byte slice can end mid-character (`1+2+2`, `2+3`, …), and
+/// decoding that returns `Err`, which silently reads as "no character here".
+fn char_at(buffer: &crate::model::buffer::Buffer, pos: usize) -> Option<char> {
+    let lead = *buffer.slice_bytes(pos..pos.saturating_add(1)).first()?;
+    let width = match lead {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => return None,
+    };
+    let bytes = buffer.slice_bytes(pos..pos.saturating_add(width));
+    std::str::from_utf8(&bytes).ok()?.chars().next()
 }

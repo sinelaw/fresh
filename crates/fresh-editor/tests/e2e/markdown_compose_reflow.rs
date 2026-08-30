@@ -722,10 +722,20 @@ run past the window width by a comfortable margin.
             .unwrap_or_default()
             .to_string();
         let last_glyph_col = row_text.trim_end().chars().count();
+        // A row whose wrap consumed a separator ends one past its last glyph:
+        // that cell IS the separator. A row split mid-run has no separator to
+        // stand on — the byte past its last glyph is the first character of the
+        // row below, which that row draws — so there the row's end is its last
+        // glyph, and stepping past it would take the caret off the row.
+        let expected = if label == "no-whitespace run" {
+            last_glyph_col - 1
+        } else {
+            last_glyph_col
+        };
         assert_eq!(
-            after.0 as usize, last_glyph_col,
-            "{label}: `End` should sit just past the row's last glyph (column \
-             {last_glyph_col}) but is at {}.\nRow: {row_text:?}",
+            after.0 as usize, expected,
+            "{label}: `End` should sit at column {expected} but is at {}.\n\
+             Row: {row_text:?}",
             after.0,
         );
     }

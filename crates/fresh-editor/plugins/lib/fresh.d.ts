@@ -4280,7 +4280,7 @@ interface EditorAPI {
 	* `editor.indentation_guide` setting. Tool views that render non-editable
 	* content (e.g. the Git Log commit-detail diff) disable them.
 	*/
-	setIndentationGuide(bufferId: number, enabled: boolean): boolean;
+	setIndentationGuide(bufferId: number, enabled: boolean | null): boolean;
 	/**
 	* Set the view mode for a buffer ("source" or "compose")
 	*/

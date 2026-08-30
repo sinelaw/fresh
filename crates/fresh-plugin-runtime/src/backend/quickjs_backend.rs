@@ -5737,8 +5737,11 @@ impl JsEditorApi {
 
     /// Enable or disable indentation guides for a buffer, overriding the global
     /// `editor.indentation_guide` setting. Tool views that render non-editable
-    /// content (e.g. the Git Log commit-detail diff) disable them.
-    pub fn set_indentation_guide(&self, buffer_id: u32, enabled: bool) -> bool {
+    /// content (e.g. the Git Log commit-detail diff) disable them, and so does
+    /// markdown compose mode. `null` withdraws the override rather than forcing
+    /// guides on, so a buffer leaving compose gets back whatever the user's own
+    /// settings resolve to — the same shape `setFoldIndicators` uses.
+    pub fn set_indentation_guide(&self, buffer_id: u32, enabled: Option<bool>) -> bool {
         self.command_sender
             .send(PluginCommand::SetIndentationGuide {
                 buffer_id: BufferId(buffer_id as usize),

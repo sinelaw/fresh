@@ -422,18 +422,26 @@ function emitCodeRails(
   }
 
   const { rows } = codeRowLayout(text, measure);
+  // A code line's own leading whitespace is real text, so the first row draws
+  // it and the rows it wraps onto do not — they would restart flush against the
+  // rail, left of the code they continue. A fence inside a list item carries
+  // the item's indent on every source line, so that is most of them. The rail
+  // supplies the indent for those rows, because the wrap's own hanging indent
+  // would push the RAIL right instead of the code.
+  const codeIndent = text.length - text.trimStart().length;
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     if (row.end <= row.start) continue;
     const rowText = text.slice(row.start, row.end);
+    const railIndent = r === 0 ? 0 : Math.min(codeIndent, Math.max(0, inner - 1));
 
     editor.addVirtualTextStyled(
       bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`,
       charToByte(lineContent, row.start, byteStart),
-      RAIL_GLYPH, codeFrameStyle, true,
+      RAIL_GLYPH + " ".repeat(railIndent), codeFrameStyle, true,
     );
 
-    const pad = inner - displayWidth(rowText);
+    const pad = inner - displayWidth(rowText) - railIndent;
     if (pad < 0) continue; // unbreakable over-long row: leave the edge open
     // Anchor the closing rail *after the last character* of the row, found by
     // code point rather than by `end - 1`: a byte before the end lands inside
@@ -1111,6 +1119,14 @@ function enableMarkdownCompose(bufferId: number): void {
   // break up the clean left edge.
   editor.setFoldIndicators(bufferId, false);
 
+  // And for indentation guides. They are a code-editor affordance too, and a
+  // composed document has nothing for them to guide: the indentation they would
+  // track belongs to the SOURCE — a list item's continuation lines, a fenced
+  // block's body — which compose mode has already re-laid-out or concealed. The
+  // guides that survived that drew as a column of disconnected verticals beside
+  // reflowed paragraphs, tracking indents no longer on screen.
+  editor.setIndentationGuide(bufferId, false);
+
   // Enable native line wrapping so that long lines without whitespace
   // (which the plugin can't soft-break) are force-wrapped by the Rust
   // wrapping transform at the content width.
@@ -1159,8 +1175,11 @@ function disableMarkdownCompose(bufferId: number): void {
     // not necessarily "on".
     editor.setLineNumbersDefault(bufferId, null);
 
-    // Same for the fold indicators.
+    // Same for the fold indicators and the indentation guides — `null`
+    // withdraws the opinion rather than forcing them on, so a user who had
+    // either turned off keeps them off on the way out.
     editor.setFoldIndicators(bufferId, null);
+    editor.setIndentationGuide(bufferId, null);
 
     // Clear layout hints, emphasis overlays, conceals, and soft breaks
     editor.setLayoutHints(bufferId, null, {});
@@ -1530,11 +1549,21 @@ const HEADING_TEXT_STYLES: Array<Record<string, unknown>> = [
 // call.
 const LIST_BULLET = "•";
 
-// Nested indents are scaled rather than stepped by a fixed amount because the
-// source's own step is unknown — 2- and 4-space nesting are both common, and
-// scaling preserves relative depth either way. Capped at a quarter of the
-// measure so a deeply nested list can't push its text off the page.
-const LIST_INDENT_SCALE = 2;
+// A nested item's indent renders as written, because markdown's own indent is
+// already the alignment: a child item is nested precisely by being indented to
+// where its parent's TEXT begins, so `2. ` puts its children at three columns
+// and `- ` at two. Rendering that unchanged lands each child's marker under the
+// first letter of its parent, which is what the nesting means and what every
+// other renderer draws.
+//
+// Scaling it — this was doubled once, to keep relative depth when the source's
+// own step is unknown — breaks that: three source columns became six, so a
+// sub-bullet under `2. ` sat three columns right of the text it belongs to,
+// reading as a deeper level than it is. Depth is already carried by the source,
+// and doubling it only doubles the error when the guess is wrong.
+//
+// Still capped, so a deeply nested list cannot push its text off the page.
+const LIST_INDENT_SCALE = 1;
 
 interface ListLineInfo {
   sourceIndent: number;  // chars of leading whitespace
@@ -2555,7 +2584,9 @@ function processFlowBlock(bufferId: number, block: FlowBlock, width: number): vo
     for (const charPos of codeRowLayout(text, width).breaks) {
       // Indent 0, not the rail's width: the continuation row's own left rail
       // is virtual text spliced in ahead of the wrap, so it already supplies
-      // those columns. Asking for them again would indent the row twice.
+      // those columns — including the code's own leading indent, which
+      // `emitCodeRails` folds into the rail for exactly this reason. Asking for
+      // it here instead indents the RAIL, not the code.
       editor.addSoftBreak(
         bufferId, "md-wrap", charToByte(lineContent, charPos, byteStart), 0,
       );
