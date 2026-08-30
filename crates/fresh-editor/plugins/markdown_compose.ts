@@ -320,6 +320,12 @@ const CODE_RAIL_ID_PREFIX = "mdcr:";
 // hint convention and it is not optional, so the widths below count it rather
 // than trying to avoid it: a left rail costs 2 columns, a right rail its
 // padding plus 2.
+/** Columns of leading whitespace on a line, ignoring its terminator. */
+function leadingIndent(content: string): number {
+  const text = content.replace(/\r?\n$/, "");
+  return text.length - text.trimStart().length;
+}
+
 const RAIL_GLYPH = "│";
 const RAIL_RENDERED_COLUMNS = 2;
 
@@ -404,10 +410,15 @@ function emitCodeRails(
   lineContent: string,
   byteStart: number,
   measure: number,
+  // Columns the whole block is indented by — its opening delimiter's indent.
+  // The frame sits that far in, and the block's own measure shrinks to match,
+  // so an indented block wraps where its narrower box actually ends.
+  blockIndent: number,
 ): void {
   const contentEnd = lineContentEndByte(lineContent, byteStart);
   const text = lineContent.replace(/\r?\n$/, "");
-  const inner = codeInnerWidth(measure);
+  const blockMeasure = Math.max(4, measure - blockIndent);
+  const inner = codeInnerWidth(blockMeasure);
 
   // An empty line has no character to hang two separate rails off, so both
   // edges and the gap between them go in one piece at its line break. Anchored
@@ -416,29 +427,34 @@ function emitCodeRails(
   if (contentEnd <= byteStart) {
     editor.addVirtualTextStyled(
       bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:e`, byteStart,
-      RAIL_GLYPH + " ".repeat(inner + 2) + RAIL_GLYPH, codeFrameStyle, true,
+      " ".repeat(blockIndent) + RAIL_GLYPH + " ".repeat(inner + 2) + RAIL_GLYPH,
+      codeFrameStyle, true,
     );
     return;
   }
 
-  const { rows } = codeRowLayout(text, measure);
-  // A code line's own leading whitespace is real text, so the first row draws
-  // it and the rows it wraps onto do not — they would restart flush against the
-  // rail, left of the code they continue. A fence inside a list item carries
-  // the item's indent on every source line, so that is most of them. The rail
-  // supplies the indent for those rows, because the wrap's own hanging indent
-  // would push the RAIL right instead of the code.
-  const codeIndent = text.length - text.trimStart().length;
+  // The block's indent is real text on this line, drawn before the rail — so
+  // the rail is anchored past it and the layout measures only what follows.
+  const body = text.slice(blockIndent);
+  const { rows } = codeRowLayout(body, blockMeasure);
+  // A code line's indent WITHIN the block is real text too, so the first row
+  // draws it and the rows it wraps onto do not — they would restart flush
+  // against the rail, left of the code they continue. The rail supplies it for
+  // those rows, because the wrap's own hanging indent would push the RAIL right
+  // instead of the code.
+  const codeIndent = body.length - body.trimStart().length;
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     if (row.end <= row.start) continue;
-    const rowText = text.slice(row.start, row.end);
+    const rowText = body.slice(row.start, row.end);
     const railIndent = r === 0 ? 0 : Math.min(codeIndent, Math.max(0, inner - 1));
+    // Only the first row has the block's indent as real text ahead of it.
+    const railLead = r === 0 ? "" : " ".repeat(blockIndent);
 
     editor.addVirtualTextStyled(
       bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`,
-      charToByte(lineContent, row.start, byteStart),
-      RAIL_GLYPH + " ".repeat(railIndent), codeFrameStyle, true,
+      charToByte(lineContent, blockIndent + row.start, byteStart),
+      railLead + RAIL_GLYPH + " ".repeat(railIndent), codeFrameStyle, true,
     );
 
     const pad = inner - displayWidth(rowText) - railIndent;
@@ -448,7 +464,9 @@ function emitCodeRails(
     // a multi-byte glyph, and the row's last character is exactly where a
     // multi-byte glyph is most likely to be.
     const lastChar = Array.from(rowText).pop() as string;
-    const lastCharStart = charToByte(lineContent, row.end - lastChar.length, byteStart);
+    const lastCharStart = charToByte(
+      lineContent, blockIndent + row.end - lastChar.length, byteStart,
+    );
     editor.addVirtualTextStyled(
       bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, lastCharStart,
       " ".repeat(pad) + RAIL_GLYPH, codeFrameStyle, false,
@@ -1736,14 +1754,21 @@ function processLineConceals(
   if (region === "body") return;
   if (region === "open" || region === "close") {
     const frameEnd = lineContentEndByte(lineContent, byteStart);
+    // A block indented into a list item keeps its indent as real text and puts
+    // the corner after it, so the box sits inside the item the way every other
+    // renderer draws it. Concealing from the line's start instead pulled the
+    // border back to the page's left edge, under text it belongs beside.
+    const blockIndent = leadingIndent(lineContent);
+    const frameStart = charToByte(lineContent, blockIndent, byteStart);
+    const blockMeasure = Math.max(4, measure - blockIndent);
     const frame = region === "open"
-      ? buildCodeFrameLine(measure, "┌", "┐")
-      : buildCodeFrameLine(measure, "└", "┘");
+      ? buildCodeFrameLine(blockMeasure, "┌", "┐")
+      : buildCodeFrameLine(blockMeasure, "└", "┘");
     editor.addConceal(
-      bufferId, "md-syntax", byteStart, frameEnd, frame,
+      bufferId, "md-syntax", frameStart, frameEnd, frame,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
-    editor.addOverlay(bufferId, "md-emphasis", byteStart, frameEnd, codeFrameStyle);
+    editor.addOverlay(bufferId, "md-emphasis", frameStart, frameEnd, codeFrameStyle);
     return;
   }
   // A fence-looking line the editor could not classify: leave it literal
@@ -2574,7 +2599,12 @@ interface FlowCell {
  * needs — the wrap runs over the block's concatenated text instead of
  * restarting at each source line, and the newlines between them are concealed.
  */
-function processFlowBlock(bufferId: number, block: FlowBlock, width: number): void {
+function processFlowBlock(
+  bufferId: number,
+  block: FlowBlock,
+  width: number,
+  blockIndents: Map<number, number>,
+): void {
   const head = block.lines[0];
   // Clear existing soft breaks for every line in the block, so a block that
   // has shrunk (an edit split it) leaves none behind.
@@ -2600,7 +2630,15 @@ function processFlowBlock(bufferId: number, block: FlowBlock, width: number): vo
   if (isCodeRegion(head.region)) {
     if (head.region !== "body") return;
     const text = lineText(head);
-    for (const charPos of codeRowLayout(text, width).breaks) {
+    // The block's own indent is ahead of the rail and outside its box, so the
+    // rows are measured on what follows it — the same split `emitCodeRails`
+    // makes, or the two passes would disagree about where a row ends.
+    const blockIndent = blockIndents.get(head.byte_start) ?? 0;
+    const body = text.slice(blockIndent);
+    const blockWidth = Math.max(4, width - blockIndent);
+    for (const charPos of codeRowLayout(body, blockWidth).breaks.map(
+      (p) => p + blockIndent,
+    )) {
       // Indent 0, not the rail's width: the continuation row's own left rail
       // is virtual text spliced in ahead of the wrap, so it already supplies
       // those columns — including the code's own leading indent, which
@@ -3002,6 +3040,31 @@ editor.on("lines_changed", (data) => {
   // lines not in this batch keep riding their auto-shift markers. Soft breaks
   // are the one pass that is per *block* rather than per line (see
   // `processFlowBlock`), and they run below, after every line's clear.
+  // Columns each fenced line's BLOCK is indented by, keyed by line start.
+  //
+  // A fenced block inside a list item is indented to the item's content column,
+  // and its frame belongs there too. The indent is the OPENING delimiter's: a
+  // body line's own leading whitespace is code, not block indent, so a
+  // `    if x:` inside the block must not push the frame right for that row
+  // alone. Computed once here because two passes need it — the rails and border
+  // below, and the code rows' soft breaks after them — and they have to agree
+  // about the box's width or a row will break where the frame does not end.
+  //
+  // Absent when the opening delimiter is not in this batch, which a block whose
+  // body spans a blank line can be re-offered without. Those rows render as
+  // they did before the frame learned about indents, rather than at a guess.
+  const blockIndents = new Map<number, number>();
+  {
+    let indent: number | null = null;
+    for (const line of data.lines) {
+      if (line.region === "open") indent = leadingIndent(line.content);
+      if (isCodeRegion(line.region) && indent !== null) {
+        blockIndents.set(line.byte_start, indent);
+      }
+      if (line.region === "close") indent = null;
+    }
+  }
+
   for (const line of data.lines) {
     // Clear this row's border range first (covers a row that stopped being a
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
@@ -3012,7 +3075,10 @@ editor.on("lines_changed", (data) => {
     // delimiter rows draw their own corners as part of the border conceal.
     clearCodeRails(data.buffer_id, line.byte_start, line.byte_end);
     if (line.region === "body") {
-      emitCodeRails(data.buffer_id, line.content, line.byte_start, measure);
+      emitCodeRails(
+        data.buffer_id, line.content, line.byte_start, measure,
+        blockIndents.get(line.byte_start) ?? 0,
+      );
     }
     // Same range-scoped clear-then-rebuild as the borders, so a line that stops
     // being a list item loses its spacer.
@@ -3096,7 +3162,7 @@ editor.on("lines_changed", (data) => {
   // conceals by range — so emitting joins inside that loop would have the next
   // line's clear delete the join just added.
   for (const block of blocks) {
-    processFlowBlock(data.buffer_id, block, measure);
+    processFlowBlock(data.buffer_id, block, measure, blockIndents);
   }
 
   // Publish this batch's heading marks. Range-scoped to the batch's byte span
