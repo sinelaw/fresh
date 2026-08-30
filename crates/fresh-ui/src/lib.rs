@@ -45,6 +45,7 @@ pub use desc::{
     col, focusable, gesture, host, host_leaf, layer, layout_reader, node_key, node_type, resolve,
     row, shared_rc, stack, text, text_runs, viewport, Align, Anchor, BoxProps, ComponentExt, Desc,
     Dir, Dismiss, ElemType, Elide, Fit, FocusProps, GestureProps, Handler, HostId, HostSpec,
+    ItemRows,
     LayerProps, LayoutReaderProps, Listener, Modality, Node, Pad, Place, PointerMode, Run, Scrim,
     ScrollMode, Sizing, TextProps, ViewportProps,
 };

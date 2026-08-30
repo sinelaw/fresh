@@ -849,6 +849,54 @@ fn a_card_lists_bar_measures_the_window_in_items() {
     assert_eq!(bar, (0, 20, 3), "twenty items, three of them visible");
 }
 
+/// **A list whose rows differ in kind.** A tree of folder headers one row tall
+/// and cards several is still a list addressed by index — the offset counts
+/// items, the selection is an item, a click names one — and the only thing it
+/// cannot do is divide to find its window.
+#[test]
+fn a_list_can_give_each_row_its_own_height() {
+    // header, card, header, card, … — 1, 4, 1, 4, …
+    let heights: Vec<u16> = (0..10).map(|i| if i % 2 == 0 { 1 } else { 4 }).collect();
+    let hs = heights.clone();
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(10, fresh_ui::Key::from, move |i| {
+            fresh_ui::col()
+                .children((0..hs[i]).map(|r| fresh_ui::text(format!("{i}.{r}"))))
+        })
+        .row_rows_each(heights.clone())
+        .scrollbar()
+        .node(),
+        Size::new(20, 10),
+    );
+    let band = |i: usize| {
+        let id = ui.find_by_key(&fresh_ui::Key::from(i)).expect("row");
+        let r = ui.rect_of(id);
+        (r.y, r.h)
+    };
+    assert_eq!(band(0), (0, 1), "a header");
+    assert_eq!(band(1), (1, 4), "a card under it");
+    assert_eq!(band(2), (5, 1));
+    assert_eq!(band(3), (6, 4));
+
+    // Ten rows of window hold header/card/header/card = four items, and the
+    // bar says so: dividing by any single height would not have.
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find_map(|i| match i.draw {
+            Draw::Scrollbar {
+                offset,
+                content,
+                window,
+            } => Some((offset, content, window)),
+            _ => None,
+        })
+        .expect("a bar");
+    assert_eq!(bar, (0, 10, 4));
+}
+
 /// **Declining the focus ring is about the keyboard, not about being inert.**
 ///
 /// A list driven from outside — its selection set by the caller each frame —

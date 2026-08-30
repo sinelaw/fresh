@@ -308,8 +308,105 @@ impl TextProps {
     }
 }
 
+/// How many cells each of a viewport's items occupies.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ItemRows {
+    /// Every item the same height, which is what a list of lines is and what
+    /// a list of equal cards is.
+    ///
+    /// **The fast case, and the reason the distinction is worth making**: a
+    /// window can name the items it holds by dividing, without looking at any
+    /// of them. That is what keeps a window onto a million rows cheap.
+    Uniform(u16),
+    /// One height per item, for a list whose rows differ in kind — a tree of
+    /// folder headers one row tall and session cards several.
+    ///
+    /// The caller states them because it is the caller that knows: they come
+    /// from what the items *are*, not from measuring them. Resolving the
+    /// window walks the heights from the offset, so this is linear in what is
+    /// on screen for the window and linear in the list for the extent — fine
+    /// for the tens or hundreds of items a list like that has, and not the
+    /// shape to reach for at a million.
+    Each(std::rc::Rc<[u16]>),
+}
+
+impl Default for ItemRows {
+    fn default() -> Self {
+        ItemRows::Uniform(1)
+    }
+}
+
+impl ItemRows {
+    /// How tall item `i` is. An index past the end is one cell, which is what
+    /// an item that is not there costs.
+    pub fn at(&self, i: usize) -> u16 {
+        match self {
+            ItemRows::Uniform(h) => (*h).max(1),
+            ItemRows::Each(hs) => hs.get(i).copied().unwrap_or(1).max(1),
+        }
+    }
+
+    /// How many items starting at `first` fit in `cells`, at least one — a
+    /// window shows something even when the item is taller than it is.
+    pub fn fit(&self, first: usize, count: usize, cells: u16) -> u32 {
+        match self {
+            ItemRows::Uniform(h) => {
+                let _ = first;
+                let _ = count;
+                (cells / (*h).max(1)).max(1) as u32
+            }
+            ItemRows::Each(_) => {
+                let mut used = 0u32;
+                let mut n = 0u32;
+                for i in first..count {
+                    let h = self.at(i) as u32;
+                    if used + h > cells as u32 && n > 0 {
+                        break;
+                    }
+                    used += h;
+                    n += 1;
+                }
+                n.max(1)
+            }
+        }
+    }
+
+    /// The whole list's extent in cells.
+    pub fn total(&self, count: usize) -> u32 {
+        match self {
+            ItemRows::Uniform(h) => (count as u32).saturating_mul((*h).max(1) as u32),
+            ItemRows::Each(hs) => hs.iter().take(count).map(|h| (*h).max(1) as u32).sum(),
+        }
+    }
+
+    /// The largest offset that still fills the window — scrolling past it
+    /// would leave blank rows under the last item.
+    pub fn max_offset(&self, count: usize, cells: u16) -> u32 {
+        match self {
+            ItemRows::Uniform(h) => {
+                let rows = (cells / (*h).max(1)).max(1) as u32;
+                (count as u32).saturating_sub(rows)
+            }
+            ItemRows::Each(_) => {
+                // Walk back from the end, taking items while they fit.
+                let mut used = 0u32;
+                let mut first = count;
+                while first > 0 {
+                    let h = self.at(first - 1) as u32;
+                    if used + h > cells as u32 {
+                        break;
+                    }
+                    used += h;
+                    first -= 1;
+                }
+                first as u32
+            }
+        }
+    }
+}
+
 /// What a viewport's scroll offset counts.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub enum ScrollMode {
     /// Cells of content. The viewport translates its children.
     #[default]
@@ -318,12 +415,10 @@ pub enum ScrollMode {
     /// offset is an index. This is what lets a window onto a million rows exist
     /// at all: a cell extent that large does not fit a coordinate.
     ///
-    /// `height` is how many cells one item occupies, and it is uniform because
-    /// that is what makes an index answerable without measuring: a window that
-    /// has to measure every row to know which ones it holds is not a window
-    /// onto a million rows. A card list — items that are little blocks rather
-    /// than lines — is the case it exists for.
-    Items { count: u32, height: u16 },
+    /// `rows` is how many cells each item occupies — see [`ItemRows`]. A card
+    /// list, whose items are little blocks rather than lines, is why it is not
+    /// always one.
+    Items { count: u32, rows: ItemRows },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1150,21 +1245,26 @@ impl<M> Node<M> {
     /// tall. See [`Node::item_rows`] for taller ones.
     pub fn items(mut self, count: u32) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => p.mode = ScrollMode::Items { count, height: 1 },
+            Desc::Viewport(p) => {
+                p.mode = ScrollMode::Items {
+                    count,
+                    rows: ItemRows::default(),
+                }
+            }
             _ => panic!("items() applies to Viewport nodes only"),
         }
         self
     }
 
-    /// How many cells one item occupies. Applies after [`Node::items`], which
-    /// sets the count; uniform, and at least one.
-    pub fn item_rows(mut self, height: u16) -> Self {
+    /// How many cells each item occupies. Applies after [`Node::items`], which
+    /// sets the count. See [`ItemRows`].
+    pub fn item_rows(mut self, rows: ItemRows) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => match p.mode {
+            Desc::Viewport(p) => match &p.mode {
                 ScrollMode::Items { count, .. } => {
                     p.mode = ScrollMode::Items {
-                        count,
-                        height: height.max(1),
+                        count: *count,
+                        rows,
                     }
                 }
                 ScrollMode::Cells => panic!("item_rows() applies after items()"),

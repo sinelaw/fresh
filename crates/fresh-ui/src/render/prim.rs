@@ -1040,7 +1040,7 @@ impl RenderObject for ViewportRender {
         let scroll = cx.scroll();
 
         let mut own = own;
-        match self.props.mode {
+        match self.props.mode.clone() {
             ScrollMode::Cells => {
                 let w = own.w;
                 self.window = Rect::at(scroll, own);
@@ -1105,7 +1105,7 @@ impl RenderObject for ViewportRender {
                     translate: true,
                 });
             }
-            ScrollMode::Items { count: n, height } => {
+            ScrollMode::Items { count: n, rows } => {
                 // The child renders only the window, so nothing is translated
                 // and the offset is an index. A cell extent over a million rows
                 // would not fit a coordinate; an index does.
@@ -1122,26 +1122,27 @@ impl RenderObject for ViewportRender {
                     own.w = c.constrain(Size::new(natural, own.h)).w;
                 }
                 // Given a loose height, the viewport is as tall as its items —
-                // which is `count * height` cells, not `count` rows.
-                let want = (n.saturating_mul(height as u32)).min(u16::MAX as u32) as u16;
+                // which is their cells, not their count.
+                let want = rows.total(n as usize).min(u16::MAX as u32) as u16;
                 own = c.constrain(Size::new(own.w, want));
                 // The window is stated in *items*, because that is what the
                 // offset counts and what the builder inside it asks for. Cells
-                // enter only here, dividing.
-                let rows = (own.h / height) as u32;
+                // enter only here, resolving how many of them fit.
+                let first = scroll.y.max(0) as usize;
+                let visible = rows.fit(first, n as usize, own.h);
                 self.items = n;
                 // When the content overflows and a scrollbar is asked for, the
                 // last column is a gutter the scrollbar owns: content laid out
                 // over it would paint the bar away, since a node's own paint is
                 // under its children. A stable gutter reserves it either way.
                 let gutter =
-                    u16::from(self.props.scrollbar && (self.props.stable_gutter || n > rows));
+                    u16::from(self.props.scrollbar && (self.props.stable_gutter || n > visible));
                 let inner_w = own.w.saturating_sub(gutter);
-                self.window = Rect::new(0, scroll.y, inner_w, rows.min(u16::MAX as u32) as u16);
+                self.window = Rect::new(0, scroll.y, inner_w, visible.min(u16::MAX as u32) as u16);
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
-                    content: Size::new(inner_w, rows.min(u16::MAX as u32) as u16),
-                    max: Point::new(0, n.saturating_sub(rows) as i32),
+                    content: Size::new(inner_w, visible.min(u16::MAX as u32) as u16),
+                    max: Point::new(0, rows.max_offset(n as usize, own.h) as i32),
                     translate: false,
                 });
                 let inner = Constraints::new(inner_w, inner_w, 0, own.h);
@@ -1163,9 +1164,9 @@ impl RenderObject for ViewportRender {
         if !self.props.scrollbar {
             return;
         }
-        let (offset, content) = match self.props.mode {
+        let (offset, content) = match &self.props.mode {
             ScrollMode::Cells => (self.window.y.max(0) as u32, self.content.h as u32),
-            ScrollMode::Items { count, .. } => (self.window.y.max(0) as u32, count),
+            ScrollMode::Items { count, .. } => (self.window.y.max(0) as u32, *count),
         };
         // The window is in the same unit the offset and the content are: cells
         // for `Cells`, items for `Items`. They differ once an item is more than
