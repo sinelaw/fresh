@@ -958,22 +958,72 @@ fn render_widget_text(
         prev_completion_scroll,
         ctx.marker_gutter,
     );
-    // Persist instance state for next render. `editor`
-    // already carries the canonical cursor (row/col +
-    // selection); `scroll` carries the renderer's
-    // auto-clamped first-visible-row for multi-line, or `0`
-    // for single-line.
+    // **What this walk decides about a text field is two numbers.**
+    //
+    // The other five were only ever carried: the editor is the same one
+    // `resolve` read out of `prev` (or seeded from the spec, which `resolve`
+    // also does, on every read), and the candidate list, its index and the
+    // navigated flag are what the plugin pushed through `SetCompletions`.
+    // Writing those back made the render walk a second writer of fields
+    // `on_key` and `on_pointer` own — the shape `kinds::dropdown`,
+    // `kinds::number` and `kinds::dual_list` have already been relieved of.
+    //
+    // Two are genuinely this walk's, and they are the reason `Text` could not
+    // simply follow the other three: they are *folds*, not derivations. The
+    // window — `scroll`, first visible row for a text area or first painted
+    // char for a single-line field — is "move just far enough to keep the
+    // caret in view", which is a statement about where the window already
+    // was; the completion popup's offset is a forward-only auto-scroll, which
+    // is the same shape. Neither can be recomputed from the spec and the
+    // stored value alone, so neither can be dropped the way a clamp was.
+    //
+    // They are still written by the wrong party. A *described* field computes
+    // the same window in `single_line`, at the width layout actually gave it,
+    // and cannot write it — so the description reads what this walk decided at
+    // the width the registry recorded, and the two agree only while those
+    // widths agree. That is 2.1's remaining defect, and closing it means the
+    // window becoming element state rather than moving to another host field.
+    // Named here so it is not mistaken for finished.
     if let Some(k) = key.filter(|k| !k.is_empty()) {
+        let carried = match prev.get(k) {
+            Some(WidgetInstanceState::Text {
+                editor,
+                completions,
+                completion_selected_index,
+                completion_navigated,
+                user_scrolled,
+                ..
+            }) => (
+                editor.clone(),
+                completions.clone(),
+                *completion_selected_index,
+                *completion_navigated,
+                *user_scrolled,
+            ),
+            // No stored entry: this render is the first, and the seed is the
+            // spec's. Recording the seed is what let the walk look like an
+            // authority; `resolve` re-seeds on every read, so the entry only
+            // needs to exist once a fold has something to remember.
+            _ => (
+                effective_editor.clone(),
+                prev_completions,
+                prev_completion_idx,
+                prev_completion_navigated,
+                false,
+            ),
+        };
+        let (editor, completions, completion_selected_index, completion_navigated, user_scrolled) =
+            carried;
         next_state.insert(
             k.to_string(),
             WidgetInstanceState::Text {
-                editor: effective_editor.clone(),
+                editor,
                 scroll: new_scroll,
-                completions: prev_completions,
-                completion_selected_index: prev_completion_idx,
+                completions,
+                completion_selected_index,
                 completion_scroll_offset: prev_completion_scroll,
-                completion_navigated: prev_completion_navigated,
-                user_scrolled: false,
+                completion_navigated,
+                user_scrolled,
             },
         );
     }

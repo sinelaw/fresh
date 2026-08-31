@@ -597,20 +597,22 @@ fn collect_dual_list(
         focused
     };
     let st = resolve(options, &seed, key, prev, is_focused);
-    // The resolver answers; persisting the answer stays here, so instance
-    // state has one writer and every reader — this collector, the
-    // description — gets it from the same rules.
-    if let Some(k) = key {
-        if !k.is_empty() {
-            next_state.insert(
-                k.to_string(),
-                WidgetInstanceState::DualList {
-                    included: st.included.clone(),
-                    active_included: st.active_included,
-                    available_cursor: st.available_cursor as u32,
-                    included_cursor: st.included_cursor as u32,
-                },
-            );
+    // **The walk carries this widget's state; it does not decide it.**
+    //
+    // What it used to write back was `resolve`'s answer — the sanitized
+    // included set and both clamped cursors — and every one of those is
+    // recomputed on each read by the same function, which the painter and the
+    // description both call. Persisting a derivation stored nothing a reader
+    // could not work out, and it made the render walk a second writer of
+    // fields `on_key` and `on_pointer` own.
+    //
+    // The pass-through keeps the entry alive across the whole-map replace in
+    // `update_side_effects`; an absent one stays absent, so a control nobody
+    // has touched still reads its columns from the spec. Same rule as
+    // `kinds::dropdown` and `kinds::number`, for the same reason.
+    if let Some(k) = key.filter(|k| !k.is_empty()) {
+        if let Some(stored) = prev.get(k) {
+            next_state.insert(k.to_string(), stored.clone());
         }
     }
 

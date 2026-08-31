@@ -5146,7 +5146,6 @@ impl Editor {
         let avail_height = self.widget_panel_height(buffer_id);
         let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
         self.record_widget_panel_render_height(&panel_key, avail_height);
-        let focus_cursor = out.focus_cursor;
         // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
         // buffer-mounted panels consume only the base rows + hits —
         // `out.overlays` and `out.popup` are DROPPED, and the click
@@ -5194,7 +5193,7 @@ impl Editor {
                 buffer_id
             );
         }
-        self.apply_widget_focus_cursor(buffer_id, &entries, focus_cursor);
+        self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
     }
 
     fn handle_update_widget_panel(
@@ -5226,7 +5225,6 @@ impl Editor {
         let avail_height = self.widget_panel_height(buffer_id_for_width);
         let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
         self.record_widget_panel_render_height(panel_key, avail_height);
-        let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         match self.widget_registry.update(
             panel_key,
@@ -5242,7 +5240,7 @@ impl Editor {
                 if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
                     tracing::error!("Failed to render updated widget panel {}: {}", panel_key, e);
                 }
-                self.apply_widget_focus_cursor(buffer_id, &entries, focus_cursor);
+                self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
             }
             Err(()) => {
                 tracing::debug!(
@@ -5617,8 +5615,6 @@ impl Editor {
             placement,
             focused: !start_blurred,
             entries: Vec::new(),
-            focus_cursor: None,
-            embeds: Vec::new(),
             overlays: Vec::new(),
             boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
@@ -5665,9 +5661,7 @@ impl Editor {
                 }),
             )
         };
-        let focus_cursor = out.focus_cursor;
         let entries = out.entries;
-        let embeds = out.embeds;
         let overlays = out.overlays;
         let panel_boxes = out.boxes.clone();
         let popup = out.popup;
@@ -5684,8 +5678,6 @@ impl Editor {
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
-            fwp.focus_cursor = focus_cursor;
-            fwp.embeds = embeds;
             fwp.overlays = overlays;
             fwp.boxes = panel_boxes;
             fwp.popup = popup;
@@ -5762,9 +5754,7 @@ impl Editor {
                 }),
             )
         };
-        let focus_cursor = out.focus_cursor;
         let entries = out.entries;
-        let embeds = out.embeds;
         let overlays = out.overlays;
         let panel_boxes = out.boxes.clone();
         let popup = out.popup;
@@ -5790,8 +5780,6 @@ impl Editor {
         }
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
-            fwp.focus_cursor = focus_cursor;
-            fwp.embeds = embeds;
             fwp.overlays = overlays;
             fwp.boxes = panel_boxes;
             fwp.popup = popup;

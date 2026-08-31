@@ -7208,10 +7208,29 @@ pub(crate) mod tests {
             out.popup.is_none(),
             "an unfocused (closed) dropdown surfaces no pop-over"
         );
+        // **The flag is carried through, and the gate is at the read.** A blur
+        // closes the list, but that is a derivation, not a state change: the
+        // walk used to write the gated value back, which made it a second
+        // writer of a field `set_open` owns. `kinds::dropdown::resolve`
+        // applies the gate for the painter and the description alike, and
+        // `is_open` applies it for the click path — so the stored flag stays
+        // as the user left it and every reader still sees a closed list.
         match out.instance_states.get("d") {
-            Some(WidgetInstanceState::Dropdown { open, .. }) => assert!(!open),
-            other => panic!("expected Dropdown state, got {other:?}"),
+            Some(WidgetInstanceState::Dropdown { open, .. }) => assert!(
+                open,
+                "the stored flag is untouched; what is gated is every read of it"
+            ),
+            other => panic!("expected the stored entry to survive, got {other:?}"),
         }
+        let gated = crate::widgets::kinds::dropdown::resolve(
+            &["a".to_string(), "b".to_string()],
+            0,
+            false,
+            Some("d"),
+            &prev,
+            /* is_focused */ false,
+        );
+        assert!(!gated.open, "and the read says closed");
     }
 
     #[test]
@@ -7399,13 +7418,17 @@ pub(crate) mod tests {
         let body: String = out[2..].iter().map(|e| e.text.clone()).collect();
         assert!(body.contains("Alpha"), "available col: {body:?}");
         assert!(body.contains("Beta"), "included col: {body:?}");
-        // Instance state seeded from spec.
-        match state.get("d") {
-            Some(WidgetInstanceState::DualList { included, .. }) => {
-                assert_eq!(included, &vec!["b".to_string()]);
-            }
-            other => panic!("expected DualList state, got {other:?}"),
-        }
+        // **The columns are seeded from the spec at every read, not written
+        // down.** The rows above already prove the seeding worked; what a
+        // render must not do is record it, because sanitizing the included set
+        // and clamping the cursors is a derivation `kinds::dual_list::resolve`
+        // performs for every reader. Storing it made the walk a second writer
+        // of fields the key and pointer handlers own.
+        assert!(
+            state.get("d").is_none(),
+            "a render that decides nothing records nothing: {:?}",
+            state.get("d")
+        );
     }
 
     #[test]

@@ -1793,8 +1793,6 @@ mod wave_dismiss_tests {
             placement: crate::app::PanelPlacement::Centered,
             focused: true,
             entries: Vec::new(),
-            focus_cursor: None,
-            embeds: Vec::new(),
             overlays: Vec::new(),
             boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),

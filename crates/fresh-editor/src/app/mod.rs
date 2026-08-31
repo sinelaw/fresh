@@ -1569,15 +1569,19 @@ pub(crate) struct FloatingWidgetState {
     /// command / mutate; painted into the overlay rect at draw
     /// time.
     pub entries: Vec<fresh_core::text_property::TextPropertyEntry>,
-    /// Hardware-cursor target when a `TextInput` is focused.
-    pub focus_cursor: Option<crate::widgets::FocusCursor>,
-    /// Window-embed rectangles reserved by `WindowEmbed`
-    /// widgets in the panel's spec. After the entries paint
-    /// down their (blank) cells, the floating panel render
-    /// walks these and invokes the per-window paint path
-    /// scoped to each rect — giving us a live render of the
-    /// referenced editor window inside the floating overlay.
-    pub embeds: Vec<crate::widgets::EmbedRect>,
+    // **`focus_cursor` and `embeds` are gone from here; both were
+    // write-only.**
+    //
+    // The first was the hardware-cursor target for a focused field, the second
+    // the rectangles a `WindowEmbed` reserved so the panel painter could walk
+    // them and invoke the per-window paint scoped to each. Both existed for
+    // that painter, and it is deleted: a caret is a marker node whose cell
+    // layout reports, and an embed is a `Host` leaf handed its own rectangle.
+    //
+    // The runtime still *computes* both — `apply_widget_focus_cursor` uses its
+    // focus cursor to move a pane-mounted panel's buffer cursor, which is
+    // contract a plugin reads through `cursor_moved` — so what went is the
+    // storage on this struct, not the value.
     /// Rows produced by `WidgetSpec::Overlay` children. Painted
     /// AFTER `entries` and `embeds`, on top of whatever's at
     /// each `buffer_row`. Used for dropdown completions /
@@ -2244,8 +2248,6 @@ mod tests {
             placement,
             focused,
             entries: Vec::new(),
-            focus_cursor: None,
-            embeds: Vec::new(),
             overlays: Vec::new(),
             boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),

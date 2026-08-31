@@ -317,7 +317,6 @@ impl Editor {
                 // do. Tracked off the same motion events as the dock's
                 // scrollbar reveal (`Dock::on_hover_change`), and likewise
                 // re-rendering only on the enter/leave transition.
-                needs_render = self.update_widget_hover(col, row, None) || needs_render;
             }
             _ => {
                 // Ignore other mouse events for now
