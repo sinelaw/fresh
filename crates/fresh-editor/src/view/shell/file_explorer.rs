@@ -168,7 +168,14 @@ fn runs_of(runs: &Runs) -> Vec<Run> {
 /// sits *on* the top border line — which is where a ratatui `Block` draws its
 /// title too. The strip is one cell high, so it covers the border row and
 /// nothing else; the rows below it stay reachable by the pointer.
+/// **Memoised on the explorer's state.** The tree is rebuilt every frame
+/// and changes only when the listing, the cursor, a hover or the width
+/// does. `Explorer` is `PartialEq` and is the whole of what this reads.
 pub fn explorer(e: &Explorer) -> Node<UiMsg> {
+    fresh_ui::memo(e.clone(), build_explorer)
+}
+
+fn build_explorer(e: &Explorer) -> Node<UiMsg> {
     stack().children([panel(e), overlay(e)])
 }
 

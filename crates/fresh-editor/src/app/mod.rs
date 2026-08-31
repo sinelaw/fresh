@@ -1130,6 +1130,11 @@ pub struct Editor {
     /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
     /// See docs/internal/web-ui.md.
     pub(crate) suppress_chrome_cells: bool,
+    /// Theme-key runs the background band's fold recorded, held until the
+    /// overlay band has added its own so both are applied to the per-cell map
+    /// together — in paint order, which is what the inspector wants. Frame
+    /// -scoped: taken and refilled every frame, never read between them.
+    pub(crate) fold_provenance: Vec<crate::app::types::ThemeRun>,
     /// THE menu walk for the frame being rendered: rectangles, the shell's
     /// description, and the theme-key provenance, all from one pass.
     ///

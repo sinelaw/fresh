@@ -1988,3 +1988,139 @@ fn test_command_palette_description_search() {
     harness.assert_screen_contains("Toggle Page View");
     harness.assert_screen_contains("Set Page Width");
 }
+
+// ---------------------------------------------------------------------------
+// "The state changed and nothing asked for a repaint."
+//
+// The whole suite is blind to this class by construction: every input helper
+// on `EditorTestHarness` ends in `self.render()`, so a test can only ever
+// assert what a frame *contains*. In the real terminal nothing calls
+// `render()` for you — `main.rs` repaints only when `Editor::handle_mouse`
+// returns `true` — so a surface that mutates its own state and reports
+// `false` looks perfect here and is frozen on the user's screen.
+//
+// Three bugs of exactly that shape shipped on the retained-UI migration:
+//
+//  1. a described panel's hover changed state but no frame was requested;
+//  2. `Dispatched::changed` was `!result.msgs.is_empty()` alone, so a
+//     `widgets::List`'s own hover write — an updater that deliberately
+//     produces no message, so the host is not bothered with it — never got a
+//     frame. `changed` is now `ui.needs_frame() || !msgs.is_empty()`;
+//  3. `update_lsp_hover_state` dismissed a tooltip and returned nothing, so
+//     the dismissal was never drawn.
+//
+// The tests below use `mouse_move_reporting_render`, which does NOT render:
+// the returned bool is the assertion. The command palette's suggestion list is
+// a `fresh_ui::widgets::List` (`view::shell::prompt`), so it is bug 2's exact
+// shape — its rows keep their hover in list state, not in a `UiFact`.
+// ---------------------------------------------------------------------------
+
+/// The (col, row) of the first cell of `needle` on screen, in *character*
+/// columns — the popup is drawn inside a box-drawing frame, so a byte offset
+/// into the line is not a column.
+fn cell_of(harness: &EditorTestHarness, needle: &str) -> (u16, u16) {
+    let screen = harness.screen_to_string();
+    for (r, line) in screen.lines().enumerate() {
+        if let Some(byte) = line.find(needle) {
+            return (line[..byte].chars().count() as u16, r as u16);
+        }
+    }
+    panic!("screen missing '{needle}':\n{screen}");
+}
+
+/// Open the command palette and settle it, returning the cell of a suggestion
+/// row that is **not** the selected one.
+///
+/// Not the selected row on purpose: the selected row is already painted with
+/// its own band, so a hover that failed to repaint could hide behind it. The
+/// row under test is one whose only reason to be redrawn is the pointer.
+fn palette_with_unselected_row(harness: &mut EditorTestHarness) -> (u16, u16) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    // "Add Cursor Above" sorts first and is therefore the selected row;
+    // "Add Cursor Below" is the row below it.
+    harness.assert_screen_contains("Add Cursor Below");
+    let cell = cell_of(harness, "Add Cursor Below");
+    // Settle: whatever the palette's own first frame queued must be flushed
+    // before the pointer is the only thing that can dirty the tree.
+    harness.render().unwrap();
+    harness.render().unwrap();
+    cell
+}
+
+/// Moving the pointer onto a suggestion row must **ask for a frame**, and
+/// leaving it there must not.
+///
+/// This is the pinned bug: a `widgets::List` owns its hover, and it writes it
+/// through an updater that returns no message — precisely so the host is not
+/// bothered with a highlight. `Dispatched::changed` was computed from
+/// `!result.msgs.is_empty()`, which is empty for exactly that write, so
+/// `handle_mouse` answered "nothing to draw" while the list sat dirty in the
+/// scheduler waiting for a frame that was never asked for. Rows never lit
+/// under the pointer, while the menu bar's did — the menu bar's hover is a
+/// `UiFact` and a list's is not.
+///
+/// The two halves are asserted together deliberately. A `true` on its own
+/// would survive anyone making `changed` unconditionally true; the second move
+/// lands on the same cell, crosses no element boundary, queues nothing, and
+/// must therefore answer `false`. Only the pair proves the bool is computed
+/// from the tree's state rather than being a constant.
+#[test]
+fn test_palette_row_hover_requests_a_frame() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let (col, row) = palette_with_unselected_row(&mut harness);
+
+    let asked = harness.mouse_move_reporting_render(col, row).unwrap();
+    assert!(
+        asked,
+        "hovering the palette row at ({col},{row}) wrote the list's hover state, so \
+         handle_mouse had to report needs_render — it reported false, which in the \
+         real editor is a highlight that never gets drawn:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Draw the frame that was just asked for, then hold still.
+    harness.render().unwrap();
+    let asked_again = harness.mouse_move_reporting_render(col, row).unwrap();
+    assert!(
+        !asked_again,
+        "a second motion onto the cell the pointer is already on crosses no element \
+         boundary and changes nothing, so it must not request a frame — reporting \
+         true here means the needs-render answer is a constant and the assertion \
+         above is vacuous:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// A pointer moving over ground that owns no hover must not ask for a frame.
+///
+/// The negative half of the rule, on a second surface so it is not only the
+/// "same cell twice" case: the editor's own text area is not a tree surface
+/// with a hover, and bare motion across it changes nothing anybody draws. An
+/// editor that repaints on every motion event burns a frame per pointer
+/// sample, which is the failure mode a careless fix for the bug above
+/// produces — `changed = true` unconditionally makes every test in this file
+/// pass and the editor repaint continuously.
+#[test]
+fn test_bare_motion_over_the_text_area_requests_no_frame() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text("alpha beta gamma\ndelta epsilon\n")
+        .unwrap();
+    harness.render().unwrap();
+
+    // Two moves: the first may legitimately request a frame (it is the first
+    // time the pointer has been anywhere), the second is the assertion.
+    harness.mouse_move(40, 10).unwrap();
+    harness.render().unwrap();
+    let asked = harness.mouse_move_reporting_render(41, 10).unwrap();
+    assert!(
+        !asked,
+        "bare motion across the text area changes nothing, so it must not request a \
+         frame:\n{}",
+        harness.screen_to_string()
+    );
+}

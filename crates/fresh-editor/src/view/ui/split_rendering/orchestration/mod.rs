@@ -1314,17 +1314,17 @@ pub(crate) fn record_scrollbar_theme_runs(
                 x: scrollbar_rect.x,
                 y: scrollbar_rect.y + row,
                 w: scrollbar_rect.width,
-                fg_key: Some(if is_thumb {
+                fg_key: Some(std::borrow::Cow::Borrowed(if is_thumb {
                     "ui.scrollbar_thumb_fg"
                 } else {
                     "ui.scrollbar_track_fg"
-                }),
-                bg_key: Some("editor.bg"),
-                region: if is_thumb {
+                })),
+                bg_key: Some(std::borrow::Cow::Borrowed("editor.bg")),
+                region: std::borrow::Cow::Borrowed(if is_thumb {
                     "Scrollbar Thumb"
                 } else {
                     "Scrollbar Track"
-                },
+                }),
             });
         }
     }

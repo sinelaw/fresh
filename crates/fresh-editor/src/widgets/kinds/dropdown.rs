@@ -169,34 +169,10 @@ fn collect_dropdown(
     } else {
         focused
     };
-    // Instance state is authoritative after first render; clamp the
-    // selected index into the current option set and persist. A panel
-    // that renders statelessly (no prior instance state — e.g. the
-    // Settings dialog re-emitting its model each frame) falls back to
-    // the spec's `open`/`scroll_offset`: the host model drives the
-    // expansion directly, so the spec's `open` is honored as-is (no
-    // focus gate — the surface's own focus model already decided).
-    let (cur, state_open) = match key {
-        Some(k) if !k.is_empty() => match prev.get(k) {
-            Some(WidgetInstanceState::Dropdown {
-                selected_index,
-                open,
-            }) => (*selected_index, Some(*open)),
-            _ => (spec_selected, None),
-        },
-        _ => (spec_selected, None),
-    };
-    let cur = if options.is_empty() {
-        0
-    } else {
-        cur.clamp(0, options.len() as i32 - 1)
-    };
-    // Instance-state open only persists while the widget is focused —
-    // a blur (Tab away, click elsewhere) closes it.
-    let open = match state_open {
-        Some(o) => o && is_focused,
-        None => spec_open,
-    } && !options.is_empty();
+    let Resolved {
+        selected: cur,
+        open,
+    } = resolve(options, spec_selected, spec_open, key, prev, is_focused);
     if let Some(k) = key {
         if !k.is_empty() {
             next_state.insert(
@@ -255,88 +231,14 @@ fn collect_dropdown(
     // areas are registered by the host draw pass, not here (they live
     // outside the panel's buffer rows).
     if open {
-        // Anchor column = the display width of the row text before the
-        // button's `[`, so the pop-over drops directly under the value cell
-        // rather than at the panel's left content edge. `button_range.0` is a
-        // byte offset into `entry.text`; measure its display width (the focus
-        // marker `▸ ` is 4 bytes but 2 columns, so byte length would misalign).
-        use crate::primitives::display_width::str_width;
-        let anchor_col = entry
-            .text
-            .get(..button_range.0)
-            .map(|prefix| str_width(prefix) as u32)
-            .unwrap_or(0);
-        // Windowing lives here with the rest of the render: clamp the
-        // scroll, slice the visible rows, and hand the host display
-        // text + absolute indices only.
-        let visible = options.len().min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
-        let max_scroll = options.len().saturating_sub(visible);
-        let scroll = scroll_offset.min(max_scroll);
-        // Rows render HERE, like every other widget row: one column
-        // of left padding, popup-family theme keys, the selected row
-        // highlighted with the same keys the completion popup uses
-        // (this also normalizes the pop-over's colors with the rest
-        // of the popup family).
-        let mut popup_entries = Vec::new();
-        let mut row_indices = Vec::new();
-        // **Every row is the width of the widest option.** They were each
-        // their own text's length, so the selected row's highlight was the
-        // width of its *word* — "default" lit while "macos-gui" beside it set
-        // the box's width, leaving the band two columns short of the edge on
-        // one row and flush on another. A pop-over is a column of equal cells;
-        // padding them here also fixes the box, which takes its width from the
-        // longest row it is given.
-        let cell_cols = options
-            .iter()
-            .map(|o| crate::primitives::display_width::str_width(o))
-            .max()
-            .unwrap_or(0);
-        for (idx, opt) in options.iter().enumerate().skip(scroll).take(visible) {
-            use crate::widgets::render::{
-                KEY_COMPLETION_FG, KEY_COMPLETION_SEL_BG, KEY_COMPLETION_SEL_FG,
-            };
-            use fresh_core::api::{OverlayColorSpec, OverlayOptions};
-            use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
-            let text = format!(" {} ", crate::widgets::render::cell(opt, cell_cols));
-            let mut e = TextPropertyEntry::text(&text);
-            let selected = idx == cur as usize;
-            // The row under the pointer, which the tree reports because the
-            // runtime's own hover probe cannot see a pop-over's rows. Selected
-            // wins: a hover band under the selection would only mute it.
-            let hovered = !selected && ctx.hover_popup_row == idx.to_string();
-            e.inline_overlays.push(InlineOverlay {
-                start: 0,
-                end: text.len(),
-                style: OverlayOptions {
-                    fg: Some(OverlayColorSpec::theme_key(if selected {
-                        KEY_COMPLETION_SEL_FG
-                    } else {
-                        KEY_COMPLETION_FG
-                    })),
-                    bg: match (selected, hovered) {
-                        (true, _) => Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
-                        (false, true) => Some(OverlayColorSpec::theme_key(
-                            crate::widgets::render::KEY_HOVER_BG,
-                        )),
-                        (false, false) => None,
-                    },
-                    bold: selected,
-                    ..Default::default()
-                },
-                properties: Default::default(),
-                unit: OffsetUnit::Byte,
-            });
-            popup_entries.push(e);
-            row_indices.push(idx);
-        }
-        out.popups.push(PanelPopup {
-            widget_key,
-            anchor_row: 0,
-            anchor_col,
-            anchor_absolute: false,
-            entries: popup_entries,
-            row_indices,
-        });
+        out.popups.push(popup_of(
+            options,
+            cur,
+            scroll_offset as u32,
+            ctx.hover_popup_row,
+            &widget_key,
+            anchor_col(&entry.text, button_range.0),
+        ));
         // The pop-over as a box: screen-space (its final rectangle is
         // resolved at paint, flipping above the anchor near the frame
         // edge), two stacking levels up. Panel-space hit-testing skips
@@ -352,6 +254,152 @@ fn collect_dropdown(
     ensure_trailing_newline(&mut entry);
     out.entries.insert(0, entry);
     out
+}
+
+/// A `Dropdown`'s two pieces of state, once the spec and the instance map
+/// have been reconciled.
+pub(crate) struct Resolved {
+    /// The option index the trigger shows, clamped into the current set.
+    pub selected: i32,
+    /// Whether the option pop-over is up.
+    pub open: bool,
+}
+
+/// **Where a `Dropdown`'s selection and open flag actually come from.**
+///
+/// Instance state is authoritative after first render; the spec's
+/// `selected_index` is a seed. A panel that renders statelessly — no prior
+/// instance state, e.g. the Settings dialog re-emitting its model each frame —
+/// falls back to the spec's `open`: the host model drives the expansion
+/// directly, so it is honored as-is with no focus gate, because that surface's
+/// own focus model already decided.
+///
+/// Pulled out of the collector because the *description* needs the same
+/// answer, and a second copy of these rules is a second place for them to
+/// drift. This is a pure function of what it is handed — no `next_state`
+/// write — which is what lets a description call it. See
+/// `view::shell::widgets`'s `Dropdown` arm.
+pub(crate) fn resolve(
+    options: &[String],
+    spec_selected: i32,
+    spec_open: bool,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    is_focused: bool,
+) -> Resolved {
+    let (cur, state_open) = match key {
+        Some(k) if !k.is_empty() => match prev.get(k) {
+            Some(WidgetInstanceState::Dropdown {
+                selected_index,
+                open,
+            }) => (*selected_index, Some(*open)),
+            _ => (spec_selected, None),
+        },
+        _ => (spec_selected, None),
+    };
+    let selected = if options.is_empty() {
+        0
+    } else {
+        cur.clamp(0, options.len() as i32 - 1)
+    };
+    // Instance-state open only persists while the widget is focused —
+    // a blur (Tab away, click elsewhere) closes it.
+    let open = match state_open {
+        Some(o) => o && is_focused,
+        None => spec_open,
+    } && !options.is_empty();
+    Resolved { selected, open }
+}
+
+/// The column the pop-over drops under: the display width of the trigger row's
+/// text before the button's `[`.
+///
+/// Measured in *display* width, never bytes — the focus marker `▸ ` is 4 bytes
+/// but 2 columns, so byte length pushed the pop-over two cells right of the
+/// value it belongs under.
+pub(crate) fn anchor_col(row_text: &str, button_start: usize) -> u32 {
+    use crate::primitives::display_width::str_width;
+    row_text
+        .get(..button_start)
+        .map(|prefix| str_width(prefix) as u32)
+        .unwrap_or(0)
+}
+
+/// The open option list: windowing, padding and row styling.
+///
+/// Windowing lives here with the rest of the render — clamp the scroll, slice
+/// the visible rows — and each row is handed over as display text plus its
+/// absolute index, so the consumer knows nothing about options or selection.
+///
+/// **Every row is the width of the widest option.** They were each their own
+/// text's length, so the selected row's highlight was the width of its *word* —
+/// "default" lit while "macos-gui" beside it set the box's width, leaving the
+/// band two columns short of the edge on one row and flush on another. A
+/// pop-over is a column of equal cells; padding them here also fixes the box,
+/// which takes its width from the longest row it is given.
+pub(crate) fn popup_of(
+    options: &[String],
+    selected_index: i32,
+    scroll_offset: u32,
+    hover_popup_row: &str,
+    widget_key: &str,
+    anchor_col: u32,
+) -> PanelPopup {
+    use crate::widgets::render::{KEY_COMPLETION_FG, KEY_COMPLETION_SEL_BG, KEY_COMPLETION_SEL_FG};
+    use fresh_core::api::{OverlayColorSpec, OverlayOptions};
+    use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
+
+    let visible = options.len().min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
+    let max_scroll = options.len().saturating_sub(visible);
+    let scroll = (scroll_offset as usize).min(max_scroll);
+    let cell_cols = options
+        .iter()
+        .map(|o| crate::primitives::display_width::str_width(o))
+        .max()
+        .unwrap_or(0);
+    let mut entries = Vec::new();
+    let mut row_indices = Vec::new();
+    for (idx, opt) in options.iter().enumerate().skip(scroll).take(visible) {
+        let text = format!(" {} ", crate::widgets::render::cell(opt, cell_cols));
+        let mut e = TextPropertyEntry::text(&text);
+        let selected = idx == selected_index as usize;
+        // The row under the pointer, which the tree reports because the
+        // runtime's own hover probe cannot see a pop-over's rows. Selected
+        // wins: a hover band under the selection would only mute it.
+        let hovered = !selected && hover_popup_row == idx.to_string();
+        e.inline_overlays.push(InlineOverlay {
+            start: 0,
+            end: text.len(),
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(if selected {
+                    KEY_COMPLETION_SEL_FG
+                } else {
+                    KEY_COMPLETION_FG
+                })),
+                bg: match (selected, hovered) {
+                    (true, _) => Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
+                    (false, true) => Some(OverlayColorSpec::theme_key(
+                        crate::widgets::render::KEY_HOVER_BG,
+                    )),
+                    (false, false) => None,
+                },
+                bold: selected,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+        entries.push(e);
+        row_indices.push(idx);
+    }
+    PanelPopup {
+        widget_key: widget_key.to_string(),
+        anchor_row: 0,
+        anchor_col,
+        anchor_absolute: false,
+        entries,
+        row_indices,
+    }
 }
 
 /// Is this Dropdown's option popup open?

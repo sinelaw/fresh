@@ -4351,3 +4351,79 @@ fn dock_card_row_hover_band_spans_the_card() {
         );
     }
 }
+
+/// Hovering a dock workspace row must **ask for a frame**.
+///
+/// The two hover-band tests above assert what the frame *contains*, and could
+/// not have caught the bug that actually shipped, because every harness input
+/// helper renders unconditionally: `mouse_move` is `send_mouse` followed by
+/// `render()`. In the real editor nothing calls `render()` for you — the main
+/// loop repaints only when `Editor::handle_mouse` returns `true` — so a
+/// surface that changes its own state and answers `false` looks perfect under
+/// test and is frozen on screen.
+///
+/// This is the shipped bug it pins: *a described panel's hover changed state
+/// but no frame was requested.* The hover band the two tests above measure was
+/// only ever on screen because the harness drew it — `handle_mouse` answered
+/// "nothing to draw", and in the terminal the row stayed dead under the
+/// pointer.
+///
+/// **What it does not pin, honestly.** The dock's row hover travels back as a
+/// message, so this test still passes against the *other* shipped variant —
+/// `Dispatched::changed` computed from `!result.msgs.is_empty()` alone, which
+/// missed a `widgets::List`'s message-free hover write. That one is pinned by
+/// `command_palette::test_palette_row_hover_requests_a_frame`, whose list
+/// keeps its hover in list state and emits nothing. Verified both ways by
+/// reintroducing each bug: this test fails when the shell reports no change at
+/// all, and survives the msgs-only computation.
+///
+/// Both rows are swept rather than assuming which workspace is active: the
+/// pointer reaching a row is what has to be answered, selected or not.
+#[test]
+fn dock_row_hover_requests_a_frame() {
+    let (_tmp, mut h) = dock_with_two_workspaces(Default::default());
+
+    for needle in ["alphaproj", "zzz_project"] {
+        let row = row_of(&h, needle) as u16;
+        // Park the pointer off the row and draw, so the tree is settled and
+        // the only thing left to change is the hover this move writes.
+        park_pointer(&mut h);
+        h.render().unwrap();
+
+        let asked = h.mouse_move_reporting_render(4, row).unwrap();
+        assert!(
+            asked,
+            "hovering the '{needle}' row at row {row} wrote the list's hover state, so \
+             handle_mouse had to report needs_render — it reported false, which in the \
+             real editor is a hover band that never gets drawn:\n{}",
+            h.screen_to_string()
+        );
+    }
+}
+
+/// The negative half: with the pointer already resting on a dock row, another
+/// motion event onto the same cell must **not** ask for a frame.
+///
+/// Without this, `dock_row_hover_requests_a_frame` is vacuous — a `changed`
+/// hardcoded to `true` satisfies it, and every motion event the terminal
+/// delivers (one per pointer sample) would repaint the whole editor. The move
+/// asserted on here crosses no element boundary, so the list emits no Enter or
+/// Leave, queues no mutation, and leaves `Ui::needs_frame` false.
+#[test]
+fn dock_pointer_at_rest_requests_no_frame() {
+    let (_tmp, mut h) = dock_with_two_workspaces(Default::default());
+
+    let row = row_of(&h, "alphaproj") as u16;
+    // `mouse_move` renders, so the hover this writes is on screen and the
+    // scheduler is drained before the assertion.
+    h.mouse_move(4, row).unwrap();
+    h.render().unwrap();
+
+    let asked = h.mouse_move_reporting_render(4, row).unwrap();
+    assert!(
+        !asked,
+        "a motion onto the cell the pointer already rests on changes nothing and must \
+         not request a frame:\n{}",
+        h.screen_to_string()
+    );
+}

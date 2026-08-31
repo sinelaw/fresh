@@ -72,9 +72,15 @@ pub fn dock(
 /// `handle_floating_widget_click` already returns without doing anything
 /// when its probe finds no widget.
 ///
-/// A right press is unchanged either way: `probe_floating_widget` reads the
-/// registry's boxes, which the runtime fills whether or not the tree
-/// describes the panel.
+/// **A right press reports the same fact either way, but not by the same
+/// route.** The column emits `DockContext` on both sides of the seam; what
+/// answers it differs. While the interior is a painter,
+/// `handle_floating_widget_context_click` probes the runtime's boxes. Once it
+/// is described that probe stands down — it would answer from a *second*
+/// layout that reads the runtime's own scroll offset, which the description
+/// does not, so a scrolled list would raise the menu for a different row from
+/// the one clicked — and the menu comes from the widget's own
+/// `UiFact::WidgetContext` instead.
 fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     let described = interior.is_some();
     let body = match interior {
@@ -226,6 +232,21 @@ const DIVIDER_COLS: u16 = 1;
 /// While the interior is still a painter the border stays the painter's, so
 /// this draws nothing but the hover: two nodes painting one cell is how they
 /// drift apart.
+///
+/// **The one thing that interrupts it is the active card's tab** (F.8), and
+/// it is not this node's business which rows those are. The dock's active
+/// session reads as a browser tab merging into the editor: its card's rows
+/// lose their right border and the divider is scooped away across them, `╯`
+/// above and `╮` below. That band is the *card's*, and only the card can say
+/// where it is — it moves with the tree's scroll, and a card scrolled half
+/// out of the list has no tab at all — so the card declares the scoop itself,
+/// anchored to its own block, as a layer over this column
+/// (`widgets::tab_scoop`). This still draws the divider whole: the rule "the
+/// dock has a wall down its last cell" is one fact with one author, and what
+/// the tab says is the separate fact that the active card is open on that
+/// side. The alternative — passing a row band from the interior to here —
+/// would be the two halves of one rectangle computed twice, which is what
+/// the painter did and what F.8 was.
 fn grip_ink(hovered: bool, focused: bool, described: bool) -> Node<UiMsg> {
     use crate::app::shell_host::shell_theme::pair;
     let fg = match (hovered, focused) {
@@ -374,10 +395,13 @@ mod tests {
         );
     }
 
-    /// **The right press does not change with the seam.**
-    /// `probe_floating_widget` reads the registry's boxes, which the runtime
-    /// fills whether or not the tree describes the panel — so the context
-    /// menu is reached the same way on both sides.
+    /// **The column says the same thing on either side of the seam.**
+    ///
+    /// This is about the *fact*, not the mechanism: `DockContext` carries the
+    /// cell, and the column emits it described or not. What consumes it
+    /// diverges — see `column`'s own doc, and
+    /// `handle_floating_widget_context_click`'s early-out for a described
+    /// panel — so this asserts what it can see and no more.
     #[test]
     fn a_right_press_reports_where_on_either_side_of_the_seam() {
         for mut ui in [described(Some(24), 100, 30), laid_out(Some(24), 100, 30)] {

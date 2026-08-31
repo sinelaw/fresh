@@ -110,6 +110,11 @@ dim is painted after the tree's overlay band.
 | **F.8** | The dock's active card keeps its heavy selection marker and never becomes the seamless tab: the pass that rewrites it sits behind the described-panel early-out. |
 | **F.2** | `Paint::Lit` — the one colour in the display list with no theme name. |
 | **F.7** | Pre-existing, identical on `master`: an LSP tooltip left through the gutter can never be dismissed by moving the mouse, because the dismissal is gated on request state the gutter branch clears. |
+| **F.9** | A press on a described *pane*-mounted panel's dead space still reaches the editor-click path, which scans the runtime's stored hit list and resolves it against a screen-to-line projection that is empty for that pane. Every other probe was gated on "is this panel described"; this one was not. Presses that land on a widget are stopped by the node, so what gets here is exactly the case the projection cannot answer. |
+
+F.6, F.7 and F.8 are fixed on this branch; F.2 and F.9 are open. The table is kept
+whole because each row names a *class* of defect the migration produces, and the
+fix is only interesting next to the shape that caused it.
 
 ---
 
@@ -217,16 +222,64 @@ description built from the *spec*: wrapping via the library's text render, hit
 areas from node rectangles rather than byte ranges, padding and alignment as
 layout. One at a time; take dropdown first, as the smallest and the one whose
 pop-over is already described.
+
+The shape each one takes is the dropdown's: the pure halves of the collector —
+where the state comes from, how the rows are windowed, what column a float drops
+under — are factored into functions the collector and the description both call,
+so a rule has one copy rather than two that can drift. The *formatter* does not
+move: what a widget's row says is domain knowledge, and rewriting it would be
+rewriting thousands of lines to get the same cells. What moves is where the row
+is, what a press on it means, and the fact that building the description no
+longer runs a whole immediate-mode render into a scratch state map it discards.
+
+Three of the five are already partly across, so the remaining work is smaller
+than "five variants" suggests: list and tree have real described arms and reach
+the collector only for a card list's item subtrees and a residual tree shape; a
+multi-line text field likewise. What is wholly uncrossed is the single-line text
+field — every form field in the editor — and the dual list.
 *Exit:* the runtime's collector has no caller in the shell.
 
 **2.3 Retire the mirror as a rendering input.** Once 2.2 lands, the text-property
 mirror is only a *text* mirror — for search, copy and change counting — and no
-longer feeds paint. The panel's outer box stops being sized by the runtime's row
-count.
+longer feeds paint.
+
+**This is one function.** An audit of every reader found the mirror's paint role
+already stood down for pane-mounted panels (the text pass and the scrollbar pass
+both return early for a described pane) and never existed for the dock (whose box
+is the carved column). What remains is the *centered and anchored* floating
+panel, whose outer box is sized by arithmetic over the mirror: its row count
+becomes the frame's height and the widest row's display width becomes its width.
+The interior is already a node whose intrinsic size layout can measure, so the
+fix is for the spot to carry no counts at all. Until it does, deleting the mirror
+shrinks every centered plugin modal and every right-click context popup.
 *Exit:* deleting the mirror changes no pixel.
 
 **2.4 Then delete the second renderer.** The widget runtime's paint role goes;
 it keeps only what the plugin API genuinely needs.
+
+The same audit named the fields of the runtime's per-panel output whose every
+consumer is a path a described panel never takes: the window-embed rectangles
+(dead by construction — a panel containing one is not described), the stored
+overlay rows (the description re-derives its own), and the stored focus cursor
+for the floating and dock slots (the described caret comes from the tree's own
+cell). The pop-over survives as a single field — the open dropdown's key — and
+not as a structure.
+
+Everything else still has a live reader on a described panel, and each retires
+with a different step rather than with this one: the mirror's rows with 2.3
+above; instance state, the focus key, the row budget and the box arena with 2.1
+and 3.2, since a described panel's Tab still builds its ring from the arena and
+its wheel still routes through it.
+
+The hit list is the one that needs a decision rather than a step. The
+described-versus-painted branch closed the floating and dock probe completely,
+but two readers were never gated: a press on a described *pane*'s dead space
+still scans the stored hits through the editor-click path, against a byte
+projection that is empty for that pane; and the web frontend projects the hit
+list verbatim, because for it the runtime *is* the renderer and the coverage gate
+is a terminal-only question. The first is a defect to close. The second is a
+question this plan should answer before 2.4: is the hit list a rendering output,
+or part of what the plugin API owes a non-terminal frontend?
 
 ### Phase 3 — Adopt the retained half
 

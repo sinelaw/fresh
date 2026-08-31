@@ -532,7 +532,29 @@ impl Editor {
     /// - Mouse is over the hover popup itself
     /// - Mouse is within the hovered symbol range
     ///
-    /// Hover is dismissed when mouse leaves the editor area entirely.
+    /// Hover is dismissed when the pointer leaves the editor's content — and
+    /// **the condition there is the popup, not the request**. Those are two
+    /// different facts, and gating the dismissal on the second one is what
+    /// stranded tooltips (F.7). `lsp_hover_state` is the debounce state
+    /// machine — *which byte a request is pending for* — and the branches
+    /// below for the gutter and for the space past a line's end deliberately
+    /// clear it while keeping the popup up, because passing over a line
+    /// number must not tear the card down. So a pointer that left the editor
+    /// *through the gutter* arrived at the leave-the-editor branch with the
+    /// state already `None`, that branch skipped its own dismissal, and the
+    /// card sat there until a key or a click removed it. What the branch
+    /// means is "a transient popup is up and the pointer has left", so that
+    /// is what it now asks: `popups.is_visible()` with a `transient` popup on
+    /// top — the same three facts `is_mouse_over_transient_popup` reads, and
+    /// exactly the popup `dismiss_transient_popups` would take down.
+    ///
+    /// One transient popup on that stack is **not** this pipeline's: the file
+    /// explorer's status tooltip, which `FileExplorer::on_hover_change` shows
+    /// while the pointer rests on a status indicator. The sidebar is not pane
+    /// content, so this branch runs on the very same motion event that put
+    /// the tooltip up and would pop it before it was ever painted. Hovering
+    /// that indicator is therefore held out by name — see
+    /// `chrome_owns_transient_popup`.
     ///
     /// RULING — this pipeline stays OUTSIDE the `HoverTarget` walk: it
     /// is not a "name the surface under the pointer" question but a
@@ -598,7 +620,10 @@ impl Editor {
             .and_then(|(pane, rect)| Some((pane, self.active_window().pane_buffer(pane)?, rect)));
 
         let Some((split_id, buffer_id, content_rect)) = split_info else {
-            // Mouse is not over editor content - clear hover state and dismiss popup
+            // Mouse is not over editor content. Two independent things happen
+            // here, and the bug was treating them as one: the pending request
+            // is dropped *if there is one*, and the popup comes down *if there
+            // is one*. Neither implies the other — see the docstring.
             if self
                 .active_window_mut()
                 .mouse_state
@@ -607,7 +632,10 @@ impl Editor {
             {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
+            }
+            if self.transient_popup_showing() && !self.chrome_owns_transient_popup() {
                 self.dismiss_transient_popups();
+                // Only this path repainted, so only this path is stale.
                 return true;
             }
             return false;
@@ -768,14 +796,53 @@ impl Editor {
     /// rectangle test, with a doc comment naming a second caller that no
     /// longer exists.
     fn is_mouse_over_transient_popup(&self, col: u16, row: u16) -> bool {
-        let popups = &self.active_state().popups;
-        if !popups.is_visible() || !popups.top().is_some_and(|p| p.transient) {
+        if !self.transient_popup_showing() {
             return false;
         }
         self.active_chrome()
             .popup_areas
             .iter()
             .any(|(_, outer, ..)| in_rect(col, row, *outer))
+    }
+
+    /// Is a transient popup (hover, signature help) actually on screen?
+    ///
+    /// The keep-alive's question minus the pointer, and the one the
+    /// leave-the-editor dismissal wants: it names the popup
+    /// `dismiss_transient_popups` would take down, so it is also the honest
+    /// answer to "would dismissing change any pixels". Asking
+    /// `lsp_hover_state.is_some()` instead — the gate that used to stand here
+    /// — answers a different question entirely (is a debounced request
+    /// pending), and the two come apart every time the pointer crosses the
+    /// gutter.
+    fn transient_popup_showing(&self) -> bool {
+        let popups = &self.active_state().popups;
+        popups.is_visible() && popups.top().is_some_and(|p| p.transient)
+    }
+
+    /// Is the transient popup on top one that a chrome surface under the
+    /// pointer owns, rather than this pipeline?
+    ///
+    /// Only one is: the file explorer's git-status tooltip. It is pushed by
+    /// `FileExplorer::on_hover_change` when the pointer enters a status
+    /// indicator and popped by the same reaction when it leaves, so "the
+    /// pointer is on a status indicator" and "that tooltip is up" are the
+    /// same fact — no stale answer is possible. Hand-listed for the same
+    /// reason the theme-info and LSP-status popups are hand-listed at the top
+    /// of `update_lsp_hover_state`: a popup does not record who put it there.
+    ///
+    /// Without this, `update_lsp_hover_state` would dismiss the tooltip on
+    /// the very motion event that created it — the shell's hover fact is
+    /// applied first, then the same event falls through to the trackers, and
+    /// the sidebar is not pane content, so the leave-the-editor branch runs
+    /// and finds a transient popup on top.
+    fn chrome_owns_transient_popup(&self) -> bool {
+        matches!(
+            self.hovered(),
+            Some(crate::app::types::HoverTarget::FileExplorerStatusIndicator(
+                _
+            ))
+        )
     }
 
     // `split_at_position` lives on `impl Window` — call it via

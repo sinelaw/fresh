@@ -6,6 +6,8 @@
 /// borrowed `&'static str` literals while plugin-driven surfaces (the
 /// orchestrator dock) can record the runtime key strings their text
 /// properties carry.
+use std::borrow::Cow;
+
 #[derive(Debug, Clone, Default)]
 pub struct CellThemeInfo {
     /// Foreground theme key (e.g. "syntax.keyword", "editor.fg")
@@ -22,15 +24,25 @@ pub struct CellThemeInfo {
 /// theme keys, captured *as it paints*. Renderers collect these into a fresh
 /// `Vec` (sidestepping any borrow of the per-cell map / the window) and the
 /// caller applies them via [`ChromeLayout::apply_theme_runs`] once its own
-/// borrows are released. Keys are `&'static str` (all chrome keys are literals).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// borrows are released.
+///
+/// **Keys are `Cow`, and that is what unblocked the fold.** They used to be
+/// `&'static str`, on the reasoning that "all chrome keys are literals" — true
+/// of a painter, which names the key it is painting with in its own source.
+/// It is not true of a *description*: a described surface's key arrives as
+/// data, through `shell_theme`'s grammar, and a plugin's key is a string the
+/// plugin chose. So a fold that wanted to record provenance had nothing it
+/// could put here, which is the mechanical reason F.6 stayed open — the
+/// recorder was never the hard part, the type was. `CellThemeInfo`, which
+/// these end up in, has always been `Cow`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeRun {
     pub x: u16,
     pub y: u16,
     pub w: u16,
-    pub fg_key: Option<&'static str>,
-    pub bg_key: Option<&'static str>,
-    pub region: &'static str,
+    pub fg_key: Option<Cow<'static, str>>,
+    pub bg_key: Option<Cow<'static, str>>,
+    pub region: Cow<'static, str>,
 }
 
 /// Write theme-key runs into a flat per-cell map of the given `width` (rows
@@ -38,7 +50,6 @@ pub struct ThemeRun {
 /// both [`super::layout::ChromeLayout::apply_theme_runs`] and the split
 /// rendering pipeline, which holds the map directly.
 pub fn apply_theme_runs(map: &mut [CellThemeInfo], width: u16, runs: &[ThemeRun]) {
-    use std::borrow::Cow;
     if width == 0 {
         return;
     }
@@ -50,9 +61,9 @@ pub fn apply_theme_runs(map: &mut [CellThemeInfo], width: u16, runs: &[ThemeRun]
             }
             let idx = r.y as usize * stride + col as usize;
             if let Some(cell) = map.get_mut(idx) {
-                cell.fg_key = r.fg_key.map(Cow::Borrowed);
-                cell.bg_key = r.bg_key.map(Cow::Borrowed);
-                cell.region = Cow::Borrowed(r.region);
+                cell.fg_key = r.fg_key.clone();
+                cell.bg_key = r.bg_key.clone();
+                cell.region = r.region.clone();
                 cell.syntax_category = None;
             }
         }
@@ -82,6 +93,35 @@ impl<'a> CellThemeRecorder<'a> {
         region: &'static str,
     ) {
         if w == 0 {
+            return;
+        }
+        self.runs.push(ThemeRun {
+            x,
+            y,
+            w,
+            fg_key: fg_key.map(Cow::Borrowed),
+            bg_key: bg_key.map(Cow::Borrowed),
+            region: Cow::Borrowed(region),
+        });
+    }
+
+    /// The same, for keys that are not literals.
+    ///
+    /// A painter names the key it paints with in its own source, so `run`'s
+    /// `&'static str` fits it exactly and every existing caller keeps working.
+    /// A *description* does not: its key arrives as data — through
+    /// `shell_theme`'s grammar, or from a plugin that chose the string — so
+    /// the fold needs this one.
+    pub fn run_owned(
+        &mut self,
+        x: u16,
+        y: u16,
+        w: u16,
+        fg_key: Option<Cow<'static, str>>,
+        bg_key: Option<Cow<'static, str>>,
+        region: Cow<'static, str>,
+    ) {
+        if w == 0 || (fg_key.is_none() && bg_key.is_none()) {
             return;
         }
         self.runs.push(ThemeRun {

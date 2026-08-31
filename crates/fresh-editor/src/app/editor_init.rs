@@ -669,6 +669,7 @@ impl Editor {
             async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
+            fold_provenance: Vec::new(),
             menu_layout_frame: None,
             shell_frame_status_bar: None,
             shell_hover: None,

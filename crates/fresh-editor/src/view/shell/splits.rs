@@ -201,6 +201,7 @@ mod tests {
             &mut out,
             Band::Background,
             Paints::All,
+            None,
         );
         out.0
     }
@@ -959,11 +960,22 @@ pub fn overlay(s: &Splits) -> Node<UiMsg> {
     dress(grid::<UiMsg>(&s.root, s.maximized), &s)
 }
 
-/// Walk the built grid and give each node its pointer role.
+/// Build the grid a second time, with each node's pointer role on it.
 ///
-/// Done as a second pass rather than inside `grid` so the description stays
-/// message-agnostic: the model lays the same grid out with `M = ()`, and a
-/// gesture would make that impossible.
+/// **`n` is unused.** The first statement is `let _ = n;`, and everything below
+/// is rebuilt from `s.root`; [`overlay`] is the only caller and the
+/// `grid::<UiMsg>(...)` it passes is dropped on the floor. The signature is a
+/// leftover from the shape this was going to have — walk the built grid,
+/// annotate it — which it cannot have: the grid is made of `layout_reader`s, so
+/// it has no structure to walk until layout has run, and by then it is too late
+/// to attach a gesture. Dressing is therefore a rebuild, not a pass over
+/// something built, and nothing here reads its argument. Dropping the parameter
+/// is a pure refactor with no other call site to update.
+///
+/// The split between the two recursions is still worth having, and it is not
+/// what `n` is for: it keeps the description message-agnostic, because the
+/// model lays the same grid out with `M = ()` and a gesture in `grid` would
+/// make that impossible.
 fn dress(n: Node<UiMsg>, s: &Rc<Splits>) -> Node<UiMsg> {
     // The grid is built by `layout_reader`s, so its structure is not walkable
     // before layout. Instead the dressing is applied by rebuilding: the same

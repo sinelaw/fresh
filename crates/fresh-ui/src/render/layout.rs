@@ -547,7 +547,13 @@ impl<M: 'static> Ui<M> {
 
         // Commands an owner queued through a handle, applied once geometry
         // exists and before anything reads it.
-        if self.apply_anchors() {
+        //
+        // A geometry pass leaves them queued. "Put this band in the window" is
+        // a statement about a frame somebody will see, and a query is not one;
+        // draining it here would move a viewport because the host asked where
+        // something was. The queue already waits for the frame that can answer
+        // it (see `apply_anchors`) — this is one more pass it waits through.
+        if !self.geometry_pass && self.apply_anchors() {
             // The layers found by the first walk are stale the moment anything
             // moves: re-arranging without clearing them would resolve, paint
             // and dismiss every one of them twice.

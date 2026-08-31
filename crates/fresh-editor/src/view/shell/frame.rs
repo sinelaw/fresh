@@ -109,8 +109,15 @@ impl HostTarget {
 // said so while the derive stayed — and now something cannot: a mounted plugin
 // panel carries its `WidgetSpec`, which is `Clone + Debug` and not comparable,
 // because comparing two of them is not a question anything asks. A frame is
-// built fresh and handed to `frame_tree`; identity short-circuiting is
-// `.shared()`'s job (0.1), on subtrees, not on the whole description.
+// built fresh and handed to `frame_tree`, every frame, root and all — and
+// nothing short-circuits on identity anywhere below it either. `Node::shared()`
+// and `shared_rc` exist in the library and have no call site outside
+// `fresh-ui`'s own reconciler tests; the migration doc scores the same thing
+// from the other end ("`.shared()` / `shared_rc` — **0** hoisted subtrees").
+// So 0.1 is an unclaimed item, not a division of labour this type is standing
+// aside for: whole-description comparison is the wrong shape for the reason
+// above, and the subtree hoist that would make the point moot has not been
+// written.
 #[derive(Clone, Debug)]
 pub struct Frame {
     pub menu_bar: bool,

@@ -69,7 +69,14 @@ pub struct MenuBar {
 /// A background surface: it paints in the fold's `Background` band, under
 /// every legacy painter, which is what the two-pass fold made possible. Its
 /// own dropdowns are `Layer`s and paint in the other band, over them.
+/// **Memoised on the bar.** The menu bar is rebuilt every frame and
+/// changes on almost none of them — a hover moving between labels, a menu
+/// opening. `MenuBar` is `PartialEq` and is the whole of what this reads.
 pub fn menu_bar(bar: &MenuBar) -> Node<UiMsg> {
+    fresh_ui::memo(bar.clone(), build_menu_bar)
+}
+
+fn build_menu_bar(bar: &MenuBar) -> Node<UiMsg> {
     let labels: Vec<Node<UiMsg>> = bar
         .items
         .iter()

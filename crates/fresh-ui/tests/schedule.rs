@@ -3,7 +3,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use fresh_ui::{col, text, BuildCx, Component, ComponentExt, Handler, Node, Ui, Updater};
+use fresh_ui::{
+    col, focusable, text, BuildCx, Component, ComponentExt, Handler, Node, Size, Sizing, Ui,
+    Updater,
+};
 
 // -- components --------------------------------------------------------------
 
@@ -160,4 +163,135 @@ fn a_mark_on_an_element_that_flush_disposes_is_dropped_silently() {
     ui.reconcile(col()); // a whole new root type: everything below goes away
     ui.flush(); // must not observe the stale mark
     assert!(!ui.is_live(c));
+}
+
+// -- layout_only: geometry without the frame ---------------------------------
+//
+// A host that only wants a rectangle out of a description asks with
+// `layout_only`. The tests below pin the two halves of what that means: the
+// geometry is the geometry a real frame would have produced, and none of the
+// things a frame *does* have happened. Each one is a side effect a caller once
+// paid per question asked, not per frame shown — the editor's macro replay
+// asks once per replayed action.
+
+const GEOM: Size = Size { w: 20, h: 6 };
+
+/// A column of three one-cell rows, the second of which asks for focus.
+fn rows() -> Node<()> {
+    col().children([
+        focusable(text("one")).key("one").h(Sizing::Cells(1)),
+        focusable(text("two"))
+            .key("two")
+            .h(Sizing::Cells(1))
+            .autofocus(),
+        focusable(text("three")).key("three").h(Sizing::Cells(1)),
+    ])
+}
+
+#[test]
+fn layout_only_lays_out_a_new_description() {
+    let mut probe: Ui<()> = Ui::new();
+    probe.layout_only(rows(), GEOM);
+
+    let mut framed: Ui<()> = Ui::new();
+    framed.frame(rows(), GEOM);
+
+    for i in 0..3 {
+        assert_eq!(
+            probe.rect_of(probe.at(&[i]).unwrap()),
+            framed.rect_of(framed.at(&[i]).unwrap()),
+            "row {i}: the rectangle a frame would have given"
+        );
+    }
+}
+
+#[test]
+fn layout_only_does_not_move_focus() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.layout_only(rows(), GEOM);
+    assert_eq!(
+        ui.focused(),
+        None,
+        "autofocus is a reaction to a frame, not part of computing one"
+    );
+
+    // And the reaction is not lost — the frame that does happen still fires it.
+    ui.frame(rows(), GEOM);
+    assert_eq!(ui.focused(), Some(ui.at(&[1]).unwrap()));
+}
+
+#[test]
+fn layout_only_leaves_a_queued_scroll_command_queued() {
+    use fresh_ui::{viewport, Point};
+
+    let anchor = fresh_ui::behavior::anchor::Anchor::new();
+    let mk = |a: std::rc::Rc<fresh_ui::behavior::anchor::Anchor>| -> Node<()> {
+        viewport(col().children((0..40).map(|i| text(format!("row {i}")))))
+            .anchor_to(a)
+            .h(Sizing::Cells(4))
+    };
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(anchor.clone()), GEOM);
+    let vp = ui.root().unwrap();
+    assert_eq!(ui.scroll(vp).0, Point::ZERO);
+
+    anchor.scroll_to(Point::new(0, 10));
+    ui.layout_only(mk(anchor.clone()), GEOM);
+    assert_eq!(
+        ui.scroll(vp).0,
+        Point::ZERO,
+        "a question about geometry does not move a viewport"
+    );
+
+    ui.frame(mk(anchor.clone()), GEOM);
+    assert_eq!(
+        ui.scroll(vp).0,
+        Point::new(0, 10),
+        "the command waited for a frame rather than being dropped"
+    );
+}
+
+#[test]
+fn layout_only_does_not_advance_a_ticker() {
+    struct Ticked(Rc<RefCell<u32>>);
+
+    impl Component<()> for Ticked {
+        type State = ();
+        fn init(&self, cx: &mut fresh_ui::InitCx<'_, ()>) {
+            let n = self.0.clone();
+            cx.register(fresh_ui::behavior::Ticker::new(move || {
+                *n.borrow_mut() += 1
+            }));
+        }
+        fn build(&self, _s: &(), _cx: &mut BuildCx<'_, ()>) -> Node<()> {
+            text("tick")
+        }
+    }
+
+    let ticks = Rc::new(RefCell::new(0));
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(Ticked(ticks.clone()).node(), GEOM);
+    let after_frame = *ticks.borrow();
+
+    ui.layout_only(Ticked(ticks.clone()).node(), GEOM);
+    assert_eq!(
+        *ticks.borrow(),
+        after_frame,
+        "a ticker counts frames; a geometry query is not one"
+    );
+}
+
+#[test]
+fn layout_only_leaves_the_display_list_alone() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(col().child(text("drawn")), GEOM);
+    let painted = ui.spec().items.len();
+
+    ui.layout_only(rows(), GEOM);
+    assert_eq!(
+        ui.spec().items.len(),
+        painted,
+        "the display list still describes what is on the screen"
+    );
 }
