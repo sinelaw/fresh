@@ -10,14 +10,12 @@
 //! buffer set and call save_workspace a second time. The on-disk
 //! file is what we assert against.
 
-mod common;
-
 use fresh::config::Config;
 use fresh::workspace::{find_workspace_file_by_root, Workspace};
 use std::path::Path;
 use tempfile::TempDir;
 
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 
 fn read_workspace(working_dir: &Path) -> Option<Workspace> {
     let path = find_workspace_file_by_root(working_dir).ok()??;

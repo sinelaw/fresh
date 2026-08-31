@@ -105,11 +105,35 @@ Two things that look like wins here but are **not**, both checked:
   unoptimized rlibs are larger and take longer to link. They also exist to
   keep plugin tests from timing out. Leave them alone.
 
-The largest remaining lever is structural rather than configuration: those 59
-separate test binaries cost roughly 12.6s each to compile and link. Merging
-them into fewer targets would help a lot, but 40 of them declare `mod common;`
-and would each need rewriting, and it would trade per-file process isolation
-for per-test isolation under nextest.
+**Integration tests are one binary.** `fresh-editor` used to have 59 test
+roots under `tests/`, and cargo builds a separate binary per root, each
+statically linking the whole editor. `autotests = false` turns that
+auto-discovery off; `tests/all_tests.rs` pulls every root in as a module
+(the same shape `e2e_tests.rs` and `semantic_tests.rs` already used for
+their 321 and 106 files). Measured over all of `fresh-editor`'s tests:
+
+| | 59 binaries | 1 binary |
+| --- | --- | --- |
+| compile + link all test targets | 182.4s | **120.7s** (-34%) |
+| touch `lib.rs`, rebuild all tests | 58.4s | **23.3s** (-60%) |
+| `target/` after building tests | 10970 MB | **4651 MB** (-58%) |
+
+Test count is unchanged: 4709 before, 4709 after, with every name accounted
+for one-to-one. The old total of 5264 counted the 15 helper tests inside
+`tests/common/` once per binary that declared `mod common;` -- 15 x 37
+redundant copies = the 555 difference. They now compile and run once.
+
+Two consequences to know about:
+
+- **Adding a test file means adding a line to `tests/all_tests.rs`.** Cargo
+  no longer discovers `tests/*.rs` on its own.
+- **`cargo test --test <name>` is now a filter, not a target.** Use
+  `cargo nextest run -E 'test(/^orchestrator_pending_local::/)'` or
+  `cargo test --test all_tests -- orchestrator_pending_local::`.
+
+Under `cargo nextest` each test still gets its own process, so isolation is
+unchanged; under plain `cargo test` they share one process, which is what
+`tests/common/global_state.rs` already exists to handle.
 
 ## Commit Hygiene
 

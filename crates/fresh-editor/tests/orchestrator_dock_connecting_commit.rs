@@ -14,7 +14,7 @@
 //! The hang is deterministic via the `tests/fixtures/fake-ssh-hang` shim —
 //! no network involved. Single test in this binary: the persistence
 //! isolation sets the process-global `XDG_DATA_HOME` (see
-//! `common::dormant_ssh::isolated_dir_context`), and the PATH shim is
+//! `crate::common::dormant_ssh::isolated_dir_context`), and the PATH shim is
 //! likewise process-global.
 //!
 //! Plugins-gated: the dormant-session dive only connects with the plugin
@@ -22,13 +22,11 @@
 //! isolation, Unix shell shim).
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
-use common::dormant_ssh::{
+use crate::common::dormant_ssh::{
     canonical_mkdir, ensure_hanging_fake_ssh_on_path, isolated_dir_context,
     persist_previous_session,
 };
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh_core::api::PluginCommand;
 
 /// While the connect is still pending, the dive must already have switched
@@ -37,7 +35,7 @@ use fresh_core::api::PluginCommand;
 /// without waiting for the connect to resolve.
 #[test]
 fn dive_commits_switch_while_connect_is_still_pending() {
-    common::tracing::init_tracing_from_env();
+    crate::common::tracing::init_tracing_from_env();
     ensure_hanging_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 

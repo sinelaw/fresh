@@ -4,6 +4,7 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 default-run = "fresh"
+autotests = false
 description = "A lightweight, fast terminal-based text editor with LSP support and TypeScript plugins"
 license.workspace = true
 repository.workspace = true
@@ -46,6 +47,15 @@ path = "src/lib.rs"
 name = "webui_server"
 path = "examples/webui_server.rs"
 required-features = ["web"]
+
+# Integration tests are one binary, not one per file. cargo builds a separate
+# binary per `tests/*.rs` root, each statically linking the whole editor and
+# its dependency graph, so 59 roots meant 59 compiles and 59 links on every
+# rebuild. `autotests = false` turns off that auto-discovery; `all_tests`
+# pulls every root in as a module instead (see tests/all_tests.rs).
+[[test]]
+name = "all_tests"
+path = "tests/all_tests.rs"
 
 [[test]]
 name = "scene_parity"

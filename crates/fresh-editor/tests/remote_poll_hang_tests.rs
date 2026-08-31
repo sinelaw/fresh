@@ -10,9 +10,7 @@
 //! calls filesystem.metadata() synchronously with no timeout or async handling.
 //! They will pass once polling is made non-blocking for slow/remote filesystems.
 
-mod common;
-
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh::model::filesystem::{
     DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,

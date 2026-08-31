@@ -40,8 +40,6 @@
 //! is nothing to exercise.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -50,7 +48,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config_io::DirectoryContext;
 use fresh::services::authority::{RemoteAgentSpec, RemoteTransportSpec, SessionAuthoritySpec};
 use fresh_core::api::PluginCommand;

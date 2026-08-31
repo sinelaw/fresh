@@ -22,9 +22,7 @@
 //!
 //! Skips (rather than fails) when a PTY can't be opened in the environment.
 
-mod common;
-
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::filesystem::{
     DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,

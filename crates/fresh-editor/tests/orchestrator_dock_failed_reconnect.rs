@@ -14,7 +14,7 @@
 //! `tests/fixtures/fake-ssh` fails instantly like an unreachable host, so no
 //! network (or real ssh binary) is involved. Single test in this binary: the
 //! persistence isolation sets the process-global `XDG_DATA_HOME` (see
-//! `common::dormant_ssh::isolated_dir_context`).
+//! `crate::common::dormant_ssh::isolated_dir_context`).
 //!
 //! Plugins-gated: the dormant-session dive (`bring_dormant_remote_online` →
 //! `start_remote_connect`) is a no-op without the plugin runtime, and the
@@ -24,12 +24,10 @@
 //! macOS/Windows data dirs) and the fake `ssh` is a Unix shell script.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
-use common::dormant_ssh::{
+use crate::common::dormant_ssh::{
     canonical_mkdir, ensure_fake_ssh_on_path, isolated_dir_context, persist_previous_session,
 };
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh_core::api::PluginCommand;
 
 /// Diving into a dormant SSH workspace whose connect fails must land the
@@ -39,7 +37,7 @@ use fresh_core::api::PluginCommand;
 /// dive must still work (retry, and switching back and forth).
 #[test]
 fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
-    common::tracing::init_tracing_from_env();
+    crate::common::tracing::init_tracing_from_env();
     ensure_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 

@@ -1,7 +1,6 @@
 // Focused test to reproduce the auto-indent bug found by property testing
-mod common;
 
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 #[test]

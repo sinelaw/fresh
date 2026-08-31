@@ -29,9 +29,7 @@
 //! `XDG_DATA_HOME` elsewhere.
 #![cfg(target_os = "linux")]
 
-mod common;
-
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
