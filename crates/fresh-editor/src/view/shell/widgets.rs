@@ -35,7 +35,7 @@ use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::TextPropertyEntry;
 use fresh_ui::{col, row, text_runs, Node, Run, Sizing};
 
-use crate::app::shell_host::shell_theme::{Attrs, Ink, Paint};
+use crate::app::shell_host::shell_theme::{pair, Attrs, Ink, Paint};
 
 use super::msg::UiMsg;
 
@@ -102,6 +102,23 @@ pub struct Ctx<'a> {
     /// Row budget for auto-sized `List`/`Tree` widgets, when the host knows
     /// the surface's inner height.
     pub avail_height: Option<u32>,
+    /// Whether this panel's scrollbars are *overlay* bars, and if so whether
+    /// they are being revealed right now.
+    ///
+    /// `None` — a bar whenever the content overflows, which is what every
+    /// panel but the dock has. `Some(shown)` — the dock's: a bar that appears
+    /// while the pointer is over the column or a keyboard move just flashed
+    /// it, and is gone otherwise, *even while the list holds focus*. Focus is
+    /// not attention: the dock keeps the keyboard for as long as you are
+    /// working in it, and a bar that stayed for all of that would be a
+    /// permanent stripe down the column rather than an answer to "how far
+    /// through am I".
+    ///
+    /// It is a fact rather than a policy because neither half is the tree's
+    /// to know: the flash is a deadline the plugin arms through
+    /// `WidgetEffects::flash_scrollbar` and the editor ticks, and the hover
+    /// is a memo the dock's own column reports.
+    pub scrollbar_reveal: Option<bool>,
     /// The ink every row on this panel starts from.
     ///
     /// **A widget does not know what it is sitting on.** The same
@@ -140,6 +157,7 @@ impl Ctx<'static> {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             avail_height: None,
+            scrollbar_reveal: None,
             surface: panel_surface(),
         }
     }
@@ -156,6 +174,19 @@ impl Ctx<'_> {
             _ => false,
         }
     }
+}
+
+/// The editor's one pair of scrollbar colours.
+///
+/// **A bar with no name of its own is a solid stripe.** The fold writes the
+/// thumb in the item's foreground and the track in its background, both as
+/// the cell's ground — so a bar that inherits the ambient ink inherits a
+/// foreground and a background that were chosen for *text*, and the two come
+/// out the same colour with no thumb to see. Named here for the same reason
+/// the overlay prompt's list names it: it is the editor's one scrollbar,
+/// wherever it appears.
+fn bar_ink() -> String {
+    pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg")
 }
 
 /// Whether every node of this spec is a variant this module describes.
@@ -874,12 +905,13 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             // key across every widget — so the list declines the ring and
             // keeps its mouse, which is what that flag means since #3108.
             .focusable(false)
-            .scrollbar()
+            .scrollbar_when(cx.scrollbar_reveal)
+            .scrollbar_theme(bar_ink())
             .row_theme({
                 let plain = cx.surface.clone();
                 move |_, st| row_surface(st, &plain).to_string()
             })
-            .on_activate_handler(Rc::new(move |i| {
+            .on_activate_handler(Rc::new(move |i, e: &fresh_ui::Event| {
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
                     slot,
                     hit: crate::widgets::HitArea {
@@ -902,6 +934,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                         owner_key: Some(list_key.clone()),
                     },
                     at: None,
+                    clicks: e.clicks,
                 }))
             }));
             // **`-1` is a controlled empty selection, not "no opinion".** A
@@ -1016,6 +1049,8 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             .focusable(false)
             .row_rows(item_height)
             .scrollbar_gutter()
+            .scrollbar_when(cx.scrollbar_reveal)
+            .scrollbar_theme(bar_ink())
             .row_theme({
                 let plain = cx.surface.to_string();
                 let hover = cx
@@ -1030,7 +1065,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                     _ => plain.clone(),
                 }
             })
-            .on_activate_handler(Rc::new(move |i| {
+            .on_activate_handler(Rc::new(move |i, e: &fresh_ui::Event| {
                 let item_key = hit_keys.get(i).cloned().unwrap_or_default();
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
                     slot,
@@ -1052,6 +1087,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                         owner_key: Some(list_key.clone()),
                     },
                     at: None,
+                    clicks: e.clicks,
                 }))
             }));
             let list = match sel >= 0 {
@@ -1232,7 +1268,14 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             let node = fresh_ui::ComponentExt::node(Scrolled {
                 blocks: std::rc::Rc::new(blocks),
                 selected,
+                reveal: cx.scrollbar_reveal,
             });
+            // **As wide as the panel, not as wide as its rows.** The rows
+            // arrive pre-rendered at the runtime's wrap width, so a window
+            // sized to its content stops where the text does — and the two
+            // things that belong at the panel's edge, the row band and the
+            // overlay scrollbar, stop with it.
+            let node = node.w(Sizing::Pct(100));
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(*r as u16)),
                 None => node.flex(1),
@@ -1362,7 +1405,8 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 row_at,
             )
             .focusable(false)
-            .scrollbar()
+            .scrollbar_when(cx.scrollbar_reveal)
+            .scrollbar_theme(bar_ink())
             .row_theme({
                 let plain = cx.surface.clone();
                 move |_, st| row_surface(st, &plain).to_string()
@@ -1465,7 +1509,8 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 }
             })
             .focusable(false)
-            .scrollbar()
+            .scrollbar_when(cx.scrollbar_reveal)
+            .scrollbar_theme(bar_ink())
             // The rows carry their own colours — a focused field paints its
             // own background band per row — so the list's row states must not
             // paint over them.
@@ -1532,6 +1577,9 @@ struct Scrolled {
     blocks: std::rc::Rc<Vec<Chunk>>,
     /// Which block is selected, if any.
     selected: Option<usize>,
+    /// See [`Ctx::scrollbar_reveal`]. Carried rather than read from a context
+    /// because a component builds outside the one that described it.
+    reveal: Option<bool>,
 }
 
 impl fresh_ui::Component<UiMsg> for Scrolled {
@@ -1566,7 +1614,9 @@ impl fresh_ui::Component<UiMsg> for Scrolled {
                     .children(b.rows.iter().map(|r| r.clone())),
             );
         }
-        let body = fresh_ui::viewport(content).scrollbar();
+        let body = fresh_ui::viewport(content)
+            .scrollbar_when(self.reveal)
+            .scrollbar_theme(bar_ink());
         match s.anchor.clone() {
             Some(a) => body.anchor_to(a),
             None => body,
@@ -1679,10 +1729,20 @@ fn rows_with_hits(
         };
         // An open dropdown's option list hangs off the row its trigger is on,
         // one row down and at the button's own column.
+        //
+        // **The row is named, not just the parent.** The layer resolves to the
+        // same rectangle either way — it *is* this row — but naming it says so
+        // to the dismissal as well: a press on the trigger is a press on the
+        // thing the list belongs to, and closes it once instead of dismissing
+        // it and letting the trigger's own toggle re-open it in the same
+        // press. `Anchor::Parent` cannot carry that, because a parent is
+        // wherever the caller attached the layer.
         for p in popups.iter().filter(|p| p.anchor_row as usize == i) {
-            node = row()
-                .h(Sizing::Cells(1))
-                .children([node, popup_layer(p, cx)]);
+            let anchor = popup_anchor_key(cx.slot, i);
+            node = row().key(anchor.clone()).h(Sizing::Cells(1)).children([
+                node,
+                popup_layer(p, cx).anchor(fresh_ui::Anchor::Node(anchor)),
+            ]);
         }
         kids.push(node);
     }
@@ -1784,6 +1844,20 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
 /// no scroll for the tree to own here and no bar to lose — which is why
 /// `Dropdown` crosses through the adapter rather than waiting for a
 /// substitution, unlike the kinds whose scrollbar the painter draws.
+/// The row an open pop-over hangs off, by name.
+///
+/// Keyed per slot and per row because two panels can each have a list open,
+/// and a key that collided would anchor one to the other's trigger.
+fn popup_anchor_key(slot: Slot, row: usize) -> fresh_ui::Key {
+    let tag = match slot {
+        Slot::Dock => "widget_popup_anchor:dock",
+        Slot::Floating => "widget_popup_anchor:floating",
+        Slot::Settings => "widget_popup_anchor:settings",
+        Slot::SettingsEntry => "widget_popup_anchor:settings_entry",
+    };
+    fresh_ui::Key::Pair(tag.into(), row as u64)
+}
+
 fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
     // **A float sits on its own ground, not on its trigger's.** `cx.surface`
     // is whatever the widget that opened this is standing on — and in the
@@ -1885,20 +1959,70 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
 /// hit-testing a rectangle it laid out, instead of the host reconstructing it
 /// from a row and a byte offset.
 fn hit_node(n: Node<UiMsg>, slot: Slot, hit: crate::widgets::HitArea) -> Node<UiMsg> {
-    fresh_ui::gesture(n).on(
+    // **And the hover, for the same reason.** A widget's rectangle is what
+    // answers "is the pointer on it", and this is the one wrapper every hit
+    // piece goes through — a button, a list row, each of a tree row's three
+    // targets — so one pair of listeners here is the whole vocabulary. What it
+    // replaces is `update_widget_hover`: a second layout of the panel's spec
+    // per motion event, hit-tested against the boxes it produced, followed by
+    // a re-render request to the plugin.
+    //
+    // Only the panels. The settings dialog's rows carry their own hover facts
+    // (`SettingsItemHover` and its siblings) onto settings state, and its
+    // `Ctx` has no `hovered_key` to read, so a fact from here would be noise.
+    let hover = matches!(slot, Slot::Dock | Slot::Floating).then(|| {
+        let (widget, item) = (
+            hit.widget_key.clone(),
+            hit.payload
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        );
+        move |entered: bool| {
+            let (slot, widget, item) = (slot, widget.clone(), item.clone());
+            std::rc::Rc::new(move |_: &fresh_ui::Event| {
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetHover {
+                    slot,
+                    widget: widget.clone(),
+                    item: item.clone(),
+                    entered,
+                }))
+            }) as fresh_ui::Handler<UiMsg>
+        }
+    });
+    let n = fresh_ui::gesture(n).on(
         fresh_ui::GestureKind::Press,
-        std::rc::Rc::new(move |e: &fresh_ui::Event| {
-            if e.button != fresh_ui::MouseButton::Left {
-                return None;
+        std::rc::Rc::new(move |e: &fresh_ui::Event| match e.button {
+            fresh_ui::MouseButton::Left => {
+                e.stop();
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
+                    slot,
+                    hit: hit.clone(),
+                    at: Some(e.local.x.max(0) as u16),
+                    clicks: e.clicks,
+                }))
             }
-            e.stop();
-            Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
-                slot,
-                hit: hit.clone(),
-                at: Some(e.local.x.max(0) as u16),
-            }))
+            // **Only the kinds that declared the capability.** A right press
+            // on a button or on padding is not this widget's, so it is left
+            // unclaimed and reaches the column behind — which is where a
+            // right press with no widget under it has always gone.
+            fresh_ui::MouseButton::Right if hit.context_click => {
+                e.stop();
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetContext {
+                    slot,
+                    hit: hit.clone(),
+                    x: e.pos.x.max(0) as u16,
+                    y: e.pos.y.max(0) as u16,
+                }))
+            }
+            _ => None,
         }),
-    )
+    );
+    match hover {
+        None => n,
+        Some(h) => n.on_enter(h(true)).on_leave(h(false)),
+    }
 }
 
 /// The ground an entry asks to keep past the end of its text, if it asks.
@@ -2201,6 +2325,7 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             avail_height: None,
+            scrollbar_reveal: None,
             surface: panel_surface(),
         }
     }
@@ -3239,6 +3364,101 @@ mod tests {
         assert_eq!(hit.owner_key.as_deref(), Some("l"));
         assert_eq!(hit.payload["index"], 2);
         assert_eq!(hit.payload["key"], "k2");
+    }
+
+    /// **A right press on a row is that row's, and it carries the screen
+    /// cell.** The probe used to answer which row a right press belonged to,
+    /// from a second layout of the same spec; the node has the rectangle, so
+    /// it answers itself. The cell rides along because the plugin anchors its
+    /// popup at the click and the payload carries only the row index.
+    #[test]
+    fn a_right_press_on_a_tree_row_raises_its_own_context_menu() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&a_tree(&["r"], 0), WIDTH, &cx()), Size::new(WIDTH, 24));
+        let at = fresh_ui::Point::new(8, 2);
+        let msgs = ui
+            .dispatch(fresh_ui::Input::press(
+                at,
+                fresh_ui::MouseButton::Right,
+                fresh_ui::Mods::NONE,
+            ))
+            .msgs;
+        let (hit, x, y) = msgs
+            .into_iter()
+            .find_map(|m| match m {
+                UiMsg::Ui(UiFact::WidgetContext { hit, x, y, .. }) => Some((hit, x, y)),
+                _ => None,
+            })
+            .expect("a right press on a tree row");
+        assert_eq!(hit.widget_kind, "tree");
+        assert!(hit.context_click, "only a kind that declared it claims");
+        assert_eq!((x, y), (8, 2), "the screen cell, not the widget's own");
+    }
+
+    /// And a widget that declared no context menu leaves the press alone, so
+    /// it reaches the surface behind — which is where a right press with no
+    /// widget under it has always gone.
+    #[test]
+    fn a_right_press_on_a_button_is_left_to_the_surface_behind_it() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            node(&button("Go", Some("go"), false, false), WIDTH, &cx()),
+            Size::new(WIDTH, 24),
+        );
+        let msgs = ui
+            .dispatch(fresh_ui::Input::press(
+                fresh_ui::Point::new(2, 0),
+                fresh_ui::MouseButton::Right,
+                fresh_ui::Mods::NONE,
+            ))
+            .msgs;
+        assert!(
+            !msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::WidgetContext { .. }))),
+            "a button raises no menu: {msgs:?}"
+        );
+    }
+
+    /// **The hover the runtime probed for.** Entering a row names the widget
+    /// *and* the row, because every row of one tree shares the tree's key;
+    /// leaving names the same pair, so two pieces of one row can hand the
+    /// hover between them without the leave undoing the enter.
+    #[test]
+    fn entering_a_tree_row_reports_it_and_leaving_gives_it_back() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&a_tree(&["r"], 0), WIDTH, &cx()), Size::new(WIDTH, 24));
+        let hover = |ui: &mut Ui<UiMsg>, x: i32, y: i32| -> Vec<(String, String, bool)> {
+            ui.dispatch(fresh_ui::Input::Move {
+                pos: fresh_ui::Point::new(x, y),
+                mods: fresh_ui::Mods::NONE,
+            })
+            .msgs
+            .into_iter()
+            .filter_map(|m| match m {
+                UiMsg::Ui(UiFact::WidgetHover {
+                    widget,
+                    item,
+                    entered,
+                    ..
+                }) => Some((widget, item, entered)),
+                _ => None,
+            })
+            .collect()
+        };
+
+        let entered = hover(&mut ui, 8, 2);
+        assert!(
+            entered.iter().any(|(w, _, e)| w == "tr" && *e),
+            "entering a row names the tree it belongs to: {entered:?}"
+        );
+
+        // Off every row: the same pair comes back, released.
+        let left = hover(&mut ui, 8, 20);
+        assert!(
+            left.iter().any(|(w, _, e)| w == "tr" && !*e),
+            "leaving names what it is leaving: {left:?}"
+        );
     }
 
     fn tree_node(text: &str, depth: u32, has_children: bool) -> fresh_core::api::TreeNode {

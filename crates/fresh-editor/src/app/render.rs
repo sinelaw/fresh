@@ -7197,7 +7197,7 @@ impl Editor {
         // content was the one panel the tree did not describe; now that
         // `view::shell::dock` carries the same interior the floating panel
         // does, the gate is the same question for both.
-        let described = self.panel_interior(slot).is_some();
+        let described = self.panel_is_described(slot);
         // **The box is the tree's.** `view::shell::panel` describes it and
         // layout places it; this reads the answer. What was here was the
         // placement arithmetic — a percentage of the area for the width, the
@@ -8179,6 +8179,18 @@ impl Editor {
     /// `None` sends the whole panel down the runtime's path. A panel is
     /// described or painted and never half of each, so `covered` asks the
     /// whole tree — see `view::shell::widgets::covered`.
+    /// Whether the tree describes this panel's interior, without building it.
+    ///
+    /// [`Self::panel_interior`] clones the spec and the whole instance-state
+    /// map, which is the right price once a frame and the wrong one on every
+    /// motion event — and the hover path asks this question per event. Same
+    /// answer, no copies.
+    pub(crate) fn panel_is_described(&self, slot: crate::app::PanelSlot) -> bool {
+        self.panel(slot)
+            .and_then(|p| self.widget_registry.get(&p.panel_key))
+            .is_some_and(|w| crate::view::shell::widgets::covered(&w.spec))
+    }
+
     pub(crate) fn panel_interior(
         &self,
         slot: crate::app::PanelSlot,
@@ -8208,6 +8220,19 @@ impl Editor {
             hovered_popup_row: panel.hovered_popup_row.clone(),
             marker_gutter: panel.focus_marker,
             avail_height: self.floating_panel_inner_height(slot),
+            // **The dock's bars are overlay bars.** Every other panel draws
+            // one whenever its content overflows; the dock's appears while
+            // the pointer is over the column or a keyboard move just flashed
+            // it, and is gone otherwise — see `widgets::Ctx::scrollbar_reveal`
+            // for why that is a fact handed down rather than a rule the tree
+            // could apply itself.
+            scrollbar_reveal: matches!(panel.placement, super::PanelPlacement::LeftDock { .. })
+                .then(|| {
+                    panel.scrollbar_zone_hovered
+                        || panel
+                            .scrollbar_flash_until
+                            .is_some_and(|until| self.time_source().now() < until)
+                }),
         })
     }
 

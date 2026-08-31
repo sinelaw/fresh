@@ -1012,7 +1012,12 @@ impl Editor {
 /// `/settings` route calls by name — so a click still does the same thing in
 /// both frontends.
 impl Editor {
-    pub(crate) fn settings_widget_hit(&mut self, hit: &crate::widgets::HitArea, at: Option<u16>) {
+    pub(crate) fn settings_widget_hit(
+        &mut self,
+        hit: &crate::widgets::HitArea,
+        at: Option<u16>,
+        clicks: u8,
+    ) {
         use crate::view::settings::items::SettingControl;
         use crate::view::settings::SettingsHit;
 
@@ -1106,11 +1111,11 @@ impl Editor {
 
         // A map row activates on a *double* click and its add row on a
         // single one (#604), so the press's own doubleness travels with it —
-        // the same bit `handle_settings_mouse` was handed.
-        let dbl = self
-            .shell_pointer_event
-            .map(|(_, double)| double)
-            .unwrap_or(false);
+        // the same bit `handle_settings_mouse` was handed. It rides on the
+        // fact rather than being fetched back off the editor: the node that
+        // saw the press is the one that knows, and `List`'s activation
+        // handler is given its `Event` for exactly this.
+        let dbl = clicks >= 2;
         self.dispatch_settings_hit(resolved, dbl);
         if let Some(byte) = caret {
             if let Some(s) = self.settings_state.as_mut() {
@@ -1261,7 +1266,12 @@ impl Editor {
             // all three frontends already share, and it does not change.
             // `None` for the clicked byte: the byte range in the hit is a
             // payload now, not a position the caller resolved.
-            UiFact::WidgetHit { slot, hit, at } => {
+            UiFact::WidgetHit {
+                slot,
+                hit,
+                at,
+                clicks,
+            } => {
                 let slot = match slot {
                     crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
@@ -1269,13 +1279,13 @@ impl Editor {
                     // are settings actions rather than a plugin's
                     // `widget_event`.
                     crate::view::shell::widgets::Slot::Settings => {
-                        self.settings_widget_hit(&hit, at);
+                        self.settings_widget_hit(&hit, at, clicks);
                         return;
                     }
                     // The same, one surface in: an entry dialog's fields are
                     // its own, not the page's.
                     crate::view::shell::widgets::Slot::SettingsEntry => {
-                        self.settings_entry_widget_hit(&hit, at);
+                        self.settings_entry_widget_hit(&hit, at, clicks);
                         return;
                     }
                 };
@@ -1330,6 +1340,64 @@ impl Editor {
                         }
                     }
                 }
+            }
+            // **The tree's answer replaces the probe's**, for a panel whose
+            // interior the tree describes. Setting the memo is all of it: the
+            // description reads `hovered_widget_key`/`hovered_item_key` when
+            // it is next built, and the row renderers take the highlight from
+            // there — where `update_widget_hover` had to ask the plugin to
+            // re-render before the painter could show it.
+            UiFact::WidgetHover {
+                slot,
+                widget,
+                item,
+                entered,
+            } => {
+                use crate::view::shell::widgets::Slot;
+                let panel = match slot {
+                    Slot::Dock => crate::app::PanelSlot::Dock,
+                    Slot::Floating => crate::app::PanelSlot::Floating,
+                    // Gated at the source; nothing else has a panel memo.
+                    _ => return,
+                };
+                if let Some(p) = self.panel_mut(panel) {
+                    match entered {
+                        true => {
+                            p.hovered_widget_key = widget;
+                            p.hovered_item_key = item;
+                        }
+                        // Only if it is still the one being left. Enter and
+                        // leave are per-node and leaves fire first, so a row
+                        // handing the hover to the piece beside it would
+                        // otherwise clear what the enter had just set.
+                        false if p.hovered_widget_key == widget && p.hovered_item_key == item => {
+                            p.hovered_widget_key.clear();
+                            p.hovered_item_key.clear();
+                        }
+                        false => {}
+                    }
+                }
+            }
+            // The right press's second half, from a hit the node carried.
+            //
+            // The re-focus is first for the same reason it is in `DockPress`
+            // and `DockContext`: the un-blur fires a `focus` widget_event, and
+            // any mirror of dock-focus state has to update before the menu the
+            // press raises reads it.
+            UiFact::WidgetContext { slot, hit, x, y } => {
+                use crate::view::shell::widgets::Slot;
+                let panel = match slot {
+                    Slot::Dock => crate::app::PanelSlot::Dock,
+                    Slot::Floating => crate::app::PanelSlot::Floating,
+                    // The settings dialog's rows raise no plugin menu.
+                    _ => return,
+                };
+                if panel == crate::app::PanelSlot::Dock
+                    && self.dock.as_ref().is_some_and(|f| !f.focused)
+                {
+                    self.refocus_floating_panel(crate::app::PanelSlot::Dock);
+                }
+                self.fire_widget_context(panel, &hit, x, y);
             }
             UiFact::WidgetPopupHover { slot, index } => {
                 use crate::view::shell::widgets::Slot;
@@ -1484,6 +1552,51 @@ impl Editor {
             }
             UiFact::PaneScrollbarHover(at) => {
                 self.shell_hover = at.and_then(|(pane, row)| self.scrollbar_hover(pane, row));
+            }
+            // **The bar captured the pointer, so this is its move.** Whether
+            // it means a drag is state this side holds: a bar's `Move` fires
+            // on a bare hover too, and then the vertical one's job is the
+            // highlight that follows the pointer between thumb and track.
+            //
+            // What this replaces is `chrome::pointer_grab` reading
+            // `mouse_state.dragging_scrollbar` on every event to decide whose
+            // drag it was, ranked against nine other flags.
+            UiFact::PaneScrollbarDrag { pane, axis, x, y } => {
+                let ms = &self.active_window().mouse_state;
+                let dragging = match axis {
+                    fresh_ui::Axis::Vertical => ms.dragging_scrollbar.is_some(),
+                    fresh_ui::Axis::Horizontal => ms.dragging_horizontal_scrollbar.is_some(),
+                };
+                if !dragging {
+                    if axis == fresh_ui::Axis::Vertical {
+                        self.shell_hover = self.scrollbar_hover(pane, y);
+                    }
+                    return;
+                }
+                let r = match axis {
+                    fresh_ui::Axis::Vertical => self.handle_vscrollbar_drag(x, y),
+                    fresh_ui::Axis::Horizontal => self.handle_hscrollbar_drag(x, y),
+                };
+                if let Err(e) = r {
+                    tracing::warn!("scrollbar drag failed: {e}");
+                }
+            }
+            // The finalizer the blanket clear used to run for this grab. The
+            // release is the captured bar's, so it never reaches that walk.
+            UiFact::PaneScrollbarRelease { pane: _, axis } => {
+                let ms = &mut self.active_window_mut().mouse_state;
+                match axis {
+                    fresh_ui::Axis::Vertical => {
+                        ms.dragging_scrollbar = None;
+                        ms.drag_start_row = None;
+                        ms.drag_start_top_byte = None;
+                    }
+                    fresh_ui::Axis::Horizontal => {
+                        ms.dragging_horizontal_scrollbar = None;
+                        ms.drag_start_hcol = None;
+                        ms.drag_start_left_column = None;
+                    }
+                }
             }
             UiFact::PaneWheel { pane, x, y, delta } => {
                 // A live terminal that asked for the mouse gets the notch —
@@ -1740,6 +1853,15 @@ impl Editor {
             }
             UiFact::DockScroll { delta, x, y } => {
                 self.handle_floating_widget_panel_wheel(crate::app::PanelSlot::Dock, x, y, delta);
+            }
+            // The memo the overlay scrollbar reads. It is a memo rather than
+            // a value derived where it is used because the *other* thing that
+            // reveals the bar is a deadline (`scrollbar_flash_until`), and the
+            // two have to be one answer by the time the description is built.
+            UiFact::DockHover(over) => {
+                if let Some(d) = self.dock.as_mut() {
+                    d.scrollbar_zone_hovered = over;
+                }
             }
             UiFact::DockResizeBegin => self.dock_resizing = true,
             // **The grip captured the pointer, so this is its move.** The

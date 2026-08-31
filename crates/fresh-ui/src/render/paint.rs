@@ -118,6 +118,17 @@ impl<M: 'static> Ui<M> {
         }
         let _ = out_of_flow;
 
+        // Anything the node draws *on top of* its own contents — an overlay
+        // scrollbar. Emitted here rather than above so the rows it reports on
+        // do not cover it.
+        if let Some(obj) = self.render.get(r).and_then(|n| n.obj.as_ref()) {
+            let mut over = DrawList::new(element);
+            over.key = key.clone();
+            over.theme = ThemeKey(theme.clone());
+            obj.paint_over(Geom { rect, clip }, &mut over);
+            spec.items.append(&mut over.items);
+        }
+
         if let Some(k) = key {
             let end = spec.items.len();
             if end > start {

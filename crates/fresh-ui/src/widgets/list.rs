@@ -163,12 +163,14 @@ pub struct List<M> {
     source: Source<M>,
     selection: Sel,
     on_select: Option<Rc<dyn Fn(usize) -> M>>,
-    on_activate: Option<Rc<dyn Fn(usize) -> Option<M>>>,
+    on_activate: Option<Rc<dyn Fn(usize, &Event) -> Option<M>>>,
     activate_on: Activate,
     focusable: bool,
     autofocus: bool,
     scrollbar: bool,
     stable_gutter: bool,
+    bar_hidden: bool,
+    overlay: bool,
     bar_theme: Option<String>,
     #[allow(clippy::type_complexity)]
     row_theme: Option<Rc<dyn Fn(usize, RowState) -> String>>,
@@ -241,6 +243,8 @@ impl<M: 'static> List<M> {
             focusable: true,
             autofocus: false,
             scrollbar: false,
+            bar_hidden: false,
+            overlay: false,
             stable_gutter: false,
             bar_theme: None,
             row_theme: None,
@@ -272,12 +276,26 @@ impl<M: 'static> List<M> {
     }
 
     pub fn on_activate(mut self, f: impl Fn(usize) -> M + 'static) -> Self {
-        self.on_activate = Some(Rc::new(move |i| Some(f(i))));
+        self.on_activate = Some(Rc::new(move |i, _: &Event| Some(f(i))));
         self
     }
 
-    /// As `on_activate`, for an activation that may produce no message.
-    pub fn on_activate_handler(mut self, f: Rc<dyn Fn(usize) -> Option<M>>) -> Self {
+    /// As `on_activate`, for an activation that may produce no message — and
+    /// that wants the press behind it.
+    ///
+    /// **The row's index is not the whole of what activated it.** Every other
+    /// handler in the library is handed the `Event`; this one was handed an
+    /// index alone, so a host whose rows mean different things on a single and
+    /// a double press had to reach back for the click count through a side
+    /// channel. [`Activate`] is the per-*list* form of that question and stays
+    /// the right answer where one policy fits every row; the event is what a
+    /// list needs when it does not (a settings map field: its `[+] Add new`
+    /// row opens on one press and a committed row on two).
+    ///
+    /// Keyboard activation passes the key press, so a handler that reads
+    /// `clicks` sees zero there — which is the honest answer for an activation
+    /// no mouse made.
+    pub fn on_activate_handler(mut self, f: Rc<dyn Fn(usize, &Event) -> Option<M>>) -> Self {
         self.on_activate = Some(f);
         self
     }
@@ -334,6 +352,25 @@ impl<M: 'static> List<M> {
         self.scrollbar = true;
         self.stable_gutter = true;
         self
+    }
+
+    /// An overlay bar, drawn only while the caller says to — see
+    /// [`Node::scrollbar_revealed`](crate::Node::scrollbar_revealed).
+    pub fn scrollbar_revealed(mut self, shown: bool) -> Self {
+        self.scrollbar = true;
+        self.overlay = true;
+        self.stable_gutter = false;
+        self.bar_hidden = !shown;
+        self
+    }
+
+    /// The bar, on terms the caller carries — see
+    /// [`Node::scrollbar_when`](crate::Node::scrollbar_when).
+    pub fn scrollbar_when(self, reveal: Option<bool>) -> Self {
+        match reveal {
+            None => self.scrollbar(),
+            Some(shown) => self.scrollbar_revealed(shown),
+        }
     }
 
     /// Name the bar's appearance — see
@@ -429,7 +466,7 @@ impl<M: 'static> Component<M> for List<M> {
                     if !activate_on.wants(e.clicks) {
                         return selected;
                     }
-                    match on_activate.as_ref().and_then(|f| f(i)) {
+                    match on_activate.as_ref().and_then(|f| f(i, e)) {
                         Some(m) => Some(m),
                         None => selected,
                     }
@@ -500,7 +537,9 @@ impl<M: 'static> Component<M> for List<M> {
         if let Some(a) = anchor.clone() {
             body = body.anchor_to(a);
         }
-        if self.stable_gutter {
+        if self.overlay {
+            body = body.scrollbar_revealed(!self.bar_hidden);
+        } else if self.stable_gutter {
             body = body.scrollbar_gutter();
         } else if self.scrollbar {
             body = body.scrollbar();
@@ -557,7 +596,7 @@ impl<M: 'static> Component<M> for List<M> {
             });
 
         if let (Some(f), Some(sel)) = (self.on_activate.clone(), sel) {
-            node = node.action_handler(Intent::Confirm, Rc::new(move |_: &Event| f(sel)));
+            node = node.action_handler(Intent::Confirm, Rc::new(move |e: &Event| f(sel, e)));
         }
         if self.autofocus {
             node = node.autofocus();
@@ -656,7 +695,7 @@ impl<M: 'static> Component<M> for Tree<M> {
 
         let mut list = List::from_source(Source::Eager(Rc::new(rows)));
         if let Some(f) = activate {
-            list = list.on_activate_handler(Rc::new(move |i| Some(f(keys[i].clone()))));
+            list = list.on_activate_handler(Rc::new(move |i, _: &Event| Some(f(keys[i].clone()))));
         }
         list.node()
     }

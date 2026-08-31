@@ -856,6 +856,30 @@ impl<M: 'static> Ui<M> {
             if paths.iter().any(|p| p.contains(&lid)) {
                 continue;
             }
+            // **And the thing it hangs off is not outside it either.**
+            //
+            // Pressing the button that opened a menu is one gesture — *close
+            // it* — and every menu on every platform reads it that way. Count
+            // the trigger as outside and the press does two things at once:
+            // this dismissal closes the layer, and the trigger's own press,
+            // which runs immediately after (see the `Press` arm above, where
+            // dismissal precedes `propagate_all`), toggles it straight back
+            // open. The list never closes, and the user has to click somewhere
+            // barren to be rid of it.
+            //
+            // Only [`Anchor::Node`] — a layer naming the thing it belongs to.
+            // `Anchor::Parent` is deliberately not honoured here: a parent is
+            // wherever the caller happened to attach the layer, which is as
+            // often a whole panel body as a single row, and suppressing the
+            // dismissal over a body would leave no outside at all. A caller
+            // that wants this says which node it means.
+            let anchored_on = match &geom.anchor {
+                crate::desc::Anchor::Node(k) => self.find_by_key(k),
+                _ => None,
+            };
+            if anchored_on.is_some_and(|a| paths.iter().any(|p| p.contains(&a))) {
+                continue;
+            }
             if let Some(h) = self.dismiss_handler(lid) {
                 let ctl = Rc::new(Ctl::default());
                 let ev = Event {

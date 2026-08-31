@@ -960,3 +960,76 @@ fn a_pass_through_dismissal_leaves_the_key_for_what_it_was_aimed_at() {
     ui.frame(build(true), FRAME);
     assert!(!typed(&mut ui), "the key is still going somewhere");
 }
+
+/// **The thing a menu hangs off is not outside it.**
+///
+/// A press on the trigger that opened a list is one gesture — close it — and
+/// every menu on every platform reads it that way. Counting the trigger as
+/// outside makes the press do two things: the dismissal closes the layer, and
+/// the trigger's own press, which runs immediately after, toggles it straight
+/// back open. The list never closes.
+///
+/// Only [`Anchor::Node`] is honoured, because a parent is wherever the caller
+/// happened to attach the layer — as often a whole panel body as a single row
+/// — and suppressing the dismissal over a body would leave no outside at all.
+#[test]
+fn a_press_on_the_node_a_layer_is_anchored_to_does_not_dismiss_it() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let anchor = fresh_ui::Key::Str("trigger-row".into());
+    let build = |log: &Log, anchor: &fresh_ui::Key| -> Node<()> {
+        let l = log.clone();
+        let t = log.clone();
+        stack().children([
+            // Somewhere barren, to prove the dismissal still works at all.
+            col().theme("doc"),
+            // The trigger and its list, under one named row — which is what
+            // the editor's dropdown pop-over does.
+            row().key(anchor.clone()).h(Sizing::Cells(1)).children([
+                gesture(text("[value]")).on(
+                    GestureKind::Press,
+                    Rc::new(move |_: &Event| note(&t, "trigger".into())),
+                ),
+                fresh_ui::layer()
+                    .anchor(fresh_ui::Anchor::Node(anchor.clone()))
+                    .place(fresh_ui::Place::Below)
+                    .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER)
+                    .on_dismiss_handler(Rc::new(move |_: &Event| note(&l, "dismissed".into())))
+                    .child(col().w(Sizing::Cells(6)).h(Sizing::Cells(3)).theme("pop")),
+            ]),
+        ])
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(&log, &anchor), FRAME);
+
+    // The trigger sits at row 0; pressing it reaches the trigger and does not
+    // dismiss, so the host's own toggle closes the list exactly once.
+    ui.dispatch(Input::press(
+        Point::new(2, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(
+        log.borrow().contains(&"trigger".to_string()),
+        "the trigger saw its own press: {:?}",
+        log.borrow()
+    );
+    assert!(
+        !log.borrow().contains(&"dismissed".to_string()),
+        "and the layer did not also dismiss itself: {:?}",
+        log.borrow()
+    );
+
+    // Somewhere barren still dismisses — the exclusion is the anchor, not the
+    // whole frame.
+    log.borrow_mut().clear();
+    ui.dispatch(Input::press(
+        Point::new(18, 8),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(
+        log.borrow().contains(&"dismissed".to_string()),
+        "a press away from both closes it: {:?}",
+        log.borrow()
+    );
+}

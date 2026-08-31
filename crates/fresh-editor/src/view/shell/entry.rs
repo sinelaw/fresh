@@ -364,6 +364,7 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             avail_height: None,
+            scrollbar_reveal: None,
             surface: surface.clone(),
         };
         super::widgets::node(&spec, info.constraints.max_w.max(1), &cx)

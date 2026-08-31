@@ -1047,8 +1047,9 @@ impl Editor {
         self.set_status_message(t!("split.closed").to_string());
     }
 
-    /// Vertical scrollbar drag (`PointerGrab::VScrollbar`): relative
-    /// thumb drag or track jump on the grabbed split.
+    /// Vertical scrollbar drag: relative thumb drag or track jump on the
+    /// grabbed split. Reached from `UiFact::PaneScrollbarDrag` — the bar
+    /// captured the pointer on its press, so the move is its own.
     pub(crate) fn handle_vscrollbar_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
             // The bar is where the tree put it, and the buffer is the one the
@@ -1083,8 +1084,8 @@ impl Editor {
         Ok(())
     }
 
-    /// Horizontal scrollbar drag (`PointerGrab::HScrollbar`): relative
-    /// thumb drag or track jump on the grabbed split.
+    /// Horizontal scrollbar drag: relative thumb drag or track jump on the
+    /// grabbed split. Reached from `UiFact::PaneScrollbarDrag`, as above.
     pub(crate) fn handle_hscrollbar_drag(&mut self, col: u16, _row: u16) -> AnyhowResult<()> {
         if let Some(dragging_split_id) = self
             .active_window_mut()

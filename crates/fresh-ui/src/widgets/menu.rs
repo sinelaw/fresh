@@ -115,7 +115,7 @@ impl<M: 'static> Component<M> for Dropdown<M> {
         )
         .on_activate_handler({
             let up = up.clone();
-            Rc::new(move |i| {
+            Rc::new(move |i, _: &crate::Event| {
                 // Choosing returns the choice; a handler yields one message, so
                 // closing is the owner's job in the controlled form (its choice
                 // handler clears the open state) and a local flip otherwise.

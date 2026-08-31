@@ -19,7 +19,7 @@ Filter      │new task…                              Add
 Filter      │new task…    Add
 (o) All░░░░░│ ribbon: click th
 ( ) Open    │»[x] build the r█
-( ) Done    │»[ ] lay it out #
+( ) Done    │»[ ] lay it out █
             │»[ ] route the p█
  alpha · visit 1
 5 tasks · light · synced 0 · r

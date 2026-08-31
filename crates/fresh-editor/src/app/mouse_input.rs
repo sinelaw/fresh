@@ -889,17 +889,11 @@ impl Editor {
                     // Replace) keep their tracks on the editor.
                     || self.try_split_widget_scrollbar_drag(row);
             }
-            // Vertical scrollbar drag: update scroll position.
-            PointerGrab::VScrollbar => {
-                self.handle_vscrollbar_drag(col, row)?;
-            }
-            // Horizontal scrollbar drag: update horizontal scroll position.
-            PointerGrab::HScrollbar => {
-                self.handle_hscrollbar_drag(col, row)?;
-            }
             // The split separator's and the file explorer's width drags were
-            // here. Both are grips that capture the pointer, so their moves
-            // arrive as `UiFact::GripDrag` and never reach this walk.
+            // here, and so were both of a pane's scrollbars. All four are
+            // nodes that capture the pointer, so their moves arrive as
+            // `UiFact::GripDrag` / `UiFact::PaneScrollbarDrag` and never reach
+            // this walk.
             // A drag whose press landed on a live terminal grid: this is
             // selection intent (a bare click only focuses — see
             // `handle_editor_click`). Drop the split into read-only scrollback
