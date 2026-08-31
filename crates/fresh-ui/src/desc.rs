@@ -186,7 +186,7 @@ pub struct BoxProps {
     pub stack: bool,
     pub pad: Pad,
     pub gap: u16,
-    pub border: bool,
+    pub border: Option<crate::render::spec::BorderStyle>,
     pub align: Align,
     /// Bound what descendants may paint and hit to this box's *content* rect —
     /// inside the border ring and the padding.
@@ -1405,9 +1405,19 @@ impl<M> Node<M> {
     /// without a bound it paints over the frame, turning a corner into a
     /// letter. Call [`clip(false)`](Node::clip) to keep the border and drop the
     /// bound.
-    pub fn border(mut self) -> Self {
+    pub fn border(self) -> Self {
+        self.border_style(crate::render::spec::BorderStyle::Plain)
+    }
+
+    /// The same, in a named corner style.
+    ///
+    /// A plugin panel's card and labelled section are rounded — they always
+    /// have been, in the painter this replaces — and the editor's chrome is
+    /// plain. Which one a box wears is the description's to say, not the
+    /// backend's to assume.
+    pub fn border_style(mut self, style: crate::render::spec::BorderStyle) -> Self {
         let p = self.box_props();
-        p.border = true;
+        p.border = Some(style);
         p.clip = true;
         self
     }

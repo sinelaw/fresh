@@ -1307,6 +1307,18 @@ impl Editor {
         // stale `true` from the previous keystroke would claim this one.
         self.shell_interior_took_key = false;
         let result = ui.dispatch(input);
+        // **A change is not always a message.** A widget that keeps its own
+        // hover — every `List` and `Tree` — writes `hovered` through an
+        // updater and produces nothing, precisely so the host is not bothered
+        // with it; `dispatch` does not rebuild, so the write is sitting in the
+        // scheduler waiting for the next frame that never got asked for. The
+        // completion popup was the symptom: its rows never lit under the
+        // pointer while the menu bar's did, because the menu bar's hover is a
+        // `UiFact` and a `List`'s is not. `needs_frame` is the library's own
+        // answer to "is the frame stale" — a dirty element, a queued mutation,
+        // a behavior with something to deliver — and it is the right one to
+        // ask here.
+        let tree_stale = ui.needs_frame();
         self.shell_ui = Some(ui);
         // Claimed is reported, not inferred. Producing a message and taking
         // the event are different things: a hover moves a highlight without
@@ -1323,10 +1335,11 @@ impl Editor {
         // labels, the explorer's rows, the status bar's segments, a
         // separator, a tab — restyled a frame nobody asked for.
         //
-        // A message *is* the change: a `UiFact` exists to be reacted to, and
-        // a pointer that crosses no element boundary produces none, which is
-        // what keeps an idle motion from drawing a frame.
-        let changed = !result.msgs.is_empty();
+        // A message is *a* change — a `UiFact` exists to be reacted to — but
+        // not the only one: see `tree_stale` above. A motion that crosses no
+        // element boundary produces neither, which is what still keeps an idle
+        // pointer from drawing a frame.
+        let changed = tree_stale || !result.msgs.is_empty();
         for msg in result.msgs {
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
@@ -1383,6 +1396,19 @@ impl Editor {
                 at,
                 clicks,
             } => {
+                // **The byte the press landed on, which the fact has carried
+                // all along.** `at` is the column inside the hit's own piece
+                // and `byte_start` is where that piece begins in the entry's
+                // rendered row, so their sum is the entry byte
+                // `reposition_widget_text_cursor_from_click` subtracts
+                // `byte_start` back off. Every arm below used to pass `None`,
+                // which made `fx.place_caret` unreachable for a described
+                // panel: clicking into a Search & Replace field focused it and
+                // left the caret wherever it was. The painter this replaces
+                // resolved the same byte by comparing the screen column
+                // against geometry it had stamped; the piece the gesture sits
+                // on *is* that geometry.
+                let clicked_byte = at.map(|c| hit.byte_start.saturating_add(c as usize));
                 let slot = match slot {
                     crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
@@ -1412,13 +1438,13 @@ impl Editor {
                         // `PaneContentPress`, which focuses the pane itself.
                         self.focus_pane(pane);
                         if let Some(panel_key) = self.pane_panel_key(pane) {
-                            self.deliver_widget_hit(&panel_key, &hit, None);
+                            self.deliver_widget_hit(&panel_key, &hit, clicked_byte);
                         }
                         return;
                     }
                 };
                 if let Some(panel_key) = self.panel(slot).map(|p| p.panel_key.clone()) {
-                    self.deliver_widget_hit(&panel_key, &hit, None);
+                    self.deliver_widget_hit(&panel_key, &hit, clicked_byte);
                 }
             }
             UiFact::SettingsItem(idx) => {

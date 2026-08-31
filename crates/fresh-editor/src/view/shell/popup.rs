@@ -707,13 +707,24 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
             let for_row = rows.clone();
             let sel = *selected;
             let hint = selected_hint.map(str::to_string);
-            let list = fresh_ui::widgets::List::windowed(
+            // **Stateful, because the row paints its own cells.** Every cell
+            // `list_row` builds carries an explicit foreground *and*
+            // background, so the band `row_theme` stamps behind the row shows
+            // through nowhere and a hovered row looked exactly like an
+            // unhovered one. The painter this replaces read
+            // `HoverTarget::PopupListItem` and gave the row `menu_hover_*`;
+            // the state the widget already owns says the same thing, so the
+            // row is built *from* it rather than having a band painted behind
+            // it. Selection stays `i == sel` — the list is not focusable, so
+            // its own selected row reads as `SelectedBlur`, and a popup's
+            // selection is never muted.
+            let list = fresh_ui::widgets::List::windowed_stateful(
                 rows.len(),
                 |i| Key::Pair("popup_item".into(), i as u64),
-                move |i| match for_row.get(i) {
+                move |i, st| match for_row.get(i) {
                     Some(it) => list_row(
                         it,
-                        &row_theme(i == sel, false),
+                        &row_theme(i == sel, st == RowState::Hover),
                         (i == sel).then(|| hint.as_deref()).flatten(),
                     ),
                     None => row().h(Sizing::Cells(1)),
@@ -1054,6 +1065,61 @@ mod tests {
         assert!(
             off.starts_with("ui.help_separator_fg/") && off.contains("+dim"),
             "a disabled row is muted and dim: {off}"
+        );
+    }
+
+    /// **A hovered row's own cells take the hover ink, not just the band
+    /// behind them.**
+    ///
+    /// `row_theme` stamps a ground on the row node, and every cell `list_row`
+    /// builds carries an explicit foreground *and* background — so the band
+    /// showed through nowhere and a hovered row was indistinguishable from a
+    /// plain one. The painter this replaces read `HoverTarget::PopupListItem`
+    /// and gave the whole row `menu_hover_*`; the widget's own `RowState` says
+    /// the same thing, so the row is built from it.
+    #[test]
+    fn a_hovered_row_carries_the_hover_ink_through_its_cells() {
+        let item = |text: &str| PopupListItem {
+            text: text.into(),
+            detail: None,
+            icon: None,
+            data: None,
+            disabled: false,
+        };
+        let c = PopupContent::List {
+            items: vec![item("first"), item("second"), item("third")],
+            // Not row 1: a selected row outranks a hovered one, and the point
+            // here is the row that is *only* hovered.
+            selected: 0,
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let size = Size::new(40, 6);
+        ui.frame(content(&c, None), size);
+        let at = ui.rect_of(
+            ui.find_by_key(&Key::Pair("popup_item".into(), 1))
+                .expect("row 1"),
+        );
+        ui.dispatch(fresh_ui::Input::Move {
+            pos: fresh_ui::Point::new(at.x, at.y),
+            mods: fresh_ui::Mods::NONE,
+        });
+        let spec = ui.frame(content(&c, None), size).clone();
+        let theme_of = |needle: &str| {
+            spec.items
+                .iter()
+                .find(|i| matches!(&i.draw, fresh_ui::Draw::Lines(l) if l.iter().any(|s| s.contains(needle))))
+                .map(|i| i.theme.as_str().to_string())
+                .unwrap_or_else(|| panic!("no run for {needle:?}"))
+        };
+        assert_eq!(
+            theme_of("second"),
+            row_theme(false, true),
+            "the row under the pointer wears the hover pair"
+        );
+        assert_eq!(
+            theme_of("third"),
+            row_theme(false, false),
+            "and only that row"
         );
     }
 

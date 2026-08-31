@@ -103,13 +103,47 @@ impl ThemeKey {
         self.0.as_deref().unwrap_or("")
     }
 }
+/// Which corner glyphs a [`Draw::Border`] is drawn with.
+///
+/// **A border's corners are a description, not a backend default.** The fold
+/// drew ratatui's `BorderType::Plain` for every box, which is right for the
+/// editor's chrome and wrong for a plugin panel: a `WidgetSpec` card and a
+/// labelled section have always worn `╭╮╰╯`, and describing one turned it
+/// square. A backend that has only one corner set can round to whichever it
+/// draws; a backend that has both is told which was meant.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum BorderStyle {
+    /// `┌┐└┘` — ratatui's `BorderType::Plain`, and the editor's chrome.
+    #[default]
+    Plain,
+    /// `╭╮╰╯` — the plugin widget vocabulary's card and labelled section.
+    Rounded,
+    /// `┏┓┗┛` with heavy edges — a colour-independent "this one is selected"
+    /// marker. `mark_list_card_selected` swaps a card's light glyphs for these
+    /// rather than banding the row, "even when colours are too subtle"; a
+    /// description that could not name it would lose the marker on any theme
+    /// whose selection colour is faint.
+    Heavy,
+}
+
+impl BorderStyle {
+    /// The six glyphs, in the order a box is drawn: horizontal, vertical, and
+    /// the four corners clockwise from the top left.
+    pub fn glyphs(self) -> (char, char, char, char, char, char) {
+        match self {
+            BorderStyle::Plain => ('─', '│', '┌', '┐', '┘', '└'),
+            BorderStyle::Rounded => ('─', '│', '╭', '╮', '╯', '╰'),
+            BorderStyle::Heavy => ('━', '┃', '┏', '┓', '┛', '┗'),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Draw {
     /// A background region.
     Fill,
-    /// A box outline drawn inside `rect`.
-    Border,
+    /// A box outline drawn inside `rect`, in the given corner style.
+    Border(BorderStyle),
     /// Covers everything painted before it.
     Scrim(Scrim),
     /// Text, one entry per visual row.

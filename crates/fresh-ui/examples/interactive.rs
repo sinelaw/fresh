@@ -339,7 +339,7 @@ impl Terminal {
                 self.fill(frame, ' ', c(roles.text), c(roles.base), frame)
             }
             Draw::Scrim(Scrim::Dim) => self.dim(frame, roles),
-            Draw::Border => self.border(r, fg, bg, clip),
+            Draw::Border(bs) => self.border(r, fg, bg, clip, *bs),
             Draw::Lines(lines) => {
                 // Clipped to the item's own rect as well as its inherited one:
                 // an item declares how much room it has, and a run longer than
@@ -416,24 +416,27 @@ impl Terminal {
         }
     }
 
-    fn border(&mut self, r: Rect, fg: Color, bg: Color, clip: Rect) {
+    fn border(&mut self, r: Rect, fg: Color, bg: Color, clip: Rect, bs: fresh_ui::BorderStyle) {
         if r.w < 2 || r.h < 2 {
             return;
         }
         let (l, t) = (r.x, r.y);
         let (right, bottom) = (r.right() - 1, r.bottom() - 1);
+        // This demo used to round every corner unconditionally, which is a
+        // backend picking a look for a description that had not asked.
+        let (h, v, tl, tr, br, bl) = bs.glyphs();
         for x in l..=right {
-            self.put(x, t, '─', fg, bg, clip);
-            self.put(x, bottom, '─', fg, bg, clip);
+            self.put(x, t, h, fg, bg, clip);
+            self.put(x, bottom, h, fg, bg, clip);
         }
         for y in t..=bottom {
-            self.put(l, y, '│', fg, bg, clip);
-            self.put(right, y, '│', fg, bg, clip);
+            self.put(l, y, v, fg, bg, clip);
+            self.put(right, y, v, fg, bg, clip);
         }
-        self.put(l, t, '╭', fg, bg, clip);
-        self.put(right, t, '╮', fg, bg, clip);
-        self.put(l, bottom, '╰', fg, bg, clip);
-        self.put(right, bottom, '╯', fg, bg, clip);
+        self.put(l, t, tl, fg, bg, clip);
+        self.put(right, t, tr, fg, bg, clip);
+        self.put(l, bottom, bl, fg, bg, clip);
+        self.put(right, bottom, br, fg, bg, clip);
     }
 
     /// A soft shadow one cell to the right and below a floating surface: the

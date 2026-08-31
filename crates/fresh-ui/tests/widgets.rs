@@ -350,6 +350,52 @@ fn a_host_can_name_each_row_state_itself() {
     assert_eq!(themes_of(&ui, "item 3"), vec!["mine.plain.3"]);
 }
 
+/// **A row under the pointer says so on the next frame.**
+///
+/// `row_theme` is handed [`RowState::Hover`], but nothing drove a pointer over
+/// a row and re-framed to see it: the widget's own `Enter`/`Leave` handlers
+/// write `ListState::hovered`, and a write that never survives to the next
+/// build is a highlight nobody sees. The editor's completion popup was the
+/// symptom — every row read `Normal` however the pointer moved.
+#[test]
+fn a_row_under_the_pointer_reads_as_hovered() {
+    let items: Vec<usize> = (0..6).collect();
+    let list = || {
+        List::keyed(
+            &items,
+            |i| fresh_ui::Key::from(*i),
+            |i| fresh_ui::text(format!("item {i}")),
+        )
+        .selected(0)
+        .row_theme(|i, st| match st {
+            fresh_ui::widgets::RowState::Hover => "mine.hover".into(),
+            _ => format!("mine.plain.{i}"),
+        })
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(), FRAME);
+    let at = ui.rect_of(ui.find_by_key(&fresh_ui::Key::from(3u64)).expect("row 3"));
+
+    ui.dispatch(Input::Move {
+        pos: Point::new(at.x, at.y),
+        mods: Mods::NONE,
+    });
+    ui.frame(list(), FRAME);
+    assert_eq!(themes_of(&ui, "item 3"), vec!["mine.hover"]);
+    assert_eq!(themes_of(&ui, "item 4"), vec!["mine.plain.4"]);
+
+    // And leaving takes it back: a hover is where the pointer is now, not
+    // where it has ever been.
+    ui.dispatch(Input::Move {
+        pos: Point::new(at.x, at.y + 1),
+        mods: Mods::NONE,
+    });
+    ui.frame(list(), FRAME);
+    assert_eq!(themes_of(&ui, "item 3"), vec!["mine.plain.3"]);
+    assert_eq!(themes_of(&ui, "item 4"), vec!["mine.hover"]);
+}
+
 /// **Which click commits is the host's rule, not the widget's.**
 ///
 /// `on_activate` fired on the first click and won over `on_select`, so a list

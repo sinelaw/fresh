@@ -73,10 +73,16 @@ pub fn key_code(code: CtKey) -> Option<KeyCode> {
         CtKey::PageUp => KeyCode::PageUp,
         CtKey::PageDown => KeyCode::PageDown,
         CtKey::F(n) => KeyCode::F(n),
+        CtKey::Menu => KeyCode::Menu,
         // Media keys, modifier-only presses, and everything else the library
-        // has no variant for. A surface that owns the keyboard still swallows
-        // them — `handle_key` asks `Ui::keyboard_owned` — so declining here
-        // costs a key its *routing*, never its containment.
+        // has no variant for.
+        //
+        // **Declining here is not free.** A surface that owns the keyboard
+        // still swallows them — `handle_key` asks `Ui::keyboard_owned` — so a
+        // key with no variant is not "left on the old path" whenever a focus
+        // layer is up; it is eaten, silently. `Menu` is here for that reason:
+        // the dock's context menu answered `F2` (which has a variant, so it
+        // reached the host's router) and not `Menu` (which did not).
         _ => return None,
     })
 }

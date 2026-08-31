@@ -549,7 +549,7 @@ impl RenderObject for BoxRender {
     /// `layout` uses to place children, so the clip and the content rect are
     /// the same rectangle by construction rather than by two copies of the sum.
     fn clip_inset(&self) -> (u16, u16) {
-        let border = u16::from(self.props.border);
+        let border = u16::from(self.props.border.is_some());
         (
             self.props.pad.x.saturating_add(border),
             self.props.pad.y.saturating_add(border),
@@ -558,7 +558,7 @@ impl RenderObject for BoxRender {
 
     fn layout(&mut self, c: Constraints, cx: &mut dyn LayoutCx) -> Size {
         let p = &self.props;
-        let border = u16::from(p.border);
+        let border = u16::from(p.border.is_some());
         let ins_x = p.pad.x.saturating_add(border);
         let ins_y = p.pad.y.saturating_add(border);
         let inner = Constraints::new(
@@ -762,8 +762,8 @@ impl RenderObject for BoxRender {
     }
 
     fn paint(&self, g: Geom, out: &mut DrawList) {
-        if self.props.border {
-            out.push(Draw::Border, g);
+        if let Some(style) = self.props.border {
+            out.push(Draw::Border(style), g);
         }
     }
 

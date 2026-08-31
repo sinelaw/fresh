@@ -7,7 +7,7 @@ use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
 mod support;
-use fresh_ui::{col, row, shared_rc, text, BuildCx, Component, ComponentExt, Node, Ui};
+use fresh_ui::{col, row, shared_rc, text, BuildCx, Component, ComponentExt, Node, Size, Ui};
 use support::fake::Recorder;
 
 fn ui() -> (Recorder, Ui<()>) {
@@ -194,4 +194,47 @@ fn a_panic_part_way_through_leaves_the_last_committed_tree() {
     // And the tree is still usable.
     ui.reconcile(col().children([text("c"), Boom(false).node()]));
     assert_eq!(ui.shape(), shape);
+}
+
+/// **A memo skips the build when its props did not change.**
+///
+/// The reconciler's only other skip is reference identity (`Node::shared`),
+/// which asks the caller to keep an `Rc<Node>` across frames. A host that
+/// derives its description from a store every frame has no `Rc` to keep, so
+/// that short-circuit never fires for it and the whole tree re-reconciles on
+/// every frame however little changed. This is the other half.
+#[test]
+fn a_memo_rebuilds_only_when_its_props_change() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.trace(true);
+    let frame = |ui: &mut Ui<()>, n: u32| {
+        ui.frame(
+            fresh_ui::memo(n, |n| fresh_ui::text(format!("n={n}"))),
+            Size::new(20, 3),
+        );
+    };
+
+    frame(&mut ui, 1);
+    assert_eq!(ui.take_build_log().len(), 1, "the first frame builds");
+
+    frame(&mut ui, 1);
+    assert!(
+        ui.take_build_log().is_empty(),
+        "the same props must not rebuild"
+    );
+
+    frame(&mut ui, 2);
+    assert_eq!(ui.take_build_log().len(), 1, "changed props must rebuild");
+
+    // And the skip is a skip of work, not of correctness: the screen still
+    // shows the props it was last built with.
+    frame(&mut ui, 2);
+    assert!(
+        ui.spec()
+            .in_flow()
+            .iter()
+            .any(|i| matches!(&i.draw, fresh_ui::Draw::Lines(l)
+                if l.iter().any(|r| r.contains("n=2")))),
+        "a skipped frame keeps what the last build produced"
+    );
 }
