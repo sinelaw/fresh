@@ -5,9 +5,9 @@
     "fg": "Default",
     "cursor": "Default",
     "inactive_cursor": "DarkGray",
-    "selection_bg": "Default",
-    "selection_modifier": ["reversed"],
-    "current_line_bg": "Default",
+    "selection_bg": [60, 100, 180],
+    "selection_modifier": null,
+    "current_line_bg": [53, 56, 63],
     "line_number_fg": "DarkGray",
     "line_number_bg": "Default",
     "diff_add_bg": "Green",
@@ -26,7 +26,16 @@
     "indent_rainbow_4": "Magenta",
     "indent_rainbow_5": "White",
     "indent_rainbow_6": "LightBlue",
-    "after_eof_bg": "Default"
+    "after_eof_bg": "Default",
+    "bracket_match_fg": "Yellow",
+    "bracket_rainbow_1": "Cyan",
+    "bracket_rainbow_2": "Green",
+    "bracket_rainbow_3": "Yellow",
+    "bracket_rainbow_4": "Magenta",
+    "bracket_rainbow_5": "White",
+    "bracket_rainbow_6": "LightBlue",
+    "indentation_guide_fg": "Gray",
+    "whitespace_indicator_selected_fg": "Gray"
   },
   "ui": {
     "tab_active_fg": "Yellow",
@@ -34,7 +43,7 @@
     "tab_inactive_fg": "Gray",
     "tab_inactive_bg": "Default",
     "tab_separator_bg": "Default",
-    "tab_close_hover_fg": "Red",
+    "tab_close_hover_fg": "White",
     "tab_hover_bg": "DarkGray",
     "menu_bg": "Default",
     "menu_fg": "Default",
@@ -108,14 +117,12 @@
     "file_status_deleted_fg": "Red",
     "file_status_renamed_fg": "Cyan",
     "file_status_untracked_fg": "Gray",
-    "file_status_conflicted_fg": "Magenta"
+    "file_status_conflicted_fg": "Magenta",
+    "status_separator_bg": "Default",
+    "status_separator_fg": "Default",
+    "suggestion_fg": "Default"
   },
-  "search": {
-    "match_bg": "Yellow",
-    "match_fg": "Black",
-    "label_bg": "Magenta",
-    "label_fg": "White"
-  },
+  "search": { "match_bg": "Yellow", "match_fg": "Black", "label_bg": "Magenta", "label_fg": "White" },
   "diagnostic": {
     "error_fg": "Red",
     "error_bg": "Default",
