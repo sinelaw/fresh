@@ -51,6 +51,66 @@ LTO, `codegen-units = 1`). Two extra knobs are available for producing a
    cargo build --release        # default features, full functionality
    ```
 
+## Dev Build Speed
+
+The default (`dev`/`test`) profile is tuned for build speed, because in this
+workspace the tests *are* the build: `crates/fresh-editor/tests` alone is 59
+integration-test files, and cargo compiles and links each one into its own
+binary that statically contains the whole editor and its dependency graph
+(78 such binaries across the workspace).
+
+**`debug = 0`** is set in `[profile.dev]`. Measured on a 4-core Linux box,
+`fresh-editor` plus 10 of its integration tests, from a cold `target/`:
+
+| | `debug = 2` (cargo default) | `debug = 0` |
+| --- | --- | --- |
+| deps + lib compile | 208s | **153s** |
+| compile + link 10 test binaries | 168s | **126s** |
+| those 10 test binaries on disk | 5586 MB | **1236 MB** |
+| whole `target/` | 12868 MB | **4879 MB** |
+| touch `lib.rs`, rebuild the 10 | 33.2s | **23.6s** |
+
+Disk is not a footnote here. At cargo's default, `cargo build --tests` over
+the whole workspace needs well past 40GB of `target/` and fails with
+"No space left on device" on a machine with 29GB free.
+
+The trade is that debug builds have no line tables, so a panic or a debugger
+gives you function names but not `file:line`. Ask for it per-invocation
+instead of putting it back for everyone:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p fresh-editor --test e2e_tests
+CARGO_PROFILE_DEV_DEBUG=2 cargo build     # full DWARF
+```
+
+`debug-assertions` and `overflow-checks` are untouched and stay on.
+
+**The git hash is release-only.** `crates/fresh-editor/build.rs` embeds the
+short commit hash, but registering `.git/HEAD` and `.git/refs` as build
+inputs meant every commit, branch switch, rebase or `git pull` invalidated
+the build script and relinked all 59 test binaries. On a warm `target/` with
+10 tests built, a true no-op rebuild is 0.44s while one touched git ref cost
+24.26s. Debug builds now report `dev` and register no git dependency;
+release builds are unchanged and still embed the real hash.
+
+Two things that look like wins here but are **not**, both checked:
+
+- *A faster linker.* Since Rust 1.9x, `rustc` already passes
+  `-B<sysroot>/.../gcc-ld -fuse-ld=lld` by default on
+  `x86_64-unknown-linux-gnu`. `lld` is already in use; a `.cargo/config.toml`
+  selecting it changes nothing.
+- *Dropping the `opt-level = 3` overrides on `oxc_*` / `rquickjs*`.* They cost
+  only ~28s of a 279s cold build (~11%), and removing them makes the
+  incremental loop **slower** (touch-rebuild 23.6s -> 27.8s), because the
+  unoptimized rlibs are larger and take longer to link. They also exist to
+  keep plugin tests from timing out. Leave them alone.
+
+The largest remaining lever is structural rather than configuration: those 59
+separate test binaries cost roughly 12.6s each to compile and link. Merging
+them into fewer targets would help a lot, but 40 of them declare `mod common;`
+and would each need rewriting, and it would trade per-file process isolation
+for per-test isolation under nextest.
+
 ## Commit Hygiene
 
 - Commit messages must describe the **motivation / goal** of each commit, not just what changed
