@@ -146,6 +146,7 @@ Drop a selection anchor and extend the selection as you move, without holding `S
 | `Tab` | Indent |
 | `Shift+Tab` | Dedent |
 | `Ctrl+/` | Toggle comment |
+| `Ctrl+Shift+D` | Duplicate line/selection |
 | `Ctrl+T` | Transpose characters |
 
 ### Deletion

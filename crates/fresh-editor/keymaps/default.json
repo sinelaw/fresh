@@ -699,6 +699,14 @@
       "when": "normal"
     },
     {
+      "comment": "Duplicate the current line (or selected lines) — VS Code Ctrl+Shift+D (issue #2673)",
+      "key": "d",
+      "modifiers": ["ctrl", "shift"],
+      "action": "duplicate_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "key": "Tab",
       "modifiers": ["shift"],
       "action": "dedent_selection",

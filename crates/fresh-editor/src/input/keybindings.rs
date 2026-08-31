@@ -3567,6 +3567,34 @@ mod tests {
         );
     }
 
+    /// Issue #2673: the editor already implements `toggle_comment` and
+    /// `duplicate_line`, but the reporter couldn't find shortcuts for them.
+    /// `Ctrl+/` was already bound; `Ctrl+Shift+D` (duplicate) was bound to
+    /// nothing in any keymap. Guard both default bindings in the editing
+    /// (Normal) context.
+    #[test]
+    fn test_comment_and_duplicate_default_bindings() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        let ctrl_slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&ctrl_slash, KeyContext::Normal),
+            Action::ToggleComment,
+            "Ctrl+/ should toggle comments in the default keymap"
+        );
+
+        let ctrl_shift_d = KeyEvent::new(
+            KeyCode::Char('d'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        assert_eq!(
+            resolver.resolve(&ctrl_shift_d, KeyContext::Normal),
+            Action::DuplicateLine,
+            "Ctrl+Shift+D should duplicate the line/selection in the default keymap"
+        );
+    }
+
     #[test]
     fn test_shift_letter_binding_works_without_terminal_shift_modifier() {
         // Regression test for https://github.com/sinelaw/fresh/issues/1899
