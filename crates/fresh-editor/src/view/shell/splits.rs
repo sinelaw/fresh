@@ -1293,6 +1293,12 @@ fn scrollbar(id: LeafId, axis: Axis) -> Node<UiMsg> {
                     return None;
                 }
                 let (x, y) = at(e);
+                // **The whole drag mechanism, in one call** — the same one
+                // `grip::draggable` makes. A thumb drag leaves the bar's own
+                // column on its first step, and capture is what keeps the
+                // moves and the release coming back here instead of being
+                // routed by a flag the ladder read on every event.
+                e.capture_pointer();
                 e.stop();
                 Some(UiMsg::Ui(UiFact::PaneScrollbarPress {
                     pane: id,
@@ -1303,6 +1309,13 @@ fn scrollbar(id: LeafId, axis: Axis) -> Node<UiMsg> {
             }),
         )
         .on(
+            GestureKind::Release,
+            Rc::new(move |e: &Event| {
+                e.stop();
+                Some(UiMsg::Ui(UiFact::PaneScrollbarRelease { pane: id, axis }))
+            }),
+        )
+        .on(
             GestureKind::Wheel,
             Rc::new(move |e: &Event| {
                 let (x, y) = at(e);
@@ -1310,20 +1323,29 @@ fn scrollbar(id: LeafId, axis: Axis) -> Node<UiMsg> {
                 Some(UiMsg::Ui(pane_wheel(id, x, y, e.delta, e.axis)))
             }),
         );
+    // **One `Move`, two meanings, and the state says which.** A captured bar
+    // is being dragged; an uncaptured one is being hovered, and the vertical
+    // bar's highlight follows the pointer between its thumb and its track.
+    // Emitting one fact and letting the applier read the drag flag is the
+    // shape `GripDrag` already has, and it is why the bar does not need to
+    // know whether it holds the pointer.
+    let bar = bar.on(
+        GestureKind::Move,
+        Rc::new(move |e: &Event| {
+            let (x, y) = at(e);
+            Some(UiMsg::Ui(UiFact::PaneScrollbarDrag {
+                pane: id,
+                axis,
+                x,
+                y,
+            }))
+        }),
+    );
     // Only the vertical bar names a hover target: it has a draggable thumb and
     // a track that pages, and the highlight follows the pointer between them.
     match axis {
         Axis::Horizontal => bar,
         Axis::Vertical => bar
-            .on(
-                GestureKind::Move,
-                Rc::new(move |e: &Event| {
-                    Some(UiMsg::Ui(UiFact::PaneScrollbarHover(Some((
-                        id,
-                        e.pos.y.max(0) as u16,
-                    )))))
-                }),
-            )
             .on_enter(Rc::new(move |e: &Event| {
                 Some(UiMsg::Ui(UiFact::PaneScrollbarHover(Some((
                     id,

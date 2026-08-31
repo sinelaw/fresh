@@ -340,6 +340,11 @@ pub struct ViewportProps {
     pub scrollbar: bool,
     /// Keep the bar's gutter reserved even when no bar is drawn.
     pub stable_gutter: bool,
+    /// Withhold the bar this frame. See [`Node::scrollbar_revealed`].
+    pub bar_hidden: bool,
+    /// The bar floats over the window's last column instead of taking a
+    /// gutter of its own. See [`Node::scrollbar_revealed`].
+    pub overlay: bool,
     /// Appearance of the bar itself, named apart from the window's.
     pub bar_theme: Option<Rc<str>>,
     pub mode: ScrollMode,
@@ -1196,6 +1201,54 @@ impl<M> Node<M> {
             _ => panic!("scrollbar_gutter() applies to Viewport nodes only"),
         }
         self
+    }
+
+    /// A bar that is only drawn while the caller says to — an *overlay* bar.
+    ///
+    /// **The window does not decide when.** What reveals an overlay bar is
+    /// attention: the pointer over the region it belongs to, a selection that
+    /// just moved, a scroll still settling. Only the first of those is a fact
+    /// about the tree, and even that one is often the app's — a panel whose
+    /// rows come from a plugin knows its own hover zones before the tree
+    /// does — while the others are a clock the app already ticks. So the
+    /// caller says *whether*, once per frame, and the window says what that
+    /// means.
+    ///
+    /// What it means is three things. The bar is not drawn. It is not
+    /// *there*: [`scrollbar`](Node::scrollbar)'s pre-propagation grab is off,
+    /// because a bar nobody can see is a bar nobody should be able to catch by
+    /// pressing the column it would have been in. And it takes **no gutter** —
+    /// it floats over the window's last column rather than carving one out,
+    /// which is what makes it an overlay and what keeps a bar that comes and
+    /// goes from reflowing the row being reached for. A window that would
+    /// rather give the bar a column of its own wants
+    /// [`scrollbar_gutter`](Node::scrollbar_gutter) and no reveal.
+    pub fn scrollbar_revealed(mut self, shown: bool) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => {
+                p.scrollbar = true;
+                p.overlay = true;
+                p.stable_gutter = false;
+                p.bar_hidden = !shown;
+            }
+            _ => panic!("scrollbar_revealed() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// The bar, on terms the caller carries: `None` — drawn whenever the
+    /// content overflows; `Some(shown)` — an overlay bar, drawn while
+    /// `shown` (see [`scrollbar_revealed`](Node::scrollbar_revealed)).
+    ///
+    /// The `Option` is the point. A window deep inside a description does not
+    /// know which surface it ended up on, and "does this surface hide its
+    /// bars, and is one showing" is one answer handed down from wherever that
+    /// *is* known — one value to thread, rather than a branch at every window.
+    pub fn scrollbar_when(self, reveal: Option<bool>) -> Self {
+        match reveal {
+            None => self.scrollbar(),
+            Some(shown) => self.scrollbar_revealed(shown),
+        }
     }
 
     /// Name the bar's appearance, apart from the window's.

@@ -405,6 +405,7 @@ impl Editor {
         &mut self,
         hit: &crate::widgets::HitArea,
         at: Option<u16>,
+        clicks: u8,
     ) {
         let key = hit.owner_key.as_deref().unwrap_or(hit.widget_key.as_str());
         let (path, part) = match key.split_once("::") {
@@ -463,7 +464,7 @@ impl Editor {
                 "add" => None,
                 _ => Some(row()),
             };
-            self.entry_composite_press(idx, entry);
+            self.entry_composite_press(idx, entry, clicks >= 2);
             return;
         }
         // A press on a text field also says where in the value the caret goes.
@@ -617,11 +618,15 @@ impl Editor {
     /// trailing `[+] Add new` sentinel — which is exactly what
     /// `open_nested_entry_dialog` reads out of `focused_entry` /
     /// `focused_index` to decide between editing an entry and making one.
-    pub(crate) fn entry_composite_press(&mut self, item_idx: usize, entry: Option<usize>) {
-        let double = self
-            .shell_pointer_event
-            .map(|(_, double)| double)
-            .unwrap_or(false);
+    /// `double` is the press's own doubleness, carried on the fact by the row
+    /// that saw it (`UiFact::WidgetHit::clicks`) rather than fetched back off
+    /// the editor — B.4's side channel, one reader shorter.
+    pub(crate) fn entry_composite_press(
+        &mut self,
+        item_idx: usize,
+        entry: Option<usize>,
+        double: bool,
+    ) {
         let Some(state) = self.settings_state.as_mut() else {
             return;
         };

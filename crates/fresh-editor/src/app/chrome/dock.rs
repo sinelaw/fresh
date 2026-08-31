@@ -6,6 +6,20 @@ pub(crate) struct Dock;
 
 impl ChromeComponent for Dock {
     fn on_pointer_moved(&self, ed: &mut Editor, col: u16, row: u16) -> bool {
+        // **Only while the dock is painted.** The zones below are rectangles
+        // the painter's scrollbar pass records on its way past, and a
+        // described dock never reaches that pass — so an empty list is not
+        // "the pointer is nowhere near", it is "nothing here has an opinion",
+        // and answering `false` anyway would overwrite the memo the tree's
+        // own `UiFact::DockHover` had just set. The tree's is the one to
+        // keep; this arm retires with the safety valve it belongs to.
+        if ed
+            .dock
+            .as_ref()
+            .is_none_or(|d| d.scrollbar_hover_zones.is_empty())
+        {
+            return false;
+        }
         // The dock's overlay scrollbar follows the pointer: reveal it
         // while the mouse is over the sessions list, hide it otherwise.
         // Tracked off the actual motion events we receive (not gated on

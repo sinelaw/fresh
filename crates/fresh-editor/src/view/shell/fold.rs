@@ -236,7 +236,14 @@ pub fn fold_band(
                     };
                     let mut cell = Style::default();
                     if let Some(c) = colour {
-                        cell = cell.bg(c);
+                        // Both halves, not just the ground. The glyph is a
+                        // space, so the foreground is invisible either way —
+                        // what naming it buys is that the cell is the *bar's*
+                        // whatever it covers. An overlay bar floats over rows
+                        // that light on hover, and a cell that took its
+                        // foreground from the row underneath would change
+                        // colour when the row did.
+                        cell = cell.fg(c).bg(c);
                     }
                     put(buf, rect.x, rect.y.saturating_add(i), ' ', cell, clip);
                 }

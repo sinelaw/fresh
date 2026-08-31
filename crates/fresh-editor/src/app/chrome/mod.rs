@@ -70,10 +70,6 @@ pub(crate) enum PointerGrab {
     WidgetText,
     /// A floating/dock panel's list scrollbar drag.
     WidgetScrollbar,
-    /// A split's vertical scrollbar (thumb-relative or track-jump).
-    VScrollbar,
-    /// A split's horizontal scrollbar.
-    HScrollbar,
     /// A press on a live terminal grid whose first motion converts to
     /// scrollback text selection (selection intent).
     TerminalSelectPending,
@@ -90,13 +86,19 @@ pub(crate) enum PointerGrab {
 /// ladder's order so precedence is unchanged when (rarely) two flags
 /// coexist.
 ///
-/// **Three grabs have left, and they left by becoming what this imitates.**
-/// The dock's width, a split separator and the file explorer's width are all
-/// dragged by a *node*, and a node that calls `capture_pointer` on its press
-/// keeps every move and the release wherever the pointer goes — so there is
-/// nothing to rank and nothing to keep in sync. What is left below are the
-/// drags whose press is not a node's: they retire with their surfaces, the
-/// same way these did (`view::shell::grip`).
+/// **Five grabs have left, and they left by becoming what this imitates.**
+/// The dock's width, a split separator, the file explorer's width and both of
+/// a pane's scrollbars are dragged by a *node*, and a node that calls
+/// `capture_pointer` on its press keeps every move and the release wherever
+/// the pointer goes — so there is nothing to rank and nothing to keep in
+/// sync. The two scrollbars are the ones that show why the ranking existed at
+/// all: a thumb drag leaves the bar's own column on its first step, which is
+/// precisely the case a re-hit-test would get wrong and the flag ladder was
+/// built to survive.
+///
+/// What is left below are the drags whose press is not a node's: they retire
+/// with their surfaces, the same way these did (`view::shell::grip`,
+/// `view::shell::splits::scrollbar`).
 pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     if ed.widget_text_drag.is_some() {
         return Some(PointerGrab::WidgetText);
@@ -118,12 +120,6 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
         return Some(PointerGrab::WidgetScrollbar);
     }
     let ms = &ed.active_window().mouse_state;
-    if ms.dragging_scrollbar.is_some() {
-        return Some(PointerGrab::VScrollbar);
-    }
-    if ms.dragging_horizontal_scrollbar.is_some() {
-        return Some(PointerGrab::HScrollbar);
-    }
     if ms.terminal_drag_pending.is_some() {
         return Some(PointerGrab::TerminalSelectPending);
     }

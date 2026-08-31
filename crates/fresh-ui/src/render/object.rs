@@ -183,6 +183,19 @@ pub trait RenderObject {
         let _ = (g, out);
     }
 
+    /// Emit display-list items *after* this node's children, so they land on
+    /// top of everything inside it.
+    ///
+    /// **A node's own paint is under its children**, which is right for a
+    /// ground and wrong for the two or three things that are genuinely on
+    /// top. An overlay scrollbar is the case this exists for: it floats over
+    /// the last column of its window rather than carving a gutter out of it,
+    /// and painted with the rest of the node's own output it would be covered
+    /// by the very rows it reports on.
+    fn paint_over(&self, g: Geom, out: &mut DrawList) {
+        let _ = (g, out);
+    }
+
     /// What happens to a point inside this node's rectangle.
     fn hit(&self, local: Point) -> Hit {
         let _ = local;

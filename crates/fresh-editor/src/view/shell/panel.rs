@@ -102,6 +102,8 @@ pub struct Interior {
     pub hovered_popup_row: String,
     pub marker_gutter: bool,
     pub avail_height: Option<u32>,
+    /// See [`super::widgets::Ctx::scrollbar_reveal`].
+    pub scrollbar_reveal: Option<bool>,
 }
 
 /// The box itself. Its rectangle is what the painter used to call
@@ -375,6 +377,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                     hovered_item_key: i.hovered_item_key.clone(),
                     hovered_popup_row: i.hovered_popup_row.clone(),
                     avail_height: i.avail_height,
+                    scrollbar_reveal: i.scrollbar_reveal,
                     surface: super::widgets::panel_surface(),
                 },
             )
@@ -682,6 +685,7 @@ mod tests {
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
+            scrollbar_reveal: None,
         });
         let ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");
@@ -740,6 +744,7 @@ mod tests {
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
+            scrollbar_reveal: None,
         });
         let mut ui = laid_out(Some(p));
         let at = ui
@@ -789,6 +794,7 @@ mod tests {
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
+            scrollbar_reveal: None,
         });
         let mut ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");

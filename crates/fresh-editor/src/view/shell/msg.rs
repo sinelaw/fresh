@@ -55,6 +55,18 @@ pub enum UiFact {
         /// geometry, so the offset inside it is what is left to say. `None`
         /// for a hit that arrived without a pointer behind it.
         at: Option<u16>,
+        /// How many presses in the run this one was — `Event::clicks`.
+        ///
+        /// **A row's index is not the whole of what activated it.** A settings
+        /// map field's `[+] Add new` row opens on one press and a committed row
+        /// on two (#604), so the surface has to know which it got. The applier
+        /// used to reach back for it through `Editor::shell_pointer_event`,
+        /// which is B.4's side channel; it rides on the fact now, exactly as
+        /// `PaneContentPress` carries the press's modifiers.
+        ///
+        /// `0` for a hit no mouse made — a keyboard activation, or the web's
+        /// own route.
+        clicks: u8,
     },
     /// The floating plugin panel's `[×]` was pressed.
     ///
@@ -167,6 +179,28 @@ pub enum UiFact {
     /// The pointer is on a pane's vertical scrollbar at a row, or has left it.
     /// Thumb or track is decided from the recorded thumb extent.
     PaneScrollbarHover(Option<(LeafId, u16)>),
+    /// The pointer moved while a pane's scrollbar holds it.
+    ///
+    /// **The bar captured the pointer on its press**, so this arrives wherever
+    /// the pointer has travelled — which is the whole of what
+    /// `chrome::PointerGrab::{VScrollbar, HScrollbar}` and the ladder that
+    /// ranked them were arranging by hand. A thumb drag leaves the bar's
+    /// column on its first step, and that is why the ranking existed.
+    ///
+    /// It fires on a bare hover over the bar too, so whether a drag is in
+    /// progress is state the applier holds and the applier that decides —
+    /// exactly as `UiFact::GripDrag` does for the three grips that left.
+    PaneScrollbarDrag {
+        pane: LeafId,
+        axis: fresh_ui::Axis,
+        x: u16,
+        y: u16,
+    },
+    /// The press that started a pane scrollbar's drag has been released.
+    PaneScrollbarRelease {
+        pane: LeafId,
+        axis: fresh_ui::Axis,
+    },
     /// A wheel notch over a pane — its content, either of its bars, whichever
     /// part reported it. They all mean the same thing: move this pane's
     /// surface. Carries the pointer's cell for the plugin `mouse_wheel` hook.
@@ -375,6 +409,19 @@ pub enum UiFact {
         x: u16,
         y: u16,
     },
+    /// The pointer entered or left the dock column.
+    ///
+    /// **What an overlay scrollbar waits for.** The dock's bar is drawn while
+    /// the pointer is over the column and hidden otherwise — see
+    /// `view::shell::widgets::Ctx::scrollbar_reveal` — and this is the tree
+    /// saying which. It replaces `chrome::Dock::on_pointer_moved`'s cell test
+    /// against `scrollbar_hover_zones`, rectangles the painter recorded on
+    /// its way past and a mouse arm compared against afterwards: the same
+    /// defect this migration removes everywhere else, in its smallest form.
+    /// The zone became the column rather than each list's own region, which
+    /// is a strictly better answer to "is the pointer here" — the bar tells
+    /// you the column scrolls as soon as you are in it.
+    DockHover(bool),
     /// A press on the dock's right-edge grip: start a width drag.
     DockResizeBegin,
     /// The pointer moved while a grip holds it.
@@ -563,6 +610,48 @@ pub enum UiFact {
     WidgetPopupHover {
         slot: super::widgets::Slot,
         index: Option<usize>,
+    },
+    /// The pointer entered or left a widget's own rectangle.
+    ///
+    /// **The hover the runtime probed for.** `update_widget_hover` laid the
+    /// panel's spec out a second time on every motion event, hit-tested the
+    /// cell against the boxes that produced, and then asked the *plugin* to
+    /// re-render so the painter could draw the highlight — a round trip into
+    /// another language per mouse move, to answer a question the tree had
+    /// already answered by laying the row out. A described panel draws its own
+    /// highlight from `widgets::Ctx::hovered_key`, so all that is left is
+    /// saying which widget it is.
+    ///
+    /// `widget` is the widget's key and `item` the row's, because every row of
+    /// one tree shares the tree's key — without the second the highlight could
+    /// only light the whole list. A leave carries the same pair rather than
+    /// clearing blindly: enter and leave are per-node, two pieces of one row
+    /// hand the hover between them, and a leave that did not name what it was
+    /// leaving could undo the enter that had just replaced it.
+    WidgetHover {
+        slot: super::widgets::Slot,
+        widget: String,
+        item: String,
+        entered: bool,
+    },
+    /// A right press on a widget that raises a context menu for itself.
+    ///
+    /// **The last thing a described panel asked the probe.** Deciding *which*
+    /// widget a right press belongs to is geometry, and the node has it;
+    /// deciding what a right press on one means is not, and that half stays
+    /// where it was (`Editor::fire_widget_context`). The probe answered the
+    /// first from a second layout of the same spec — one that reads the
+    /// runtime's own `scroll_offset`, which the description does not — so a
+    /// scrolled list raised the menu for a different row from the one clicked.
+    ///
+    /// `x`/`y` are the screen cell, not the widget's: the plugin anchors its
+    /// popup at the click, and the payload it gets from a list carries only
+    /// the row index.
+    WidgetContext {
+        slot: super::widgets::Slot,
+        hit: crate::widgets::HitArea,
+        x: u16,
+        y: u16,
     },
     /// An open widget pop-over was dismissed — a press outside it, or Escape.
     ///

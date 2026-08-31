@@ -1102,12 +1102,16 @@ impl RenderObject for ViewportRender {
                 own = c.constrain(Size::new(content.w.max(c.min_w), content.h));
                 // A vertical scrollbar takes a one-column gutter when the
                 // content is taller than the window; re-measure the content in
-                // the narrower area so it is not painted over the bar. A
-                // stable gutter keeps the column whether the bar is drawn or
-                // not, so the content does not reflow when the list crosses
-                // the length that makes it overflow.
+                // the narrower area so it does not run under the bar. A stable
+                // gutter keeps the column whether the bar is drawn or not, so
+                // the content does not reflow when the list crosses the length
+                // that makes it overflow. An overlay bar carves nothing and
+                // floats over the last column, which is what lets it come and
+                // go without moving the content under the pointer.
                 let gutter = u16::from(
-                    self.props.scrollbar && (self.props.stable_gutter || content.h > own.h),
+                    self.props.scrollbar
+                        && !self.props.overlay
+                        && (self.props.stable_gutter || content.h > own.h),
                 );
                 if gutter > 0 {
                     let inner_w = own.w.saturating_sub(gutter);
@@ -1162,11 +1166,15 @@ impl RenderObject for ViewportRender {
                 let rows = (own.h / height) as u32;
                 self.items = n;
                 // When the content overflows and a scrollbar is asked for, the
-                // last column is a gutter the scrollbar owns: content laid out
-                // over it would paint the bar away, since a node's own paint is
-                // under its children. A stable gutter reserves it either way.
-                let gutter =
-                    u16::from(self.props.scrollbar && (self.props.stable_gutter || n > rows));
+                // last column is a gutter the scrollbar owns, so the rows are
+                // not laid out under it. A stable gutter reserves it either
+                // way; an overlay bar asks for none and floats over the rows
+                // instead — see [`RenderObject::paint_over`].
+                let gutter = u16::from(
+                    self.props.scrollbar
+                        && !self.props.overlay
+                        && (self.props.stable_gutter || n > rows),
+                );
                 let inner_w = own.w.saturating_sub(gutter);
                 self.window = Rect::new(0, scroll.y, inner_w, rows.min(u16::MAX as u32) as u16);
                 cx.set_scroll(ScrollInfo {
@@ -1187,11 +1195,20 @@ impl RenderObject for ViewportRender {
     }
 
     fn paint(&self, g: Geom, out: &mut DrawList) {
-        use crate::desc::ScrollMode;
         if self.props.selectable {
             out.push(Draw::Selectable, g);
         }
-        if !self.props.scrollbar {
+    }
+
+    /// **The bar is on top of the window, always.** With a gutter it does not
+    /// overlap anything, so this changes nothing; without one — a revealed
+    /// overlay bar — it is the difference between a bar and no bar, because a
+    /// node's own paint is under its children and the rows would cover it.
+    fn paint_over(&self, g: Geom, out: &mut DrawList) {
+        use crate::desc::ScrollMode;
+        // A revealed bar that is not being revealed draws nothing. Its
+        // gutter, when it has one, is still reserved.
+        if !self.props.scrollbar || self.props.bar_hidden {
             return;
         }
         let (offset, content) = match self.props.mode {
@@ -1227,7 +1244,11 @@ impl RenderObject for ViewportRender {
     }
 
     fn shows_scrollbar(&self) -> bool {
-        self.props.scrollbar
+        // What this answers is whether the column is grabbable, so a
+        // withheld bar answers no: `hit.rs` starts a drag from a press on the
+        // track before propagation, and an invisible track would swallow a
+        // press aimed at the row behind it.
+        self.props.scrollbar && !self.props.bar_hidden
     }
 
     fn render_name(&self) -> &'static str {

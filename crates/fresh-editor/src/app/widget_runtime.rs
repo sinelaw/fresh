@@ -2683,9 +2683,17 @@ impl Editor {
     /// right-clicked row. Returns `true` when a context event fired (so the
     /// caller swallows the click). Clicks on non-list widgets, padding, or
     /// outside the inner rect return `false`.
-    pub(super) fn handle_floating_widget_context_click(
+    /// Raise a widget's context menu from a hit the caller already has.
+    ///
+    /// **The half of the arm below that was never the probe's.** Deciding
+    /// *which* widget a right press belongs to is geometry; deciding what a
+    /// right press on it means is not. A described panel answers the first
+    /// itself — its widgets are nodes with rectangles — and hands the hit
+    /// here, which is the same second half the probe's answer goes through.
+    pub(super) fn fire_widget_context(
         &mut self,
         slot: super::PanelSlot,
+        hit: &crate::widgets::HitArea,
         col: u16,
         row: u16,
     ) -> bool {
@@ -2693,23 +2701,12 @@ impl Editor {
             Some(fwp) => fwp.panel_key.clone(),
             None => return false,
         };
-        // One probe for every pointer gesture on a panel — the same
-        // geometry, surface decision (base vs covering popup), and
-        // row-aware resolution the left-click and hover paths use.
-        // This path used to duplicate the geometry inline WITHOUT the
-        // overlay check, so a right-click went through an open popup
-        // to the rows it covered.
-        let probe = match self.probe_floating_widget(slot, col, row) {
-            Some(p) => p,
-            None => return false,
-        };
-        // Keep only hits whose kind declared the context-click
-        // capability (List/Tree rows): a right-click raises a menu for
-        // a session row, not for a button or empty padding.
-        let (mut payload, key, _kind) = match probe.hit.filter(|hit| hit.context_click) {
-            Some(hit) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
-            None => return false,
-        };
+        // A right-click raises a menu for a session row, not for a button or
+        // empty padding: only kinds that declared the capability answer.
+        if !hit.context_click {
+            return false;
+        }
+        let mut payload = hit.payload.clone();
         // Carry the screen cell so the plugin can anchor its popup at the
         // click (the list `select` payload only has the row index).
         if let Some(obj) = payload.as_object_mut() {
@@ -2724,8 +2721,44 @@ impl Editor {
         {
             return false;
         }
-        self.fire_widget_event(&panel_key, key, "context".to_string(), payload);
+        self.fire_widget_event(
+            &panel_key,
+            hit.widget_key.clone(),
+            "context".to_string(),
+            payload,
+        );
         true
+    }
+
+    pub(super) fn handle_floating_widget_context_click(
+        &mut self,
+        slot: super::PanelSlot,
+        col: u16,
+        row: u16,
+    ) -> bool {
+        // **A described panel's widgets answer their own right press.** The
+        // node carries the `HitArea`, so `UiFact::WidgetContext` has already
+        // gone to `fire_widget_context` by the time this runs — and the probe
+        // below would answer from a *second* layout that reads the runtime's
+        // own scroll offset, which the description does not, so a scrolled
+        // list would raise the menu for a different row from the one clicked.
+        // This is the last reader of that layout for a described panel.
+        if self.panel_is_described(slot) {
+            return false;
+        }
+        // One probe for every pointer gesture on a panel — the same
+        // geometry, surface decision (base vs covering popup), and
+        // row-aware resolution the left-click and hover paths use.
+        // This path used to duplicate the geometry inline WITHOUT the
+        // overlay check, so a right-click went through an open popup
+        // to the rows it covered.
+        let Some(hit) = self
+            .probe_floating_widget(slot, col, row)
+            .and_then(|p| p.hit)
+        else {
+            return false;
+        };
+        self.fire_widget_context(slot, &hit, col, row)
     }
 
     /// True when the centered (`Floating`) slot currently holds an
@@ -2940,6 +2973,20 @@ impl Editor {
     ) -> bool {
         let mut changed = false;
         for slot in [super::PanelSlot::Dock, super::PanelSlot::Floating] {
+            // **A described panel answers its own hover.** Its widgets are
+            // nodes, so `UiFact::WidgetHover` writes the same two memos from
+            // the rectangles layout already produced — and this probe is a
+            // *second* layout of the same spec per motion event, followed by a
+            // re-render request to the plugin. Two writers for one memo is the
+            // drift, not the cost: `probe_floating_widget` reads the runtime's
+            // own scroll offset, which the description does not, so a scrolled
+            // list would light a different row from the one under the pointer.
+            //
+            // The probe stays for the right-press context menu, which is not a
+            // node yet, and for a panel the tree still paints.
+            if self.panel_is_described(slot) {
+                continue;
+            }
             // A slot the pointer isn't addressing resolves to "nothing
             // hovered", which also *clears* whatever it had highlighted.
             // The hovered *row* travels beside the hovered widget: a
