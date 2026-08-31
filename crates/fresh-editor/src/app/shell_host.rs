@@ -382,6 +382,7 @@ impl crate::view::shell::fold::HostPainter for BodyPainter<'_> {
     fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer, caret: &mut Caret) {
         let region = match target {
             HostTarget::Pane(leaf) => return self.pane(leaf, rect, buf, caret),
+            HostTarget::Embed(window_id) => return self.embed(window_id, rect, buf),
             HostTarget::Region(r) => r,
         };
         match region {
@@ -394,11 +395,47 @@ impl crate::view::shell::fold::HostPainter for BodyPainter<'_> {
             // The prompt's input row: cells the fold writes, at the rectangle
             // layout gave the region.
             HostRegion::PromptLine => self.editor.render_prompt_line(buf, rect, caret),
-            // The dock's column is native around a `Host` content leaf that
-            // the panel painter still owns, and the status bar's prompt states
-            // are the one row `Editor::render` still paints outside the fold.
+            // **Neither paints, and they reach here for different reasons.**
+            //
+            // The dock emits a `Host` only for a column with no mounted panel
+            // — an empty dock, which has nothing to draw. It used to be the
+            // seam the panel painter drew the interior through; that painter
+            // is deleted, and the dock's content is the tree's.
+            //
+            // The status bar's rectangle is a `Host` because its *prompt
+            // states* are the one row `Editor::render` still paints outside
+            // the fold. That is 4.1's remaining work for this region, not a
+            // no-op like the dock's.
             HostRegion::Dock | HostRegion::StatusBar => {}
         }
+    }
+}
+
+impl BodyPainter<'_> {
+    /// An editor window embedded in a plugin panel, painted into the rectangle
+    /// layout gave it.
+    ///
+    /// **The rectangle is handed over, not reconstructed.** The runtime
+    /// reserved this space by emitting blank rows and then overlaid the
+    /// window's paint on top of them, deriving the target rect from the
+    /// panel's inner area plus the row and column those blanks had landed on —
+    /// a rectangle rebuilt from where text ended up. A `Host` leaf is given
+    /// one, which is the whole difference.
+    ///
+    /// `preview_window_id` is still borrowed around the call because that is
+    /// how the per-window paint path selects a session; what has gone is the
+    /// arithmetic, not the mechanism. Window id `0` names no window and paints
+    /// nothing, which is the spec's own "renders empty placeholder rows".
+    fn embed(&mut self, window_id: u32, rect: Rect, buf: &mut Buffer) {
+        if window_id == 0 || rect.width == 0 || rect.height == 0 {
+            return;
+        }
+        let theme = self.editor.theme.read().unwrap().clone();
+        let saved = self.editor.preview_window_id;
+        self.editor.preview_window_id = Some(fresh_core::WindowId(window_id as u64));
+        self.editor
+            .render_session_preview_into_rect(buf, rect, &theme);
+        self.editor.preview_window_id = saved;
     }
 }
 
@@ -2007,11 +2044,17 @@ impl Editor {
                     self.refocus_floating_panel(crate::app::PanelSlot::Dock);
                 }
             }
-            UiFact::DockContext { x, y } => {
+            // **The cell is no longer read, and the menu no longer comes from
+            // here.** This used to refocus and then probe the runtime's boxes
+            // at `(x, y)` to raise the plugin's context menu. The widget's own
+            // node carries the `HitArea` now, so `UiFact::WidgetContext` has
+            // already raised it by the time this runs — what is left of the
+            // right press is the focus it takes, which is the half that was
+            // never about geometry.
+            UiFact::DockContext { .. } => {
                 if self.dock.as_ref().is_some_and(|f| !f.focused) {
                     self.refocus_floating_panel(crate::app::PanelSlot::Dock);
                 }
-                self.handle_floating_widget_context_click(crate::app::PanelSlot::Dock, x, y);
             }
             UiFact::DockScroll { delta, x, y } => {
                 self.handle_floating_widget_panel_wheel(crate::app::PanelSlot::Dock, x, y, delta);

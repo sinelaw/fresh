@@ -111,9 +111,7 @@ impl Editor {
             // unreachable from here. Scoped to `Floating`: the dock may
             // still be mounted underneath, and a pointer over the modal is
             // not over the dock widget it happens to cover.
-            MouseEventKind::Moved => {
-                self.update_widget_hover(col, row, Some(crate::app::PanelSlot::Floating));
-            }
+            MouseEventKind::Moved => {}
             // Right-click, horizontal scroll, other-button releases:
             // swallowed — the modal eats them all.
             _ => {}

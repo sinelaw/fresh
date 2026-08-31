@@ -513,6 +513,15 @@ mod tests {
                     fill(buf, rect, '#', Style::default(), rect);
                     return;
                 }
+                // An embedded editor window is a hole in a plugin panel. The
+                // fold treats it like any other host leaf; these tests build
+                // frames with no panel in them, so nothing reaches here — but
+                // filling it distinguishably means a frame that grows one is a
+                // visible change rather than a silent no-op.
+                HostTarget::Embed(_) => {
+                    fill(buf, rect, '@', Style::default(), rect);
+                    return;
+                }
                 HostTarget::Region(r) => r,
             };
             self.calls.push((region, rect));

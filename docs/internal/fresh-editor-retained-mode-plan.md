@@ -216,8 +216,46 @@ contract, the renderer is not.
 dropdown-open flags move out of the runtime's registry and into element state,
 read and written by the same party. Today one side writes and the other reads a
 frame later, and they have already disagreed.
-*Exit:* the description no longer receives runtime state as context, and the
-hit-test probe no longer has a described-versus-painted branch.
+
+**The original exit condition was wrong, and working the phase is what showed
+it.** "The description no longer receives runtime state" conflates two things
+that live in the same map. A field's value, a dropdown's selection, a dual
+list's included set are *model* state — what the plugin is told about through
+`text_change` and `dropdown_select`, and what it owns. Those legitimately reach
+the description as context and stay. What does not belong there is *view* state:
+where a window sits, whether a pop-over is up.
+
+Within the view half, a second distinction decides the fix, and it is the one
+that matters:
+
+* A **derivation** is a pure function of what is in hand — a clamped index, a
+  sanitized set, a focus-gated flag. Recomputed identically on every read, so
+  writing it back stores nothing and merely makes the walk an authority. The fix
+  is a *deletion*.
+* A **fold** takes its own previous value as an input — "move the window just
+  far enough to keep the caret in view" gives three different answers for the
+  same caret depending on where the window already was. It cannot be recomputed,
+  so the fix is a *move* into the element.
+
+*Exit:* no fold is written by one party and read by another, and the hit-test
+probe has no described-versus-painted branch.
+
+*Progress:* the render walk no longer decides anything for `Dropdown`, `Number`
+or `DualList` — all three were writing derivations back — and carries their
+stored entry through only so the whole-map replace does not collect it. One rule
+had to move rather than vanish: a blur closes a dropdown, which the walk used to
+enforce by storing its result, and which is now applied at every read.
+
+`List` and `Tree` turned out to need nothing: their described arms read no
+runtime state at all, because the element already owns the window. The registry's
+copy is vestigial for a described panel and retires with the painter, in 2.4.
+
+`Text` is the remainder and the only real one. Five of its seven fields were
+merely carried and now are; the two that are left — the caret window and the
+completion popup's forward-only offset — are folds, and they are still decided
+by the walk at the width the *registry* recorded while the description computes
+the same fold at the width layout gave it. The two agree only while those widths
+agree.
 
 **2.2 Describe the five collected variants for real.** Text, list, tree, dropdown
 and dual-list stop going through the runtime's collector. Each becomes a

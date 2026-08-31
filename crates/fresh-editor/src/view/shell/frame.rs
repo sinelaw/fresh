@@ -72,6 +72,17 @@ pub enum HostTarget {
     Region(HostRegion),
     /// One pane's content, by the leaf showing it.
     Pane(crate::model::event::LeafId),
+    /// An editor window embedded in a plugin panel, by its window id.
+    ///
+    /// **This is what `WindowEmbed` is, and it was the last thing keeping a
+    /// whole second panel painter alive.** The variant is a real editor window
+    /// inside a panel — cells, and permanently so — and the adapter read that
+    /// as "this panel cannot be described", which sent every panel containing
+    /// one down the runtime's paint path. But "paints its own cells" is
+    /// precisely what a `Host` leaf *is*; the two were never in tension. The
+    /// panel is described, the embed is a hole in it, and the fold hands the
+    /// window painter the rectangle layout worked out.
+    Embed(u32),
 }
 
 /// The bit that separates a pane's id from a region's.
@@ -80,15 +91,27 @@ pub enum HostTarget {
 /// counter, so the two would otherwise overlap immediately.
 const PANE_TAG: u64 = 1 << 32;
 
+/// The same, for an embedded window. Window ids come from a third counter that
+/// collides with both, so each id space gets its own bit rather than a range.
+const EMBED_TAG: u64 = 1 << 33;
+
 /// The `HostId` a pane's content leaf carries.
 pub fn pane_host_id(id: crate::model::event::LeafId) -> HostId {
     HostId(PANE_TAG | id.0 .0 as u64)
+}
+
+/// The `HostId` an embedded editor window carries.
+pub fn embed_host_id(window_id: u32) -> HostId {
+    HostId(EMBED_TAG | window_id as u64)
 }
 
 impl HostTarget {
     /// Which painter owns this id, or `None` when it names neither — which is
     /// the fold's assertion, not a case to handle.
     pub fn from_host_id(id: HostId) -> Option<HostTarget> {
+        if id.0 & EMBED_TAG != 0 {
+            return Some(HostTarget::Embed((id.0 & (EMBED_TAG - 1)) as u32));
+        }
         if id.0 & PANE_TAG != 0 {
             let leaf = (id.0 & (PANE_TAG - 1)) as usize;
             return Some(HostTarget::Pane(crate::model::event::LeafId(

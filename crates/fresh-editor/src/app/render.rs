@@ -5505,7 +5505,7 @@ impl Editor {
     /// back after. `pending_hardware_cursor` and
     /// `cell_theme_map` use scratch locals so the active editor
     /// area's hit-testing isn't clobbered by the preview pass.
-    fn render_session_preview_into_rect(
+    pub(crate) fn render_session_preview_into_rect(
         &mut self,
         buf: &mut ratatui::buffer::Buffer,
         inner: ratatui::layout::Rect,
@@ -7309,30 +7309,14 @@ impl Editor {
         // here: they describe the *box*, and the box is the tree's
         // (`Editor::panel_description`). What is left is what the interior
         // needs.
-        let (
-            entries,
-            focus_cursor,
-            embeds,
-            overlays,
-            scroll_regions,
-            placement,
-            panel_focused,
-            scrollbar_zone_hovered,
-            scrollbar_flash_until,
-            popup,
-        ) = match self.panel(slot) {
-            Some(fwp) => (
-                fwp.entries.clone(),
-                fwp.focus_cursor,
-                fwp.embeds.clone(),
-                fwp.overlays.clone(),
-                fwp.boxes.clone(),
-                fwp.placement,
-                fwp.focused,
-                fwp.scrollbar_zone_hovered,
-                fwp.scrollbar_flash_until,
-                fwp.popup.clone(),
-            ),
+        // **Two facts, where there were ten.** This used to lift the whole of
+        // the runtime's per-panel output — the rows, the caret, the embed
+        // rectangles, the floated overlay rows, the box arena, the open
+        // pop-over — because it painted every one of them. The tree does that
+        // now, so what is left for the painter is where the panel sits and
+        // whether it wears the focused ring.
+        let (placement, panel_focused) = match self.panel(slot) {
+            Some(fwp) => (fwp.placement, fwp.focused),
             None => return,
         };
         let theme = self.theme.read().unwrap().clone();
@@ -7507,338 +7491,6 @@ impl Editor {
             }
             return;
         }
-
-        let dock_sw = self.active_chrome().last_frame.width;
-        let max_rows = inner.height as usize;
-        for (i, entry) in entries.iter().take(max_rows).enumerate() {
-            let recorder = is_dock.then(|| {
-                (
-                    &mut self.active_chrome_mut().cell_theme_map,
-                    dock_sw,
-                    "Orchestrator Dock",
-                )
-            });
-            paint_text_property_entry(
-                frame.buffer_mut(),
-                entry,
-                inner.x,
-                inner.y + i as u16,
-                inner.width,
-                &theme,
-                recorder,
-            );
-        }
-
-        // Walk WindowEmbed widgets and paint their referenced
-        // editor window into the cells they reserved. Each embed
-        // rect is panel-relative; translate to screen cells via
-        // `inner`. We temporarily borrow `preview_window_id` to
-        // reuse the existing per-window paint path — it reads
-        // that field to decide which session to draw.
-        let saved_preview = self.preview_window_id;
-        for emb in &embeds {
-            if emb.window_id == 0 {
-                continue;
-            }
-            let ex = inner.x.saturating_add(emb.col_in_row as u16);
-            let ey = inner.y.saturating_add(emb.buffer_row as u16);
-            // Clip the embed rect to the panel's inner area so a
-            // partially-offscreen embed (tiny terminal) doesn't
-            // paint into the frame border.
-            let max_w = inner.x.saturating_add(inner.width).saturating_sub(ex);
-            let max_h = inner.y.saturating_add(inner.height).saturating_sub(ey);
-            let w = (emb.width_cols as u16).min(max_w);
-            let h = (emb.height_rows as u16).min(max_h);
-            if w == 0 || h == 0 {
-                continue;
-            }
-            let rect = ratatui::layout::Rect {
-                x: ex,
-                y: ey,
-                width: w,
-                height: h,
-            };
-            self.preview_window_id = Some(fresh_core::WindowId(emb.window_id as u64));
-            self.render_session_preview_into_rect(frame.buffer_mut(), rect, &theme);
-        }
-        self.preview_window_id = saved_preview;
-
-        // Dock "seamless tab (missing wall)": erase the right-edge divider
-        // across the active session card's rows and scoop it away with
-        // rounded corners just above and below, so the active card reads as
-        // merging into the editor to its right (a file-folder / browser
-        // tab). Painted over the wall the block drew and the card entries —
-        // but BEFORE the scrollbar below, so a visible scrollbar paints on
-        // top of (rather than being erased by) the tab's border cells.
-        // No-op for non-dock panels and for an empty dock.
-        if is_dock {
-            paint_dock_seamless_active_tab(
-                frame.buffer_mut(),
-                overlay_rect,
-                inner,
-                &entries,
-                max_rows,
-                dock_border_fg,
-                theme.suggestion_bg,
-            );
-        }
-
-        // Paint a draggable scrollbar over the rightmost column of each
-        // overflowing list, reusing the canonical `render_scrollbar` /
-        // `ScrollbarState` (same path as the keybinding editor &
-        // settings dialog). Record each track's screen rect + state so
-        // the mouse handlers can hit-test press/drag against it.
-        let mut scrollbar_tracks: Vec<super::WidgetScrollbarTrack> = Vec::new();
-        // The dock's list scrollbars are overlay-style: shown while the
-        // pointer is over the list OR briefly after a keyboard selection
-        // move (the "flash", see `scrollbar_flash_until`), and hidden
-        // otherwise — even when the list holds keyboard focus. Every other
-        // panel keeps its scrollbar always visible.
-        //
-        // Hover is read from the panel-global `scrollbar_zone_hovered` memo
-        // (maintained by the mouse-move handler), NOT from a per-window
-        // cursor position: the latter is stored per editor window, so paging
-        // through sessions with next/prev-window would swap in each window's
-        // stale cursor and flicker the bar on for some sessions and off for
-        // others even though the pointer never moved.
-        //
-        // The flash deadline is compared on the editor's `time_source` (the
-        // same clock that armed it), so the harness's logical clock drives
-        // expiry in tests; `check_dock_scrollbar_flash_expiry` on the editor
-        // tick repaints once it passes so the bar also vanishes on an idle
-        // UI without another input event.
-        let dock_overlay_scrollbar = is_dock;
-        let scrollbar_flash_active =
-            scrollbar_flash_until.is_some_and(|until| self.time_source().now() < until);
-        {
-            use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
-            let colors = ScrollbarColors::from_theme(&theme);
-            for b in &scroll_regions {
-                // Scroll payloads ride every scrollable box; only
-                // overflowing ones get a scrollbar.
-                let Some(sc) = b.scroll else { continue };
-                if sc.total <= sc.visible {
-                    continue;
-                }
-                // Scrollbar column = right edge of the list's column,
-                // clamped inside the panel. Height = visible rows,
-                // clamped to the panel bottom.
-                let mut sb_x = inner
-                    .x
-                    .saturating_add(b.col as u16)
-                    .saturating_add((b.width.saturating_sub(1)) as u16)
-                    .min(inner.x + inner.width.saturating_sub(1));
-                // The dock reserves an editor-side gutter between the list and
-                // its divider; nudge its scrollbar one column right into that
-                // gutter so it hugs the divider/edge instead of floating a
-                // column inboard. Still clamped inside the panel.
-                if dock_overlay_scrollbar {
-                    sb_x = sb_x
-                        .saturating_add(1)
-                        .min(inner.x + inner.width.saturating_sub(1));
-                }
-                let sb_y = inner.y.saturating_add(b.row as u16);
-                if sb_y >= inner.y + inner.height {
-                    continue;
-                }
-                let max_h = inner.y + inner.height - sb_y;
-                let sb_h = (b.height as u16).min(max_h);
-                if sb_h == 0 {
-                    continue;
-                }
-                let sb_rect = ratatui::layout::Rect {
-                    x: sb_x,
-                    y: sb_y,
-                    width: 1,
-                    height: sb_h,
-                };
-                let show =
-                    !dock_overlay_scrollbar || scrollbar_zone_hovered || scrollbar_flash_active;
-                if !show {
-                    // Hidden: skip painting and recording a draggable track —
-                    // an invisible bar shouldn't be grabbable. (The pointer
-                    // can't be on the track without being in the zone, so a
-                    // visible bar is always available before a press lands.)
-                    continue;
-                }
-                let state = ScrollbarState::new(sc.total, sc.visible, sc.offset);
-                render_scrollbar(frame.buffer_mut(), sb_rect, &state, &colors);
-                scrollbar_tracks.push(super::WidgetScrollbarTrack {
-                    list_key: b.key.clone().unwrap_or_default(),
-                    rect: sb_rect,
-                    total: sc.total,
-                    visible: sc.visible,
-                    scroll: sc.offset,
-                });
-            }
-        }
-
-        // Paint overlay rows AFTER the main entries + embeds. Each
-        // overlay row sits on top of whatever's at its
-        // `buffer_row` (the row it would have occupied if it
-        // weren't floating). Used for dropdown completions
-        // anchored to a text input — the completion list rows
-        // overpaint the form's static rows beneath without
-        // shifting them on every show / hide.
-        //
-        // Clear the row first so the underlying entry's text
-        // doesn't bleed past the overlay's content width.
-        // `Paragraph` only paints cells it has content for; a
-        // bare `Clear` resets the row to the panel background
-        // (the `Block` here just supplies the bg style — no
-        // borders).
-        let panel_bg = theme.popup_bg;
-        let panel_bg_style = ratatui::style::Style::default().bg(panel_bg);
-        let overlay_sw = self.active_chrome().last_frame.width;
-        for o in &overlays {
-            let row_y = inner.y.saturating_add(o.buffer_row as u16);
-            if row_y >= inner.y.saturating_add(inner.height) {
-                continue;
-            }
-            let row_rect = ratatui::layout::Rect {
-                x: inner.x,
-                y: row_y,
-                width: inner.width,
-                height: 1,
-            };
-            frame.render_widget(Clear, row_rect);
-            frame.render_widget(Block::default().style(panel_bg_style), row_rect);
-            let recorder = is_dock.then(|| {
-                (
-                    &mut self.active_chrome_mut().cell_theme_map,
-                    overlay_sw,
-                    "Orchestrator Dock",
-                )
-            });
-            paint_text_property_entry(
-                frame.buffer_mut(),
-                &o.entry,
-                inner.x,
-                row_y,
-                inner.width,
-                &theme,
-                recorder,
-            );
-        }
-
-        // ---- Open-Dropdown floating pop-over ---------------------------
-        // Painted AFTER the panel content, at the trigger's SCREEN row and
-        // clamped to the whole frame (`area`) rather than the panel — so
-        // the option list extends past the panel/modal border instead of
-        // growing/clipping it. Geometry mirrors the
-        // `PanelPlacement::Anchored` popup: hug the content, and flip above
-        // the trigger when there's no room below. Each option's screen rect
-        // is recorded so the mouse hit-test can route a click (which lands
-        // outside the panel's inner rect) back to `dropdown_select`.
-        let mut popup_hits: Vec<super::PanelPopupOptionHit> = Vec::new();
-        let mut popup_rect: Option<ratatui::layout::Rect> = None;
-        if let Some(dp) = popup.as_ref() {
-            use crate::primitives::display_width::str_width;
-            // The renderer delivered fully-rendered rows (windowing,
-            // padding, selection styling as theme-key overlays). The
-            // host resolves geometry, draws the border, and paints the
-            // entries verbatim — it knows nothing about the content.
-            let visible = dp.entries.len();
-            if visible > 0 {
-                let content_w = dp
-                    .entries
-                    .iter()
-                    .map(|e| str_width(&e.text) as u16)
-                    .max()
-                    .unwrap_or(0);
-                let w = content_w.saturating_add(2).clamp(4, area.width);
-                let h = (visible as u16).saturating_add(2).clamp(3, area.height);
-                // Anchor to the trigger's screen row; prefer opening below
-                // (one row under the trigger), flipping above when the box
-                // would run off the bottom of the frame.
-                let anchor_screen_y = inner.y.saturating_add(dp.anchor_row as u16);
-                let below_y = anchor_screen_y.saturating_add(1);
-                let bottom = area.y + area.height;
-                let y = if below_y.saturating_add(h) <= bottom {
-                    below_y
-                } else {
-                    anchor_screen_y.saturating_sub(h)
-                };
-                // Anchor the box under the trigger's `[` (its display column
-                // within the row) rather than at the panel's left edge, then
-                // clamp so it stays inside the frame.
-                let anchor_screen_x = inner.x.saturating_add(dp.anchor_col as u16);
-                let x = anchor_screen_x.min(area.x + area.width.saturating_sub(w));
-                let y = y.clamp(area.y, area.y + area.height.saturating_sub(h));
-                let box_rect = ratatui::layout::Rect {
-                    x,
-                    y,
-                    width: w,
-                    height: h,
-                };
-                frame.render_widget(Clear, box_rect);
-                let popup_block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(ratatui::style::Style::default().fg(theme.popup_border_fg))
-                    .style(ratatui::style::Style::default().bg(theme.popup_bg));
-                let popup_inner = popup_block.inner(box_rect);
-                frame.render_widget(popup_block, box_rect);
-                for (row_i, entry) in dp.entries.iter().enumerate() {
-                    let ry = popup_inner.y + row_i as u16;
-                    if ry >= popup_inner.y + popup_inner.height {
-                        break;
-                    }
-                    paint_text_property_entry(
-                        frame.buffer_mut(),
-                        entry,
-                        popup_inner.x,
-                        ry,
-                        popup_inner.width,
-                        &theme,
-                        None,
-                    );
-                    if let Some(idx) = dp.row_indices.get(row_i) {
-                        popup_hits.push(super::PanelPopupOptionHit {
-                            rect: ratatui::layout::Rect {
-                                x: popup_inner.x,
-                                y: ry,
-                                width: popup_inner.width,
-                                height: 1,
-                            },
-                            index: *idx,
-                        });
-                    }
-                }
-                popup_rect = Some(box_rect);
-            }
-        }
-
-        if let Some(fc) = focus_cursor {
-            let cx = inner.x.saturating_add(byte_to_screen_col(
-                entries
-                    .get(fc.buffer_row as usize)
-                    .map(|e| e.text.as_str())
-                    .unwrap_or(""),
-                fc.byte_in_row as usize,
-            ) as u16);
-            let cy = inner.y.saturating_add(fc.buffer_row as u16);
-            if cx < inner.x + inner.width && cy < inner.y + inner.height {
-                frame.set_cursor_position((cx, cy));
-            }
-        } else if panel_focused {
-            // No focused text input, and the panel owns the keyboard —
-            // the underlying editor's `set_cursor_position` (called
-            // earlier this frame) would otherwise leave a hardware
-            // caret blinking inside the dimmed buffer behind the panel.
-            // Park it on the panel's bottom-right corner so it hides
-            // under the panel chrome. A *blurred* dock skips this: the
-            // editor beside it is focused and must keep its caret.
-            let cx = inner.x + inner.width.saturating_sub(1);
-            let cy = inner.y + inner.height.saturating_sub(1);
-            frame.set_cursor_position((cx, cy));
-        }
-
-        if let Some(fwp) = self.panel_mut(slot) {
-            fwp.last_inner_rect = Some(inner);
-            fwp.scrollbar_tracks = scrollbar_tracks;
-            fwp.popup_hits = popup_hits;
-            fwp.popup_rect = popup_rect;
-        }
     }
 
     fn resolve_overlay_style(
@@ -7889,122 +7541,6 @@ impl Editor {
             style = style.add_modifier(m);
         }
         style
-    }
-}
-
-/// Paint the dock's "seamless tab (missing wall)" treatment for the
-/// active session card.
-///
-/// The dock normally draws a full-height right-edge divider (the
-/// "wall") separating its column from the editor. For the active
-/// session — the one mirrored in the main view — we erase the wall
-/// across the card's rows and scoop the divider away with rounded
-/// corners just above and below it, so the card visually merges into
-/// the editor to its right:
-///
-/// ```text
-///                    │   <- wall (untouched) above
-/// ╭──────────────────╯   <- top edge scoops up into the wall
-/// │  session (active)     <- right side open: flows into the editor
-/// ╰──────────────────╮   <- bottom edge scoops down into the wall
-///                    │   <- wall resumes below
-/// ```
-///
-/// The active card is located by the heavy box glyphs that
-/// `mark_list_card_selected` stamps onto exactly one card's rows; its first
-/// and last such rows bound the band. No-ops when no card is selected
-/// (e.g. an empty dock) so the plain wall stands.
-fn paint_dock_seamless_active_tab(
-    buf: &mut ratatui::buffer::Buffer,
-    overlay_rect: ratatui::layout::Rect,
-    inner: ratatui::layout::Rect,
-    entries: &[fresh_core::text_property::TextPropertyEntry],
-    max_rows: usize,
-    border_fg: ratatui::style::Color,
-    bg: ratatui::style::Color,
-) {
-    // Rows of the (single) selected card carry the heavy box glyphs that
-    // `mark_list_card_selected` stamps — the corners on its border rows and the
-    // `┃` bars on its content rows. No other dock row uses them.
-    fn is_active_card_row(s: &str) -> bool {
-        s.chars().any(|c| matches!(c, '┏' | '┓' | '┗' | '┛' | '┃'))
-    }
-    fn set_cell(
-        buf: &mut ratatui::buffer::Buffer,
-        x: u16,
-        y: u16,
-        sym: &str,
-        fg: ratatui::style::Color,
-        bg: ratatui::style::Color,
-    ) {
-        if let Some(cell) = buf.cell_mut((x, y)) {
-            cell.set_symbol(sym);
-            cell.set_fg(fg);
-            cell.set_bg(bg);
-        }
-    }
-
-    // Locate the active card's contiguous row band.
-    let mut top: Option<usize> = None;
-    let mut bot = 0usize;
-    for (i, e) in entries.iter().take(max_rows).enumerate() {
-        if is_active_card_row(&e.text) {
-            top.get_or_insert(i);
-            bot = i;
-        }
-    }
-    let Some(top) = top else { return };
-    // Need a top border, at least one content row, and a bottom border.
-    if bot < top + 2 {
-        return;
-    }
-    // Row-level tree scrolling can clip the active card at a viewport
-    // edge; only paint the tab when the card's actual border rows are
-    // both on screen — scooping over a clipped content row would draw
-    // a border through the card's text.
-    let has_corner = |row: usize, corner: char| {
-        entries
-            .get(row)
-            .map(|e| e.text.contains(corner))
-            .unwrap_or(false)
-    };
-    if !has_corner(top, '┏') || !has_corner(bot, '┗') {
-        return;
-    }
-
-    // `inner.x` is the dock's left edge; the wall sits one column past the
-    // inner area (the block's `Borders::RIGHT`).
-    let wall_x = overlay_rect.x + overlay_rect.width.saturating_sub(1);
-    let left_x = inner.x;
-    if wall_x <= left_x + 1 {
-        return;
-    }
-    let top_y = inner.y + top as u16;
-    let bot_y = inner.y + bot as u16;
-
-    // Top edge of the tab: ╭───…───╯  (╯ scoops up into the wall above).
-    set_cell(buf, left_x, top_y, "╭", border_fg, bg);
-    for x in (left_x + 1)..wall_x {
-        set_cell(buf, x, top_y, "─", border_fg, bg);
-    }
-    set_cell(buf, wall_x, top_y, "╯", border_fg, bg);
-
-    // Bottom edge: ╰───…───╮  (╮ scoops down into the wall below).
-    set_cell(buf, left_x, bot_y, "╰", border_fg, bg);
-    for x in (left_x + 1)..wall_x {
-        set_cell(buf, x, bot_y, "─", border_fg, bg);
-    }
-    set_cell(buf, wall_x, bot_y, "╮", border_fg, bg);
-
-    // Content rows: keep the left border, open the right — erase the card's
-    // own right border, the gutter, and the wall — so the row flows into the
-    // editor with no divider.
-    for r in (top + 1)..bot {
-        let y = inner.y + r as u16;
-        set_cell(buf, left_x, y, "│", border_fg, bg);
-        for x in wall_x.saturating_sub(2)..=wall_x {
-            set_cell(buf, x, y, " ", border_fg, bg);
-        }
     }
 }
 
@@ -8283,24 +7819,6 @@ fn record_entry_span_cells(
     }
 }
 
-/// Translate a UTF-8 byte offset within a rendered line into a
-/// display-column offset, walking codepoints with their Unicode
-/// width. Used to place the hardware caret on the focused
-/// TextInput's byte position.
-fn byte_to_screen_col(text: &str, target_byte: usize) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    let mut byte = 0;
-    let mut col = 0usize;
-    for ch in text.chars() {
-        if byte >= target_byte {
-            break;
-        }
-        col += UnicodeWidthChar::width(ch).unwrap_or(0);
-        byte += ch.len_utf8();
-    }
-    col
-}
-
 /// Building the floating plugin panel's frame from live state.
 impl Editor {
     /// The box around the panel: where it goes, its title, its `[×]`.
@@ -8374,7 +7892,7 @@ impl Editor {
     pub(crate) fn panel_is_described(&self, slot: crate::app::PanelSlot) -> bool {
         self.panel(slot)
             .and_then(|p| self.widget_registry.get(&p.panel_key))
-            .is_some_and(|w| crate::view::shell::widgets::covered(&w.spec))
+            .is_some()
     }
 
     /// The described mounted panel each visible pane is showing.
@@ -8475,9 +7993,6 @@ impl Editor {
             .into_iter()
             .next()?;
         let spec = self.widget_registry.get(&key)?.spec.clone();
-        if !crate::view::shell::widgets::covered(&spec) {
-            return None;
-        }
         Some(crate::view::shell::panel::Interior {
             spec: Rc::new(spec),
             states: Rc::new(
@@ -8516,7 +8031,7 @@ impl Editor {
             .into_iter()
             .next()
             .and_then(|key| self.widget_registry.get(&key))
-            .is_some_and(|w| crate::view::shell::widgets::covered(&w.spec))
+            .is_some()
     }
 
     /// Whether a mounted panel's buffer is one the **panel** scrolls rather
@@ -8558,9 +8073,6 @@ impl Editor {
         let panel = self.panel(slot)?;
         let key = panel.panel_key.clone();
         let spec = self.widget_registry.get(&key)?.spec.clone();
-        if !crate::view::shell::widgets::covered(&spec) {
-            return None;
-        }
         Some(crate::view::shell::panel::Interior {
             spec: Rc::new(spec),
             states: Rc::new(

@@ -973,7 +973,6 @@ impl Editor {
         let panel_slot = Self::slot_for_panel_buffer(buffer_id);
         let focus_cursor = out_pieces.focus_cursor;
         let entries = out_pieces.entries;
-        let embeds = out_pieces.embeds;
         let overlays = out_pieces.overlays;
         let panel_boxes = out_pieces.boxes.clone();
         let popup = out_pieces.popup;
@@ -997,8 +996,6 @@ impl Editor {
             if let Some(fwp) = self.panel_mut(slot) {
                 if &fwp.panel_key == panel_key {
                     fwp.entries = entries;
-                    fwp.focus_cursor = focus_cursor;
-                    fwp.embeds = embeds;
                     fwp.overlays = overlays;
                     fwp.boxes = panel_boxes;
                     fwp.popup = popup;
@@ -2730,37 +2727,6 @@ impl Editor {
         true
     }
 
-    pub(super) fn handle_floating_widget_context_click(
-        &mut self,
-        slot: super::PanelSlot,
-        col: u16,
-        row: u16,
-    ) -> bool {
-        // **A described panel's widgets answer their own right press.** The
-        // node carries the `HitArea`, so `UiFact::WidgetContext` has already
-        // gone to `fire_widget_context` by the time this runs — and the probe
-        // below would answer from a *second* layout that reads the runtime's
-        // own scroll offset, which the description does not, so a scrolled
-        // list would raise the menu for a different row from the one clicked.
-        // This is the last reader of that layout for a described panel.
-        if self.panel_is_described(slot) {
-            return false;
-        }
-        // One probe for every pointer gesture on a panel — the same
-        // geometry, surface decision (base vs covering popup), and
-        // row-aware resolution the left-click and hover paths use.
-        // This path used to duplicate the geometry inline WITHOUT the
-        // overlay check, so a right-click went through an open popup
-        // to the rows it covered.
-        let Some(hit) = self
-            .probe_floating_widget(slot, col, row)
-            .and_then(|p| p.hit)
-        else {
-            return false;
-        };
-        self.fire_widget_context(slot, &hit, col, row)
-    }
-
     /// True when the centered (`Floating`) slot currently holds an
     /// anchored context-menu popup rather than a centered modal.
     pub(super) fn floating_panel_is_anchored(&self) -> bool {
@@ -2944,85 +2910,6 @@ impl Editor {
             bcol,
             hit: hit.map(|(_, h)| h.clone()),
         })
-    }
-
-    /// Track which widget the pointer is over, per mounted panel, and
-    /// re-render a panel whose hovered widget changed.
-    ///
-    /// Purely host state: the tracked key feeds `RenderContext::hover_key`,
-    /// which the renderer compares against each widget's own key. A hover
-    /// therefore costs a hit-test and — only when the pointer crosses a
-    /// widget boundary — one spec re-render. Nothing crosses the plugin
-    /// bridge, so panels pay nothing for pointer movement over them.
-    ///
-    /// The re-render is needed because the draw pass paints the panel's
-    /// cached entries; a highlight change has to go back through the
-    /// renderer to appear.
-    ///
-    /// `pointer_owner` names the slot the pointer is actually addressing,
-    /// for callers that already know: a centered modal captures the mouse
-    /// channel outright, and the dock it covers must not keep (or gain) a
-    /// highlight from a pointer that is really over the modal. `None` —
-    /// the normal, non-modal pipeline — leaves every mounted panel
-    /// reachable.
-    pub(super) fn update_widget_hover(
-        &mut self,
-        col: u16,
-        row: u16,
-        pointer_owner: Option<super::PanelSlot>,
-    ) -> bool {
-        let mut changed = false;
-        for slot in [super::PanelSlot::Dock, super::PanelSlot::Floating] {
-            // **A described panel answers its own hover.** Its widgets are
-            // nodes, so `UiFact::WidgetHover` writes the same two memos from
-            // the rectangles layout already produced — and this probe is a
-            // *second* layout of the same spec per motion event, followed by a
-            // re-render request to the plugin. Two writers for one memo is the
-            // drift, not the cost: `probe_floating_widget` reads the runtime's
-            // own scroll offset, which the description does not, so a scrolled
-            // list would light a different row from the one under the pointer.
-            //
-            // The probe stays for the right-press context menu, which is not a
-            // node yet, and for a panel the tree still paints.
-            if self.panel_is_described(slot) {
-                continue;
-            }
-            // A slot the pointer isn't addressing resolves to "nothing
-            // hovered", which also *clears* whatever it had highlighted.
-            // The hovered *row* travels beside the hovered widget: a
-            // list/tree hit carries its item key in the payload, and every
-            // row of one tree shares the tree's own `widget_key`, so
-            // without it the renderer could only light the whole list.
-            let (now, now_item) = if pointer_owner.is_none_or(|owner| owner == slot) {
-                self.probe_floating_widget(slot, col, row)
-                    .and_then(|p| p.hit)
-                    .map(|h| {
-                        let item = h
-                            .payload
-                            .get("key")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string();
-                        (h.widget_key, item)
-                    })
-                    .unwrap_or_default()
-            } else {
-                (String::new(), String::new())
-            };
-            let panel_key = match self.panel(slot) {
-                Some(fwp) if fwp.hovered_widget_key != now || fwp.hovered_item_key != now_item => {
-                    fwp.panel_key.clone()
-                }
-                _ => continue,
-            };
-            if let Some(fwp) = self.panel_mut(slot) {
-                fwp.hovered_widget_key = now;
-                fwp.hovered_item_key = now_item;
-            }
-            self.rerender_widget_panel(&panel_key);
-            changed = true;
-        }
-        changed
     }
 
     pub(super) fn handle_floating_widget_click(
