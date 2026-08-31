@@ -78,6 +78,15 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     F(u8),
+    /// The dedicated context-menu key (`Menu`, sometimes "Application"), and
+    /// the reason it is here rather than in a host's private vocabulary:
+    /// **containment applies to keys the tree cannot name.** A surface that
+    /// owns the keyboard swallows anything the host declines to translate, so
+    /// a key with no variant here is not "left on the old path" while a focus
+    /// layer is up — it is eaten. The editor's dock lost its context menu to
+    /// exactly that: `F2` had a variant and fell through to the host's router,
+    /// `Menu` did not and died silently.
+    Menu,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]

@@ -100,7 +100,7 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
         Draw::Fill => fill(s, r, fill_char(item.theme.as_str()).unwrap_or(' '), clip),
         Draw::Scrim(Scrim::Opaque) => fill(s, frame, ' ', frame),
         Draw::Scrim(Scrim::Dim) => fill(s, frame, '·', frame),
-        Draw::Border => border(s, r, clip),
+        Draw::Border(bs) => border(s, r, clip, *bs),
         Draw::Lines(lines) => {
             // Clipped to the item's own rect as well as its inherited one: an
             // item declares how much room it has, and a run longer than that
@@ -144,22 +144,25 @@ fn fill(s: &mut Screen, r: Rect, ch: char, clip: Rect) {
     }
 }
 
-fn border(s: &mut Screen, r: Rect, clip: Rect) {
+fn border(s: &mut Screen, r: Rect, clip: Rect, bs: fresh_ui::BorderStyle) {
     if r.w < 2 || r.h < 2 {
         return;
     }
     let (l, t) = (r.x, r.y);
     let (rr, b) = (r.right() - 1, r.bottom() - 1);
+    // The reference backend honours the style, so a golden file records which
+    // corner set the description asked for rather than one this file picked.
+    let (h, v, tl, tr, br, bl) = bs.glyphs();
     for x in l..=rr {
-        s.put(x, t, '─', clip);
-        s.put(x, b, '─', clip);
+        s.put(x, t, h, clip);
+        s.put(x, b, h, clip);
     }
     for y in t..=b {
-        s.put(l, y, '│', clip);
-        s.put(rr, y, '│', clip);
+        s.put(l, y, v, clip);
+        s.put(rr, y, v, clip);
     }
-    s.put(l, t, '┌', clip);
-    s.put(rr, t, '┐', clip);
-    s.put(l, b, '└', clip);
-    s.put(rr, b, '┘', clip);
+    s.put(l, t, tl, clip);
+    s.put(rr, t, tr, clip);
+    s.put(l, b, bl, clip);
+    s.put(rr, b, br, clip);
 }

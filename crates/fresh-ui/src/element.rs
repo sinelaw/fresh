@@ -520,6 +520,34 @@ impl<M: 'static> Ui<M> {
                 return;
             }
         }
+        // **The props memo**, asked before the description is swapped in,
+        // because it compares the old props against the new. A component that
+        // answers `true` has said its build is a pure function of props that
+        // did not change, so the build below is skipped and with it the whole
+        // child reconciliation — nothing is unmounted, so state, focus and
+        // scroll are untouched.
+        //
+        // Only when the desc carries no children of its own: a component can
+        // be handed children through its description, and those are not part
+        // of the props it compared. Skipping with children present would drop
+        // a change the component never got to see.
+        //
+        // The default is `false`, so this is inert until a component opts in.
+        // What it exists for: `Node::shared`'s reference identity asks the
+        // caller to hold an `Rc<Node>` across frames, which a host deriving
+        // its description from a store cannot do — there is no `Rc` to keep.
+        let memo_skip = {
+            let el = &self.arena[id];
+            matches!(el.ty, ElemType::Component(_))
+                && resolve(&new).children.is_empty()
+                && match (
+                    crate::desc::component_of(&new),
+                    crate::desc::component_of(&el.desc),
+                ) {
+                    (Some(next), Some(prev)) => next.props_eq(prev.as_ref()),
+                    _ => false,
+                }
+        };
         let moved = crate::desc::layout_relevant_changed(&self.arena[id].desc, &new);
         self.set_desc(id, new);
         if let Some(a) = self.arena[id].desc.anchor.clone() {
@@ -538,7 +566,14 @@ impl<M: 'static> Ui<M> {
         self.renderer
             .update(id, self.arena[id].ty, self.arena[id].name);
         self.refresh_provided(id);
-        self.rebuild(id);
+        // A memo skips only the *build*. If this element is separately dirty —
+        // its own state changed, or an ambient it read did — the flush reaches
+        // it through the dirty set and rebuilds it there, which is the whole
+        // reason the two paths are distinct.
+        match memo_skip {
+            true => self.set_needs_build(id, false),
+            false => self.rebuild(id),
+        }
     }
 
     /// A `Provide` element whose value changed swaps it in place — descendants

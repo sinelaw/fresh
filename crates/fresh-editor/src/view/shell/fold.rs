@@ -25,7 +25,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use fresh_ui::{Draw, LayoutSpec, Scrim, ThemeKey};
+use fresh_ui::{BorderStyle, Draw, LayoutSpec, Scrim, ThemeKey};
 
 use super::frame::HostTarget;
 
@@ -188,7 +188,7 @@ pub fn fold_band(
 
         match &item.draw {
             Draw::Fill => fill(buf, rect, ' ', style, clip),
-            Draw::Border => border(buf, rect, style, clip),
+            Draw::Border(bs) => border(buf, rect, style, clip, *bs),
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything
             // behind this is receding" — so this one *is* a patch over what is
@@ -400,28 +400,33 @@ fn restyle(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
     }
 }
 
-fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
+fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect, bs: BorderStyle) {
     if r.width < 2 || r.height < 2 {
         return;
     }
     let (l, t) = (r.x, r.y);
     let right = r.x + r.width - 1;
     let bottom = r.y + r.height - 1;
+    let (h, v, tl, tr, br, bl) = bs.glyphs();
     for x in l..=right {
-        put(buf, x, t, '─', style, clip);
-        put(buf, x, bottom, '─', style, clip);
+        put(buf, x, t, h, style, clip);
+        put(buf, x, bottom, h, style, clip);
     }
     for y in t..=bottom {
-        put(buf, l, y, '│', style, clip);
-        put(buf, right, y, '│', style, clip);
+        put(buf, l, y, v, style, clip);
+        put(buf, right, y, v, style, clip);
     }
-    // Plain corners, matching ratatui's default `BorderType::Plain` — the
-    // glyphs every bordered surface in the editor already draws. A rounded set
-    // would be a visible change on the first surface that migrates.
-    put(buf, l, t, '┌', style, clip);
-    put(buf, right, t, '┐', style, clip);
-    put(buf, l, bottom, '└', style, clip);
-    put(buf, right, bottom, '┘', style, clip);
+    // **The corners are the description's, not this backend's.** This used to
+    // be an unconditional `┌┐└┘`, matching ratatui's `BorderType::Plain` and
+    // every bordered surface in the editor's chrome — which was right until a
+    // *plugin panel* was described. A `WidgetSpec` card and a labelled section
+    // have always been drawn `╭╮╰╯` by `widgets::render`, so describing one
+    // silently squared it off: the code-tour panel's `╭─ Steps`, and the dock's
+    // card density, are what noticed.
+    put(buf, l, t, tl, style, clip);
+    put(buf, right, t, tr, style, clip);
+    put(buf, l, bottom, bl, style, clip);
+    put(buf, right, bottom, br, style, clip);
 }
 
 // ---------------------------------------------------------------------------
@@ -734,13 +739,15 @@ mod band_tests {
         );
         for item in spec.in_flow() {
             assert!(
-                !matches!(item.draw, Draw::Border | Draw::Scrim(_)),
+                !matches!(item.draw, Draw::Border(_) | Draw::Scrim(_)),
                 "a layer's item landed in the background band: {:?}",
                 item.draw
             );
         }
         assert!(
-            spec.layers().iter().any(|i| matches!(i.draw, Draw::Border)),
+            spec.layers()
+                .iter()
+                .any(|i| matches!(i.draw, Draw::Border(_))),
             "the overlay band must carry the menus' boxes"
         );
     }
@@ -837,13 +844,13 @@ mod band_tests {
         let boxes = spec
             .layers()
             .iter()
-            .filter(|i| matches!(i.draw, Draw::Border))
+            .filter(|i| matches!(i.draw, Draw::Border(_)))
             .count();
         assert_eq!(boxes, 3, "every declared layer paints above the fold");
         assert!(
             spec.in_flow()
                 .iter()
-                .all(|i| !matches!(i.draw, Draw::Border)),
+                .all(|i| !matches!(i.draw, Draw::Border(_))),
             "and none of them below it"
         );
     }

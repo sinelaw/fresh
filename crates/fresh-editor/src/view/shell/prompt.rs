@@ -1051,7 +1051,7 @@ mod tests {
         assert!(
             spec.items
                 .iter()
-                .any(|i| matches!(i.draw, fresh_ui::Draw::Border)
+                .any(|i| matches!(i.draw, fresh_ui::Draw::Border(_))
                     && i.theme.as_str() == "ui.popup_border_fg/ui.suggestion_bg"),
             "the popup draws its own ring"
         );
@@ -1268,7 +1268,7 @@ mod tests {
             !spec
                 .items
                 .iter()
-                .any(|i| matches!(i.draw, fresh_ui::Draw::Border)
+                .any(|i| matches!(i.draw, fresh_ui::Draw::Border(_))
                     && i.theme.as_str() == "ui.popup_border_fg/ui.suggestion_bg"
                     && i.rect == band),
             "a frame inside the card's frame is a double frame"

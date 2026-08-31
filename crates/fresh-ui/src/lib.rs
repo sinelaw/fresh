@@ -40,7 +40,7 @@ pub mod widgets;
 
 pub use ambient::{provide, provide_eq, scope, Ambient, AmbientKey, ProvideProps};
 pub use behavior::Behavior;
-pub use component::{AnyComponent, Component};
+pub use component::{memo, AnyComponent, Component, Memo};
 pub use desc::{
     col, focusable, gesture, host, host_leaf, layer, layout_reader, node_key, node_type, resolve,
     row, shared_rc, stack, text, text_runs, viewport, Align, Anchor, BoxProps, ComponentExt, Desc,
@@ -64,7 +64,7 @@ pub use render::object::{
     FocusReg, Geom, Hit, HostLeaf, LayerGeom, LayoutCx, LayoutInfo, PlainHost, RenderId,
     RenderObject, ScrollInfo,
 };
-pub use render::spec::{CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};
+pub use render::spec::{BorderStyle, CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};
 pub use services::{GeomHandle, GeomSnapshot, Geometry, Job, Services};
 pub use widgets::{

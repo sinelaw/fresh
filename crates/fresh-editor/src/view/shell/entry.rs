@@ -167,7 +167,11 @@ pub fn layer(d: &Dialog) -> Node<UiMsg> {
                     false => "ui.popup_border_fg",
                 };
                 let ring = pair(ring_fg, "ui.popup_bg");
-                let boxed = col().theme(ring).border().child(body(&d));
+                // `render_entry_dialog_inner` drew this frame rounded.
+                let boxed = col()
+                    .theme(ring)
+                    .border_style(fresh_ui::BorderStyle::Rounded)
+                    .child(body(&d));
                 fresh_ui::stack()
                     .w(Sizing::Cells(w))
                     .h(Sizing::Cells(h))

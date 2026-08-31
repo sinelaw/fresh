@@ -307,8 +307,10 @@ impl Editor {
                     self.update_terminal_link_hover(col, row, mouse_event.modifiers);
                 needs_render = needs_render || term_link_changed;
 
-                // Track LSP hover state for mouse-triggered hover popups
-                self.update_lsp_hover_state(col, row);
+                // Track LSP hover state for mouse-triggered hover popups.
+                // Dismissing the popup is a repaint, and this is the only
+                // party that knows it happened — see the docstring.
+                needs_render = self.update_lsp_hover_state(col, row) || needs_render;
 
                 // Bare icon buttons inside a panel (the dock's `×`) light up
                 // under the pointer, the way the tab and file explorer `×`
@@ -541,7 +543,17 @@ impl Editor {
     /// names chrome, these trackers own editor-content reactions.
     /// Folding it in is recorded in the plan doc as part of the
     /// mounted-panel/hover unification arc, not chrome registration.
-    fn update_lsp_hover_state(&mut self, col: u16, row: u16) {
+    ///
+    /// **Reports whether the frame is stale**, which is the half of
+    /// `update_hover_target` that had no replacement. That walk returned "the
+    /// target moved, redraw" and every tracker rode on it; the tree reports
+    /// its own hover now, but a pointer over ground the tree does not describe
+    /// — the `~` filler past the last line, the padding right of the text —
+    /// crosses no element and produces neither a message nor a mutation. So
+    /// the one transition here that changes pixels, dismissing the popup, has
+    /// to say so itself. Nothing else does: clearing `lsp_hover_state` moves
+    /// the request state machine, not the screen.
+    fn update_lsp_hover_state(&mut self, col: u16, row: u16) -> bool {
         tracing::trace!(col, row, "update_lsp_hover_state: raw mouse position");
 
         // Suppress LSP hover when a popup is already visible (the theme
@@ -570,13 +582,14 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
                 self.dismiss_transient_popups();
+                return true;
             }
-            return;
+            return false;
         }
 
         // Check if mouse is over a transient popup - if so, keep hover active
         if self.is_mouse_over_transient_popup(col, row) {
-            return;
+            return false;
         }
 
         // Which split the mouse is over, and the rectangle to project through.
@@ -595,8 +608,9 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
                 self.dismiss_transient_popups();
+                return true;
             }
-            return;
+            return false;
         };
 
         // Get cached mappings and gutter width for this split
@@ -649,7 +663,7 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
-            return;
+            return false;
         };
 
         // Check if mouse is past the end of line content - don't trigger hover for empty space
@@ -708,14 +722,14 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
-            return;
+            return false;
         }
 
         // Check if mouse is within the hovered symbol range - if so, keep hover active
         if let Some((start, end)) = self.active_window_mut().hover.symbol_range() {
             if byte_pos >= start && byte_pos < end {
                 // Mouse is still over the hovered symbol - keep hover state
-                return;
+                return false;
             }
         }
 
@@ -725,7 +739,7 @@ impl Editor {
         {
             if old_pos == byte_pos && old_buf == buffer_id {
                 // Same position - keep existing state
-                return;
+                return false;
             }
             // Position changed outside the hovered symbol range. Don't dismiss
             // the popup here: a new hover request will fire after the debounce
@@ -740,6 +754,7 @@ impl Editor {
         self.active_window_mut().mouse_state.lsp_hover_state =
             Some((byte_pos, std::time::Instant::now(), col, row, buffer_id));
         self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
+        false
     }
 
     /// Is the pointer over a transient popup (hover, signature help)?

@@ -607,8 +607,13 @@ fn card_box(c: &Card) -> Node<UiMsg> {
     }
     let inner = row().children([gutter(c, &band), body]);
     match c.bordered {
+        // Rounded, as `render_setting_item_pure` drew it: "subdued colour for
+        // the card chrome — distinct from the panel/popup border around the
+        // modal so the cards read as secondary structure, not nested popups".
+        // Half of that distinction is the corner set, and the fold's border
+        // was plain for everything until `BorderStyle` existed.
         true => col()
-            .border()
+            .border_style(fresh_ui::BorderStyle::Rounded)
             .theme(pair("ui.split_separator_fg", "ui.popup_bg"))
             .child(inner),
         false => inner,
@@ -1449,7 +1454,10 @@ pub fn dialog_layer(d: &Dialog) -> Node<UiMsg> {
                 };
                 col()
                     .theme(ring)
-                    .border()
+                    // `centered_dialog_frame` and `render_help_overlay` both
+                    // drew `BorderType::Rounded`; every dialog stacked here is
+                    // one of the two.
+                    .border_style(fresh_ui::BorderStyle::Rounded)
                     .w(Sizing::Cells(w))
                     .h(Sizing::Cells(h))
                     .key(dialog_key())
