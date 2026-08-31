@@ -126,6 +126,7 @@ impl<M: 'static> Ui<M> {
                 if button == MouseButton::Left {
                     if let Some(r) = self.scrollbar_hit(pos) {
                         self.scrollbar_drag = Some(r);
+                        self.scrollbar_grab = self.grab_within_thumb(r, pos.y);
                         self.scroll_to_pointer(r, pos.y);
                         return true;
                     }
@@ -712,6 +713,28 @@ impl<M: 'static> Ui<M> {
     /// the end of the content. So the same `len` [`Draw::scrollbar_thumb`]
     /// paints with is what this divides by; press and drag both come here, so
     /// they agree by construction.
+    /// How far down the thumb a press landed, or zero when it landed on the
+    /// bare track.
+    ///
+    /// A press inside the thumb picks it up where it was touched, so the row
+    /// under the pointer stays under the pointer and a press with no movement
+    /// moves nothing. A press on the track is a jump, and a jump has no grab.
+    fn grab_within_thumb(&self, r: RenderId, y: i32) -> i32 {
+        use crate::render::spec::Draw;
+        let Some(n) = self.render.get(r) else {
+            return 0;
+        };
+        let (rect, max, off) = (n.data.rect, n.data.scroll_max.y, n.data.scroll.y);
+        let track = rect.h.max(1);
+        let content = max.max(0) as u32 + track as u32;
+        let (top, len) = Draw::scrollbar_thumb(off.max(0) as u32, content, track);
+        let rel = y - rect.y;
+        match rel >= top as i32 && rel < top as i32 + len as i32 {
+            true => rel - top as i32,
+            false => 0,
+        }
+    }
+
     fn scroll_to_pointer(&mut self, r: RenderId, y: i32) {
         let (rect, max) = {
             let Some(n) = self.render.get(r) else { return };
@@ -726,7 +749,7 @@ impl<M: 'static> Ui<M> {
         let off = if travel == 0 || max <= 0 {
             0
         } else {
-            let rel = (y - rect.y).clamp(0, travel);
+            let rel = (y - rect.y - self.scrollbar_grab).clamp(0, travel);
             // `scrollbar_thumb` *floors* offset -> row, so dividing back the
             // same way lands the thumb a row above the one pointed at whenever
             // the quotient has a fraction. Take the smallest offset that

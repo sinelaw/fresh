@@ -213,14 +213,18 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
 /// Send every pointer event that reaches this node to the modal slot, which
 /// routes it to `handle_settings_mouse`. The parts the tree owns stop the flow
 /// before it gets here.
+///
+/// **Except the wheel, which is never this node's.** Scroll chaining runs only
+/// for a notch nothing claimed, so a catch-all that stops the wheel stops it
+/// for every viewport underneath — and all three of the dialog's scrolling
+/// regions are viewports now: the category tree, the cards, and the search
+/// results. Claiming it here meant a wheel over the results moved nothing at
+/// all, while `handle_settings_mouse`'s own wheel arm sat behind a comment
+/// saying a notch over the tree "is the tree's ... nothing reaches here from
+/// over it" — true only if the notch is allowed to get there.
 fn route(n: Node<UiMsg>) -> Node<UiMsg> {
     let mut g = gesture(n);
-    for kind in [
-        GestureKind::Press,
-        GestureKind::Release,
-        GestureKind::Move,
-        GestureKind::Wheel,
-    ] {
+    for kind in [GestureKind::Press, GestureKind::Release, GestureKind::Move] {
         g = g.on(
             kind,
             Rc::new(|e: &Event| {
@@ -780,8 +784,12 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
             // Four columns of indent, then the chevron column the category
             // rows spend on their arrow.
             text("     "),
+            // The dirty dot's two columns, and the icon's two. A category
+            // row's icon is a wide glyph — `⚙`, `✎` — so it occupies two
+            // cells, and a section that reserved one for it sat a column to
+            // the left of every category label instead of indented past them.
             text("  "),
-            text(" "),
+            text("  "),
             text(label.clone()),
         ]),
     }

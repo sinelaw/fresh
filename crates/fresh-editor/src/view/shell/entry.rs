@@ -311,11 +311,46 @@ fn gutter(it: &Item, band: &str) -> Node<UiMsg> {
             ])
         })
         .collect();
-    col().w(Sizing::Cells(3)).children(rows)
+    col().w(Sizing::Cells(GUTTER_COLS)).children(rows)
 }
 
+/// The cursor/modified gutter beside every field, which the control starts
+/// after. The painter called it `focus_indicator_width`.
+pub const GUTTER_COLS: u16 = 3;
+
 /// The control, through the adapter a plugin's field goes through.
+///
+/// **Except a read-only one, which is a label and reads as one.** The Key of
+/// an existing entry cannot be edited, and drawing it as a text box promises
+/// an edit that will not happen — the widget adapter has no read-only mode, so
+/// it renders the bracketed input every field gets. The painter special-cased
+/// this in the settings renderer rather than in the widget framework, and so
+/// does this: `label:` in the column the gutter leaves, then the value. Doing
+/// it in the adapter instead would change how every plugin's read-only field
+/// looks, which is not this migration's to decide.
 fn control(it: &Item, band: &str) -> Node<UiMsg> {
+    if let (
+        true,
+        fresh_core::api::WidgetSpec::Text {
+            label,
+            value,
+            label_width,
+            ..
+        },
+    ) = (it.read_only, &it.spec)
+    {
+        // The label column the painter used: the widest name plus two, less
+        // the gutter the control already sits after. Clipped rather than
+        // elided — an ellipsis would be a third thing in a four-column cell.
+        let cell = (*label_width as u16).saturating_sub(GUTTER_COLS);
+        let label: String = format!("{label}: ").chars().take(cell as usize).collect();
+        return row().h(Sizing::Cells(1)).children([
+            text(label)
+                .theme(pair("ui.editor_fg", band))
+                .w(Sizing::Cells(cell)),
+            text(value.clone()).theme(pair("ui.line_number_fg", band)),
+        ]);
+    }
     let spec = it.spec.clone();
     let focus_key = it.focus_key.clone();
     let surface = Ink::keys("ui.popup_text_fg", band.to_string());

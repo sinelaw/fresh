@@ -2229,7 +2229,9 @@ impl Editor {
         // The left tree's highlight follows the body, in both directions —
         // the same contract the wheel and the scrollbar had, stated once
         // against the window rather than at each thing that moves it.
-        if moved {
+        // ...but not when the cursor is what moved it: see
+        // `SettingsState::cursor_drove_body`.
+        if moved && !s.take_cursor_drove_body() {
             s.sync_tree_cursor_to_body_scroll();
         }
         // The search results' window, on the same terms. The list moves its
@@ -2300,7 +2302,6 @@ impl Editor {
     /// button and per-field action answers its own press.
     fn settings_entry_description(&self) -> Vec<crate::view::shell::entry::Dialog> {
         use crate::view::shell::entry as e;
-        use fresh_i18n::t;
 
         let Some(s) = self.settings_state.as_ref() else {
             return Vec::new();
@@ -2376,7 +2377,13 @@ impl Editor {
                 e::Dialog {
                     level,
                     title: match d.is_dirty() {
-                        true => format!(" {} • {} ", d.title, t!("settings.modified_suffix")),
+                        // The painter's own words, not a message key: there is
+                        // no `settings.modified_suffix` in the catalogue, so
+                        // `t!` handed the title the key itself and the dialog
+                        // read "Add Value • settings.modified_suffix". The
+                        // settings box beside it spells its own suffix out the
+                        // same way.
+                        true => format!(" {} • modified ", d.title),
                         false => format!(" {} ", d.title),
                     },
                     dirty: d.is_dirty(),
@@ -7218,11 +7225,29 @@ impl Editor {
             true => {
                 let block = Block::default()
                     .borders(Borders::RIGHT)
-                    .border_style(ratatui::style::Style::default().fg(dock_border_fg))
-                    .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
+                    .border_style(ratatui::style::Style::default().fg(dock_border_fg));
+                // **A described dock's ground is already on the screen.** Its
+                // content is the tree's now (C.5b) and the tree's *background*
+                // band folds before this painter runs — so clearing here, or
+                // filling with the panel ground, wipes exactly what was just
+                // drawn, and the `described` early-out below means nothing
+                // paints it again. That is a blank dock: the column opens, the
+                // display list carries every row of it, and the screen shows
+                // nothing.
+                //
+                // The right border is still this painter's, because it is the
+                // draggable divider's *appearance* and the tree carries only
+                // its hit target. Drawn without a fill, over content that is
+                // already correct.
+                let block = match described {
+                    true => block,
+                    false => block.style(ratatui::style::Style::default().bg(theme.suggestion_bg)),
+                };
                 let inner = block.inner(overlay_rect);
                 if draw {
-                    frame.render_widget(Clear, overlay_rect);
+                    if !described {
+                        frame.render_widget(Clear, overlay_rect);
+                    }
                     frame.render_widget(block, overlay_rect);
                 }
                 inner

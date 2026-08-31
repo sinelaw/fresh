@@ -3109,10 +3109,14 @@ pub fn render_text_input(
             // Short or exact-fit value: pad with trailing spaces
             // to total_inner. Cursor at byte k of value lands at
             // byte k of inner.
+            // The deficit is known: counting the string again after every
+            // space made this quadratic, and unbounded when a caller asked
+            // for an unbounded width.
             let mut padded = value.to_string();
-            while padded.chars().count() < total_inner {
-                padded.push(' ');
-            }
+            padded.extend(std::iter::repeat_n(
+                ' ',
+                total_inner.saturating_sub(value_chars.len()),
+            ));
             (padded, Some(raw_cursor_byte))
         } else {
             // Long value: a `target`-wide window slides over it,

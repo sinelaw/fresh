@@ -502,6 +502,15 @@ pub struct Ui<M> {
     pub(crate) geom_store: Rc<RefCell<crate::services::GeomStore>>,
     /// The viewport whose scrollbar is being dragged, between press and release.
     pub(crate) scrollbar_drag: Option<crate::render::object::RenderId>,
+    /// Where in the thumb the drag was grabbed, in rows from its top.
+    ///
+    /// **A press on the thumb picks it up; a press on the track jumps to it.**
+    /// Without this every press put the thumb's *top* under the pointer, so
+    /// grabbing a thumb anywhere but its first row shifted it up by however
+    /// far down it had been grabbed — a press that moved the viewport without
+    /// the pointer moving at all. Zero for a press on the bare track, which is
+    /// the jump.
+    pub(crate) scrollbar_grab: i32,
 }
 
 impl<M: 'static> Default for Ui<M> {
@@ -550,6 +559,7 @@ impl<M: 'static> Ui<M> {
             anchored: Vec::new(),
             geom_store: Rc::new(RefCell::new(crate::services::GeomStore::default())),
             scrollbar_drag: None,
+            scrollbar_grab: 0,
         }
     }
 
@@ -888,15 +898,28 @@ impl<M: 'static> Ui<M> {
         self.process_disposals();
     }
 
-    /// Settle focus, and rebuild once more if doing so changed anything.
+    /// Settle focus and layout, and rebuild once more if either moved, so
+    /// paint sees a tree that has finished moving.
     ///
     /// Autofocus happens after layout, because which scope is active depends on
     /// which layers resolved. A widget that mirrors focus reacts by marking
     /// itself, so without this second pass a focus ring would appear one frame
     /// late.
+    ///
+    /// **There are two kinds of dirt here and both have to be asked about.**
+    /// The scheduler knows what still needs *building*; the render tree knows
+    /// what still needs *measuring*, and that list can be non-empty while the
+    /// scheduler's is clear. A `layout_reader` rebuilds during the layout pass
+    /// — and so does a `Component` inside one, which is how a windowed
+    /// [`List`](crate::widgets::List) fills its rows — so the dirt its
+    /// reconcile raises arrives after `drain_layout` has finished its own
+    /// loop. Asking only the scheduler carried that dirt into the next frame
+    /// and painted the subtree one frame behind the description it was built
+    /// from: the editor's settings dialog kept the previous category selected
+    /// until some later, unrelated event drew again.
     fn settle(&mut self, size: Size) {
         self.apply_autofocus();
-        if self.sched.borrow().has_pending() {
+        if self.sched.borrow().has_pending() || !self.layout_dirty.is_empty() {
             self.run_flush(None);
             self.flush_layout(size);
         }

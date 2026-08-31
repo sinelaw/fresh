@@ -1023,11 +1023,24 @@ impl Editor {
                     &item.control,
                     crate::view::settings::items::page_label_width(&page.items),
                 );
+                // **The width layout gave the card, not "unbounded".** A
+                // `full_width` field takes the panel's width as its own, so
+                // `u32::MAX` asked for a field four billion columns wide and
+                // `render_text_input` padded it one space at a time, counting
+                // the string's characters on each pass — the click never
+                // returned. It was wrong before it was slow: the window a long
+                // value slides through, and where it elides, both follow the
+                // width, so a byte resolved at any other width is not the byte
+                // under the pointer.
+                let w = self
+                    .panel_rect(&crate::view::shell::settings::card_key(idx))
+                    .map_or(0, |r| r.width as u32)
+                    .max(1);
                 let out = crate::widgets::render_spec_no_autofocus(
                     &spec,
                     crate::view::shell::widgets::no_state(),
                     "",
-                    u32::MAX,
+                    w,
                 );
                 crate::widgets::WidgetTextClickGeometry::from_render_output(&out, 0)
                     .map(|g| g.value_byte_in_cell(hit.byte_start, col))

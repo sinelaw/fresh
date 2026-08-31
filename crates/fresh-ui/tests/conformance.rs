@@ -7,10 +7,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, focusable, gesture, host_leaf, layer, layout_reader, text, viewport, Anchor, BuildCx,
-    Component, ComponentExt, Constraints, Draw, Event, Focusable, Geom, GeomHandle, GestureKind,
-    Hit, HostLeaf, InitCx, Input, Intent, Key, KeyCode, KeyPress, LayoutCx, LayoutInfo, Modality,
-    Mods, MouseButton, Node, Point, PointerMode, Rect, RenderObject, Shortcut, Size, Sizing, Ui,
+    col, focusable, gesture, host_leaf, layer, layout_reader, text, viewport, Align, Anchor,
+    BuildCx, Component, ComponentExt, Constraints, Draw, Event, Focusable, Geom, GeomHandle,
+    GestureKind, Hit, HostLeaf, InitCx, Input, Intent, Key, KeyCode, KeyPress, LayoutCx,
+    LayoutInfo, Modality, Mods, MouseButton, Node, Place, Point, PointerMode, Rect, RenderObject,
+    Shortcut, Size, Sizing, Ui,
 };
 
 const FRAME: Size = Size { w: 20, h: 10 };
@@ -1164,4 +1165,129 @@ fn a_scrollbar_thumb_fills_a_track_it_cannot_move_along() {
             "content {content} fits in 28 cells"
         );
     }
+}
+
+/// **What a reader builds this frame is what paints this frame.**
+///
+/// A `layout_reader`'s builder is a new closure over new state every
+/// description, and the framework invalidates it so the builder re-runs. But
+/// re-running the builder is only half of it: the subtree it produces has to
+/// reach the display list of *this* frame. It did not — the builder ran with
+/// the new state and the spec still carried the previous frame's text, so
+/// every surface built inside a reader painted one frame behind the state it
+/// was built from, and only caught up when some later, unrelated event
+/// happened to draw again.
+///
+/// In the editor that is the settings dialog: clicking a category moved the
+/// selection and rebuilt the description, and the screen kept showing the
+/// previous category until the pointer moved.
+#[test]
+fn a_layout_readers_rebuilt_subtree_paints_in_the_same_frame() {
+    fn painted(ui: &Ui<()>) -> Vec<String> {
+        ui.spec()
+            .items
+            .iter()
+            .filter_map(|i| match &i.draw {
+                Draw::Lines(l) => Some(l.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+    let tree = |label: &'static str| layout_reader(move |_| text(label));
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree("first"), FRAME);
+    assert_eq!(painted(&ui), vec!["first".to_string()]);
+
+    ui.frame(tree("second"), FRAME);
+    assert_eq!(
+        painted(&ui),
+        vec!["second".to_string()],
+        "the reader rebuilt with the new description, so the new subtree is \
+         what this frame paints — not what the last one did"
+    );
+
+    // The same, one layer in. A layer is laid out in its own pass, and that
+    // is where the editor's dialogs live.
+    // The subtree keeps the *same geometry* both times — the editor's dialog
+    // is a fixed-size box whose contents change — so nothing about the
+    // arrangement moves and only the text differs.
+    let layered = |label: &'static str| {
+        col().key(Key::Str("chrome".into())).child(
+            layer()
+                .within(Key::Str("chrome".into()))
+                .anchor(Anchor::Screen(Align::Center))
+                .place(Place::Over)
+                .child(layout_reader(move |_| {
+                    col()
+                        .w(Sizing::Cells(12))
+                        .h(Sizing::Cells(1))
+                        .key(Key::Str("box".into()))
+                        .child(text(label))
+                })),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(layered("one"), FRAME);
+    assert_eq!(painted(&ui), vec!["one".to_string()]);
+
+    ui.frame(layered("two"), FRAME);
+    assert_eq!(
+        painted(&ui),
+        vec!["two".to_string()],
+        "a reader inside a layer paints this frame's build too"
+    );
+}
+
+/// **A press on the thumb picks it up; a press on the track jumps to it.**
+///
+/// Every press used to put the thumb's *top* under the pointer, so grabbing a
+/// thumb anywhere below its first row shifted it up by however far down it had
+/// been grabbed — the viewport moved without the pointer moving at all. That
+/// is the click-jumps-to-row bug, and it is why a press one row into a resting
+/// two-row thumb scrolled the keybinding editor's table.
+#[test]
+fn a_press_inside_the_thumb_grabs_it_rather_than_jumping() {
+    fn bar(ui: &mut Ui<()>) -> (Rect, i32) {
+        let v = ui.find_by_key(&Key::Str("v".into())).expect("the viewport");
+        (ui.rect_of(v), ui.scroll(v).0.y)
+    }
+    let tree = || {
+        // Thirty rows in a ten-row window puts four cells of thumb on a
+        // ten-cell track, so there is a thumb to grab in the first place.
+        viewport(col().children((0..30).map(|i| text(format!("row {i}")))))
+            .key(Key::Str("v".into()))
+            .scrollbar()
+            .h(Sizing::Cells(10))
+            .w(Sizing::Cells(10))
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree(), FRAME);
+    let (r, before) = bar(&mut ui);
+    assert_eq!(before, 0, "starts at the top");
+
+    // The bar is the viewport's last column; the resting thumb starts at its
+    // first row. Press one row into it and let go without moving.
+    let x = r.x + r.w as i32 - 1;
+    press(&mut ui, x, r.y + 1);
+    ui.dispatch(Input::release(
+        Point::new(x, r.y + 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    ui.frame(tree(), FRAME);
+    assert_eq!(
+        bar(&mut ui).1,
+        before,
+        "a press inside the thumb with no movement moves nothing"
+    );
+
+    // A press on the bare track below the thumb still jumps.
+    press(&mut ui, x, r.y + 8);
+    ui.frame(tree(), FRAME);
+    assert!(
+        bar(&mut ui).1 > before,
+        "a press on the track below the thumb still jumps toward it"
+    );
 }

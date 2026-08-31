@@ -831,18 +831,29 @@ fn pressing_a_track_row_puts_the_thumb_on_that_row() {
         "the thumb must be taller than one cell to be a test"
     );
     let gutter = FRAME.w as i32 - 1;
-    for target in 0..=(FRAME.h - len) {
+    let press_at = |ui: &mut Ui<()>, row: u16| {
         ui.dispatch(Input::press(
-            Point::new(gutter, target as i32),
+            Point::new(gutter, row as i32),
             MouseButton::Left,
             Mods::NONE,
         ));
         ui.dispatch(Input::release(
-            Point::new(gutter, target as i32),
+            Point::new(gutter, row as i32),
             MouseButton::Left,
             Mods::NONE,
         ));
         ui.tick();
+    };
+    // **Bare track only.** A press that lands *on* the thumb picks it up
+    // where it was touched and moves nothing — see
+    // `a_press_inside_the_thumb_grabs_it_rather_than_jumping` — so the rows
+    // the resting thumb covers are not track presses and cannot be asserted
+    // about here. Row 0 is inside it, and doubles as the reset: from anywhere
+    // else it is bare track, and jumping there returns the thumb to the top.
+    for target in len..=(FRAME.h - len) {
+        press_at(&mut ui, 0);
+        assert_eq!(thumb(&ui).0, 0, "row 0 is bare track once scrolled away");
+        press_at(&mut ui, target);
         assert_eq!(
             thumb(&ui).0,
             target,
