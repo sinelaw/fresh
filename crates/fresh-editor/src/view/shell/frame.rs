@@ -83,6 +83,16 @@ pub enum HostTarget {
     /// panel is described, the embed is a hole in it, and the fold hands the
     /// window painter the rectangle layout worked out.
     Embed(u32),
+    /// One band of the overlay prompt's card, by which band.
+    ///
+    /// **A band names a rectangle, not a painter.** `render_overlay_prompt`
+    /// draws the whole card in one pass between the two fold bands; the tree
+    /// states where each band sits so that painter, and the read-backs, agree
+    /// on one set of rectangles. So this resolves to a target that paints
+    /// nothing — but it has to *resolve*, because the alternative is what it
+    /// replaced: raw ids 1..=5 that `HostRegion::from_host_id` answered with
+    /// `Dock`, `MenuBar`, `Explorer`, `Body` and `StatusBar`.
+    Card(super::overlay_prompt::CardRegion),
 }
 
 /// The bit that separates a pane's id from a region's.
@@ -95,6 +105,11 @@ const PANE_TAG: u64 = 1 << 32;
 /// collides with both, so each id space gets its own bit rather than a range.
 const EMBED_TAG: u64 = 1 << 33;
 
+/// The same, for the overlay prompt's card bands. Their discriminants are
+/// 1..=5 and would otherwise *be* `Dock`, `MenuBar`, `Explorer`, `Body` and
+/// `StatusBar`.
+const CARD_TAG: u64 = 1 << 34;
+
 /// The `HostId` a pane's content leaf carries.
 pub fn pane_host_id(id: crate::model::event::LeafId) -> HostId {
     HostId(PANE_TAG | id.0 .0 as u64)
@@ -105,10 +120,19 @@ pub fn embed_host_id(window_id: u32) -> HostId {
     HostId(EMBED_TAG | window_id as u64)
 }
 
+/// The `HostId` one band of the overlay prompt's card carries.
+pub fn card_host_id(region: super::overlay_prompt::CardRegion) -> HostId {
+    HostId(CARD_TAG | region.id())
+}
+
 impl HostTarget {
     /// Which painter owns this id, or `None` when it names neither — which is
     /// the fold's assertion, not a case to handle.
     pub fn from_host_id(id: HostId) -> Option<HostTarget> {
+        if id.0 & CARD_TAG != 0 {
+            return super::overlay_prompt::CardRegion::from_id(id.0 & (CARD_TAG - 1))
+                .map(HostTarget::Card);
+        }
         if id.0 & EMBED_TAG != 0 {
             return Some(HostTarget::Embed((id.0 & (EMBED_TAG - 1)) as u32));
         }
@@ -1006,5 +1030,25 @@ mod tests {
             "the slot's pointer claim did not take the keyboard: {:?}",
             got.msgs
         );
+    }
+
+    /// A card band's id is its own, and not a region's.
+    ///
+    /// The bands' discriminants are 1..=5, which are exactly `Dock`,
+    /// `MenuBar`, `Explorer`, `Body` and `StatusBar`. Untagged, a band folded
+    /// in a hosts-painting band would have handed the *buffer* painter the
+    /// prompt's results rectangle — silently, because `from_host_id` answered
+    /// `Some` for every one of them and the fold's assertion only catches
+    /// `None`.
+    #[test]
+    fn a_card_band_never_resolves_to_a_region() {
+        use crate::view::shell::overlay_prompt::CardRegion;
+        for r in CardRegion::ALL {
+            assert_eq!(
+                HostTarget::from_host_id(card_host_id(r)),
+                Some(HostTarget::Card(r)),
+                "{r:?} does not round-trip"
+            );
+        }
     }
 }

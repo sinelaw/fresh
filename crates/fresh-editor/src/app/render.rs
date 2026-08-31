@@ -1296,13 +1296,14 @@ impl Editor {
         // the cell-writing half is skipped, which is what "backends are folds
         // over the display list" buys: two backends, one layout.
         // The full-screen modals' remaining paint, **before** the overlay band
-        // rather than after it. What is left of `render_modal_overlays` is the
-        // settings dialog's body — its two panels and its entry stack — and
-        // the box that body sits in is a layer in the tree, as are its search
-        // row, its footer and its five prompts. A `Block` fills the rectangle
-        // it borders, so a painter that ran after the fold wiped every one of
-        // them: the described rows came out blank and the help overlay never
-        // appeared at all.
+        // rather than after it. What is left of `render_modal_overlays` for
+        // the settings dialog is the box and the one divider column between
+        // its two panes (`view::settings::render`, 270 lines); everything
+        // inside it — both panels, the entry stack, the search row, the footer
+        // and every prompt — is the tree's. Order still matters for what is
+        // left: a `Block` fills the rectangle it borders, so a painter that
+        // ran after the fold wiped the described rows inside it and the help
+        // overlay never appeared at all.
         //
         // This is the rule the overlay band already states for every other
         // legacy painter — "painted after every legacy painter, because paint
@@ -1371,31 +1372,26 @@ impl Editor {
             self.shell_ui = Some(ui);
         }
 
-        // Chrome theme-key provenance, and the hole in it. This used to say
-        // the whole list — status bar, menu, tabs, file explorer, scrollbars —
-        // "is now recorded during each region's own paint", and neither half
-        // of that is true.
+        // Chrome theme-key provenance. **Every described surface records
+        // through the fold**, in both bands: `FoldProvenance` is installed
+        // above and applied below, and it files each display-list item's rect,
+        // clip and resolved theme keys as it folds. That is defect F.6's fix,
+        // and it is the reason the file explorer, the settings dialog, the
+        // popups and the dock report keys without a fifth hand-written walk.
         //
-        // Two of them still have a paint to record during: the tab strip
-        // threads a `CellThemeRecorder` through `render_tabs`, and the pane
-        // scrollbars are filed by `record_scrollbar_theme_runs` in
-        // `BodyPainter::finish`, from the geometry the grid produced. Two more
-        // are *described* and so have no painter left at all — their runs come
-        // from a read-back written by hand for each: `MenuRenderer::
-        // compute_layout` collects them on the same walk that builds the menu's
-        // description, and `Self::publish_status_bar` asks the retained tree
-        // through `status_bar::provenance_runs`. Both work; neither is a paint.
+        // Two surfaces still record during a paint instead, because they still
+        // have one: the tab strip threads a `CellThemeRecorder` through
+        // `render_tabs`, and the pane scrollbars are filed by
+        // `record_scrollbar_theme_runs` in `BodyPainter::finish`.
         //
-        // The file explorer is in the list and records nothing. Nor do the
-        // settings dialog, the popups or the dock. Every writer of
-        // `cell_theme_map` is either a painter or a bespoke per-surface
-        // read-back, and a surface that has migrated has neither until someone
-        // writes the second one — so Ctrl+Right-click over the sidebar reports
-        // blank. That is defect **F.6** in
-        // `docs/internal/fresh-editor-retained-mode-plan.md`, still open; its
-        // fix is one recorder inside the fold, which already holds each display
-        // -list item's rect, clip and resolved theme keys, rather than a fifth
-        // hand-written walk.
+        // What is still blank is not a surface but a *tier*: `FoldProvenance::
+        // item` can only file a key, so an item whose ink resolved to literal
+        // colours files nothing. The status bar hard-codes literals for its
+        // separator, and `render_side` falls back to a literal for any element
+        // whose colour does not equal `theme_of(key)` — so provenance is blank
+        // over those cells today, with no plugin involved. That is defect
+        // **F.2** in `docs/internal/fresh-editor-retained-mode-plan.md`, and
+        // it is wider than "a plugin cannot register a named key".
 
         // Render tab drag drop zone overlay if dragging a tab
         let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
