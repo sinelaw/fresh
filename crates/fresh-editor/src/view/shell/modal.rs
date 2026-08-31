@@ -1,11 +1,15 @@
 //! The full-screen modals: Settings and the floating plugin panel.
 //!
 //! The calibration wizard and the keybinding editor were here and are not any
-//! more — its interior had no
-//! mouse and no recorded rectangles, so once its box became a description
-//! there was nothing left behind the seam and it carries its own exclusivity
-//! (`view::shell::calibration`). That is what each of the remaining three is
-//! for.
+//! more. The wizard's interior had no mouse and no recorded rectangles, so
+//! once its box became a description there was nothing left behind the seam at
+//! all; the keybinding editor's interior had both and has since migrated
+//! whole — its table rows, its fields and its dialog buttons answer their own
+//! presses, and `KeybindingEditorLayout` is down to two fields nothing
+//! compares a cell against. Each carries its own exclusivity in its own module
+//! (`view::shell::calibration`, `view::shell::keybinding`), so neither wants a
+//! pointer slot here. That is what each of the two remaining [`Slot`] variants
+//! is for.
 //!
 //! Each owned the whole mouse channel through `ChromeComponent::capture_mouse`
 //! — a band ahead of every walk, the shell's included, and the reason
@@ -14,12 +18,20 @@
 //! outside the layer is interactive, so nothing outside it is offered the
 //! pointer.
 //!
-//! **Their interiors are not here.** Settings is eleven modules, the
-//! keybinding editor is a table with its own scrollbar and its own
-//! double-click semantics, and both hit-test rectangles their own painters
-//! recorded. So the tree answers *which* surface an event belongs to, and the
-//! surface answers what it means — the same seam as the overlay prompt's
-//! toolbar band, at the scale of a whole dialog.
+//! **Their interiors are not here.** Settings is eleven modules and the
+//! floating panel is the widget runtime. So the tree answers *which* surface
+//! an event belongs to, and the surface answers what it means — the same seam
+//! as the overlay prompt's toolbar band, at the scale of a whole dialog.
+//!
+//! What the surface no longer does is *hit-test recorded rectangles*, which is
+//! what this paragraph used to claim of Settings and the keybinding editor
+//! both. Neither does it now. `SettingsLayout` is deleted (see
+//! `view::settings::hit`): every surface in the dialog is a node and answers
+//! its own press, and `handle_settings_mouse` is what is left over — the
+//! wheel, a `Down` arm that swallows a press on the box or its scrim because
+//! the dialog is modal, and the narrow category strip. `KeybindingEditorLayout`
+//! is a husk of two fields that no hit test reads. What crosses the seam is the
+//! *event*; the geometry stayed on this side of it.
 //!
 //! The event itself never leaves the host: it is routed, not transported. A
 //! tree `Event` cannot carry a crossterm one faithfully in any case — the

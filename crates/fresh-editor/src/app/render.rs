@@ -93,6 +93,63 @@ fn flow_run_start(buffer: &crate::model::buffer::Buffer, top_byte: usize) -> usi
     run_start
 }
 
+/// Turns the fold's painted items into theme-key runs for the inspector.
+///
+/// **The fold reports a rectangle and a name; the grammar is this side's.** A
+/// described surface's theme name is written in `shell_theme`'s notation
+/// (`fg/bg+attrs`, a literal, or a plugin's key over a fallback), so splitting
+/// it into the key pair `ThemeRun` carries has to happen where that notation is
+/// understood — not inside `view::shell::fold`, which is meant to know nothing
+/// about the editor's theme vocabulary.
+///
+/// One recorder for the whole display list, replacing the per-surface
+/// `provenance_runs` walks that each newly described surface would otherwise
+/// have had to grow. Later items overwrite earlier ones, which is the paint
+/// order the inspector wants.
+///
+/// **The region is generic on purpose.** `ThemeRun::region` is a surface label
+/// ("Status Bar", "Editor Content") and the fold does not know which surface an
+/// item belongs to — an item carries a key, a rect and a theme, not a
+/// province. Deriving one from key prefixes would be a stringly guess that goes
+/// stale the moment a key is renamed. What the theme inspector's popup and its
+/// "Open in Theme Editor" action actually consume is the *key pair*, which is
+/// exact; the label is decoration, and an honest generic one beats a confident
+/// wrong one.
+struct FoldProvenance {
+    runs: Vec<crate::app::types::ThemeRun>,
+}
+
+impl crate::view::shell::fold::ProvenanceSink for FoldProvenance {
+    fn item(
+        &mut self,
+        rect: ratatui::layout::Rect,
+        clip: ratatui::layout::Rect,
+        theme: &fresh_ui::ThemeKey,
+    ) {
+        use std::borrow::Cow;
+        let vis = rect.intersection(clip);
+        if vis.width == 0 || vis.height == 0 {
+            return;
+        }
+        let (fg, bg) = crate::app::shell_host::shell_theme::names(theme.as_str());
+        if fg.is_none() && bg.is_none() {
+            return;
+        }
+        let fg = fg.map(Cow::Owned);
+        let bg = bg.map(Cow::Owned);
+        for y in vis.y..vis.y.saturating_add(vis.height) {
+            self.runs.push(crate::app::types::ThemeRun {
+                x: vis.x,
+                y,
+                w: vis.width,
+                fg_key: fg.clone(),
+                bg_key: bg.clone(),
+                region: Cow::Borrowed("Chrome"),
+            });
+        }
+    }
+}
+
 impl Editor {
     /// Render the topmost global popup at its computed area and register its
     /// click region in `global_popup_areas`. Shared by the generic
@@ -357,12 +414,28 @@ impl Editor {
         let status_bar_area = region(HostRegion::StatusBar);
         let editor_content_area = region(HostRegion::Body);
         // Where the sidebar wants the hardware caret (its selected row) when it
-        // owns the keyboard. The panel is native now, so this is a *layout*
-        // query rather than something a painter hands back: the caret sits on
-        // the left edge of the row the description marked. Committed at the
-        // very end of this draw, with the editor's caret, so overlays painted
-        // after the sidebar can suppress it instead of having it blink through
-        // them.
+        // owns the keyboard.
+        //
+        // **This is arithmetic, not a layout query**, whatever the comment here
+        // used to say. `area` is the explorer region's rectangle and the two
+        // `+ 1`s are the border the panel's own box draws, hard-coded here and
+        // stated a second time in the description — so a row of padding added
+        // inside that box moves the caret off the row it is meant to mark, and
+        // nothing fails. The description does place a marker: `file_explorer`'s
+        // row stacks a `▌` cell over the selected row. That node carries no
+        // key, so `shell::cell_of` cannot be asked where it landed, which is
+        // why this reaches for the region origin instead.
+        //
+        // The right shape is in this file already, for the pane caret:
+        // `widgets::caret_key(Slot::Pane(id))` keys the marker,
+        // `Self::shell_cell` reads back the cell layout gave it, and no border
+        // offset appears anywhere (see `Self::described_pane_caret`). Keying
+        // the explorer's marker and reading it back the same way is the fix.
+        // This comment is not the fix; it is the admission that one is owed.
+        //
+        // Committed at the very end of this draw, with the editor's caret, so
+        // overlays painted after the sidebar can suppress it instead of having
+        // it blink through them.
         let explorer_hardware_cursor = shell.explorer.as_ref().and_then(|e| {
             let area = region(HostRegion::Explorer);
             Some((area.x + 1, area.y + 1 + e.caret_row? as u16))
@@ -822,6 +895,7 @@ impl Editor {
             .map(|s| s.chrome.clone())
             .unwrap_or_default();
         let mut body = crate::app::shell_host::BodyPainter::new(self, body_state, pane_chrome);
+        let mut provenance = FoldProvenance { runs: Vec::new() };
         let pending_hardware_cursor = crate::view::shell::fold::fold_band(
             ui.spec(),
             frame.buffer_mut(),
@@ -829,6 +903,7 @@ impl Editor {
             &mut body,
             crate::view::shell::fold::Band::Background,
             paints,
+            Some(&mut provenance),
         );
         let crate::app::shell_host::BodyOutput {
             split_areas,
@@ -838,6 +913,11 @@ impl Editor {
             horizontal_scrollbar_areas,
         } = body.finish();
         self.shell_ui = Some(ui);
+        // Held until the overlay band has added its own, so the two are
+        // applied together after every described item in the frame has been
+        // seen. Applying the background band here would be overwritten by
+        // nothing, but it would also be a second entry point into the map.
+        self.fold_provenance = provenance.runs;
 
         // **A described mounted panel's caret is still the pane's caret.**
         // Before C.5's flip the runtime wrote the panel's focus cursor into
@@ -1254,12 +1334,27 @@ impl Editor {
                 .shell_ui
                 .take()
                 .expect("the shell tree is taken and returned within one frame");
-            let fold_caret = crate::view::shell::fold::fold_native(
+            let mut provenance = FoldProvenance {
+                runs: std::mem::take(&mut self.fold_provenance),
+            };
+            let fold_caret = crate::view::shell::fold::fold_band(
                 ui.spec(),
                 frame.buffer_mut(),
                 &palette,
+                &mut crate::view::shell::fold::SkipHosts,
                 crate::view::shell::fold::Band::Overlay,
+                crate::view::shell::fold::Paints::All,
+                Some(&mut provenance),
             );
+            // **F.6: one recorder for every described surface.** Applied after
+            // both bands, so the overlay's items land on top of the
+            // background's — the paint order the inspector wants. What this
+            // replaces is nothing: a described surface simply had no writer,
+            // and Ctrl+Right-click reported "No theme key recorded here" over
+            // the menu bar, the status bar, the explorer, settings, the popups
+            // and the dock.
+            let runs = provenance.runs;
+            self.active_chrome_mut().apply_theme_runs(&runs);
             // A native widget that placed a cursor — a focused `TextField` —
             // outranks both the buffer's caret and the sidebar's, which is the
             // rule §4.4 states and the thing
@@ -1276,8 +1371,31 @@ impl Editor {
             self.shell_ui = Some(ui);
         }
 
-        // Chrome theme-key provenance (status bar, menu, tabs, file explorer,
-        // scrollbars) is now recorded during each region's own paint.
+        // Chrome theme-key provenance, and the hole in it. This used to say
+        // the whole list — status bar, menu, tabs, file explorer, scrollbars —
+        // "is now recorded during each region's own paint", and neither half
+        // of that is true.
+        //
+        // Two of them still have a paint to record during: the tab strip
+        // threads a `CellThemeRecorder` through `render_tabs`, and the pane
+        // scrollbars are filed by `record_scrollbar_theme_runs` in
+        // `BodyPainter::finish`, from the geometry the grid produced. Two more
+        // are *described* and so have no painter left at all — their runs come
+        // from a read-back written by hand for each: `MenuRenderer::
+        // compute_layout` collects them on the same walk that builds the menu's
+        // description, and `Self::publish_status_bar` asks the retained tree
+        // through `status_bar::provenance_runs`. Both work; neither is a paint.
+        //
+        // The file explorer is in the list and records nothing. Nor do the
+        // settings dialog, the popups or the dock. Every writer of
+        // `cell_theme_map` is either a painter or a bespoke per-surface
+        // read-back, and a surface that has migrated has neither until someone
+        // writes the second one — so Ctrl+Right-click over the sidebar reports
+        // blank. That is defect **F.6** in
+        // `docs/internal/fresh-editor-retained-mode-plan.md`, still open; its
+        // fix is one recorder inside the fold, which already holds each display
+        // -list item's rect, clip and resolved theme keys, rather than a fifth
+        // hand-written walk.
 
         // Render tab drag drop zone overlay if dragging a tab
         let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
@@ -3771,11 +3889,13 @@ impl Editor {
                     // is what the inspector should say about it.
                     fg_key: fg
                         .as_deref()
-                        .and_then(crate::view::theme::Theme::static_theme_key),
+                        .and_then(crate::view::theme::Theme::static_theme_key)
+                        .map(std::borrow::Cow::Borrowed),
                     bg_key: bg
                         .as_deref()
-                        .and_then(crate::view::theme::Theme::static_theme_key),
-                    region: "Status Bar",
+                        .and_then(crate::view::theme::Theme::static_theme_key)
+                        .map(std::borrow::Cow::Borrowed),
+                    region: std::borrow::Cow::Borrowed("Status Bar"),
                 })
                 .collect::<Vec<_>>()
         };
@@ -6804,13 +6924,32 @@ impl Editor {
         // it carved the explorer but never the dock — so a replay with a dock
         // open computed visual-line motion against a body twenty-odd columns
         // too wide.
+        //
+        // **A geometry pass, not a frame.** `layout_only` builds the
+        // description and lays it out and stops; a frame goes on to do things
+        // — move focus to an autofocused element and tell the application it
+        // moved, drain a queued reveal into a viewport's scroll offset, hand a
+        // behavior what arrived for it, repaint a display list nobody will
+        // draw. Replay asks this question once per replayed action, so a frame
+        // here writes the *length of the macro* into editor state that has
+        // nothing to do with where the body is. What replay needs is one
+        // rectangle.
+        //
+        // The description still has to be rebuilt and reconciled, and the
+        // frame the shell describes is still the only thing that knows the
+        // answer: it changes between replayed actions (a suggestion list takes
+        // the status row, the search-options row appears, the dock opens), so
+        // there is nothing to cache it against short of the whole `Frame` —
+        // which is deliberately not comparable, and a hand-picked subset of it
+        // is the same "replica of a layout" this call site already got wrong
+        // once.
         let split = self.compute_dock_split(size);
         let shell = self.shell_frame(split).resolve_dock(size.width);
         let mut ui = self
             .shell_ui
             .take()
             .expect("the shell tree is taken and returned within one call");
-        ui.frame(
+        ui.layout_only(
             crate::view::shell::frame::frame_tree(shell),
             fresh_ui::Size::new(size.width, size.height),
         );

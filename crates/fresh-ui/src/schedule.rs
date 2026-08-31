@@ -450,6 +450,16 @@ pub struct Ui<M> {
     /// Set while a render object is being measured, so a second measurement of
     /// the same subtree in one frame can be counted.
     pub(crate) measuring: bool,
+    /// Set while a [`Ui::layout_only`] pass runs, so the passes below can tell
+    /// "compute this layout" from "a frame happened".
+    ///
+    /// It changes nothing about the geometry — the same build, the same
+    /// measure, the same arrange. What it changes is that the things a frame
+    /// *owes the application* are not owed to a question: an arrival handed
+    /// over, a queued scroll applied. Those are reactions to a frame having
+    /// happened, and a caller that fires them to ask where something is
+    /// changes the thing it is asking about.
+    pub(crate) geometry_pass: bool,
     pub(crate) frame_no: u64,
     pub(crate) frame_size: Size,
     /// Relayout boundaries awaiting a measure pass.
@@ -539,6 +549,7 @@ impl<M: 'static> Ui<M> {
             focus_tree: Default::default(),
             focus_roots: Vec::new(),
             measuring: false,
+            geometry_pass: false,
             frame_no: 0,
             frame_size: Size::ZERO,
             layout_dirty: Vec::new(),
@@ -572,6 +583,53 @@ impl<M: 'static> Ui<M> {
         self.settle(size);
         self.flush_paint(size);
         &self.spec
+    }
+
+    /// The geometry a frame would produce, without the frame.
+    ///
+    /// A host that needs a rectangle out of a description it has just built —
+    /// how tall a region came out, where a row landed — needs the build and
+    /// the layout: a description *states* its geometry, and measuring it is
+    /// the only thing that answers. It does not need what a frame additionally
+    /// *does*. Focus moving to an autofocused element and the application
+    /// being told so, a queued reveal scrolling a viewport, a ticker
+    /// advancing, a display list nothing will draw: those happen because a
+    /// frame was shown. A caller that fires them in order to ask a question
+    /// changes the thing it is measuring — once per question asked.
+    ///
+    /// Reconciliation is *not* one of them, and still runs: an element that
+    /// does not exist has no rectangle, so a new description has to be mounted
+    /// before it can be measured. That is also why this is a query against the
+    /// live tree rather than a scratch copy of it — a description carries
+    /// handles ([`Anchor`](crate::behavior::Anchor)) that bind to whichever
+    /// tree reconciles them, so laying the same description out in a second
+    /// tree would take the binding away from the first.
+    ///
+    /// Read the answer with [`Ui::rect_of`] and its neighbours. There is no
+    /// display list to return, because nothing was painted; the one from the
+    /// last real frame is left alone, which is what is on the screen. The next
+    /// [`Ui::frame`] is unaffected — it reconciles whatever description it is
+    /// given, over this one.
+    pub fn layout_only(&mut self, root: Node<M>, size: Size) {
+        // Host anchors are neither cleared nor published here: they are the
+        // host's answer for what lives inside its own leaves, `frame` clears
+        // them because it is about to collect a fresh set, and a query has no
+        // fresh set to collect.
+        let was = std::mem::replace(&mut self.geometry_pass, true);
+        self.run_flush(Some(root));
+        self.flush_layout(size);
+        // The half of `settle` that is part of computing a layout rather than
+        // a reaction to one. A builder that runs *during* the layout pass — a
+        // `layout_reader`, or the `Component` inside one that fills a windowed
+        // list's rows — raises its dirt after the layout drain has finished
+        // its own loop, and geometry read without draining it is the geometry
+        // of the description *before* that build. Autofocus is the other half,
+        // and is the reaction.
+        if self.sched.borrow().has_pending() || !self.layout_dirty.is_empty() {
+            self.run_flush(None);
+            self.flush_layout(size);
+        }
+        self.geometry_pass = was;
     }
 
     /// Tell the tree where something inside a host leaf is, so an
@@ -826,7 +884,15 @@ impl<M: 'static> Ui<M> {
 
         // 0. Hand over anything that arrived from elsewhere since the last
         //    frame. Between frames, never during build, layout or paint.
-        self.pump_behaviors();
+        //
+        //    Not on a geometry pass. That is between frames too, but it is not
+        //    one: delivering here would put an arrival into the tree earlier
+        //    for having been asked a question, and would advance every ticker
+        //    once per question — making how often the host asks where
+        //    something is visible in what the tree does.
+        if !self.geometry_pass {
+            self.pump_behaviors();
+        }
 
         // 1. Apply queued state mutations, then mark their elements for build.
         //    A mutation aimed at an element that has since been disposed is

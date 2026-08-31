@@ -175,7 +175,29 @@ impl Editor {
         // and the mouse_click hook need them, and the cost (a single
         // `screen_to_buffer_position` call) is non-trivial — share the
         // result.
-        let (mc_buffer_row, mc_buffer_col) = {
+        // **A described pane has no screen-to-line projection, and must say
+        // so rather than answer.**
+        //
+        // Every other pointer probe is gated on whether the tree describes the
+        // panel — the floating and dock right press, the hover walk, the dock
+        // and floating left press. This one was not, and the projection it
+        // reads is not merely stale for a described pane: the text pass that
+        // fills `view_line_mappings` does not run there, so the map is written
+        // *empty* and `screen_to_buffer_position` falls back to the viewport's
+        // top byte. Every click in the pane therefore resolved to the same
+        // line and column — the first row of the panel — and the widget
+        // hit-test below happily matched whatever control sits there. A press
+        // that lands on a widget is stopped by the node, so what reached here
+        // was exactly the case the projection cannot answer.
+        //
+        // `None` is what both readers below already expect for "no position",
+        // and it is what the `mouse_click` hook's `Option` fields mean. A
+        // number that is wrong for every click but one is worse than no
+        // number.
+        let described_pane = self.pane_panel_is_described(buffer_id);
+        let (mc_buffer_row, mc_buffer_col) = if described_pane {
+            (None, None)
+        } else {
             let cached_mappings = self
                 .active_layout()
                 .view_line_mappings
@@ -253,6 +275,11 @@ impl Editor {
             // mounted panels drop the overlay/popup channels at mount
             // (see `handle_mount_widget_panel`), so there is never an
             // overlay surface to resolve against here.
+            //
+            // A *described* pane never gets here: the projection above is
+            // `None` for one, because its widgets carry their own hits on
+            // their own rectangles and the runtime's stored list is the
+            // second layout this migration exists to remove.
             if let Some((panel_key, hit)) = self
                 .widget_registry
                 .hit_test_row_aware(buffer_id, brow, bcol, false)

@@ -206,7 +206,19 @@ fn separator(bar: &StatusBar) -> Node<UiMsg> {
 /// compute: layout gives the fixed elements their width and the gap whatever
 /// is left, so the right side sits against the edge without anyone measuring
 /// backwards from it.
+///
+/// **Memoised on the bar itself.** The status bar is rebuilt on every frame —
+/// which, in this editor, means on every terminal tick — and changes on very
+/// few of them: a cursor move, a mode change, a new diagnostic count. `Node`
+/// identity cannot express that, because the description is derived from the
+/// frame's state and so is a new value each time; `memo` compares the state
+/// instead. `StatusBar` is `PartialEq` and is the whole of what this function
+/// reads, which is the contract `memo` asks for.
 pub fn status_bar(bar: &StatusBar) -> Node<UiMsg> {
+    fresh_ui::memo(bar.clone(), build)
+}
+
+fn build(bar: &StatusBar) -> Node<UiMsg> {
     let mut kids: Vec<Node<UiMsg>> = Vec::new();
     for (i, it) in bar.left.iter().enumerate() {
         if i > 0 {

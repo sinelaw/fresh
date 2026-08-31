@@ -4,8 +4,15 @@
 //! `docs/internal/fresh-editor-ui-migration.md`:
 //!
 //! - [`frame`] — the editor frame as a `fresh-ui` description, with one
-//!   `Host` region per area the old painters own. Proven to reproduce the
-//!   ratatui rectangles exactly in `tests/ui_shell_frame_parity.rs`.
+//!   `Host` region per area the old painters own. Pinned cell-for-cell against
+//!   the ratatui rectangles in `tests/ui_shell_frame_parity.rs`. This line said
+//!   "proven" and it overstates what that test can do now: S1b deleted the
+//!   production copy of the second computation, so the test's own `reference()`
+//!   is the only one left. It is a golden of the layout the editor *had*, not a
+//!   live cross-check against one it still runs — enough to stop the shell's
+//!   geometry drifting away from the behaviour users have, and unable by
+//!   construction to catch the two sides being wrong together, because there is
+//!   no longer a second side. Read that file's header before leaning on it.
 //! - [`fold`] — the backend: a walk over `LayoutSpec::items` that writes cells
 //!   into a `ratatui::Buffer`, calling back into the host for `Draw::Host`.
 //!

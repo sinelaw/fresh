@@ -1309,6 +1309,42 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Send a mouse event and report **whether the editor asked for a
+    /// frame** — without drawing one.
+    ///
+    /// Every other input helper on this harness ends in `self.render()`, and
+    /// that is a lie the real editor never tells. `main.rs` repaints only when
+    /// `Editor::handle_mouse` returns `true`; a frame nobody asked for is a
+    /// frame that never happens. Because the suite always renders, it can
+    /// assert what a frame *contains* and is structurally blind to the whole
+    /// class of "the state changed and nothing requested a repaint" — the bug
+    /// where the pixels are right in the test and stale on the user's screen.
+    ///
+    /// Three of those have shipped on the retained-UI migration alone: a
+    /// described panel's hover, a `widgets::List`'s own hover write (which
+    /// produces no message, so `Dispatched::changed` computed from
+    /// `!msgs.is_empty()` missed it), and `update_lsp_hover_state` dismissing
+    /// a tooltip and reporting nothing. Every one of them passed the suite.
+    ///
+    /// So this helper deliberately does **not** render: the answer is the
+    /// assertion. Existing helpers keep their `render()` — a test that wants
+    /// the screen should keep using them.
+    pub fn send_mouse_reporting_render(&mut self, mouse_event: MouseEvent) -> anyhow::Result<bool> {
+        self.editor.handle_mouse(mouse_event)
+    }
+
+    /// [`Self::send_mouse_reporting_render`] for a bare pointer motion — the
+    /// gesture that carries hover, and therefore the one the missing-repaint
+    /// bugs all hid in.
+    pub fn mouse_move_reporting_render(&mut self, col: u16, row: u16) -> anyhow::Result<bool> {
+        self.send_mouse_reporting_render(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+    }
+
     /// Simulate a mouse click at specific coordinates
     pub fn mouse_click(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {

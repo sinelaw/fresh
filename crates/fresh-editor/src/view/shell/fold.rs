@@ -29,6 +29,24 @@ use fresh_ui::{BorderStyle, Draw, LayoutSpec, Scrim, ThemeKey};
 
 use super::frame::HostTarget;
 
+/// Where the fold reports what it painted, for the theme inspector.
+///
+/// **The fold is the only party that sees every described cell**, which is why
+/// F.6 belongs here: every other writer of the per-cell theme map is a painter,
+/// and a described surface has no painter, so Ctrl+Right-click went blank over
+/// the menu bar, the status bar, the explorer, settings, the popups and the
+/// dock as each one crossed — silently, because no test asks the inspector
+/// about chrome.
+///
+/// It reports the *rectangle and the theme name*, not a resolved key pair: the
+/// grammar those names are written in belongs to the host (`shell_theme`), and
+/// teaching this module to read it would drag the editor's theme vocabulary
+/// into the backend that is meant to be ignorant of it.
+pub trait ProvenanceSink {
+    /// One painted item: the cells `rect ∩ clip` covers, wearing `theme`.
+    fn item(&mut self, rect: Rect, clip: Rect, theme: &ThemeKey);
+}
+
 /// Where the terminal caret ends up for a frame.
 pub type Caret = Option<(u16, u16)>;
 
@@ -106,11 +124,18 @@ pub fn fold_native(
     palette: &dyn Palette,
     band: Band,
 ) -> Caret {
-    struct Skip;
-    impl HostPainter for Skip {
-        fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {}
-    }
-    fold_band(spec, buf, palette, &mut Skip, band, Paints::All)
+    fold_band(spec, buf, palette, &mut SkipHosts, band, Paints::All, None)
+}
+
+/// A [`HostPainter`] that paints no host region.
+///
+/// For a band whose hosts were painted by someone else — the overlay band,
+/// whose `Host` leaves belong to the legacy painters that ran between the two
+/// folds — or for a fold that only wants the described cells.
+pub struct SkipHosts;
+
+impl HostPainter for SkipHosts {
+    fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {}
 }
 
 /// Fold a display list into `buf`, returning the caret position for the frame.
@@ -127,8 +152,16 @@ pub fn fold(
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
 ) -> Caret {
-    let a = fold_band(spec, buf, palette, host, Band::Background, Paints::All);
-    let b = fold_band(spec, buf, palette, host, Band::Overlay, Paints::All);
+    let a = fold_band(
+        spec,
+        buf,
+        palette,
+        host,
+        Band::Background,
+        Paints::All,
+        None,
+    );
+    let b = fold_band(spec, buf, palette, host, Band::Overlay, Paints::All, None);
     b.or(a)
 }
 
@@ -157,6 +190,7 @@ pub fn fold_band(
     host: &mut dyn HostPainter,
     band: Band,
     paints: Paints,
+    mut provenance: Option<&mut dyn ProvenanceSink>,
 ) -> Caret {
     let frame = buf.area;
     let mut host_caret: Caret = None;
@@ -185,6 +219,21 @@ pub fn fold_band(
         let style = Style::reset().patch(palette.style(&item.theme));
         let rect = to_rect(item.rect);
         let clip = intersect(to_rect(item.clip), frame);
+
+        // Recorded before the draw, and only for the kinds that put a theme on
+        // cells. A `Host` is excluded because the painter behind it records its
+        // own — the split grid's line numbers and syntax runs are far finer
+        // than "this rectangle wore this name". A scrim is excluded because it
+        // is a statement about everything behind it rather than about its own
+        // cells.
+        if let Some(sink) = provenance.as_deref_mut() {
+            if matches!(
+                item.draw,
+                Draw::Fill | Draw::Border(_) | Draw::Lines(_) | Draw::Scrollbar { .. }
+            ) {
+                sink.item(rect, clip, &item.theme);
+            }
+        }
 
         match &item.draw {
             Draw::Fill => fill(buf, rect, ' ', style, clip),

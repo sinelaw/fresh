@@ -23,11 +23,27 @@
 //! wrongly without a red test, and the oracle goes when the last variant does.
 //!
 //! **Coverage is explicit** ([`covered`]) because a panel is either described
-//! or painted, never half of each: a spec using a variant this module has not
-//! reached takes the old path whole. That is the same seam as a `Host` leaf.
+//! or painted, never half of each: a spec using a variant this module has no
+//! arm for takes the old path whole. That is the same seam as a `Host` leaf.
 //! It now answers `true` for everything but `WindowEmbed`, which is a `Host`
-//! leaf by rule and never crosses — so the gate is what remains of a boundary
-//! that has closed rather than a list of things still to do.
+//! leaf by rule and never crosses.
+//!
+//! **Read `covered` as what it says: the adapter has an arm for this variant.**
+//! It does not say the arm is native, and this doc used to imply it did — that
+//! the gate was "what remains of a boundary that has closed". The boundary has
+//! not closed. Most variants are written out below as nodes; five of them —
+//! `Text`, `List`, `Tree`, `Dropdown` and `DualList` — reach [`collected`],
+//! which calls `crate::widgets::render::render_collected`, the immediate-mode
+//! runtime, and wraps what comes back: its rows become nodes, each `HitArea`
+//! becomes a gesture on the sub-range it names, each overlay row becomes a
+//! layer. That is a real gain, and the reason to do it in one step — the
+//! byte-range scan and the `LayoutBox` arena go, and a press is resolved
+//! against a rectangle layout produced. But the runtime is still the thing that
+//! decides what a list row, a tree's indent guides and a dropdown's trigger
+//! look like, so seventeen thousand lines of it are still on the render path
+//! for those five. `collected`'s own doc puts it exactly: "It is a stage, not
+//! the end." The gate has closed over `WidgetSpec`'s variants; it has not
+//! closed over the runtime.
 
 use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::TextPropertyEntry;
@@ -1232,10 +1248,12 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
         // — the library's cells-scrolling window, which clips at both edges by
         // construction and owns the offset itself.
         //
-        // The rows are the runtime's, marking included: a selected card gets
-        // the heavy box frame rather than a band, and those heavy glyphs are
-        // also the marker `paint_dock_seamless_active_tab` keys on to merge
-        // the active card into the editor beside it.
+        // The rows are the runtime's, and so is most of the marking: a
+        // selected card gets a box frame rather than a band, because a band
+        // "reads garish over a multi-row card". Which frame is this module's,
+        // and it depends on what the card is standing next to — the heavy one
+        // everywhere, and in the dock the seamless tab, which is
+        // [`open_card_edge`] and [`tab_scoop`] together.
         WidgetSpec::Tree {
             nodes,
             item_keys,
@@ -1281,14 +1299,25 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 // block selects as one unit and so must light as one — and
                 // selection outranks it.
                 let as_card = crate::widgets::render::tree_node_is_card(&n, *checkable);
+                // **In the dock, the selected card is the seamless tab.**
+                // There the card sits against a wall — `dock::grip_ink`'s
+                // divider, in the column's last cell — and the active session
+                // is the one mirrored in the editor beside it, so its card
+                // opens onto the editor instead of being boxed off from it
+                // (F.8). That is the whole marker, and it is made of glyphs:
+                // nothing here depends on a colour. Everywhere else there is
+                // no wall to open onto, so the heavy frame stays what
+                // selection looks like.
+                let tab = is_selected && as_card && matches!(cx.slot, Slot::Dock);
                 let hovered = !is_selected
                     && !cx.hovered_item_key.is_empty()
                     && cx.hovered_item_key == item_key;
                 let dress = |e: &mut TextPropertyEntry| {
                     if is_selected {
-                        match as_card {
-                            true => crate::widgets::render::mark_list_card_selected(e),
-                            false => {
+                        match (as_card, tab) {
+                            (true, true) => open_card_edge(e),
+                            (true, false) => crate::widgets::render::mark_list_card_selected(e),
+                            (false, _) => {
                                 let mut st = e.style.clone().unwrap_or_default();
                                 st.bg = Some(OverlayColorSpec::theme_key("ui.popup_selection_bg"));
                                 st.extend_to_line_end = true;
@@ -1356,14 +1385,16 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                     });
                 }
                 let h = rows.len() as u32;
+                let block = fresh_ui::Key::Str(
+                    match item_key.is_empty() {
+                        true => i.to_string(),
+                        false => item_key.clone(),
+                    }
+                    .into(),
+                );
                 blocks.push(Chunk {
-                    key: fresh_ui::Key::Str(
-                        match item_key.is_empty() {
-                            true => i.to_string(),
-                            false => item_key.clone(),
-                        }
-                        .into(),
-                    ),
+                    edge: tab.then(|| tab_scoop(block.clone(), at, h, &cx.surface)),
+                    key: block,
                     start: at,
                     rows,
                 });
@@ -1638,11 +1669,112 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 _ => col().children([entry_row(&out.entries[0], &cx.surface), body]),
             }
         }
+        // **The first of the five collected variants to stop being collected.**
+        //
+        // A `Dropdown` is a trigger row and, when it is up, a floating list —
+        // and neither half needed the collector. What it needed was the
+        // collector's *formatter* (`render_dropdown` for the `[value ▼]` row,
+        // and the option rows the pop-over paints), which is a pure function
+        // of the spec and the resolved state, and the two rules the collector
+        // buried in its walk: where the selection and the open flag come from,
+        // and which column the list drops under. Those are now
+        // `kinds::dropdown`'s `resolve`, `popup_of` and `anchor_col`, called
+        // from here and from the collector both, so there is one copy of each.
+        //
+        // What goes away is the round trip. `collected` ran the whole
+        // immediate-mode render to get rows and byte ranges, threw the state it
+        // wrote into a scratch map, and then rebuilt nodes from the cells — so
+        // a press was resolved by matching a byte range in a row the painter
+        // had produced. Here the trigger *is* the node the press lands on, and
+        // the pop-over hangs off it.
+        //
+        // The state is still read from `cx.states` rather than held by the
+        // element: `selected_index` is what the plugin is told about through
+        // `dropdown_select`, so it is model state and belongs to the host. The
+        // *open* flag is view state and should become the element's — that is
+        // 2.1, and it needs the runtime to stop writing it in its own walk
+        // first.
+        WidgetSpec::Dropdown {
+            options,
+            selected_index,
+            label,
+            focused,
+            label_width,
+            open,
+            scroll_offset,
+            key,
+        } => {
+            use crate::widgets::kinds::dropdown as dd;
+            let key = key.as_deref();
+            // A keyed widget takes focus from the host's resolved focus key; an
+            // unkeyed one falls back to the spec's initial-only `focused` hint.
+            let is_focused = match key.is_some_and(|k| !k.is_empty()) {
+                true => cx.is_focused(key),
+                false => *focused,
+            };
+            let st = dd::resolve(options, *selected_index, *open, key, cx.states, is_focused);
+            let rendered = crate::widgets::render_dropdown(
+                options,
+                st.selected,
+                label,
+                is_focused,
+                *label_width,
+                st.open,
+                *scroll_offset,
+                cx.marker_gutter,
+            );
+            let widget_key = key.unwrap_or("").to_string();
+            // A click on the `[value ▼]` button toggles the option list; a
+            // click on the label does not. The hit is the button's range, and
+            // `deliver_widget_hit` does the rest — the kind's `on_pointer`
+            // owns both the open flag and the index, so the plugin never sees
+            // this raw.
+            let trigger = entry_row_hit(
+                &rendered.entry,
+                rendered.button_range,
+                cx.slot,
+                &cx.surface,
+                crate::widgets::HitArea {
+                    row_target: false,
+                    context_click: false,
+                    overlay: false,
+                    widget_key: widget_key.clone(),
+                    widget_kind: "dropdown",
+                    buffer_row: 0,
+                    byte_start: rendered.button_range.0,
+                    byte_end: rendered.button_range.1,
+                    payload: serde_json::json!({}),
+                    event_type: "dropdown_toggle",
+                    owner_key: None,
+                },
+            );
+            if !st.open {
+                return trigger;
+            }
+            let popup = dd::popup_of(
+                options,
+                st.selected,
+                rendered.scroll_offset as u32,
+                &cx.hovered_popup_row,
+                &widget_key,
+                dd::anchor_col(&rendered.entry.text, rendered.button_range.0),
+            );
+            // **The row is named, not just the parent** — the same reason
+            // `rows_with_hits` names it. The layer resolves to this rectangle
+            // either way, but naming it says so to the *dismissal* as well: a
+            // press on the trigger is a press on the thing the list belongs
+            // to, so it closes the list once instead of dismissing it and
+            // letting the trigger's own toggle re-open it in the same press.
+            let anchor = dropdown_anchor_key(cx.slot, &widget_key);
+            row().key(anchor.clone()).h(Sizing::Cells(1)).children([
+                trigger,
+                popup_layer(&popup, cx).anchor(fresh_ui::Anchor::Node(anchor)),
+            ])
+        }
         // The rest, with collectors of their own. See [`collected`].
         WidgetSpec::Text { .. }
         | WidgetSpec::List { .. }
         | WidgetSpec::Tree { .. }
-        | WidgetSpec::Dropdown { .. }
         | WidgetSpec::DualList { .. } => collected(spec, width, cx, site.escape),
         // `covered` gates this; reaching it is a bug in the caller rather than
         // a spec the plugin got wrong, so it is loud in debug and empty in
@@ -1654,6 +1786,128 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
     }
 }
 
+/// One row of the dock's active card, with its right edge opened.
+///
+/// **The card keeps its own light glyphs; what changes is the last one.** A
+/// border row's closing corner becomes another `─`, so the rule runs on to
+/// where the wall is and [`tab_scoop`] turns it back with `╯` above and `╮`
+/// below; a content row's closing `│` becomes a space, so the row flows into
+/// the editor with no wall between them. The left border, the text and every
+/// overlay on it are untouched — and so are the byte offsets, because the
+/// glyph replaced is the row's last.
+///
+/// The emphasis is [`crate::widgets::render::mark_list_card_selected`]'s,
+/// minus its glyph swap: the heavy frame is a marker for a card that has
+/// nothing else to say selection with, and the tab says it by *shape*, which
+/// no theme can wash out either.
+fn open_card_edge(entry: &mut TextPropertyEntry) {
+    let end = entry.text.trim_end_matches('\n').len();
+    if let Some(edge) = entry.text[..end].chars().next_back() {
+        let open = match edge {
+            '╮' | '╯' => Some('─'),
+            '│' => Some(' '),
+            _ => None,
+        };
+        if let Some(open) = open {
+            entry
+                .text
+                .replace_range(end - edge.len_utf8()..end, open.encode_utf8(&mut [0u8; 4]));
+        }
+    }
+    let mut st = entry.style.clone().unwrap_or_default();
+    st.bold = true;
+    // `trim_start`: tree cards indent nested rows by depth, so the border
+    // glyph may sit after leading spaces.
+    let head = entry.text.trim_start();
+    if head.starts_with('╭') || head.starts_with('╰') {
+        // A pure border row, so a whole-row fg tints the whole rule.
+        st.fg = Some(OverlayColorSpec::theme_key("ui.popup_border_fg"));
+        entry.style = Some(st);
+        return;
+    }
+    // A content row holds the session's text after the left border. A
+    // whole-row fg would repaint that text, so only the border glyph is
+    // tinted — and there is only one of them now.
+    entry.style = Some(st);
+    if let Some(bar) = entry.text.find('│') {
+        entry
+            .inline_overlays
+            .push(fresh_core::text_property::InlineOverlay {
+                start: bar,
+                end: bar + '│'.len_utf8(),
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key("ui.popup_border_fg")),
+                    bold: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: fresh_core::text_property::OffsetUnit::Byte,
+            });
+    }
+}
+
+/// The dock's divider, interrupted across the active card's rows: `╯` where
+/// the card's top rule meets it, spaces beside the card's open rows, `╮`
+/// where its bottom rule does.
+///
+/// **The band never travels.** The two halves of the seamless tab are the
+/// card's rows ([`open_card_edge`]) and this, and what they have to agree
+/// about is *which rows* — a fact that was a screen band in the painter, read
+/// back off the cells it had just written. Here the scoop is declared by the
+/// card itself and anchored to the card's own block, so layout answers where
+/// the band is, in the same frame that drew it: [`fresh_ui::Anchor::Node`] on
+/// the key the block already carries, placed `RightOf` it, which is the
+/// column's last cell because the block is as wide as the panel's rows.
+///
+/// **A layer, because the divider is drawn under it.** `dock::grip_ink` draws
+/// one `│` per row of the whole column and does not know a card is there;
+/// this is out of flow, so it paints above that column and takes those cells
+/// back. It claims no pointer: the cell it covers is still the width grip's
+/// to drag.
+///
+/// `start` and `rows` are the block's own place in the tree's content, and
+/// they are here for the one thing layout will not do: a card scrolled half
+/// out of the window still *has* a rectangle, and a scoop placed against it
+/// would land on the toolbar above the list or the column below it. The
+/// enclosing viewport's window is what says whether the whole card is on
+/// screen, and inside the viewport it is there for the asking — this is the
+/// guard the painter spelled as "only when both border rows survived".
+fn tab_scoop(block: fresh_ui::Key, start: u32, rows: u32, surface: &Ink) -> Node<UiMsg> {
+    let ink = surface
+        .clone()
+        .with_fg(Paint::key("ui.popup_border_fg"))
+        .to_string();
+    fresh_ui::layout_reader(move |i: fresh_ui::LayoutInfo| {
+        let hidden = || row().h(Sizing::Cells(0));
+        // Three rows at the least: a rule, something between, a rule.
+        let Some(win) = i.scroll_window.filter(|_| rows >= 3) else {
+            return hidden();
+        };
+        let (top, bottom) = (i64::from(start), i64::from(start + rows));
+        let (win_top, win_bottom) = (i64::from(win.y), i64::from(win.y) + i64::from(win.h));
+        if top < win_top || bottom > win_bottom {
+            return hidden();
+        }
+        let ink = ink.clone();
+        fresh_ui::layer()
+            .anchor(fresh_ui::Anchor::Node(block.clone()))
+            .place(fresh_ui::Place::RightOf)
+            .pointer_mode(fresh_ui::PointerMode::Ignore)
+            .child(col().children((0..rows).map(|r| {
+                let glyph = match r {
+                    0 => "╯",
+                    r if r + 1 == rows => "╮",
+                    _ => " ",
+                };
+                fresh_ui::text(glyph)
+                    .theme(ink.clone())
+                    .w(Sizing::Cells(1))
+                    .h(Sizing::Cells(1))
+            })))
+    })
+    .h(Sizing::Cells(0))
+}
+
 /// One addressable run of rows inside a [`Scrolled`]: a card tree's node, or
 /// a single line of a text area. `start` is where it begins in the content.
 struct Chunk {
@@ -1661,6 +1915,11 @@ struct Chunk {
     /// First row of this block within the whole tree's rows.
     start: u32,
     rows: Vec<Node<UiMsg>>,
+    /// What this block does to the column's right edge, if anything: the
+    /// dock's active card scoops the divider away across its own rows (see
+    /// [`tab_scoop`]). Out of flow, so it is not one of `rows` — the row
+    /// count is what `start` and the reveal are counted in.
+    edge: Option<Node<UiMsg>>,
 }
 
 #[derive(Default)]
@@ -1718,11 +1977,11 @@ impl fresh_ui::Component<UiMsg> for Scrolled {
         }
         let mut content = col();
         for b in self.blocks.iter() {
-            content = content.child(
-                col()
-                    .key(b.key.clone())
-                    .children(b.rows.iter().map(|r| r.clone())),
-            );
+            let block = col().key(b.key.clone()).children(b.rows.iter().cloned());
+            content = content.child(match b.edge.clone() {
+                Some(e) => block.child(e),
+                None => block,
+            });
         }
         let body = fresh_ui::viewport(content)
             .scrollbar_when(self.reveal)
@@ -1965,6 +2224,31 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
 ///
 /// Keyed per slot and per row because two panels can each have a list open,
 /// and a key that collided would anchor one to the other's trigger.
+/// The anchor a *described* `Dropdown`'s pop-over hangs off.
+///
+/// [`popup_anchor_key`] names a pop-over by the collector row it was emitted
+/// at, which is what distinguishes two of them in one panel on that path. A
+/// described dropdown has no row index — it is a node, built from its spec
+/// alone — so it is named by the thing that actually identifies it: its widget
+/// key. Two dropdowns in one panel therefore anchor apart whenever the plugin
+/// keyed them, which is the same condition under which they can hold separate
+/// instance state at all; an unkeyed pair shares the collector path's row-0
+/// name, and shares its open flag too, so there is nothing further to tell
+/// apart.
+fn dropdown_anchor_key(slot: Slot, widget_key: &str) -> fresh_ui::Key {
+    if widget_key.is_empty() {
+        return popup_anchor_key(slot, 0);
+    }
+    let scope = match slot {
+        Slot::Dock => "dock".to_string(),
+        Slot::Floating => "floating".to_string(),
+        Slot::Settings => "settings".to_string(),
+        Slot::SettingsEntry => "settings_entry".to_string(),
+        Slot::Pane(leaf) => format!("pane:{}", leaf.0 .0),
+    };
+    fresh_ui::Key::Str(format!("widget_dropdown_anchor:{scope}:{widget_key}").into())
+}
+
 fn popup_anchor_key(slot: Slot, row: usize) -> fresh_ui::Key {
     let tag = match slot {
         Slot::Dock => "widget_popup_anchor:dock",
@@ -4274,6 +4558,43 @@ mod tests {
         );
     }
 
+    /// **The list opens under the trigger wherever the trigger is.**
+    ///
+    /// The collector path named a pop-over's anchor by the *row of the
+    /// collector's own output* it was emitted at, which is only the panel's
+    /// row because the collector rendered the whole panel. A described
+    /// dropdown is a node built from its own spec and knows nothing about the
+    /// rows above it, so it is named by its widget key and the column places
+    /// it. With rows above it that distinction is visible: the box must drop
+    /// under the trigger's row, not under row 0.
+    #[test]
+    fn the_pop_over_follows_its_trigger_down_the_panel() {
+        let spec = col_of(vec![
+            WidgetSpec::Raw {
+                entries: vec![raw("above one")],
+                key: None,
+            },
+            WidgetSpec::Raw {
+                entries: vec![raw("above two")],
+                key: None,
+            },
+            dropdown(&["fast", "slow", "off"], 0, true, 0),
+        ]);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let top = ui
+            .spec()
+            .layers()
+            .iter()
+            .map(|i| i.rect)
+            .min_by_key(|r| (r.y, r.x))
+            .expect("a pop-over");
+        assert_eq!(
+            top.y, 3,
+            "two rows above, the trigger, then the list: {top:?}"
+        );
+    }
+
     /// A press on the box's border is swallowed, not passed on. It selects
     /// nothing and — the reason the runtime tested `popup_rect` before
     /// anything else — it must not reach whatever dismissal is behind it.
@@ -4518,9 +4839,10 @@ mod tests {
         assert_eq!(band("s1"), (y0 + 5, 5), "and the next block under it");
     }
 
-    /// The selected card is framed in heavy glyphs — the marker
-    /// `paint_dock_seamless_active_tab` keys on, so a background band here
-    /// would silently lose the seamless-tab treatment.
+    /// The selected card is framed in heavy glyphs, wherever there is no wall
+    /// for it to open onto: a background band "reads garish over a multi-row
+    /// card", and the frame is a marker no theme can wash out. In the dock it
+    /// is the seamless tab instead — see below.
     #[test]
     fn the_selected_card_is_framed_in_heavy_glyphs() {
         let picked = tree_rows(&card_tree(3, 1, 20));
@@ -4532,6 +4854,97 @@ mod tests {
         assert!(
             !plain.iter().any(|r| r.contains('┏')),
             "and only when something is selected: {plain:?}"
+        );
+    }
+
+    /// **In the dock the selected card is the seamless tab** (F.8): its rows
+    /// keep the light box and lose the right border, so the active session's
+    /// card flows into the editor mirroring it, and the column's divider is
+    /// scooped away across exactly those rows — `╯` where the card's top rule
+    /// meets it, `╮` where its bottom rule does.
+    ///
+    /// Both halves are asserted from one laid-out frame, because the whole
+    /// point is that they agree without a band travelling between them: the
+    /// scoop is anchored to the card's own block, so it is at the block's
+    /// right edge and as tall as the block by construction rather than by
+    /// arithmetic.
+    #[test]
+    fn the_docks_selected_card_opens_onto_the_editor() {
+        let dock = Ctx {
+            slot: Slot::Dock,
+            ..cx()
+        };
+        let spec = card_tree(3, 1, 20);
+        let rows = tree_text(&spec, &dock);
+        assert!(
+            !rows.iter().any(|r| r.contains('┏')),
+            "the tab is the marker here, not a heavy frame: {rows:?}"
+        );
+        let open: Vec<&String> = rows
+            .iter()
+            .filter(|r| r.starts_with('╭') || r.starts_with('╰'))
+            .collect();
+        assert!(
+            open.iter().any(|r| r.ends_with('─')),
+            "the selected card's rules run on to the wall: {rows:?}"
+        );
+        assert!(
+            open.iter().any(|r| r.ends_with('╮')) && open.iter().any(|r| r.ends_with('╯')),
+            "and every other card still closes its box: {rows:?}"
+        );
+
+        // The scoop itself: one column wide, at the right edge of the card it
+        // belongs to, top and bottom turning back into the divider.
+        // The dock's own geometry: the panel is `WIDTH` wide and the column
+        // has one more cell, which is the divider's.
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            node(&spec, WIDTH, &dock).w(Sizing::Cells(WIDTH)),
+            Size::new(WIDTH + 1, 24),
+        );
+        let card = ui.rect_of(
+            ui.find_by_key(&fresh_ui::Key::Str("s1".into()))
+                .expect("the selected card's block"),
+        );
+        let scoop: Vec<(i32, i32, String)> = ui
+            .spec()
+            .layers()
+            .iter()
+            .filter_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) => Some((i.rect.x, i.rect.y, l.concat())),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            scoop.iter().all(|(x, ..)| *x == card.x + card.w as i32),
+            "the scoop sits in the column's last cell, past the card: {scoop:?} vs {card:?}"
+        );
+        let glyphs: Vec<&str> = scoop.iter().map(|(_, _, g)| g.as_str()).collect();
+        assert_eq!(
+            glyphs,
+            vec!["╯", " ", " ", " ", "╮"],
+            "the divider turns away above the card and back below it"
+        );
+        assert_eq!(
+            (scoop.first().map(|(_, y, _)| *y), scoop.len()),
+            (Some(card.y), card.h as usize),
+            "across the card's rows and no others"
+        );
+    }
+
+    /// …and only in the dock: everywhere else the card has no wall beside it,
+    /// so nothing is scooped and the heavy frame stays the marker.
+    #[test]
+    fn no_other_surface_scoops_a_divider() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            node(&card_tree(3, 1, 20), WIDTH, &cx()),
+            Size::new(WIDTH, 24),
+        );
+        assert!(
+            ui.spec().layers().is_empty(),
+            "a floating panel's selected card declares no edge: {:?}",
+            ui.spec().layers()
         );
     }
 
