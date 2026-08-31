@@ -7,20 +7,37 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    // Embed git commit hash (gracefully falls back to "unknown" outside git)
-    let git_hash = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    // Embed git commit hash (gracefully falls back to "unknown" outside git).
+    //
+    // Release builds only. Declaring `.git/HEAD` and `.git/refs` as build
+    // inputs means *any* git write -- a commit, a branch switch, a rebase, a
+    // `git pull` -- invalidates this build script, which recompiles
+    // `fresh-editor` and relinks every one of its 59 integration-test
+    // binaries. Measured on a warm `target/` with 10 of those tests built:
+    // a genuine no-op rebuild is 0.44s, but one `touch .git/refs/heads/*`
+    // turns it into 24.26s, and that is the state you are in after every
+    // single commit. At the full 59 targets it is several minutes of
+    // relinking for a hash that only ever reaches a `tracing::info!` line.
+    //
+    // So debug builds report "dev" and register no git dependency; release
+    // builds are unchanged and still embed the real short hash.
+    let git_hash = if std::env::var("PROFILE").as_deref() == Ok("debug") {
+        "dev".to_string()
+    } else {
+        if Path::new("../../.git/HEAD").exists() {
+            println!("cargo::rerun-if-changed=../../.git/HEAD");
+            println!("cargo::rerun-if-changed=../../.git/refs");
+        }
+        std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    };
     println!("cargo::rustc-env=FRESH_GIT_HASH={}", git_hash);
-    if Path::new("../../.git/HEAD").exists() {
-        println!("cargo::rerun-if-changed=../../.git/HEAD");
-        println!("cargo::rerun-if-changed=../../.git/refs");
-    }
 
     // ---- Assemble the self-contained web-ui page --------------------------
     // Sources live in web-ui/ split by concern: shell.html (the document
