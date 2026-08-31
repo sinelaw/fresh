@@ -132,6 +132,17 @@ pub struct Frame {
     /// bool.)
     pub status_bar_items: Option<super::status_bar::StatusBar>,
     pub prompt_line: bool,
+    /// Whether a prompt is up, and so whether the keyboard's owner is the
+    /// prompt. Separate from `prompt_line` — the overlay form of the prompt
+    /// draws no row and still owns the keyboard. See
+    /// [`super::prompt::keys_layer`].
+    pub prompt_keys: bool,
+    /// Whether the dock has keyboard focus, and so whether its layer is the
+    /// keyboard's owner. `chrome::Dock::layers`' `owns_keyboard`, said where
+    /// the precedence is now derived. See [`super::panel::keys_layer`].
+    pub dock_keys: bool,
+    /// The same for the centred plugin panel.
+    pub panel_keys: bool,
     /// Column width, already resolved against the frame width.
     pub dock: Option<u16>,
     /// The dock's content as a description, when the adapter covers every
@@ -262,6 +273,9 @@ impl Default for Frame {
             search_options: None,
             status_bar_items: None,
             prompt_line: false,
+            prompt_keys: false,
+            dock_keys: false,
+            panel_keys: false,
             dock: None,
             dock_interior: None,
             dock_grip_hovered: false,
@@ -448,6 +462,27 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
     // states in the precedence table, expressed here as the order they are
     // declared in.
+    //
+    // **The two panel keyboards lead, because they are the floor of the
+    // routable band.** `DOCK` was the lowest rank and `FLOATING_MODAL` the
+    // next, both under `POPUP` — the R1 rank-inversion fix, which says a
+    // prompt, a popup or a menu takes a key before a focused dock or centred
+    // modal does. Declared first, they are exactly that: `Modality::Focus`
+    // confines the keyboard to the topmost such layer, and the topmost is the
+    // one declared last.
+    //
+    // They carry no state, which is why the window scope around this column
+    // is not the problem it would be for the dock's *content*: a keyboard
+    // seam has nothing to lose when a workspace switch rebuilds it, and it
+    // re-autofocuses on the next frame.
+    let chrome = match f.dock_keys {
+        true => chrome.child(super::panel::keys_layer(super::widgets::Slot::Dock)),
+        false => chrome,
+    };
+    let chrome = match f.panel_keys {
+        true => chrome.child(super::panel::keys_layer(super::widgets::Slot::Floating)),
+        false => chrome,
+    };
     // The overlay prompt's card, over everything the frame holds and under the
     // menus — a context menu opened from inside it still paints on top, the
     // same declaration-order rule the dropdowns follow.
@@ -475,6 +510,16 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // menus — a context menu opened from a popup row still paints on top, the
     // same declaration-order rule everything else here follows.
     let chrome = chrome.children(super::popup::placed_layers(&f.popups));
+    // **The prompt's keyboard, over the popups and under the menus.** This is
+    // `layer_rank`'s `MENU > PROMPT > POPUP` said as declaration order instead
+    // of as three integers: a `Modality::Focus` layer confines the keyboard to
+    // itself, and `topmost_modal` picks the one declared last, so the ordering
+    // *is* the precedence. It paints nothing — the prompt's row, card and
+    // suggestion list are described above and elsewhere.
+    let chrome = match f.prompt_keys {
+        true => chrome.child(super::prompt::keys_layer()),
+        false => chrome,
+    };
     let chrome = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
         Some(chain) => chrome.child(chain),
         None => chrome,
@@ -694,7 +739,9 @@ pub fn region_rects(
 mod tests {
     use super::*;
     use crate::model::event::BufferId;
+    use crate::view::shell::msg::{UiFact, UiMsg};
     use crate::view::shell::splits::{leaf_key, PaneControls, Splits};
+    use crate::view::shell::widgets::Slot;
     use crate::view::split::SplitNode;
     use fresh_core::SplitId;
     use fresh_ui::{Size, Ui};
@@ -778,5 +825,149 @@ mod tests {
     fn a_windows_scope_is_named_after_its_id() {
         assert_eq!(window_scope(7), "window:7");
         assert_ne!(window_scope(1), window_scope(10));
+    }
+
+    /// **This is `layer_rank` now**, and the order below is the whole of it
+    /// for the surfaces that used to be dispatched by integer. Each is a
+    /// `Modality::Focus` layer, so `topmost_modal` picks the one declared
+    /// last, and declaration order *is* keyboard precedence.
+    ///
+    /// The case pinned here is the one that broke: a focused dock with a
+    /// plugin panel over it — the orchestrator's right-click context menu.
+    /// `FLOATING_MODAL > DOCK` said the panel takes the key, and it has to,
+    /// because the dock's own `widget_panel_key` answers Escape by blurring
+    /// and would eat the key the menu needs to close on.
+    #[test]
+    fn a_panels_keyboard_outranks_a_focused_docks() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                panel_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Floating)))),
+            "the panel's layer is the one containment finds: {:?}",
+            got.msgs
+        );
+        assert!(
+            !got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Dock)))),
+            "and the dock's does not also get it: {:?}",
+            got.msgs
+        );
+    }
+
+    /// The partner: with no panel up, the focused dock's layer is the one
+    /// that answers. Without this the test above would pass on a frame that
+    /// had stopped declaring the dock's layer at all.
+    #[test]
+    fn a_focused_dock_answers_when_no_panel_is_over_it() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Dock)))),
+            "the dock's layer answers: {:?}",
+            got.msgs
+        );
+    }
+
+    /// And the prompt beats both, which is `PROMPT > FLOATING_MODAL > DOCK`
+    /// — the R1 rank-inversion fix, kept as declaration order.
+    #[test]
+    fn a_prompt_outranks_both_panels() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                panel_keys: true,
+                prompt_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PromptKey))),
+            "the prompt's layer is the topmost: {:?}",
+            got.msgs
+        );
+        assert!(
+            !got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(_)))),
+            "and neither panel also gets it: {:?}",
+            got.msgs
+        );
+    }
+
+    /// **The exclusive slot must not steal the keyboard from the layer that
+    /// wants it.** `modal::layer(FloatingPanel)` claims the pointer for the
+    /// panel; saying `Exclusive` there made it the focus scope, and with
+    /// nothing focusable inside it focus was dropped and the panel's own
+    /// keyboard layer stopped being found. `Modality::Pointer` is the claim
+    /// it actually makes, and this is the frame that proves it.
+    #[test]
+    fn the_panels_pointer_slot_leaves_its_keyboard_layer_alone() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                panel_keys: true,
+                modal: Some(crate::view::shell::modal::Slot::FloatingPanel),
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Floating)))),
+            "the slot's pointer claim did not take the keyboard: {:?}",
+            got.msgs
+        );
     }
 }

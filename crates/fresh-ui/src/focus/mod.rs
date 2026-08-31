@@ -612,11 +612,15 @@ impl<M: 'static> Ui<M> {
         self.key_stops_at_modal()
     }
 
-    /// Whether focus sits inside a layer that owns the keyboard.
+    /// Whether focus sits inside a layer that *swallows* the keys it does not
+    /// act on.
     ///
     /// A host with its own input pipeline behind this tree asks this about the
     /// keys the tree has no vocabulary for: it cannot route them, and letting
-    /// them past a modal surface would reach what the modal is covering.
+    /// them past a modal surface would reach what the modal is covering. A
+    /// `Modality::Focus` layer answers `false` — confining focus is not the
+    /// same as taking the key away from the host, and that layer's whole
+    /// point is that what it declines is still the host's to resolve.
     pub fn keyboard_owned(&self) -> bool {
         self.key_stops_at_modal()
     }
@@ -627,12 +631,16 @@ impl<M: 'static> Ui<M> {
     /// one of them, so this asks the same containment question traversal does
     /// — no separate stack of "who owns the keyboard" and no ranking of
     /// surfaces. With nothing focused there is no chain and nothing owns it.
+    ///
+    /// **Confining and swallowing are different questions**, and this is the
+    /// swallowing one: a `Modality::Focus` layer is on the chain and got the
+    /// key first, and still lets what it declined carry on to the host.
     fn key_stops_at_modal(&self) -> bool {
         let Some(f) = self.focus else { return false };
         self.path_to(f).iter().any(|&n| {
             self.render_for(n)
                 .and_then(|r| self.layer_geom(r))
-                .is_some_and(|g| g.modality != Modality::None)
+                .is_some_and(|g| g.modality.swallows_keys())
         })
     }
 

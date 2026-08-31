@@ -476,6 +476,27 @@ pub enum UiFact {
     /// and the tree's own `KeyPress` is a smaller vocabulary than the one the
     /// interiors read.
     ModalKey(super::modal::KeySlot),
+    /// A key belongs to the prompt, whose interior owns what it means — and
+    /// which may hand it back.
+    ///
+    /// **The declining half of `ModalKey`.** A modal swallows what its
+    /// interior ignores, so the tree can claim during dispatch and be right.
+    /// The prompt cannot: an unhandled prompt key is still the editor's, and
+    /// whether `dispatch_prompt_key` took it is only known once it has run —
+    /// here, in the applier. So this fact's applier completes the claim
+    /// (`Editor::shell_interior_took_key`) and the prompt's layer is
+    /// `Modality::Focus`, which confines the keyboard without swallowing it.
+    PromptKey,
+    /// A key belongs to a focused plugin panel, whose interior is the widget
+    /// runtime's.
+    ///
+    /// The same declining seam as [`UiFact::PromptKey`], for the two surfaces
+    /// that reach `dispatch_floating_widget_key`: a shortcut the panel does
+    /// not bind blurs the dock and falls through to the editor's own
+    /// resolution, so the layer confines the keyboard (`Modality::Focus`)
+    /// without swallowing what it declines, and the applier completes the
+    /// claim.
+    PanelKey(super::widgets::Slot),
     /// A press on one of the keybinding editor's dialogs.
     ///
     /// **The dialogs answer for themselves, the table does not — yet.** Five
@@ -542,6 +563,18 @@ pub enum UiFact {
     WidgetPopupHover {
         slot: super::widgets::Slot,
         index: Option<usize>,
+    },
+    /// An open widget pop-over was dismissed — a press outside it, or Escape.
+    ///
+    /// **The layer says when, so nobody writes the rule twice.** The settings
+    /// dialog carried its own "if a dropdown is open and the click is outside
+    /// it, cancel and stop" in `dispatch_settings_hit`, and the panel runtime
+    /// had no equivalent at all — so a press inside the dock but outside its
+    /// open dropdown left the list up. `Dismiss::OUTSIDE_POINTER | ESCAPE` on
+    /// the pop-over's own layer is that rule, stated once, for both, and for
+    /// the keyboard as well as the pointer.
+    WidgetPopupDismiss {
+        slot: super::widgets::Slot,
     },
     SettingsItemHover(Option<usize>),
     /// A press on a nullable setting's `[Inherit]`, which unsets it.

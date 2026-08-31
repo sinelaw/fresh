@@ -1210,6 +1210,19 @@ pub struct Editor {
     /// those interiors.
     pub(crate) shell_key_event: Option<crossterm::event::KeyEvent>,
 
+    /// **The half of a key's claim the tree cannot make.**
+    ///
+    /// A `Modality::Focus` layer confines the keyboard without swallowing it,
+    /// so what its interior declined is still the host's to resolve. But the
+    /// interior runs in a `UiFact` applier, *after* `Ui::dispatch` has already
+    /// reported whether anything in the tree claimed the key — so the surface
+    /// that is authoritative answers last. Its applier sets this, and
+    /// `shell_dispatch` folds it into what it returns.
+    ///
+    /// Reset at the top of every dispatch rather than cleared by its reader,
+    /// so a stale `true` cannot survive into the next keystroke.
+    pub(crate) shell_interior_took_key: bool,
+
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,

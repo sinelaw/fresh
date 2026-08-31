@@ -89,18 +89,6 @@ pub(crate) struct Layer {
     pub blocks_terminal_input: bool,
 }
 
-/// One entry in the owner-stamped overlay stack: a [`Layer`] plus the
-/// registry index of the chrome component that declared it — the
-/// keyboard analogue of `chrome::ChromeBox::owner`. The key walk
-/// (`Editor::dispatch_layer_keyboard`) dispatches each layer to its
-/// owner's `on_layer_key`. `owner` is `None` only for the hardcoded
-/// event-debug head, which is a pre-walk intercept, not a component.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct OwnedLayer {
-    pub owner: Option<usize>,
-    pub layer: Layer,
-}
-
 /// Resolve the keyboard-owning `KeyContext` from an ordered (top-first)
 /// layer list: the first owning layer that has a `KeyContext` wins.
 /// Layers without a `KeyContext` (custom-dispatch modals) are skipped —
@@ -126,12 +114,17 @@ pub(crate) fn any_layer_blocks_terminal_input(layers: &[Layer]) -> bool {
 /// keyboard. Used by the unfocused-popup key interception: the layers
 /// ranked above `Popup` (840) are the capture-all modals (Settings /
 /// KeybindingEditor / CalibrationWizard 880-900), WorkspaceTrust
-/// (870), Menu (860), Prompt (850), and the hardcoded event-debug
-/// head — the walk derives the set from the real stack, so this list
-/// is documentation, not an encoding. While one of those owns the
-/// keyboard the popup must not intercept keys. Callers guarantee a
-/// `Popup` layer is present, so the `take_while` stops before the
-/// editor base layer.
+/// (870), Menu (860) and Prompt (850), plus the hardcoded event-debug
+/// head — the stack derives the set, so this list is documentation, not
+/// an encoding. While one of those owns the keyboard the popup must not
+/// intercept keys. Callers guarantee a `Popup` layer is present, so the
+/// `take_while` stops before the editor base layer.
+///
+/// **Still load-bearing after the key walk went.** The interception is the
+/// first rung of `dispatch_base_key` now, and base runs whenever the tree
+/// did not claim — which includes a `Modality::Focus` surface that
+/// *declined*. An open prompt still reports `owns_keyboard`, so this is
+/// what keeps Esc in a prompt from reaching past it to a stale popup.
 pub(crate) fn popup_blocked_by_higher_modal(layers: &[Layer]) -> bool {
     layers
         .iter()
@@ -219,32 +212,7 @@ impl Editor {
     /// (`handle_mouse`) all read from this list rather than keeping their
     /// own conditional ladders.
     pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
-        self.overlay_stack().into_iter().map(|o| o.layer).collect()
-    }
-
-    /// The owner-stamped overlay stack, ordered top-first: each layer
-    /// paired with the registry index of the component that declared
-    /// it (the keyboard analogue of `chrome_tree` stamping box
-    /// owners). DERIVED from the chrome component registry: each
-    /// component declares its own layer contributions (presence,
-    /// keyboard ownership, `KeyContext`, PTY blocking) with an
-    /// explicit rank (`chrome::layer_rank`), and this concatenates
-    /// and sorts them top-first. No central conditional ladder — a
-    /// new overlay surface registers a component and appears here,
-    /// and the key walk reaches its `on_layer_key` with no edit to
-    /// any dispatcher.
-    /// DELIBERATELY NOT MEMOIZED: this build is ~17 cheap activity
-    /// predicates and one small Vec — and it is the ground truth every
-    /// derived cache validates against. Any Editor API can flip a layer
-    /// predicate (plugin dispatch, tests driving methods directly), so a
-    /// counter-keyed memo here would need a bump at every such site — a
-    /// hand-maintained roster this model exists to avoid, and exactly
-    /// what CI's oracle caught when it was tried. The expensive
-    /// derivation (`chrome_tree`) memoizes by comparing THIS stack
-    /// instead: staleness is checked, not trusted.
-    pub(crate) fn overlay_stack(&self) -> Vec<crate::app::overlay::OwnedLayer> {
         let mut ranked: Vec<(u16, Layer)> = Vec::new();
-        let mut owners: Vec<Option<usize>> = Vec::new();
         // Event-debug intercepts every key ahead of every other path
         // (see `handle_key_event`) — a debugging instrument with a
         // custom dispatcher, deliberately not a registered component.
@@ -258,22 +226,14 @@ impl Editor {
                     blocks_terminal_input: true,
                 },
             ));
-            owners.push(None);
         }
-        for (i, c) in crate::app::chrome::components().iter().enumerate() {
-            let before = ranked.len();
+        for c in crate::app::chrome::components() {
             c.layers(self, &mut ranked);
-            owners.extend(std::iter::repeat(Some(i)).take(ranked.len() - before));
         }
-        let mut stack: Vec<(u16, OwnedLayer)> = ranked
-            .into_iter()
-            .zip(owners)
-            .map(|((rank, layer), owner)| (rank, OwnedLayer { owner, layer }))
-            .collect();
         // Stable sort: within a rank, declaration (registry) order is
-        // preserved — same ordering `overlay_layers` always had.
-        stack.sort_by(|a, b| b.0.cmp(&a.0));
-        stack.into_iter().map(|(_, o)| o).collect()
+        // preserved — the ordering this has always had.
+        ranked.sort_by(|a, b| b.0.cmp(&a.0));
+        ranked.into_iter().map(|(_, l)| l).collect()
     }
 
     /// True iff any overlay layer is currently blocking key routing to a

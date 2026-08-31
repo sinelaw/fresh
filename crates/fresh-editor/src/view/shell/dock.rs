@@ -19,9 +19,12 @@
 //! before the chrome walk, so once the menu bar, status bar, explorer and
 //! popups became nodes, clicking any of them left a focused dock focused.
 //!
-//! What is *not* here: the dock's keys (`chrome::Dock::on_layer_key`, which
-//! rides the layer walk) and its scrollbar-reveal hover, which reads zones the
-//! plugin publishes from inside the panel. Both belong with the content.
+//! What is *not* here: the dock's keys — they are a layer of their own
+//! (`super::panel::keys_layer`, declared in the frame under everything that
+//! outranks a focused dock) rather than a node of this column, because the
+//! keyboard's owner is not the same question as where the column sits. Nor is
+//! the scrollbar-reveal hover, which reads zones the plugin publishes from
+//! inside the panel and belongs with the content.
 
 use std::rc::Rc;
 

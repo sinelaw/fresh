@@ -33,51 +33,18 @@ impl ChromeComponent for Dock {
         false
     }
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        layer: &crate::app::overlay::Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<anyhow::Result<crate::input::handler::InputResult>> {
-        // Only while this layer owns the keyboard (a FOCUSED dock). A
-        // blurred dock's layer is still visited by the walk (it
-        // carries the Dock `KeyContext` for `get_key_context`) but
-        // never claims keys. Riding the walk at rank DOCK (810) —
-        // instead of the old pre-band `on_key` grab — means an open
-        // prompt (850), popup (840), menu (860) or modal (900s) now
-        // takes the key FIRST, exactly as `get_key_context` always
-        // resolved it: the grab's rank inversion (Esc aimed at a
-        // prompt blurring the dock instead) is gone.
-        if !layer.owns_keyboard {
-            return None;
-        }
-        // A focused dock swallows keys in the dispatch below, so the
-        // global focus-toggle (default Alt+O) would never be able to
-        // hand focus back to the editor once you've dived in. Resolve
-        // it ahead of the dock's own key handling, so the toggle is
-        // symmetric (same key in and out). Only the blur-out
-        // direction needs this — focusing a blurred dock is ordinary
-        // keybinding resolution (the editor owns the keyboard then).
-        let ctx = ed.get_key_context();
-        let resolved = ed.keybindings.read().ok().map(|kb| kb.resolve(event, ctx));
-        if matches!(
-            resolved,
-            Some(crate::input::keybindings::Action::ToggleDockFocus)
-        ) {
-            return Some(
-                ed.handle_action(crate::input::keybindings::Action::ToggleDockFocus)
-                    .map(|_| crate::input::handler::InputResult::Consumed),
-            );
-        }
-        // The focused dock claims every other key its widget dispatch
-        // consumes; anything it declines falls through the walk to the
-        // editor base.
-        if ed.dispatch_floating_widget_key(crate::app::PanelSlot::Dock, event.code, event.modifiers)
-        {
-            return Some(Ok(crate::input::handler::InputResult::Consumed));
-        }
-        None
-    }
+    // **No `on_layer_key`.** A focused dock's keys are the tree's now
+    // (`view::shell::panel::keys_layer`): a `Modality::Focus` layer confines
+    // the keyboard to the panel without swallowing the shortcuts it does not
+    // bind, which is what let this arm return `false` and blur instead. The
+    // `ToggleDockFocus` pre-resolution that had to run ahead of the panel's
+    // own dispatch — so the toggle stays symmetric once you have dived in —
+    // went with it, into the fact's applier.
+    //
+    // The layer below still exists: `get_key_context` and the PTY gate read
+    // it. What is gone is the rank, which said an open prompt, popup, menu or
+    // modal takes a key before this does — and which the frame now says by
+    // declaring this layer first, under all four.
 
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
         use crate::app::overlay::{Layer, LayerKind};

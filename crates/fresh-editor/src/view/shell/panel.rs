@@ -148,6 +148,41 @@ impl Panel {
 /// being handed `chrome_area` instead of the frame; a layer that names the
 /// region it may be placed inside says the same thing, in the place that does
 /// the placing.
+/// **A focused panel's keyboard — confinement without a swallow.**
+///
+/// `chrome::Dock::on_layer_key` and `chrome::FloatingModal::on_layer_key`
+/// were offered every key by the ranked overlay walk while their layer said
+/// `owns_keyboard`, and both end in `dispatch_floating_widget_key`, which
+/// **declines**: a shortcut the panel does not bind blurs the dock and falls
+/// through to the editor's own resolution. That is the same shape the prompt
+/// has, and the same [`fresh_ui::Modality::Focus`] says it — see
+/// `super::prompt::keys_layer` for the two halves and why the claim is
+/// completed host-side.
+///
+/// What the ranks said, the frame's declaration order says: these are
+/// declared under the overlay prompt's card and the popups
+/// (`POPUP > FLOATING_MODAL > DOCK` — the R1 rank-inversion fix, kept), the
+/// dock's under the floating panel's, and both under the menus and the modal
+/// band. Nothing consults an integer.
+///
+/// Paints nothing and takes no pointer: the panel's frame, its `[×]` and its
+/// described interior are all elsewhere, and every one of them answers its
+/// own press.
+pub fn keys_layer(slot: super::widgets::Slot) -> Node<UiMsg> {
+    use fresh_ui::Modality;
+    layer()
+        .anchor(Anchor::Screen(Align::Start))
+        .place(Place::Fill)
+        .pointer_mode(PointerMode::Ignore)
+        .modality(Modality::Focus)
+        .child(
+            fresh_ui::focusable(row())
+                .pointer_mode(PointerMode::Ignore)
+                .autofocus()
+                .on_key(move |_| Some(UiMsg::Ui(UiFact::PanelKey(slot)))),
+        )
+}
+
 pub fn layer_for(p: &Panel) -> Node<UiMsg> {
     let l = layer();
     match &p.spot {

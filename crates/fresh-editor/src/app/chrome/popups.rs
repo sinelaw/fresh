@@ -43,30 +43,30 @@ impl ChromeComponent for Popups {
         }
     }
 
-    /// **The unfocused rung, and nothing else.**
-    ///
-    /// The three this used to offer — the completion resolver, then the global
-    /// popup stack, then the buffer's — are the open popup's own now: its
-    /// layer declares the intents it carries out, the keymap's `popup` and
-    /// `completion` bindings ride down as shortcuts on it, and what an
-    /// unhandled key does is the layer's `Dismiss` (a hover pane spends it
-    /// going away; a completion list lets it through to the buffer) or
-    /// `Modality::Keyboard` (a list waiting to be answered keeps it). The
-    /// shell is offered the key before this walk, so none of that reaches
-    /// here.
-    ///
-    /// What is left is not the popup's keyboard at all: a merely-*visible*
-    /// popup holds no focus, so nothing in the tree is listening for it, and
-    /// the user's bound popup-cancel (default Esc) and popup-focus (default
-    /// Alt+T) are ordinary editor bindings that must still find it.
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &crate::app::overlay::Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<anyhow::Result<crate::input::handler::InputResult>> {
-        ed.dispatch_popup_keys(event)
-    }
+    // **The unfocused rung, and nothing else.**
+    //
+    // The three this used to offer — the completion resolver, then the global
+    // popup stack, then the buffer's — are the open popup's own now: its
+    // layer declares the intents it carries out, the keymap's `popup` and
+    // `completion` bindings ride down as shortcuts on it, and what an
+    // unhandled key does is the layer's `Dismiss` (a hover pane spends it
+    // going away; a completion list lets it through to the buffer) or
+    // `Modality::Keyboard` (a list waiting to be answered keeps it). The
+    // shell is offered the key before this walk, so none of that reaches
+    // here.
+    //
+    // What is left is not the popup's keyboard at all: a merely-*visible*
+    // popup holds no focus, so nothing in the tree is listening for it, and
+    // the user's bound popup-cancel (default Esc) and popup-focus (default
+    // Alt+T) are ordinary editor bindings that must still find it.
+    //
+    // **So it is not a layer's dispatch either, and no longer pretends to
+    // be.** `dispatch_popup_keys` is the first rung of `dispatch_base_key`
+    // now: an editor binding resolved before the rest of the keymap, which
+    // is what it always was. It sat on this component because the ranked
+    // walk was the only place a rung could sit; with every surface that
+    // outranks a popup claiming its keys in the tree, the walk has one
+    // member and the rung belongs inside it.
 }
 
 /// Behavior owned by this component (moved from mouse_input.rs —

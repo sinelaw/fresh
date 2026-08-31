@@ -44,14 +44,16 @@ impl ChromeComponent for Prompt {
         }
     }
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &crate::app::overlay::Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
-        ed.dispatch_prompt_key(event).map(Ok)
-    }
+    // **No `on_layer_key`.** The prompt's keys are the tree's now
+    // (`view::shell::prompt::keys_layer`): a `Modality::Focus` layer confines
+    // the keyboard to the prompt without swallowing what it declines, and its
+    // `on_key` names the surface the way `modal::keys` does for the four
+    // capture-all modals. The layer below still exists — `get_key_context`
+    // and the PTY gate read it — but nothing offers this component a key.
+    //
+    // What that layer's *rank* used to say is the order the frame declares
+    // its layers in: `keys_layer` is declared over the popups and under the
+    // menu dropdowns, which is `MENU > PROMPT > POPUP` without the integers.
 }
 
 /// Behavior owned by this component (moved from mouse_input.rs —
@@ -66,7 +68,7 @@ impl Editor {
     /// layers below (and ultimately normal keybinding resolution,
     /// which resolves in the Prompt context — that's how the file
     /// browser's Alt+letter toggles and Ctrl+P reach their bindings).
-    pub(super) fn dispatch_prompt_key(
+    pub(crate) fn dispatch_prompt_key(
         &mut self,
         event: &crossterm::event::KeyEvent,
     ) -> Option<crate::input::handler::InputResult> {

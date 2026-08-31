@@ -90,18 +90,30 @@ pub fn keys(slot: KeySlot, content: Node<UiMsg>) -> Node<UiMsg> {
 /// owns the surface. What it contributes is the claim.
 pub fn layer(slot: Slot) -> Node<UiMsg> {
     let content = surface(slot).key(key());
-    let content = match slot {
-        Slot::Settings => keys(KeySlot::Settings, content),
-        // The floating panel's keys are the widget runtime's, and reach it
-        // through `dispatch_floating_widget_key` — a different interior from
-        // a dialog's own dispatcher, and one that declines rather than
-        // swallowing (an unhandled shortcut blurs the dock).
-        Slot::FloatingPanel => content,
+    // **The two slots claim different channels, and the difference is not a
+    // detail.** Settings claims both: `keys` below is an `on_key` at the top
+    // of a subtree focus goes into, and what it declines the modal swallows.
+    //
+    // The floating panel claims only the *pointer*. Its keys are the widget
+    // runtime's — they reach it through `dispatch_floating_widget_key`, which
+    // *declines* rather than swallowing (an unhandled shortcut blurs the
+    // dock) — so they arrive on the panel's own `Modality::Focus` layer
+    // (`super::panel::keys_layer`) rather than through this seam.
+    //
+    // Saying `Exclusive` here anyway is what broke the dock's plugin context
+    // menu: an exclusive layer owns the keyboard, so containment made *this*
+    // layer the focus scope, found nothing focusable inside it, and dropped
+    // focus — and the panel's own keyboard layer, which is where the key had
+    // to land, stopped being the one the tree looked in. `Modality::Pointer`
+    // is the claim it actually makes.
+    let (content, modality) = match slot {
+        Slot::Settings => (keys(KeySlot::Settings, content), Modality::Exclusive),
+        Slot::FloatingPanel => (content, Modality::Pointer),
     };
     fresh_ui::layer()
         .anchor(Anchor::Screen(Align::Start))
         .place(Place::Fill)
-        .modality(Modality::Exclusive)
+        .modality(modality)
         .child(content)
 }
 

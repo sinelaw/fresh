@@ -1187,6 +1187,9 @@ impl Editor {
                 .map(|p| (p.x.max(0) as u16, p.y.max(0) as u16))
                 .unwrap_or_default(),
         };
+        // Cleared before the interiors run, never by whoever reads it: a
+        // stale `true` from the previous keystroke would claim this one.
+        self.shell_interior_took_key = false;
         let result = ui.dispatch(input);
         self.shell_ui = Some(ui);
         // Claimed is reported, not inferred. Producing a message and taking
@@ -1220,6 +1223,12 @@ impl Editor {
                 crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact, facts),
             }
         }
+        // **The claim's second half.** A `Modality::Focus` surface confines
+        // the keyboard without swallowing it, so whether the key was taken is
+        // its interior's answer — and the interior ran in an applier above,
+        // after `dispatch` had already reported what the *tree* claimed. The
+        // authoritative party answers last.
+        let claimed = claimed || self.shell_interior_took_key;
         Dispatched { claimed, changed }
     }
 
@@ -1282,6 +1291,46 @@ impl Editor {
             // and a pop-over is not among them. Stored on the panel beside the
             // hovered widget, which is where every other row-level hover
             // lives, and read back by the dropdown's renderer.
+            UiFact::WidgetPopupDismiss { slot } => {
+                use crate::view::shell::widgets::Slot;
+                match slot {
+                    Slot::Settings | Slot::SettingsEntry => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.dropdown_cancel();
+                        }
+                    }
+                    // Closing it *is* toggling it: the runtime owns the open
+                    // flag and `dropdown_toggle` is how every other surface
+                    // flips it, so the dismissal goes through the same
+                    // dispatch rather than reaching into the state map.
+                    Slot::Dock | Slot::Floating => {
+                        let panel = match slot {
+                            Slot::Dock => crate::app::PanelSlot::Dock,
+                            _ => crate::app::PanelSlot::Floating,
+                        };
+                        let open = self.panel(panel).and_then(|p| {
+                            let key = p.popup.as_ref()?.widget_key.clone();
+                            (!key.is_empty()).then(|| (p.panel_key.clone(), key))
+                        });
+                        if let Some((panel_key, widget_key)) = open {
+                            let ha = crate::widgets::HitArea {
+                                overlay: false,
+                                row_target: false,
+                                context_click: false,
+                                widget_key,
+                                widget_kind: "dropdown",
+                                buffer_row: 0,
+                                byte_start: 0,
+                                byte_end: 0,
+                                payload: serde_json::json!({}),
+                                event_type: "dropdown_toggle",
+                                owner_key: None,
+                            };
+                            self.deliver_widget_hit(&panel_key, &ha, None);
+                        }
+                    }
+                }
+            }
             UiFact::WidgetPopupHover { slot, index } => {
                 use crate::view::shell::widgets::Slot;
                 let now = index.map(|i| i.to_string()).unwrap_or_default();
@@ -1990,6 +2039,70 @@ impl Editor {
                     KeySlot::WorkspaceTrust => {
                         let _ = self.handle_workspace_trust_key(&ev);
                     }
+                }
+            }
+            // **The prompt: the same seam, and the claim it completes.**
+            //
+            // `ModalKey` above can be a plain effect because a modal swallows
+            // what its interior ignores — the tree already claimed the key
+            // when it routed it there. The prompt's layer is
+            // `Modality::Focus` instead: it confines the keyboard so nothing
+            // else takes a keystroke ahead of it, and hands back what
+            // `dispatch_prompt_key` declines, which is how the file browser's
+            // `Alt+H` and quick-open's `Ctrl+P` still reach their bindings.
+            // `Some` — including `Some(Ignored)`, which is how the
+            // query-replace confirm prompt consumes every key — is the
+            // prompt taking it.
+            UiFact::PromptKey => {
+                let Some(ev) = self.shell_key_event else {
+                    return;
+                };
+                if self.dispatch_prompt_key(&ev).is_some() {
+                    self.shell_interior_took_key = true;
+                }
+            }
+            // **A focused plugin panel: the same declining seam.** Its
+            // interior is `dispatch_floating_widget_key`, which hands back a
+            // shortcut the panel does not bind — a blurred dock and ordinary
+            // keybinding resolution — so the layer confines the keyboard
+            // without swallowing, and the claim is completed here.
+            UiFact::PanelKey(slot) => {
+                use crate::view::shell::widgets::Slot;
+                let Some(ev) = self.shell_key_event else {
+                    return;
+                };
+                let slot = match slot {
+                    Slot::Dock => crate::app::PanelSlot::Dock,
+                    Slot::Floating => crate::app::PanelSlot::Floating,
+                    // The settings surfaces reuse the widget vocabulary but
+                    // are not panels and never raise this layer.
+                    Slot::Settings | Slot::SettingsEntry => return,
+                };
+                // **The focus toggle is resolved ahead of the panel.** A
+                // focused dock swallows keys in the dispatch below, so the
+                // global toggle (default Alt+O) could never hand focus back
+                // to the editor once you had dived in. Only the blur-out
+                // direction needs this — focusing a blurred dock is ordinary
+                // keybinding resolution, because the editor owns the keyboard
+                // then.
+                if slot == crate::app::PanelSlot::Dock {
+                    let ctx = self.get_key_context();
+                    let resolved = self.keybindings.read().ok().map(|kb| kb.resolve(&ev, ctx));
+                    if matches!(
+                        resolved,
+                        Some(crate::input::keybindings::Action::ToggleDockFocus)
+                    ) {
+                        if let Err(e) =
+                            self.handle_action(crate::input::keybindings::Action::ToggleDockFocus)
+                        {
+                            tracing::warn!("dock focus toggle failed: {e}");
+                        }
+                        self.shell_interior_took_key = true;
+                        return;
+                    }
+                }
+                if self.dispatch_floating_widget_key(slot, ev.code, ev.modifiers) {
+                    self.shell_interior_took_key = true;
                 }
             }
             UiFact::ModalPointer(slot) => {
