@@ -75,3 +75,20 @@ pub(crate) fn rect_of(
     let r = ui.rect_of(e);
     (r.w > 0 && r.h > 0).then(|| screen_rect(r, size))
 }
+
+/// The cell a keyed element starts at, **whether or not it occupies any**.
+///
+/// [`rect_of`]'s zero-size filter is right for the surfaces that ask "is this
+/// on screen": a bar-less pane places a zero-size scrollbar node and `None`
+/// there means "no bar". It is exactly wrong for a marker whose *only* job is
+/// to be a position — the caret's cell is a zero-width node between two runs,
+/// so a filter on width answers `None` for every caret there has ever been.
+pub(crate) fn cell_of(
+    ui: &fresh_ui::Ui<msg::UiMsg>,
+    key: &fresh_ui::Key,
+    size: ratatui::layout::Rect,
+) -> Option<(u16, u16)> {
+    let e = ui.find_by_key(key)?;
+    let r = screen_rect(ui.rect_of(e), size);
+    Some((r.x, r.y))
+}

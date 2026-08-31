@@ -762,6 +762,7 @@ mod tests {
                     close: false,
                 },
                 groups: Default::default(),
+                interiors: Default::default(),
             }),
             ..Frame::default()
         }

@@ -5625,7 +5625,6 @@ impl Editor {
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
             last_inner_rect: None,
-            scrollbar_hover_zones: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,

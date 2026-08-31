@@ -153,16 +153,13 @@ pub(crate) fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
 }
 
 pub(crate) trait ChromeComponent: Sync {
-    /// React to the pointer being at a cell, whatever is under it.
-    ///
-    /// The reactions keyed on the *position* rather than on the hover target:
-    /// the dock's overlay scrollbar, which reveals itself while the pointer is
-    /// over the sessions list. Offered on every motion event; return true to
-    /// ask for a re-render, which a reaction should do only on the transition
-    /// it cares about rather than on every step.
-    fn on_pointer_moved(&self, _ed: &mut Editor, _col: u16, _row: u16) -> bool {
-        false
-    }
+    // **`on_pointer_moved` is gone.** It existed for one reaction — the
+    // dock's overlay scrollbar, revealed while the pointer was over the
+    // column — and that reaction was keyed on the pointer's *cell* because
+    // the only thing that knew where the column was, was a rectangle the
+    // painter had recorded. The column is a node now and reports its own
+    // Enter and Leave (`UiFact::DockHover`), so there is nothing left that
+    // needs every motion event offered to every component.
 
     /// React to a hover-target transition (enter / leave / move),
     /// offered to EVERY component after the tree names the new target —

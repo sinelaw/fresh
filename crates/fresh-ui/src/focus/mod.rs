@@ -636,11 +636,38 @@ impl<M: 'static> Ui<M> {
     /// swallowing one: a `Modality::Focus` layer is on the chain and got the
     /// key first, and still lets what it declined carry on to the host.
     fn key_stops_at_modal(&self) -> bool {
+        self.focus_in_layer(crate::desc::Modality::swallows_keys)
+    }
+
+    /// Whether focus sits inside a layer that *confines* it — the other half
+    /// of [`Modality`](crate::desc::Modality), and a different question from
+    /// [`keyboard_owned`](Self::keyboard_owned).
+    ///
+    /// **A surface can own the keyboard and still hand back what it declines.**
+    /// That is exactly a `Modality::Focus` layer: an open prompt is
+    /// unambiguously where the keyboard is, and the keys it does not bind are
+    /// still the host's. `keyboard_owned` answers the second half and says
+    /// *no* for it; this answers the first and says *yes*.
+    ///
+    /// A host with surfaces of its own behind the tree needs both, because
+    /// "may I intercept this key" and "may I resolve this key" are not the
+    /// same permission. An unfocused popup asks the first: while anything
+    /// above it owns the keyboard it must not intercept, whether or not that
+    /// thing swallows. Answering it by containment is what replaces asking a
+    /// ranked list of surfaces where the popup sits in it.
+    pub fn focus_confined(&self) -> bool {
+        self.focus_in_layer(crate::desc::Modality::owns_keyboard)
+    }
+
+    /// The containment question both halves are asking, with the half as an
+    /// argument: is any layer on the focused element's ancestor chain one this
+    /// predicate accepts.
+    fn focus_in_layer(&self, half: fn(crate::desc::Modality) -> bool) -> bool {
         let Some(f) = self.focus else { return false };
         self.path_to(f).iter().any(|&n| {
             self.render_for(n)
                 .and_then(|r| self.layer_geom(r))
-                .is_some_and(|g| g.modality.swallows_keys())
+                .is_some_and(|g| half(g.modality))
         })
     }
 

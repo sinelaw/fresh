@@ -450,8 +450,15 @@ impl Editor {
         // Higher-priority modal contexts (Settings, Menu, Prompt) own the
         // keyboard regardless of whether a buffer popup happens to be
         // visible underneath. Skip the unfocused-popup interception so
-        // pressing Esc in a settings dialog still closes the dialog
-        // rather than reaching past it to dismiss a stale popup.
+        // pressing Esc in a settings dialog still closes the dialog rather
+        // than reaching past it to dismiss a stale popup.
+        //
+        // **Not `Ui::focus_confined`, though it looks like the same question.**
+        // A layer dismissed by this very keystroke goes on confining focus
+        // until the app stops declaring it, and this guard runs inside
+        // `dispatch_base_key` — reached precisely when a surface declined,
+        // including one that dismissed itself passing through. It needs
+        // post-mutation truth, which is what the re-derived stack gives it.
         if crate::app::overlay::popup_blocked_by_higher_modal(&self.overlay_layers()) {
             return None;
         }

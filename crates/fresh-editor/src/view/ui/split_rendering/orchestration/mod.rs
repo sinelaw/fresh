@@ -112,6 +112,15 @@ pub(crate) struct FrameFacts<'a> {
     /// single window flag) so two splits on the same terminal can differ
     /// (fresh#2595).
     pub scrollback_view_splits: &'a std::collections::HashSet<LeafId>,
+    /// The panes whose mounted plugin panel the shell tree *describes*.
+    ///
+    /// Their text pass does not run. The virtual buffer is still filled — it
+    /// is the mirror search, copy and the `lines_changed` hooks read — but the
+    /// panel is drawn by the description mounted over this pane's `Host`, and
+    /// painting the mirror underneath it would be the same panel twice, at two
+    /// wrap widths, with the tree winning wherever they differ. See
+    /// `Editor::described_panes`.
+    pub described_panes: &'a std::collections::HashSet<LeafId>,
     pub lsp_waiting: bool,
     pub hide_cursor: bool,
     /// `(target, split_id, is_close_button)`.
@@ -225,6 +234,10 @@ pub(crate) fn render_content(
 ) {
     let _span = tracing::trace_span!("render_content").entered();
 
+    // The preview paints *another window's* grid, where this window's tree
+    // has no nodes at all — so no pane of it is described and every one of
+    // them paints whole.
+    let described_panes = std::collections::HashSet::new();
     let facts = FrameFacts {
         style,
         buffer_metadata,
@@ -232,6 +245,7 @@ pub(crate) fn render_content(
         grouped_subtrees,
         pane_chrome,
         scrollback_view_splits,
+        described_panes: &described_panes,
         lsp_waiting,
         hide_cursor,
         hovered_tab,
@@ -390,6 +404,7 @@ pub(crate) fn paint_leaf(
         grouped_subtrees,
         pane_chrome,
         scrollback_view_splits,
+        described_panes,
         lsp_waiting,
         hide_cursor,
         hovered_tab,
@@ -547,6 +562,17 @@ pub(crate) fn paint_leaf(
     // skip buffer content rendering so the group's inner leaves can
     // draw into the content rect without being overwritten.
     if skip_content {
+        view_line_mappings.insert(split_id, Vec::new());
+        return;
+    }
+
+    // **A described mounted panel is drawn by the tree, not from its mirror.**
+    // Deliberately after the tab strip and not folded into `skip_content`: the
+    // strip above this is still the painter's, and what stops here is the
+    // three things the description states for itself — the buffer's text, its
+    // tildes past the last row, and its scrollbars. The mirror is still
+    // written on every re-render; it is the rendering path it stops being.
+    if described_panes.contains(&split_id) {
         view_line_mappings.insert(split_id, Vec::new());
         return;
     }

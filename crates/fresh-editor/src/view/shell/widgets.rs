@@ -29,8 +29,6 @@
 //! leaf by rule and never crosses — so the gate is what remains of a boundary
 //! that has closed rather than a list of things still to do.
 
-use std::borrow::Cow;
-
 use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::TextPropertyEntry;
 use fresh_ui::{col, row, text_runs, Node, Run, Sizing};
@@ -49,6 +47,19 @@ pub fn panel_surface() -> Ink {
     Ink::keys(BASE_FG, BASE_BG)
 }
 
+/// The ink a panel *mounted into a pane* starts from.
+///
+/// **A mounted panel is not standing on a panel.** Its rows were the text of a
+/// virtual buffer, painted on the editor's own ground like every other line of
+/// every other buffer — so the surface it says is the editor's, not the
+/// suggestion palette the floating and dock panels sit on. Naming
+/// [`panel_surface`] here would repaint the search panel in the popup's
+/// background and make it look like a floating box welded to the bottom of the
+/// window.
+pub fn pane_surface() -> Ink {
+    Ink::keys("editor.fg", "editor.bg")
+}
+
 /// Which panel a description belongs to.
 ///
 /// The view layer's own spelling of `app::PanelSlot`, mirrored the way
@@ -64,6 +75,16 @@ pub enum Slot {
     /// A settings entry-edit dialog's field. The same again, one surface in:
     /// its item indices are the dialog's, not the page's.
     SettingsEntry,
+    /// A panel mounted into a pane's buffer (`mountWidgetPanel`) — the
+    /// review-diff sidebar, Search & Replace.
+    ///
+    /// **It names the pane, because that is the only thing about it that is
+    /// different.** Everything in this module is slot-agnostic: a `Ctx` says
+    /// where the facts go and nothing in the translation asks where the
+    /// surface lives, which is what made C.5 a decision about drawing rather
+    /// than about the vocabulary. What the host cannot recover without this
+    /// is *which* mounted panel a hit belongs to, and a pane is one buffer.
+    Pane(crate::model::event::LeafId),
 }
 
 /// What a panel's widgets need beyond their spec.
@@ -278,6 +299,25 @@ pub fn covered(spec: &WidgetSpec) -> bool {
     }
 }
 
+/// **A tree's `visibleRows` is a window, not a height** — and a list's is a
+/// height.
+///
+/// The two kinds differ, in the runtime, in a way nothing in the vocabulary
+/// says out loud: `kinds/list.rs` pads its output to the advertised row count
+/// ("so the List occupies its full `visible_rows`"), while `kinds/tree.rs`
+/// emits at most that many and stops. A plugin can and does depend on the
+/// difference — the orchestrator pads the gap *below* its dock tree with blank
+/// rows so its hint bar lands on the dock's last two, and its comment says
+/// why: "The host tree renders only its actual content rows (it does not pad
+/// itself out to `visibleRows`)".
+///
+/// Giving both a fixed height made the dock's column taller than the dock by
+/// exactly the padding, which pushed the hint bar off the bottom and hung four
+/// e2e tests waiting for it. So a tree is as tall as its content, capped.
+fn tree_rows(content: u32, visible: u32) -> u16 {
+    content.min(visible).min(u16::MAX as u32) as u16
+}
+
 /// The description for a covered spec.
 ///
 /// `width` is the panel's inner content width, which two variants need before
@@ -477,6 +517,16 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
         // Full width by definition — "so the separator always matches the
         // rendered width, including a user-dragged dock, without the plugin
         // computing the width itself".
+        // **A rule is as wide as the panel, and `width` is that width.**
+        //
+        // It is text of a computed length rather than something that fills,
+        // which is fine and stays fine *because* the caller passes the same
+        // number it lays the subtree out at. Where those two diverge — the
+        // dock, laid one column short of the painter's divider — everything
+        // else pins to the laid width by flex and this pins to the parameter,
+        // and the title bar's `×` comes to rest one column off the rule it
+        // lines up with. The fix is to keep them equal, not to make this fill;
+        // see `shell::dock::DIVIDER_COLS`.
         WidgetSpec::Divider { ch, style, .. } => {
             let glyph = match ch.is_empty() {
                 true => "─",
@@ -916,7 +966,13 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                     slot,
                     hit: crate::widgets::HitArea {
                         row_target: true,
-                        context_click: false,
+                        // **What the runtime's own row says** (`kinds/list.rs`
+                        // sets it too). It cost nothing while the probe
+                        // supplied the hit for a right press; now that the
+                        // tree is the only answer and the probe stands down
+                        // for a described panel, a row that does not declare
+                        // the capability raises no context menu at all.
+                        context_click: true,
                         overlay: false,
                         widget_key: hit_keys.get(i).cloned().unwrap_or_default(),
                         widget_kind: "list",
@@ -1277,7 +1333,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             // overlay scrollbar, stop with it.
             let node = node.w(Sizing::Pct(100));
             match visible_rows {
-                Some(r) => node.h(Sizing::Cells(*r as u16)),
+                Some(r) => node.h(Sizing::Cells(tree_rows(at, *r))),
                 None => node.flex(1),
             }
         }
@@ -1419,7 +1475,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
             let node = fresh_ui::ComponentExt::node(list);
             match visible_rows {
-                Some(r) => node.h(Sizing::Cells(*r as u16)),
+                Some(r) => node.h(Sizing::Cells(tree_rows(n as u32, *r))),
                 None => node.flex(1),
             }
         }
@@ -1818,6 +1874,12 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
                 }))
             }
             (Slot::Dock, _) => None,
+            // A pane-mounted panel's float covers the panel and nothing else:
+            // there is no scrolling surface *behind* it to hand the notch on
+            // to the way the dock's column takes it, and `e.stop()` above has
+            // already kept it off the pane underneath. So the float swallows
+            // it, which is what no fact means here.
+            (Slot::Pane(_), _) => None,
             // The settings dialog is a modal too, and its own box already
             // routes everything the tree does not answer for to that slot.
             (Slot::Settings | Slot::SettingsEntry, _) => Some(UiMsg::Ui(
@@ -1854,6 +1916,15 @@ fn popup_anchor_key(slot: Slot, row: usize) -> fresh_ui::Key {
         Slot::Floating => "widget_popup_anchor:floating",
         Slot::Settings => "widget_popup_anchor:settings",
         Slot::SettingsEntry => "widget_popup_anchor:settings_entry",
+        // A pane's tag carries its leaf, because two panes *can* each hold an
+        // open pop-over: a mounted panel is a subtree now, and a `Dropdown`
+        // inside one raises the same layer the dock's does.
+        Slot::Pane(leaf) => {
+            return fresh_ui::Key::Pair(
+                format!("widget_popup_anchor:pane:{}", leaf.0 .0).into(),
+                row as u64,
+            )
+        }
     };
     fresh_ui::Key::Pair(tag.into(), row as u64)
 }
@@ -2115,8 +2186,25 @@ pub fn entry_row_hits(
 /// text the row had already measured to paint it. A zero-width marker at the
 /// caret's byte lands where the glyphs put it, and the host reads the
 /// rectangle back rather than recomputing it.
-pub fn caret_key() -> fresh_ui::Key {
-    fresh_ui::Key::Str("widget_caret".into())
+///
+/// **Keyed per surface, because more than one can carry a caret at once.**
+/// A described panel emits this marker whenever *its own* focused field says
+/// so, and that is plugin state rather than a claim on the keyboard: the
+/// search panel mounted in a pane goes on reporting a focused query field
+/// while you type in the pane above it. One key for all of them would let the
+/// wrong surface's marker answer the lookup, and a hardware cursor would sit
+/// in a panel nobody is editing.
+pub fn caret_key(slot: Slot) -> fresh_ui::Key {
+    let tag = match slot {
+        Slot::Dock => "widget_caret:dock",
+        Slot::Floating => "widget_caret:floating",
+        Slot::Settings => "widget_caret:settings",
+        Slot::SettingsEntry => "widget_caret:settings_entry",
+        Slot::Pane(leaf) => {
+            return fresh_ui::Key::Pair("widget_caret:pane".into(), leaf.0 .0 as u64)
+        }
+    };
+    fresh_ui::Key::Str(tag.into())
 }
 
 /// One row split into its hit pieces, with the caret's marker at `caret` if it
@@ -2144,7 +2232,7 @@ fn row_pieces(
     };
     let marker = || {
         row()
-            .key(caret_key())
+            .key(caret_key(slot))
             .w(Sizing::Cells(0))
             .h(Sizing::Cells(1))
     };
@@ -2181,6 +2269,32 @@ fn row_pieces(
     // end, which no run starts at.
     if caret.is_some_and(|c| c >= end) {
         kids.push(marker());
+    }
+    // **A row-wide hit has to be stated past the row's text.**
+    //
+    // A piece is a byte range, and past the last glyph there are no bytes —
+    // so a row built only from its pieces answers for exactly as many columns
+    // as it has characters. A compact dock row is a short name in a wide
+    // column, and a right-click "past the end of its short text — where most
+    // of a compact row's width is empty and where a user naturally aims"
+    // (`dock_right_click_opens_context_menu_in_compact_mode`) landed on
+    // nothing at all.
+    //
+    // The runtime answered this with a *second* resolver: `hit_test_row_aware`
+    // tries an exact byte hit and falls back to `row_select_hit`, "the
+    // row-body `select` hit of a list/tree row, regardless of column". The
+    // description needs no fallback and no second pass — the row simply
+    // extends, carrying the hit its `row_target` flag already declares.
+    //
+    // The last such hit wins, which is the collector's own precedence: "the
+    // narrow targets are named before the row-wide one, so a byte inside the
+    // glyph or the box belongs to it rather than to `select`".
+    if let Some((_, h)) = hits.iter().rev().find(|(_, h)| h.row_target) {
+        kids.push(hit_node(
+            row().w(Sizing::Flex(1)).h(Sizing::Cells(1)),
+            slot,
+            h.clone(),
+        ));
     }
     row().h(Sizing::Cells(1)).children(kids)
 }
@@ -2268,12 +2382,19 @@ fn entry_runs(
 /// Apply an overlay's properties over an existing ink.
 ///
 /// A colour the overlay does not set is inherited, which is the merge the
-/// painter does. A `ThemeKey` stays a name; an `Rgb` becomes a literal, which
-/// is the one thing in the display list with no theme entry behind it and is
-/// honest about that (F.2).
+/// painter does. An `Rgb` becomes a literal, which is the one thing in the
+/// display list with no theme entry behind it and is honest about that (F.2).
+///
+/// **A `ThemeKey` here is a name a *plugin* chose**, so it becomes
+/// [`Paint::Asked`] rather than [`Paint::Key`]: the editor's table is under no
+/// obligation to know it, and one the theme has never had must not take the
+/// run's other half down with it. `git_history.ts` colours commit hashes
+/// `syntax.number`, which is not a theme key and never has been — the painter
+/// left the row's own foreground in place, and this is that fallback said out
+/// loud rather than left to an unset field.
 fn ink_of(o: &OverlayOptions, under: &Ink) -> Ink {
-    let paint = |c: &OverlayColorSpec| match c {
-        OverlayColorSpec::ThemeKey(k) => Paint::key(Cow::Owned(k.clone())),
+    let paint = |c: &OverlayColorSpec, beneath: &Paint| match c {
+        OverlayColorSpec::ThemeKey(k) => Paint::asked(k.clone(), beneath.clone()),
         OverlayColorSpec::Rgb(r, g, b) => Paint::Lit(ratatui::style::Color::Rgb(*r, *g, *b)),
     };
     let mut attrs = under.attrs;
@@ -2291,8 +2412,16 @@ fn ink_of(o: &OverlayOptions, under: &Ink) -> Ink {
         }
     }
     Ink {
-        fg: o.fg.as_ref().map(paint).unwrap_or_else(|| under.fg.clone()),
-        bg: o.bg.as_ref().map(paint).unwrap_or_else(|| under.bg.clone()),
+        fg: o
+            .fg
+            .as_ref()
+            .map(|c| paint(c, &under.fg))
+            .unwrap_or_else(|| under.fg.clone()),
+        bg: o
+            .bg
+            .as_ref()
+            .map(|c| paint(c, &under.bg))
+            .unwrap_or_else(|| under.bg.clone()),
         attrs,
     }
 }
@@ -4378,7 +4507,8 @@ mod tests {
                 node(&text_field(value, cursor, true), WIDTH, &focused),
                 Size::new(WIDTH, 8),
             );
-            ui.find_by_key(&caret_key()).map(|id| ui.rect_of(id).x)
+            ui.find_by_key(&caret_key(Slot::Floating))
+                .map(|id| ui.rect_of(id).x)
         };
         let head = at("hello", 0).expect("a caret at the head");
         let mid = at("hello", 3).expect("a caret in the middle");
@@ -4396,7 +4526,7 @@ mod tests {
             node(&text_field("hello", -1, false), WIDTH, &cx()),
             Size::new(WIDTH, 8),
         );
-        assert!(ui.find_by_key(&caret_key()).is_none());
+        assert!(ui.find_by_key(&caret_key(Slot::Floating)).is_none());
     }
 
     fn text_area(value: &str, cursor: i32, rows: u32, label: &str) -> WidgetSpec {

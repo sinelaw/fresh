@@ -148,6 +148,12 @@ pub struct BodyPainter<'a> {
     /// The splits whose active buffer is a terminal shown in read-only
     /// scrollback. Gathered once per frame, for the same reason.
     scrollback: HashSet<LeafId>,
+    /// The panes the shell tree describes instead of painting — a buffer
+    /// holding a mounted plugin panel the adapter covers. Gathered here for
+    /// the same reason as the two above, and read by
+    /// [`crate::view::ui::split_rendering::orchestration::paint_leaf`] to skip
+    /// the text pass. See `FrameFacts::described_panes`.
+    described_panes: HashSet<LeafId>,
 }
 
 impl<'a> BodyPainter<'a> {
@@ -171,6 +177,7 @@ impl<'a> BodyPainter<'a> {
                 })
             })
             .unwrap_or_default();
+        let described_panes = editor.described_panes();
         Self {
             editor,
             state,
@@ -179,6 +186,7 @@ impl<'a> BodyPainter<'a> {
             screen_width: 0,
             pane_chrome,
             scrollback,
+            described_panes,
         }
     }
 
@@ -221,6 +229,7 @@ impl<'a> BodyPainter<'a> {
             buf.area.width,
             &self.pane_chrome,
             &self.scrollback,
+            &self.described_panes,
             |facts, stores, mgr, window_chrome| {
                 let base_visible = mgr.get_visible_buffers(area);
                 let pass = prepare_content(
@@ -266,6 +275,7 @@ impl<'a> BodyPainter<'a> {
             buf.area.width,
             &self.pane_chrome,
             &self.scrollback,
+            &self.described_panes,
             |facts, stores, _mgr, _window_chrome| {
                 paint_leaf(buf, pane, facts, pass, stores, out, caret);
             },
@@ -288,6 +298,7 @@ fn with_grid<R>(
     screen_width: u16,
     pane_chrome: &std::collections::HashMap<LeafId, PaneChrome>,
     scrollback_view_splits: &HashSet<LeafId>,
+    described_panes: &HashSet<LeafId>,
     f: impl FnOnce(&FrameFacts<'_>, &mut Stores<'_>, &crate::view::split::SplitManager, PaneChrome) -> R,
 ) -> Option<R> {
     // Built before the `&mut editor.windows` borrow below; it only borrows
@@ -336,6 +347,7 @@ fn with_grid<R>(
             grouped_subtrees: grouped_ref,
             pane_chrome,
             scrollback_view_splits,
+            described_panes,
             lsp_waiting: state.lsp_waiting,
             hide_cursor: state.hide_cursor,
             hovered_tab: state.hovered_tab,
@@ -466,6 +478,27 @@ pub mod shell_theme {
         /// ordinary, inspectable, user-overridable name and this variant can
         /// go. See §6.2 of the migration doc.
         Lit(Color),
+        /// A name a **plugin** asked for, over the half that stands if the
+        /// theme has no such entry.
+        ///
+        /// **A plugin's theme key is data, not one of our names.** Everything
+        /// else here is written by the shell, so a name that does not resolve
+        /// is a typo and the `debug_assert` in [`resolve`] is right to say so.
+        /// A key that arrived in an `OverlayColorSpec` is the plugin author's,
+        /// and the editor's table is under no obligation to know it —
+        /// `git_history.ts` colours commit hashes `syntax.number`, which no
+        /// theme has ever had.
+        ///
+        /// The painter's answer was per half and implicit: it set `fg` only
+        /// when the key resolved, so an unknown one left the row's own
+        /// foreground in place. `Ink::style` is all-or-nothing, so the same
+        /// name dropped the *whole run* to the editor's plain ground — and
+        /// tripped the assert. This variant is that implicit fallback written
+        /// down: the plugin's name, and what it falls back to, both stated.
+        Asked {
+            name: Cow<'static, str>,
+            under: Box<Paint>,
+        },
     }
 
     impl Paint {
@@ -475,11 +508,33 @@ pub mod shell_theme {
             Paint::Key(k.into())
         }
 
+        /// A name a plugin asked for, over what stands without it.
+        pub fn asked(name: impl Into<Cow<'static, str>>, under: Paint) -> Paint {
+            Paint::Asked {
+                name: name.into(),
+                under: Box::new(under),
+            }
+        }
+
         /// The key behind this half, when there is one.
+        ///
+        /// A plugin's asked-for name counts: it is what this half is *for*,
+        /// and the theme inspector's job is to report provenance rather than
+        /// to grade it.
         pub fn name(&self) -> Option<&str> {
             match self {
                 Paint::Key(k) => Some(k),
+                Paint::Asked { name, .. } => Some(name),
                 Paint::Lit(_) => None,
+            }
+        }
+
+        /// The key **the shell itself wrote**, which is the only kind that can
+        /// be a typo — see [`resolve`]'s assertion.
+        fn declared(&self) -> Option<&str> {
+            match self {
+                Paint::Key(k) => Some(k),
+                Paint::Asked { .. } | Paint::Lit(_) => None,
             }
         }
 
@@ -487,6 +542,12 @@ pub mod shell_theme {
             match self {
                 Paint::Key(k) => theme.resolve_theme_key(k),
                 Paint::Lit(c) => Some(*c),
+                // The same two-step the painter used for an
+                // `OverlayColorSpec::ThemeKey` — one of the sixteen names, or
+                // a theme entry — and then what stands without either.
+                Paint::Asked { name, under } => crate::view::theme::named_color_from_str(name)
+                    .or_else(|| theme.resolve_theme_key(name))
+                    .or_else(|| under.color(theme)),
             }
         }
 
@@ -495,6 +556,14 @@ pub mod shell_theme {
         /// `#7ee787` is a 24-bit literal, `#i42` a palette index, `#Yellow`
         /// one of the sixteen names; anything else is a theme key.
         fn parse(half: &str) -> Option<Paint> {
+            // `asked|under`: neither a key nor a literal contains a pipe, so
+            // the first one separates the plugin's name from its fallback.
+            if let Some((name, under)) = half.split_once('|') {
+                if name.is_empty() {
+                    return None;
+                }
+                return Some(Paint::asked(name.to_string(), Paint::parse(under)?));
+            }
             let Some(rest) = half.strip_prefix('#') else {
                 return (!half.is_empty()).then(|| Paint::Key(Cow::Owned(half.to_string())));
             };
@@ -521,6 +590,7 @@ pub mod shell_theme {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
                 Paint::Key(k) => f.write_str(k),
+                Paint::Asked { name, under } => write!(f, "{name}|{under}"),
                 Paint::Lit(Color::Rgb(r, g, b)) => write!(f, "#{r:02x}{g:02x}{b:02x}"),
                 Paint::Lit(Color::Indexed(i)) => write!(f, "#i{i}"),
                 Paint::Lit(other) => write!(
@@ -713,9 +783,9 @@ pub mod shell_theme {
         /// with the structural ones the ink asked for.
         pub fn style(&self, theme: &Theme) -> Option<Style> {
             let (fg, bg) = (self.fg.color(theme)?, self.bg.color(theme)?);
-            let declared = match &self.fg {
-                Paint::Key(k) => theme.resolve_modifier_key(k),
-                Paint::Lit(_) => Modifier::empty(),
+            let declared = match self.fg.name() {
+                Some(k) => theme.resolve_modifier_key(k),
+                None => Modifier::empty(),
             };
             Some(
                 Style::default()
@@ -791,13 +861,10 @@ pub mod shell_theme {
             return base(theme);
         };
         debug_assert!(
-            {
-                let (fg, bg) = ink.names();
-                [fg, bg]
-                    .into_iter()
-                    .flatten()
-                    .all(|k| theme.resolve_theme_key(k).is_some())
-            },
+            [ink.fg.declared(), ink.bg.declared()]
+                .into_iter()
+                .flatten()
+                .all(|k| theme.resolve_theme_key(k).is_some()),
             "shell theme name {name:?} names a key that is not one: \
              `Theme::resolve_theme_key` does not know it, so the whole \
              surface falls back to the editor's plain ground"
@@ -916,6 +983,50 @@ mod shell_theme_tests {
             resolve("editor.fg/editor.bg+wobble", &theme()).fg,
             Some(theme().editor_fg)
         );
+    }
+
+    /// **A plugin's key that the theme does not know leaves the rest of the
+    /// run alone.** `Ink::style` is all-or-nothing, so before `Paint::Asked`
+    /// existed one such name — `git_history.ts` colours commit hashes
+    /// `syntax.number`, which no theme has ever had — dropped the whole run to
+    /// the editor's plain ground, and tripped `resolve`'s assertion on the way
+    /// past. The painter's behaviour was to leave the row's own foreground in
+    /// place, and that is what this reproduces.
+    #[test]
+    fn a_plugin_key_the_theme_does_not_know_falls_back_to_what_was_under_it() {
+        let t = theme();
+        let asked = |k: &str| {
+            Ink::new(
+                Paint::asked(k.to_string(), Paint::key("ui.suggestion_fg")),
+                Paint::key("ui.suggestion_bg"),
+            )
+        };
+        let unknown = asked("syntax.number");
+        let style = resolve(&unknown.to_string(), &t);
+        assert_eq!(
+            style.fg,
+            Some(t.suggestion_fg),
+            "an unknown plugin key leaves the row's own foreground"
+        );
+        assert_eq!(
+            style.bg,
+            Some(t.suggestion_bg),
+            "and does not take the background down with it"
+        );
+
+        // One the theme *does* know still wins over what is under it.
+        let known = asked("syntax.keyword");
+        assert_eq!(resolve(&known.to_string(), &t).fg, Some(t.syntax_keyword));
+
+        // And the whole thing survives the written form, fallback included.
+        for ink in [unknown, known] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink),
+                "{written:?} did not read back"
+            );
+        }
     }
 
     /// A literal has no name by construction, and the inspector should say so
@@ -1288,6 +1399,23 @@ impl Editor {
                         self.settings_entry_widget_hit(&hit, at, clicks);
                         return;
                     }
+                    // A panel mounted into a pane's buffer. It is a plugin
+                    // panel like the two above, and the only difference is
+                    // where its key comes from: a pane is one buffer, and a
+                    // buffer names its panel.
+                    crate::view::shell::widgets::Slot::Pane(pane) => {
+                        // The focus half of the press, which a widget's own
+                        // hit swallows: a `hit_node` press calls `e.stop()`,
+                        // so the pane's own surface never sees it and the
+                        // keyboard would stay wherever it was. A press no
+                        // widget claims reaches that surface and arrives as
+                        // `PaneContentPress`, which focuses the pane itself.
+                        self.focus_pane(pane);
+                        if let Some(panel_key) = self.pane_panel_key(pane) {
+                            self.deliver_widget_hit(&panel_key, &hit, None);
+                        }
+                        return;
+                    }
                 };
                 if let Some(panel_key) = self.panel(slot).map(|p| p.panel_key.clone()) {
                     self.deliver_widget_hit(&panel_key, &hit, None);
@@ -1313,6 +1441,9 @@ impl Editor {
                     // flag and `dropdown_toggle` is how every other surface
                     // flips it, so the dismissal goes through the same
                     // dispatch rather than reaching into the state map.
+                    // A pane-mounted panel has no pop-over yet: its dropdown
+                    // rows come with the rest of C.5's second step.
+                    Slot::Pane(_) => {}
                     Slot::Dock | Slot::Floating => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
@@ -1357,7 +1488,10 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
-                    // Gated at the source; nothing else has a panel memo.
+                    // Gated at the source; nothing else has a panel memo. A
+                    // pane-mounted panel has none *yet* — it never had one,
+                    // because `update_widget_hover` only ever probed the two
+                    // above — so its highlight comes with C.5's second step.
                     _ => return,
                 };
                 if let Some(p) = self.panel_mut(panel) {
@@ -1411,6 +1545,8 @@ impl Editor {
                             s.hovered_popup_row = now;
                         }
                     }
+                    // As above: no pop-over on a pane-mounted panel yet.
+                    Slot::Pane(_) => {}
                     Slot::Dock | Slot::Floating => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
@@ -2197,8 +2333,10 @@ impl Editor {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
                     // The settings surfaces reuse the widget vocabulary but
-                    // are not panels and never raise this layer.
-                    Slot::Settings | Slot::SettingsEntry => return,
+                    // are not panels and never raise this layer. Neither does
+                    // a pane-mounted panel: its keys are the buffer's, and the
+                    // pane already owns the keyboard when it is focused.
+                    Slot::Settings | Slot::SettingsEntry | Slot::Pane(_) => return,
                 };
                 // **The focus toggle is resolved ahead of the panel.** A
                 // focused dock swallows keys in the dispatch below, so the

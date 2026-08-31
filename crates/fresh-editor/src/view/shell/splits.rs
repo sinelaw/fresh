@@ -366,6 +366,7 @@ mod tests {
             chrome: [(host, with_tabs)].into_iter().collect(),
             controls: Default::default(),
             groups: [(host, group.clone())].into_iter().collect(),
+            interiors: Default::default(),
         };
         let (w, h) = (80u16, 24u16);
         let mut ui: Ui<UiMsg> = Ui::new();
@@ -415,6 +416,7 @@ mod tests {
                     chrome: Default::default(),
                     controls: Default::default(),
                     groups: Default::default(),
+                    interiors: Default::default(),
                 };
                 let want: Vec<(LeafId, Rect)> = root
                     .reference_leaves_with_rects(at)
@@ -440,6 +442,7 @@ mod tests {
             chrome: Default::default(),
             controls: Default::default(),
             groups: Default::default(),
+            interiors: Default::default(),
         };
         assert_eq!(panes_folded(&s, at), vec![(LeafId(SplitId(1)), at)]);
     }
@@ -474,6 +477,7 @@ mod tests {
             chrome: [(host_leaf, chrome)].into_iter().collect(),
             controls: Default::default(),
             groups: [(host_leaf, group)].into_iter().collect(),
+            interiors: Default::default(),
         };
 
         let content = split_layout(host_leaf, at, chrome).content_rect;
@@ -522,6 +526,7 @@ mod tests {
                     chrome: [(pane, chrome)].into_iter().collect(),
                     controls,
                     groups: Default::default(),
+                    interiors: Default::default(),
                 };
                 let mut ui: Ui<UiMsg> = Ui::new();
                 ui.frame(overlay(&s), Size::new(at.width, at.height));
@@ -610,6 +615,7 @@ mod tests {
             .collect(),
             controls: Default::default(),
             groups: Default::default(),
+            interiors: Default::default(),
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(overlay(&s), Size::new(80, 24));
@@ -672,6 +678,7 @@ mod tests {
                 .collect(),
             controls: Default::default(),
             groups: Default::default(),
+            interiors: Default::default(),
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(overlay(&s), Size::new(80, 24));
@@ -901,7 +908,10 @@ impl PaneControls {
 }
 
 /// What the shell needs to state about the grid.
-#[derive(Clone, Debug, PartialEq)]
+// Not `PartialEq`, for the reason `Frame` is not: a pane can hold a mounted
+// plugin panel, and a `WidgetSpec` is `Clone + Debug` and not comparable.
+// Nothing compared two of these — the derive outlived its last caller.
+#[derive(Clone, Debug)]
 pub struct Splits {
     pub root: SplitNode,
     pub maximized: Option<LeafId>,
@@ -918,6 +928,20 @@ pub struct Splits {
     /// interior — so the grid a pane holds is stated here rather than found by
     /// walking `root`.
     pub groups: std::collections::HashMap<LeafId, SplitNode>,
+    /// The described plugin panel each pane is showing, by the pane showing
+    /// it.
+    ///
+    /// **A mounted panel is a subtree in the pane's content slot** — that is
+    /// C.5, and this map is the whole of what the grid needs to know about it.
+    /// The virtual buffer stays as a *text mirror* for search, copy and the
+    /// `lines_changed` hooks; what it stops being is the rendering path.
+    ///
+    /// Absent for a pane showing a buffer, and absent for a mounted panel the
+    /// adapter does not cover — a `WindowEmbed` panel keeps its painter whole,
+    /// by the same `widgets::covered` gate the dock and the floating panel
+    /// pass through. The painter is told the same thing, so a pane described
+    /// here is a pane whose text pass does not run.
+    pub interiors: std::collections::HashMap<LeafId, super::panel::Interior>,
 }
 
 /// The grid mounted over the body's `Host` leaf: geometry and the dividers'
@@ -1140,9 +1164,15 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
     // the migration's standing boundary: the group's panels and dividers lived
     // in a side map, so their separators stayed recorded rectangles while the
     // main tree's became nodes. Nested here, they are the same nodes.
-    let content = match s.groups.get(&id) {
-        Some(g) => dressed(g, s),
-        None => content_surface(id),
+    let content = match (s.groups.get(&id), s.interiors.get(&id)) {
+        (Some(g), _) => dressed(g, s),
+        // **A described mounted panel replaces the content surface, it does
+        // not sit on top of one.** The surface's whole job is to say which
+        // pane was pressed and where, so a click can be turned into a caret
+        // position through the view pipeline; a panel has no caret to place
+        // and no byte to map to, and every one of its rows answers for itself.
+        (None, Some(i)) => panel_content(id, i.clone()),
+        (None, None) => content_surface(id),
     };
     pane_interior(
         id,
@@ -1196,6 +1226,99 @@ fn live_controls(id: LeafId, c: PaneControls) -> Node<UiMsg> {
             HoverTarget::CloseSplitButton(id),
             UiFact::PaneClose(id),
         ),
+    )
+}
+
+/// A mounted plugin panel, as the pane's content.
+///
+/// Laid out inside a `layout_reader` for both extents, and that is the point
+/// rather than a convenience: **a pane's row budget is the rectangle it is
+/// being given**, not a number the last paint recorded. The dock and the
+/// floating panel know their inner height as state — it is the box they were
+/// placed in — so they hand it down on the `Interior`; a pane's arrives here,
+/// which is why [`super::panel::Interior::avail_height`] is `None` for one.
+fn panel_content(id: LeafId, i: super::panel::Interior) -> Node<UiMsg> {
+    let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+        // **The whole pane, not `widget_panel_width`'s.** The runtime lays a
+        // mounted spec two columns short — "reserve 2 cols for gutter /
+        // scrollbar / border padding the renderer adds", in its own words —
+        // because the *painter* drew the panel's scrollbar outside the text it
+        // had wrapped. A described panel's bar is its list's own, and a
+        // viewport reserves the column itself, so taking those two again is
+        // counting them twice: the bar would float two columns inboard with
+        // dead space between it and the divider, which is what it did until
+        // this line said otherwise.
+        //
+        // The dock's `DIVIDER_COLS` is not the counter-example it looks like.
+        // There the two columns are *taken* — one by the painter's divider,
+        // one by the slack it wraps against — and the description may not use
+        // them. Here nothing takes them.
+        let inner_w = info.constraints.max_w.max(1);
+        super::widgets::node(
+            &i.spec,
+            inner_w,
+            &super::widgets::Ctx {
+                slot: super::widgets::Slot::Pane(id),
+                states: &i.states,
+                focus_key: i.focus_key.clone(),
+                hovered_key: i.hovered_key.clone(),
+                marker_gutter: i.marker_gutter,
+                hovered_item_key: i.hovered_item_key.clone(),
+                hovered_popup_row: i.hovered_popup_row.clone(),
+                avail_height: Some(info.constraints.max_h as u32),
+                scrollbar_reveal: i.scrollbar_reveal,
+                // Not `panel_surface`: a mounted panel's rows were buffer
+                // text on the editor's own ground. See `widgets::pane_surface`.
+                surface: super::widgets::pane_surface(),
+            },
+        )
+        .w(Sizing::Cells(inner_w))
+        // **The panel is the height of the pane, not of its content.** A
+        // `Tree` or `List` the plugin left auto-sized (`visible_rows: None`)
+        // is a `flex(1)` inside the panel's column, and flex divides what is
+        // *left* of a bounded extent — a column that sized itself to its
+        // content would hand the list every row it asked for and let the pane
+        // clip the overflow, so the match list would have no window to scroll
+        // and no bar to say how far through it you are.
+        .h(Sizing::Flex(1))
+    });
+    // **The press stays the pane's, unchanged.** The first instinct here was
+    // that a panel has no byte to put a caret at, so a press only needed to
+    // move the keyboard — and that is wrong, because the mirror still has
+    // bytes and the plugin API depends on it. `git_log`'s own comment says so:
+    // "Selection is cursor-driven (see the `cursor_moved` handler), so the
+    // List's `select` event is ignored — a row click places the buffer cursor,
+    // and `cursor_moved` mirrors it into the selection." Half a press left its
+    // log clickable in the sense that the hit arrived, and dead in the sense
+    // that nothing happened.
+    //
+    // So this is `content_surface`'s press verbatim: the caret it places is
+    // invisible now — the text pass does not run and the hardware caret comes
+    // from the description's own marker — and that is exactly right. The
+    // mirror is where a plugin reads a click's *line* from, and it goes on
+    // being that.
+    //
+    // The **wheel** is deliberately not taken, where `content_surface` takes
+    // it: the panel's lists are viewports, and `fresh-ui` chains a notch into
+    // one only when nothing claimed it. The dock learned this the same way.
+    //
+    // A **right** press is left alone for the reason it was before: it belongs
+    // to the base surface's dismissal of the tab context menu.
+    gesture(body).on(
+        GestureKind::Press,
+        Rc::new(move |e: &Event| {
+            if e.button != MouseButton::Left {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(UiFact::PaneContentPress {
+                pane: id,
+                x: e.pos.x.max(0) as u16,
+                y: e.pos.y.max(0) as u16,
+                clicks: e.clicks,
+                mods: e.mods,
+            }))
+        }),
     )
 }
 

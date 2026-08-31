@@ -509,6 +509,17 @@ impl Editor {
         }
     }
 
+    /// Move the keyboard to a pane, without placing a caret in it.
+    ///
+    /// What [`Self::press_pane_content`] does before it turns the cell into a
+    /// byte — and all of it a pane showing a described plugin panel wants,
+    /// because a panel has no text to put a caret in.
+    pub(crate) fn focus_pane(&mut self, pane: LeafId) {
+        if let Some(buffer) = self.active_window().pane_buffer(pane) {
+            self.focus_split(pane, buffer);
+        }
+    }
+
     /// Where the shell laid this pane's content out.
     pub fn pane_content_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
         self.pane_part_rect(crate::view::shell::splits::content_key(pane))
