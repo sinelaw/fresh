@@ -1209,14 +1209,20 @@ pub(crate) fn configure_lsp_servers(
     // its actual project rather than the process cwd.
     if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
         // Check if the Deno runtime is present so we can safely switch to `deno lsp`.
-        let has_deno = env::var_os("PATH").and_then(|paths| {
-            env::split_paths(&paths).any(|dir| {
-                let executable = dir.join("deno");
-                executable.is_file()
-            }).then_some(true)
-        }).is_some();
+        let has_deno = env::var_os("PATH")
+            .and_then(|paths| {
+                env::split_paths(&paths)
+                    .any(|dir| {
+                        let executable = dir.join("deno");
+                        executable.is_file()
+                    })
+                    .then_some(true)
+            })
+            .is_some();
         if (has_deno) {
-            tracing::info!("Detected Deno project (deno.json + runtime found), using deno lsp for JS/TS");
+            tracing::info!(
+                "Detected Deno project (deno.json + runtime found), using deno lsp for JS/TS"
+            );
             let deno_config = LspServerConfig {
                 command: "deno".to_string(),
                 args: Some(vec!["lsp".to_string()]),
