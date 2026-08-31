@@ -1,6 +1,4 @@
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use fresh::config::Config;
 use std::fs;
 use std::time::Duration;

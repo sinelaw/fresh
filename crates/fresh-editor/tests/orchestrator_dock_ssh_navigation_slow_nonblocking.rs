@@ -30,17 +30,15 @@
 //! process-global `XDG_DATA_HOME` / `FAKE_SSH_SLOW_*` env must not leak.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
-use common::dormant_ssh::{
+use crate::common::dormant_ssh::{
     canonical_mkdir, ensure_slow_fake_ssh_on_path, isolated_dir_context, persist_previous_session,
 };
-use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 #[test]
 fn arrow_nav_onto_slow_remote_keeps_editor_responsive() {
-    common::tracing::init_tracing_from_env();
+    crate::common::tracing::init_tracing_from_env();
     ensure_slow_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 

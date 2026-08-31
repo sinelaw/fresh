@@ -14,10 +14,8 @@
 //! other test binaries.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
-use common::dormant_ssh::{ensure_hanging_fake_ssh_on_path, isolated_dir_context};
-use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::dormant_ssh::{ensure_hanging_fake_ssh_on_path, isolated_dir_context};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 #[test]

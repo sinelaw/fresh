@@ -1,6 +1,4 @@
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 

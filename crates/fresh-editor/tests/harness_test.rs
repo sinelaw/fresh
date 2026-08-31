@@ -1,8 +1,6 @@
 // Test the EditorTestHarness itself
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 
 #[test]
 fn test_harness_creation() {

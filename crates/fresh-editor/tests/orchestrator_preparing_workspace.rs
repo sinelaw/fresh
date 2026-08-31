@@ -21,9 +21,7 @@
 
 #![cfg(feature = "plugins")]
 
-mod common;
-
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh_core::api::PluginCommand;
 use portable_pty::{native_pty_system, PtySize};
 
