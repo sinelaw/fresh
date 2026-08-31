@@ -238,7 +238,7 @@ walk those four are on, and the PTY gate and `get_key_context` still read it.
 | C.3 | `HitArea` (byte ranges) and `LayoutBox` (a parent-linked, z-ordered arena). | Both deleted. `LayoutBox` is a second layout tree; goal 5 allows one. | Keeping `LayoutBox` as the web bridge's hit list. The web is a consumer of the display list (D.3), which already carries keyed rectangles. |
 | C.4 | `WidgetMutation`'s fast path — a channel that patches retained state in place. | An ordinary rebuild. Goal 3: a rebuild costs one allocation per node, so the incentive the fast path answers does not exist. | Keeping it as an optimisation without measuring it against 0.4's benchmark. |
 | C.5 | Buffer-mounted panels (`mountWidgetPanel`). | A subtree in the pane's content slot; the virtual buffer stays as a text mirror for search, copy and the `lines_changed` hooks. Removes the documented limitation that mounted panels drop overlays and popups. | Deciding it by which is less work. It is the only open *design* question left in the whole migration: it was deferred deliberately, to be taken with C.1's experience in hand, not settled by default. |
-| C.5b | **The dock is editor-global UI built from `Editor.windows`, not from the active window.** Its content is the orchestrator's `WidgetSpec`; its column, grip and blur observer are already nodes. **Its paint order is fixed** (see below), which was a prerequisite nobody had written down. | Its content lands like any other panel (C.1), mounted *outside* the window key per 0.5. `panel_interior` is already slot-generic, so the description is `panel_interior(PanelSlot::Dock)` and `render_floating_widget_panel`'s `described` gate drops its `!is_dock`. Its own two remainders go with it: `chrome::Dock::on_layer_key` (A.2) and the scrollbar-reveal hover, which reads zones the plugin publishes from inside the panel. **Two things need deciding rather than porting**: what a press on the column's dead space means once the widgets answer their own (today `DockPress` also *focuses* the dock, so it cannot simply become an absorb), and whether the wheel stays `DockScroll` or becomes the described viewport's. The right-press context menu needs neither — `probe_floating_widget` reads the registry's boxes, which the runtime fills whether or not the tree describes the panel. | Building its description from `active_window()`. `shell_frame` does that for nearly everything else, and the dock is the one surface for which it is wrong. |
+| ~~C.5b~~ **Done.** | **The dock is editor-global UI built from `Editor.windows`, not from the active window.** Its content is the orchestrator's `WidgetSpec`; its column, grip and blur observer are already nodes. **Its paint order is fixed** (see below), which was a prerequisite nobody had written down. | Its content lands like any other panel (C.1), mounted *outside* the window key per 0.5: `Frame::dock_interior` is `panel_interior(PanelSlot::Dock)` and `render_floating_widget_panel`'s `described` gate no longer names the dock. Both of the things that "needed deciding" are decided. The dead-space press became `DockFocus` — the half of `DockPress` that was never about geometry. **The wheel is the viewport's**, and the arm that took it was worse than dead: `fresh-ui` chains a notch into a viewport only when nothing claimed it, so the catch-all `e.stop()` stopped the sessions list scrolling, while `DockScroll` went on moving the runtime's `WidgetInstanceState::scroll_offset` — which the description does not read but `probe_floating_widget` still does, so a few notches put hover and the context menu on a different row from the one drawn. It fires only while the interior is still a painter. **What the row got wrong** is the third clause: the right-press context menu *does* need something, because `probe_floating_widget`'s boxes come from a second layout of the same spec, and the interior was being laid out two columns wider than the runtime lays it (`floating_panel_inner_width` takes the divider and a column of slack). It takes the same two now. Its own two remainders still stand: `chrome::Dock::on_layer_key` (A.2) and the scrollbar-reveal hover, which is now dead rather than pending — the described viewport draws its own bar, always, where the painter's auto-hid. | Building its description from `active_window()`. `shell_frame` does that for nearly everything else, and the dock is the one surface for which it is wrong. |
 
 **The dock was painting over the tree, and had been since the band existed.**
 `render_floating_widget_panel(Dock)` is called from `render_panels_and_modals`,
@@ -596,11 +596,11 @@ deferred deliberately, to be taken with C.1's experience in hand.
 
 Each had been using one scan to answer *two* questions — where a pane is, and which buffer it shows (or whether it still shows that one). The first is layout's; the second is the split model's, and `visible_leaves` / `pane_buffer` answer it about *now* rather than about the last frame. The two `impl Window` readers take the rectangle as a parameter, which is the shape `Window::detect_terminal_link_at` already had.
 
-**What stays recorded is what the rule says stays**: thumb extents and a maximum content width, which are reads of the *scroll state* at paint time. Dropping the rect fields from the two tuples, and the oracle with them, is the last step — and deliberately not taken until the oracle has run a full CI pass, since deleting its subject before it reports discards the proof the swap was safe.
+**What stays recorded is what the rule says stays**: thumb extents and a maximum content width, which are reads of the *scroll state* at paint time. **The last step has been taken.** The oracle ran its full CI pass, the rect fields came out of both tuples, and `assert_pane_rects_match_layout` is deleted along with its call site — the row above is the record of what it proved.
 
 Note also that `split_layout` lays `pane_interior` out in a **throwaway `Ui` per pane per frame** while the shell tree already contains the same description under the same keys — that is a duplicate *derivation* rather than a duplicate record, so it cannot disagree, but it is the same rectangle computed twice and it goes with this. | Re-recording a rectangle for speed. 0.4's benchmark is the answer, and every rectangle recorded twice is a chance to disagree. |
 | ~~E.2~~ **Done.** | `separator_areas` was assembled from **two** producers: a second layout walk (`get_separators_with_ids`, re-running `split_rect_ext` against a rectangle the caller supplied) for the main grid, and the painter's own recording for grouped subtrees, which the first could not see. | `separator_rects` — the model says which containers exist and which way each splits, layout says where each divider landed. Grouped subtrees need no special case (their dividers have been ordinary nodes since S5) and neither does maximization (a maximized frame describes no divider, so it has no rectangle). The removed walk stays as the oracle `the_dividers_are_where_the_separators_are` checks the tree against — the one job a second derivation is good for. | — |
-| E.3 | `PointerGrab` — the drag state machine. **Three of its ten are gone**: the dock's width, a split separator and the file explorer's width. | The library's pointer capture, which is already there and is what B.4 also needs. **A grip that calls `capture_pointer` on its press keeps every move and the release wherever the pointer travels**, which is what the ladder was arranging by hand — and the tell that it was imitating capture is in its own doc: "checked in the old drag ladder's order so precedence is unchanged when (rarely) two flags coexist", a tie-break between things that cannot legitimately be true at once. `view::shell::grip::draggable` is the one statement of it; `UiFact::GripDrag`/`GripRelease` name *which* grip from the node rather than by ranking flags. What stays app-side is the state — whether a drag is running — because a grip's `Move` fires on a bare hover too and that is not geometry. **The seven left are the drags whose press is not a node's** (text and terminal selection, the widget scrollbars, a tab drag): they retire with their surfaces, exactly as these three did. `WidgetScrollbar` is the one with a date already: `try_widget_scrollbar_press` walks `scrollbar_tracks`, which a *described* panel never fills — the interior returns before the painter's scrollbar pass — so the floating panel stopped arming it when M6a landed, and what is left arming it is the dock (C.5b) and the buffer-mounted panels. | Porting the state machine. It is the thing capture exists to replace. |
+| E.3 | `PointerGrab` — the drag state machine. **Three of its ten are gone**: the dock's width, a split separator and the file explorer's width. | The library's pointer capture, which is already there and is what B.4 also needs. **A grip that calls `capture_pointer` on its press keeps every move and the release wherever the pointer travels**, which is what the ladder was arranging by hand — and the tell that it was imitating capture is in its own doc: "checked in the old drag ladder's order so precedence is unchanged when (rarely) two flags coexist", a tie-break between things that cannot legitimately be true at once. `view::shell::grip::draggable` is the one statement of it; `UiFact::GripDrag`/`GripRelease` name *which* grip from the node rather than by ranking flags. What stays app-side is the state — whether a drag is running — because a grip's `Move` fires on a bare hover too and that is not geometry. **The seven left are the drags whose press is not a node's** (text and terminal selection, the widget scrollbars, a tab drag): they retire with their surfaces, exactly as these three did. `WidgetScrollbar` is the one with a date already: `try_widget_scrollbar_press` walks `scrollbar_tracks`, which a *described* panel never fills — the interior returns before the painter's scrollbar pass — so the floating panel stopped arming it when M6a landed. **The dock stopped too, when C.5b landed**: what is left arming it is the buffer-mounted panels (C.5). The library's own pre-propagation `scrollbar_hit` covers the drag, so nothing is lost — what went with it is the dock's *auto-hiding* bar, which now shows whenever the list overflows. | Porting the state machine. It is the thing capture exists to replace. |
 
 ### F. Library-side (both are `fresh-ui` changes, not editor ones)
 
@@ -701,6 +701,47 @@ already has:
 That pattern is itself the finding, and it is §I restated from outside: the
 gaps a reader sees in this migration are mostly capabilities the library has
 and the editor has not adopted.
+
+**The real gaps were smaller and more specific than any of those, and every
+one of them was found by driving the editor rather than by reading it.** Each
+is the same shape: a *vocabulary* the painter had that the description had no
+word for, so the thing it said was dropped in silence.
+
+- **`List` could not say "controlled, and nothing selected."** `selected(i)`
+  asserts two facts at once, so an owner with an empty selection could only
+  omit it — which hands the selection back to the element, whose own starts at
+  row zero. A settings field's `[+] Add new` sentinel is a one-row list that is
+  selected only when the arrows are on it; it looked focused always.
+  `selection(Option<usize>)` separates the two.
+- **A `List` row builder could not see its own row's state.** `row_theme`
+  names the row node, which fills the row *under* whatever the builder
+  produced — and every row built from an editor `TextPropertyEntry` carries
+  both halves of its ink, because a description has no "already" for a fill to
+  show through. So a selected row was highlighted only in the gaps between its
+  glyphs. `windowed_stateful` hands the builder the `RowState` that `row_theme`
+  already gets.
+- **The ink grammar had no word for reverse video.** A form control on a modal
+  overlay draws its caret as one reverse-video cell, because there is no
+  hardware cursor to place there; the word did not exist, so every such caret
+  was dropped and a field being typed into showed an empty bracketed box.
+- **Nor for `extend_to_line_end`.** The painter drew each widget row as a
+  `Paragraph` over the whole row rect, so an overlay carrying that flag
+  coloured the trailing cells; a description's runs stop at the glyphs. A
+  toggle's hover band ended at its chip.
+- **And ten theme names in the migrated tree were not theme keys at all**
+  (`ui.selection_bg`, `ui.line_number_fg`, four `ui.diagnostic_*` — those
+  fields live under `editor.*` and `diagnostic.*`). `shell_theme::resolve`
+  falls back to the editor's plain ground for a name it cannot read, which on
+  most themes is close enough to the popup ground to look like nothing at all.
+  It `debug_assert!`s now, so the next one fails a test instead of a screen.
+
+The lesson the five share: **a description is exhaustive where a painter was
+incremental.** The painter could leave a cell's background unset and let what
+was already there show through; a description has to say every half of every
+cell, so anything the old vocabulary expressed by *omission* needs a word — and
+until it has one, it is dropped without a diagnostic. Every gap above was
+invisible to the type checker and to the test suite, and visible immediately to
+anyone using the editor.
 
 **One suggestion worth keeping and not acting on yet.** Several engines make a
 document scope an *event* boundary as well as a state one, so an event in one

@@ -1950,25 +1950,28 @@ impl Editor {
                 KeyStatus::Pending if current => (
                     ">".into(),
                     crate::app::shell_host::shell_theme::attrs(
-                        "ui.status_warning_fg",
+                        "diagnostic.warning_fg",
                         "ui.popup_bg",
                         &["bold"],
                     ),
                 ),
                 KeyStatus::Pending => (
                     " ".into(),
-                    crate::app::shell_host::shell_theme::pair("ui.line_number_fg", "ui.popup_bg"),
-                ),
-                KeyStatus::Captured => (
-                    "*".into(),
                     crate::app::shell_host::shell_theme::pair(
-                        "ui.diagnostic_info_fg",
+                        "editor.line_number_fg",
                         "ui.popup_bg",
                     ),
                 ),
+                KeyStatus::Captured => (
+                    "*".into(),
+                    crate::app::shell_host::shell_theme::pair("diagnostic.info_fg", "ui.popup_bg"),
+                ),
                 KeyStatus::Skipped => (
                     "-".into(),
-                    crate::app::shell_host::shell_theme::pair("ui.line_number_fg", "ui.popup_bg"),
+                    crate::app::shell_host::shell_theme::pair(
+                        "editor.line_number_fg",
+                        "ui.popup_bg",
+                    ),
                 ),
                 KeyStatus::Verified => (
                     "v".into(),
@@ -2039,7 +2042,7 @@ impl Editor {
                         ctrl(
                             "a",
                             t!("calibration.abort").to_string(),
-                            "ui.diagnostic_error_fg",
+                            "diagnostic.error_fg",
                         ),
                     ],
                 )
@@ -2054,12 +2057,12 @@ impl Editor {
                     ctrl(
                         "y",
                         t!("calibration.save").to_string(),
-                        "ui.diagnostic_info_fg",
+                        "diagnostic.info_fg",
                     ),
                     ctrl(
                         "a",
                         t!("calibration.abort").to_string(),
-                        "ui.diagnostic_error_fg",
+                        "diagnostic.error_fg",
                     ),
                 ],
             ),
@@ -2076,11 +2079,11 @@ impl Editor {
                         };
                         let theme = match status {
                             KeyStatus::Verified => crate::app::shell_host::shell_theme::pair(
-                                "ui.diagnostic_info_fg",
+                                "diagnostic.info_fg",
                                 "ui.popup_bg",
                             ),
                             _ => crate::app::shell_host::shell_theme::pair(
-                                "ui.status_warning_fg",
+                                "diagnostic.warning_fg",
                                 "ui.popup_bg",
                             ),
                         };
@@ -2110,18 +2113,18 @@ impl Editor {
                         ctrl(
                             "y",
                             t!("calibration.save").to_string(),
-                            "ui.diagnostic_info_fg",
+                            "diagnostic.info_fg",
                         ),
                         ctrl("b", t!("calibration.back").to_string(), "ui.help_key_fg"),
                         ctrl(
                             "r",
                             t!("calibration.restart").to_string(),
-                            "ui.status_warning_fg",
+                            "diagnostic.warning_fg",
                         ),
                         ctrl(
                             "a",
                             t!("calibration.abort").to_string(),
-                            "ui.diagnostic_error_fg",
+                            "diagnostic.error_fg",
                         ),
                     ],
                 )
@@ -2186,16 +2189,24 @@ impl Editor {
         let Some(ui) = self.shell_ui.as_ref() else {
             return;
         };
-        let Some(vp) = ui.find_by_key(&st::items_key()) else {
-            return;
+        // **Three windows, three answers, and no one of them gates the
+        // others.** The cards' viewport is only in the tree while the body is
+        // showing cards: a search replaces it with the results list, so
+        // returning here when it is missing left the results' own offset
+        // unread, and the count row went on reporting "(1-10 of 176)" however
+        // far the wheel had taken the list.
+        let body = ui.find_by_key(&st::items_key());
+        let vpr = body.map(|vp| ui.rect_of(vp)).unwrap_or_default();
+        let (scroll, content) = match body {
+            Some(vp) => ui.scroll(vp),
+            None => Default::default(),
         };
-        let vpr = ui.rect_of(vp);
-        let (scroll, content) = ui.scroll(vp);
         let offset = scroll.y.max(0) as u16;
-        let moved = self
-            .settings_state
-            .as_ref()
-            .is_some_and(|s| s.body.offset != offset);
+        let moved = body.is_some()
+            && self
+                .settings_state
+                .as_ref()
+                .is_some_and(|s| s.body.offset != offset);
         // Which card the window starts on. Only worth a walk when the window
         // has actually moved — it is the left tree's highlight that reads it,
         // and that only has to change when the body does.
@@ -2209,7 +2220,7 @@ impl Editor {
                     .map(|p| p.items.len())
                     .unwrap_or(0);
                 (0..n).find(|&i| {
-                    ui.find_by_key_in(vp, &st::card_key(i))
+                    body.and_then(|vp| ui.find_by_key_in(vp, &st::card_key(i)))
                         .map(|e| ui.rect_of(e))
                         // The first card whose bottom edge is below the
                         // window's top is the one the window starts on.
@@ -2220,12 +2231,14 @@ impl Editor {
         let Some(s) = self.settings_state.as_mut() else {
             return;
         };
-        s.body = crate::view::settings::state::BodyWindow {
-            offset,
-            height: vpr.h,
-            content: content.h,
-            top_item,
-        };
+        if body.is_some() {
+            s.body = crate::view::settings::state::BodyWindow {
+                offset,
+                height: vpr.h,
+                content: content.h,
+                top_item,
+            };
+        }
         // The left tree's highlight follows the body, in both directions —
         // the same contract the wheel and the scrollbar had, stated once
         // against the window rather than at each thing that moves it.
@@ -2455,6 +2468,7 @@ impl Editor {
                             true => item.path.clone(),
                             false => String::new(),
                         },
+                        hovered_popup_row: s.hovered_popup_row.clone(),
                         description: item.description.clone().filter(|d| !d.is_empty()),
                         layer: match item.layer_source {
                             crate::config_io::ConfigLayer::System => None,
@@ -2495,7 +2509,7 @@ impl Editor {
         use crate::view::shell::settings as st;
 
         let s = self.settings_state.as_ref().filter(|s| s.visible)?;
-        let dim = pair("ui.line_number_fg", "ui.popup_bg");
+        let dim = pair("editor.line_number_fg", "ui.popup_bg");
         let search = match s.search_active {
             false => st::Search::Hint(vec![
                 st::Span::new("Press ", dim.clone()),
@@ -2864,7 +2878,7 @@ impl Editor {
 
         let e = self.keybinding_editor.as_ref()?;
         let ink = pair("ui.popup_text_fg", "ui.popup_bg");
-        let accent = pair("ui.diagnostic_info_fg", "ui.popup_bg");
+        let accent = pair("diagnostic.info_fg", "ui.popup_bg");
         let key_ink = attrs("ui.help_key_fg", "ui.popup_bg", &["bold"]);
 
         let mut path = vec![
@@ -2896,7 +2910,7 @@ impl Editor {
                     kb::Span::new(e.search_query.clone(), ink.clone()),
                 ];
                 if e.search_focused {
-                    v.push(kb::Span::new("_", pair("ui.cursor", "ui.popup_bg")));
+                    v.push(kb::Span::new("_", pair("editor.cursor", "ui.popup_bg")));
                     v.push(kb::Span::new(
                         format!("  {}", t!("keybinding_editor.search_text_hint")),
                         ink.clone(),
@@ -2907,7 +2921,7 @@ impl Editor {
             (true, SearchMode::RecordKey) => vec![
                 kb::Span::new(
                     format!(" {} ", t!("keybinding_editor.label_record_key")),
-                    attrs("ui.status_warning_fg", "ui.popup_bg", &["bold"]),
+                    attrs("diagnostic.warning_fg", "ui.popup_bg", &["bold"]),
                 ),
                 kb::Span::new(
                     match e.search_key_display.is_empty() {
@@ -2960,7 +2974,7 @@ impl Editor {
         if e.has_changes {
             filters.push(kb::Span::new(
                 format!("  {}", t!("keybinding_editor.modified")),
-                pair("ui.status_warning_fg", "ui.popup_bg"),
+                pair("diagnostic.warning_fg", "ui.popup_bg"),
             ));
         }
 
@@ -4138,6 +4152,11 @@ impl Editor {
             // otherwise — `panel_interior`'s `covered` gate is what makes
             // that decision, the same way it does for the floating panel.
             dock_interior: self.panel_interior(crate::app::PanelSlot::Dock),
+            dock_grip_hovered: matches!(
+                self.shell_hover,
+                Some(crate::app::types::HoverTarget::DockBorder)
+            ),
+            dock_focused: self.dock.as_ref().is_some_and(|d| d.focused),
             // Which workspace the window-owned half of the frame belongs to.
             // One retained tree, N windows: without this the two match each
             // other and window B's first pane inherits window A's element
@@ -7244,10 +7263,14 @@ impl Editor {
                     false => block.style(ratatui::style::Style::default().bg(theme.suggestion_bg)),
                 };
                 let inner = block.inner(overlay_rect);
-                if draw {
-                    if !described {
-                        frame.render_widget(Clear, overlay_rect);
-                    }
+                // **The divider goes with the content.** For a described dock
+                // it is `dock::grip_ink`'s, drawn in the background band; this
+                // painter runs after the overlay band folds, so the border it
+                // used to draw here came back through the middle of any modal
+                // open over the dock. What is left for the described case is
+                // the rectangle, which the callers below still need.
+                if draw && !described {
+                    frame.render_widget(Clear, overlay_rect);
                     frame.render_widget(block, overlay_rect);
                 }
                 inner
@@ -8168,6 +8191,7 @@ impl Editor {
                 .unwrap_or_default(),
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),
+            hovered_popup_row: panel.hovered_popup_row.clone(),
             marker_gutter: panel.focus_marker,
             avail_height: self.floating_panel_inner_height(slot),
         })

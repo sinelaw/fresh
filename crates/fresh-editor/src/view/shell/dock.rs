@@ -45,8 +45,16 @@ pub fn grip_key() -> Key {
 /// painter fills — the same safety valve the floating panel has had since
 /// M6a, and the reason this flip cannot half-land: `panel_interior` returns
 /// `None` for an uncovered spec and the dock stays exactly as it was.
-pub fn dock(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
-    stack().children([column(interior), grip_strip()])
+pub fn dock(
+    interior: Option<super::panel::Interior>,
+    grip_hovered: bool,
+    focused: bool,
+) -> Node<UiMsg> {
+    let described = interior.is_some();
+    stack().children([
+        column(interior),
+        grip_strip(grip_hovered, focused, described),
+    ])
 }
 
 /// The panel's own pointer surface.
@@ -69,9 +77,18 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     let body = match interior {
         None => host(HostRegion::Dock.id()),
         Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+            // **The interior is not the column.** The runtime lays this same
+            // spec at `floating_panel_inner_width` — `width_cols - 2` for a
+            // left dock — and the painter draws the divider into the column's
+            // last cell. Handed the whole column, the description came out two
+            // columns wider than the boxes `probe_floating_widget` resolves
+            // hover and right-click against, and anything a `flexSpacer` pins
+            // to the right edge — the title bar's `[×]` above all — was laid
+            // out past the visible edge and clipped away entirely.
+            let inner_w = info.constraints.max_w.saturating_sub(DIVIDER_COLS).max(1);
             super::widgets::node(
                 &i.spec,
-                info.constraints.max_w.max(1),
+                inner_w,
                 &super::widgets::Ctx {
                     slot: super::widgets::Slot::Dock,
                     states: &i.states,
@@ -79,10 +96,12 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                     hovered_key: i.hovered_key.clone(),
                     marker_gutter: i.marker_gutter,
                     hovered_item_key: i.hovered_item_key.clone(),
+                    hovered_popup_row: i.hovered_popup_row.clone(),
                     avail_height: i.avail_height,
                     surface: super::widgets::panel_surface(),
                 },
             )
+            .w(Sizing::Cells(inner_w))
         }),
     };
     gesture(body)
@@ -109,13 +128,23 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
         )
         .on(
             GestureKind::Wheel,
-            Rc::new(|e: &Event| {
-                // The column takes the wheel whether or not the panel finds
-                // something to scroll with it. The old arm passed a declined
-                // wheel on down the walk, where nothing under a dock column
-                // could answer it either — so this is the same outcome, said
-                // once, and it keeps a wheel over the dock from ever reaching
-                // the buffer beside it.
+            Rc::new(move |e: &Event| {
+                // **A described interior scrolls itself.** Its sessions list
+                // is a `viewport`, and the library chains a notch into one
+                // only when *nothing claimed it* — so a catch-all that calls
+                // `e.stop()` here is the whole reason the dock stopped
+                // scrolling. Worse than nothing: `DockScroll` moved the
+                // runtime's own `WidgetInstanceState::scroll_offset`, which
+                // the description does not read but `probe_floating_widget`
+                // still does, so a few notches put the hover highlight and the
+                // right-click menu on a different row from the one drawn.
+                //
+                // The same ruling the settings dialog's wheel got. While the
+                // interior is a painter there is no viewport to chain into and
+                // the runtime's offset *is* the scroll, so that arm stays.
+                if described {
+                    return None;
+                }
                 e.stop();
                 Some(UiMsg::Ui(UiFact::DockScroll {
                     delta: e.delta,
@@ -126,24 +155,74 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
         )
 }
 
+/// The column's last cell, which the painter draws the draggable divider into
+/// and the interior therefore may not use. `floating_panel_inner_width` takes
+/// two for a left dock — the divider and the column of slack the runtime wraps
+/// against — and the description has to take the same, or the two disagree
+/// about where every right-pinned thing in the panel is.
+const DIVIDER_COLS: u16 = 2;
+
 /// One transparent column of the panel's width with the grip in its last cell.
 ///
 /// The grip paints nothing: the column's right border is the legacy painter's,
 /// and this only claims the pointer that lands on it — and then keeps it,
 /// through every move and the release, because a resize drag leaves the grip's
 /// own cell on its first step.
-fn grip_strip() -> Node<UiMsg> {
+/// The divider the dock is dragged by, and what it looks like.
+///
+/// **It is the tree's now, for a described dock.** The painter drew it as a
+/// `Block::borders(RIGHT)` from `render_floating_widget_panel`, which runs
+/// *after* the overlay band folds — so with the settings box open over the
+/// dock, this one column of the dock came back through the middle of the
+/// dialog. The column is already this node's; drawing it here puts it in the
+/// background band with the rest of the dock's content, where a modal covers
+/// it like everything else.
+///
+/// The colours are the painter's: the accent `editor.cursor` while the dock
+/// has focus (the same one the file explorer's focused border wears, so
+/// exactly one region wears it at a time), and `ui.split_separator_hover_fg`
+/// under the pointer — which is the affordance the grip did not have at all.
+/// A column you can drag has to say so before you drag it.
+///
+/// While the interior is still a painter the border stays the painter's, so
+/// this draws nothing but the hover: two nodes painting one cell is how they
+/// drift apart.
+fn grip_ink(hovered: bool, focused: bool, described: bool) -> Node<UiMsg> {
+    use crate::app::shell_host::shell_theme::pair;
+    let fg = match (hovered, focused) {
+        (true, _) => "ui.split_separator_hover_fg",
+        (false, true) => "editor.cursor",
+        (false, false) => "ui.popup_border_fg",
+    };
+    if !hovered && !described {
+        return row();
+    }
+    let ink = pair(fg, "editor.bg");
+    fresh_ui::layout_reader(move |c: fresh_ui::LayoutInfo| {
+        fresh_ui::col().children(
+            (0..c.constraints.max_h)
+                .map(|_| fresh_ui::text("│").theme(ink.clone()).h(Sizing::Cells(1))),
+        )
+    })
+}
+
+fn grip_strip(hovered: bool, focused: bool, described: bool) -> Node<UiMsg> {
     // The width and the key go on the OUTSIDE, on the gesture node `draggable`
     // returns: it is the node that hit-tests, and an unconstrained one would
     // stretch across the whole strip and swallow presses meant for the panel
     // beside it.
+    let hover = |t: Option<crate::app::types::HoverTarget>| -> fresh_ui::Handler<UiMsg> {
+        Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::Hover(t.clone()))))
+    };
     let grip = super::grip::draggable(
         super::msg::Grip::DockWidth,
-        row(),
+        grip_ink(hovered, focused, described),
         Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::DockResizeBegin))),
     )
     .w(Sizing::Cells(1))
-    .key(grip_key());
+    .key(grip_key())
+    .on_enter(hover(Some(crate::app::types::HoverTarget::DockBorder)))
+    .on_leave(hover(None));
     row()
         .pointer_mode(PointerMode::Transparent)
         .children([row().flex(1).pointer_mode(PointerMode::Transparent), grip])
@@ -219,6 +298,7 @@ mod tests {
                     focus_key: String::new(),
                     hovered_key: None,
                     hovered_item_key: String::new(),
+                    hovered_popup_row: String::new(),
                     marker_gutter: false,
                     avail_height: None,
                 }),

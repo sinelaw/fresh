@@ -1116,7 +1116,7 @@ mod tests {
                 description_spans: Some(vec![
                     DescriptionSpan {
                         text: "hit".into(),
-                        fg: Some("editor.warning_fg".into()),
+                        fg: Some("diagnostic.warning_fg".into()),
                         attrs: vec!["bold"],
                         ..DescriptionSpan::default()
                     },
@@ -1157,7 +1157,7 @@ mod tests {
         // state — all three, from one name.
         assert_eq!(
             of("hit"),
-            "editor.warning_fg/ui.suggestion_selected_bg+bold",
+            "diagnostic.warning_fg/ui.suggestion_selected_bg+bold",
             "a span keeps the row under it"
         );
         // A span that overrides nothing is the row.

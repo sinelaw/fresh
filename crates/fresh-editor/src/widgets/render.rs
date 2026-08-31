@@ -517,6 +517,12 @@ pub struct RenderContext<'a> {
     /// Every row of one list shares that list's `hover_key`, so the row
     /// identity has to travel separately for a per-row highlight.
     pub hover_item_key: &'a str,
+    /// The open dropdown pop-over's hovered option, as a decimal index, or
+    /// `""`. Separate from `hover_item_key` because a pop-over's rows are not
+    /// panel rows: the runtime's own hover probe walks the panel's entries and
+    /// a pop-over floats beside them, so this arrives from the tree, which
+    /// lays the rows out and knows which one the pointer is on.
+    pub hover_popup_row: &'a str,
     /// Theme + grammars for `markdown: true` Text widgets. `None`
     /// (tests, callers without a theme in hand) renders the markdown
     /// source as plain unstyled lines — layout identical, colours
@@ -575,6 +581,8 @@ pub struct RenderOptions<'a> {
     pub hover_key: &'a str,
     /// See [`RenderContext::hover_item_key`].
     pub hover_item_key: &'a str,
+    /// See [`RenderContext::hover_popup_row`].
+    pub hover_popup_row: &'a str,
     /// See [`RenderContext::marker_gutter`].
     pub marker_gutter: bool,
     /// Fall back to the first tabbable when `prev_focus_key` matches
@@ -624,6 +632,7 @@ pub fn render_spec_with_options(
         focus_key: &focus_key,
         hover_key: opts.hover_key,
         hover_item_key: opts.hover_item_key,
+        hover_popup_row: "",
         markdown: opts.markdown,
         marker_gutter: opts.marker_gutter,
         avail_height: opts.avail_height,
@@ -4328,6 +4337,7 @@ pub(crate) mod tests {
                 // row identity has to come from `hover_item_key`.
                 hover_key: "sessions",
                 hover_item_key: "b",
+                hover_popup_row: "",
                 ..Default::default()
             },
         );
@@ -7040,7 +7050,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|e| e.text.as_str())
                 .collect::<Vec<_>>(),
-            vec![" a", " b"],
+            vec![" a ", " b "],
             "rows arrive fully rendered (padded) with their indices"
         );
         assert_eq!(dp.row_indices, vec![0, 1]);
@@ -7108,7 +7118,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|e| e.text.as_str())
                 .collect::<Vec<_>>(),
-            vec![" a", " b", " c"]
+            vec![" a ", " b ", " c "]
         );
         assert_eq!(dp.row_indices, vec![0, 1, 2]);
         // The selected row carries its highlight as a rendered overlay

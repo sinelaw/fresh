@@ -1652,6 +1652,11 @@ pub(crate) struct FloatingWidgetState {
     /// line under the pointer. This feeds `RenderContext::hover_item_key`,
     /// which the list/tree collectors compare against each row's item key.
     pub hovered_item_key: String,
+    /// The open dropdown pop-over's hovered option, as a decimal index, or
+    /// empty. Separate from `hovered_item_key` because a pop-over's rows are
+    /// not panel rows: `update_widget_hover` probes the runtime's entries and
+    /// never sees them, so this is reported by the tree instead.
+    pub hovered_popup_row: String,
     /// The open `Dropdown`'s option list, surfaced by the widget renderer
     /// for a screen-level floating pop-over (drawn by
     /// `render_floating_widget_panel` at the trigger's screen row, clipped
@@ -2237,6 +2242,7 @@ mod tests {
             closable: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
             popup: None,
             popup_hits: Vec::new(),
             popup_rect: None,

@@ -151,10 +151,10 @@ fn dialog(c: &Calibration) -> Node<UiMsg> {
 }
 
 fn confirm_box(k: &Confirm) -> Node<UiMsg> {
-    let ring = pair("ui.status_warning_fg", "ui.popup_bg");
+    let ring = pair("diagnostic.warning_fg", "ui.popup_bg");
     let ink = pair("ui.popup_text_fg", "ui.popup_bg");
     col().theme(ring).border().children([
-        titled(&k.title, "ui.status_warning_fg"),
+        titled(&k.title, "diagnostic.warning_fg"),
         blank(),
         line(
             k.message.clone(),
@@ -167,7 +167,7 @@ fn confirm_box(k: &Confirm) -> Node<UiMsg> {
                 Control {
                     key: k.confirm_key.clone(),
                     label: k.confirm_label.clone(),
-                    key_theme: "ui.diagnostic_error_fg".into(),
+                    key_theme: "diagnostic.error_fg".into(),
                 },
                 Control {
                     key: k.cancel_key.clone(),
@@ -207,7 +207,7 @@ fn wizard_box(c: &Calibration) -> Node<UiMsg> {
                 ),
                 line(
                     format!("  {target_name}"),
-                    attrs("ui.status_warning_fg", "ui.popup_bg", &["bold"]),
+                    attrs("diagnostic.warning_fg", "ui.popup_bg", &["bold"]),
                 ),
                 blank(),
             ]),
@@ -224,7 +224,7 @@ fn wizard_box(c: &Calibration) -> Node<UiMsg> {
                             KeyRow {
                                 glyph: String::new(),
                                 name: step_info.clone(),
-                                theme: pair("ui.line_number_fg", "ui.popup_bg"),
+                                theme: pair("editor.line_number_fg", "ui.popup_bg"),
                             },
                         ])
                         .collect(),
@@ -251,7 +251,7 @@ fn wizard_box(c: &Calibration) -> Node<UiMsg> {
                 blank(),
                 row().h(Sizing::Cells(1)).children([
                     text(format!("{translations_label}: ")).theme(ink.clone()),
-                    text(translations.clone()).theme(pair("ui.diagnostic_info_fg", "ui.popup_bg")),
+                    text(translations.clone()).theme(pair("diagnostic.info_fg", "ui.popup_bg")),
                 ]),
             ]),
             fresh_ui::ComponentExt::node(KeyList {
@@ -281,7 +281,7 @@ fn wizard_box(c: &Calibration) -> Node<UiMsg> {
                 blank(),
                 line(
                     title.clone(),
-                    attrs("ui.diagnostic_info_fg", "ui.popup_bg", &["bold"]),
+                    attrs("diagnostic.info_fg", "ui.popup_bg", &["bold"]),
                 ),
                 blank(),
                 text(message.clone()).wrap().theme(ink.clone()),
@@ -434,7 +434,7 @@ mod tests {
             controls: vec![Control {
                 key: "a".into(),
                 label: "Abort".into(),
-                key_theme: "ui.diagnostic_error_fg".into(),
+                key_theme: "diagnostic.error_fg".into(),
             }],
             status: "waiting".into(),
             confirm: None,

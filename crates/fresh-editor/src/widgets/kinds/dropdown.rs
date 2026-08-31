@@ -279,15 +279,31 @@ fn collect_dropdown(
         // of the popup family).
         let mut popup_entries = Vec::new();
         let mut row_indices = Vec::new();
+        // **Every row is the width of the widest option.** They were each
+        // their own text's length, so the selected row's highlight was the
+        // width of its *word* — "default" lit while "macos-gui" beside it set
+        // the box's width, leaving the band two columns short of the edge on
+        // one row and flush on another. A pop-over is a column of equal cells;
+        // padding them here also fixes the box, which takes its width from the
+        // longest row it is given.
+        let cell_cols = options
+            .iter()
+            .map(|o| crate::primitives::display_width::str_width(o))
+            .max()
+            .unwrap_or(0);
         for (idx, opt) in options.iter().enumerate().skip(scroll).take(visible) {
             use crate::widgets::render::{
                 KEY_COMPLETION_FG, KEY_COMPLETION_SEL_BG, KEY_COMPLETION_SEL_FG,
             };
             use fresh_core::api::{OverlayColorSpec, OverlayOptions};
             use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
-            let text = format!(" {opt}");
+            let text = format!(" {} ", crate::widgets::render::cell(opt, cell_cols));
             let mut e = TextPropertyEntry::text(&text);
             let selected = idx == cur as usize;
+            // The row under the pointer, which the tree reports because the
+            // runtime's own hover probe cannot see a pop-over's rows. Selected
+            // wins: a hover band under the selection would only mute it.
+            let hovered = !selected && ctx.hover_popup_row == idx.to_string();
             e.inline_overlays.push(InlineOverlay {
                 start: 0,
                 end: text.len(),
@@ -297,7 +313,13 @@ fn collect_dropdown(
                     } else {
                         KEY_COMPLETION_FG
                     })),
-                    bg: selected.then(|| OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
+                    bg: match (selected, hovered) {
+                        (true, _) => Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
+                        (false, true) => Some(OverlayColorSpec::theme_key(
+                            crate::widgets::render::KEY_HOVER_BG,
+                        )),
+                        (false, false) => None,
+                    },
                     bold: selected,
                     ..Default::default()
                 },

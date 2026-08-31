@@ -395,7 +395,7 @@ fn field_row(f: &Field) -> Node<UiMsg> {
         false => pair("ui.popup_text_fg", bg),
     };
     let value = match f.invalid {
-        true => pair("ui.diagnostic_error_fg", bg),
+        true => pair("diagnostic.error_fg", bg),
         false => pair("ui.popup_text_fg", bg),
     };
     let mut spans: Vec<Node<UiMsg>> = vec![
@@ -403,7 +403,7 @@ fn field_row(f: &Field) -> Node<UiMsg> {
         text(f.value.clone()).theme(value),
     ];
     if f.caret {
-        spans.push(text("_").theme(pair("ui.cursor", bg)));
+        spans.push(text("_").theme(pair("editor.cursor", bg)));
     }
     if let Some(hint) = &f.hint {
         spans.push(text(format!("  {hint}")).theme(pair("ui.popup_text_fg", bg)));
@@ -449,18 +449,18 @@ fn edit_box(e: &Edit) -> Node<UiMsg> {
     if let Some(err) = &e.error {
         info.push(line(
             format!("   ✗ {err}"),
-            attrs("ui.diagnostic_error_fg", "ui.popup_bg", &["bold"]),
+            attrs("diagnostic.error_fg", "ui.popup_bg", &["bold"]),
         ));
     }
     if !e.conflicts.is_empty() {
         info.push(line(
             format!("   {}", e.conflicts_label),
-            attrs("ui.status_warning_fg", "ui.popup_bg", &["bold"]),
+            attrs("diagnostic.warning_fg", "ui.popup_bg", &["bold"]),
         ));
         for c in &e.conflicts {
             info.push(line(
                 format!("     {c}"),
-                pair("ui.status_warning_fg", "ui.popup_bg"),
+                pair("diagnostic.warning_fg", "ui.popup_bg"),
             ));
         }
     }
@@ -558,10 +558,10 @@ fn confirm_box(c: &Confirm) -> Node<UiMsg> {
         kids.push(text("  ").theme(ink()));
     }
     col()
-        .theme(pair("ui.status_warning_fg", "ui.popup_bg"))
+        .theme(pair("diagnostic.warning_fg", "ui.popup_bg"))
         .border()
         .children([
-            titled(&c.title, "ui.status_warning_fg"),
+            titled(&c.title, "diagnostic.warning_fg"),
             line(format!(" {}", c.message), ink()),
             blank(),
             row().flex(1),
@@ -794,14 +794,14 @@ fn table_row(r: &Row, cols: &[u16; 5], selected: bool) -> Node<UiMsg> {
                 text(pad(key, cols[0] as usize)).theme(pair("ui.help_key_fg", "ui.popup_bg")),
                 text(" ").theme(ink()),
                 text(pad(action, cols[1] as usize))
-                    .theme(pair("ui.diagnostic_info_fg", "ui.popup_bg")),
+                    .theme(pair("diagnostic.info_fg", "ui.popup_bg")),
                 text(" ").theme(ink()),
                 text(pad(description, cols[2] as usize)).theme(ink()),
                 text(" ").theme(ink()),
                 text(pad(context, cols[3] as usize)).theme(ink()),
                 text(" ").theme(ink()),
                 text(pad(source, cols[4] as usize))
-                    .theme(accent(*source_accent, "ui.diagnostic_info_fg")),
+                    .theme(accent(*source_accent, "diagnostic.info_fg")),
             ])
         }
     }

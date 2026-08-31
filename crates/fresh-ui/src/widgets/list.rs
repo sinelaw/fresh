@@ -101,7 +101,7 @@ enum Source<M> {
     Windowed {
         count: usize,
         key: Rc<dyn Fn(usize) -> Key>,
-        row: Rc<dyn Fn(usize) -> Node<M>>,
+        row: Rc<dyn Fn(usize, RowState) -> Node<M>>,
     },
 }
 
@@ -126,10 +126,12 @@ impl<M> Source<M> {
         }
     }
 
-    fn at(&self, i: usize) -> Option<(Key, Node<M>)> {
+    fn at(&self, i: usize, state: RowState) -> Option<(Key, Node<M>)> {
         match self {
+            // Eager rows are built before the list knows anything about them,
+            // so their state cannot reach them. `row_theme` still names them.
             Source::Eager(v) => v.get(i).cloned(),
-            Source::Windowed { count, key, row } => (i < *count).then(|| (key(i), row(i))),
+            Source::Windowed { count, key, row } => (i < *count).then(|| (key(i), row(i, state))),
         }
     }
 }
@@ -138,9 +140,28 @@ impl<M> Source<M> {
 /// the nested closure type is otherwise unwieldy.
 type RowClick<M> = Rc<dyn Fn(usize) -> crate::desc::Handler<M>>;
 
+/// What a list's selection is, and who owns it.
+///
+/// **"Controlled" and "on a row" are different facts.** `selected(i)` could
+/// only ever say both at once, so a caller with a controlled list and nothing
+/// selected had no way to say so — omitting it handed the selection back to
+/// the element, whose own starts at row zero, and the first row came out
+/// highlighted. That is what a settings field's `[+] Add new` sentinel looked
+/// like when it was *not* the focused row.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+enum Sel {
+    /// The owner never said; the element keeps its own.
+    #[default]
+    Own,
+    /// The owner holds it, and it is on this row.
+    At(usize),
+    /// The owner holds it, and no row is selected.
+    Empty,
+}
+
 pub struct List<M> {
     source: Source<M>,
-    selected: Option<usize>,
+    selection: Sel,
     on_select: Option<Rc<dyn Fn(usize) -> M>>,
     on_activate: Option<Rc<dyn Fn(usize) -> Option<M>>>,
     activate_on: Activate,
@@ -178,6 +199,34 @@ impl<M: 'static> List<M> {
         List::from_source(Source::Windowed {
             count,
             key: Rc::new(key),
+            row: Rc::new(move |i, _| row(i)),
+        })
+    }
+
+    /// The same, for rows that name their own ink.
+    ///
+    /// **A stamped theme is a ground, and a row that paints its own cells
+    /// covers it.** [`row_theme`](Self::row_theme) names the row node, which
+    /// emits a fill under whatever the builder produced — so a host whose rows
+    /// carry explicit foreground *and* background (which every row built from
+    /// an editor `TextPropertyEntry` does, because a description has no
+    /// "already" to show through) got a selection band only in the gaps
+    /// between its glyphs. The orchestrator dock's compact rows were the
+    /// symptom: the active session's highlight appeared on the padding after
+    /// the name and nowhere else.
+    ///
+    /// The state machine stays the widget's — which is the whole point of
+    /// [`RowState`] — and this hands it to the builder as well as to
+    /// `row_theme`, so a host can build the row *from* its state instead of
+    /// having one painted behind it.
+    pub fn windowed_stateful(
+        count: usize,
+        key: impl Fn(usize) -> Key + 'static,
+        row: impl Fn(usize, RowState) -> Node<M> + 'static,
+    ) -> Self {
+        List::from_source(Source::Windowed {
+            count,
+            key: Rc::new(key),
             row: Rc::new(row),
         })
     }
@@ -185,7 +234,7 @@ impl<M: 'static> List<M> {
     fn from_source(source: Source<M>) -> Self {
         List {
             source,
-            selected: None,
+            selection: Sel::Own,
             on_select: None,
             on_activate: None,
             activate_on: Activate::default(),
@@ -202,7 +251,18 @@ impl<M: 'static> List<M> {
     /// Controlled selection: the owner holds it and is told when it should
     /// change. Omit this and the element keeps its own.
     pub fn selected(mut self, i: usize) -> Self {
-        self.selected = Some(i);
+        self.selection = Sel::At(i);
+        self
+    }
+
+    /// The same, for an owner whose selection may be empty. `None` is a
+    /// *controlled* empty selection — no row is highlighted, and no row is
+    /// confirmed — not "the owner has no opinion".
+    pub fn selection(mut self, i: Option<usize>) -> Self {
+        self.selection = match i {
+            Some(i) => Sel::At(i),
+            None => Sel::Empty,
+        };
         self
     }
 
@@ -312,7 +372,12 @@ impl<M: 'static> Component<M> for List<M> {
 
     fn build(&self, s: &ListState, cx: &mut BuildCx<'_, M>) -> Node<M> {
         let n = self.source.len();
-        let sel = self.selected.unwrap_or(s.selected).min(n.saturating_sub(1));
+        let last = n.saturating_sub(1);
+        let sel: Option<usize> = match self.selection {
+            Sel::Own => Some(s.selected.min(last)),
+            Sel::At(i) => Some(i.min(last)),
+            Sel::Empty => None,
+        };
         let up: Updater<ListState> = cx.updater();
         let anchor = s.anchor.clone();
 
@@ -321,7 +386,7 @@ impl<M: 'static> Component<M> for List<M> {
         // fight the wheel, which is a statement about the window rather than
         // about the selection; the memo is what distinguishes the two, and its
         // write is an idempotent function of the build inputs.
-        if let Some(a) = &anchor {
+        if let (Some(a), Some(sel)) = (&anchor, sel) {
             let a = a.clone();
             s.revealed.get_or(sel, move || a.reveal(sel as u32));
         }
@@ -404,8 +469,7 @@ impl<M: 'static> Component<M> for List<M> {
             let first = (win.y.max(0) as usize).min(n.saturating_sub(visible.min(n)));
             let last = (first + visible + OVERSCAN).min(n);
             col().children((first..last).map(|i| {
-                let (k, row) = source.at(i).expect("index inside the source");
-                let state = if i == sel {
+                let state = if Some(i) == sel {
                     // A selected row reads as focused only when the list has
                     // focus; otherwise it is muted.
                     if focused {
@@ -418,6 +482,7 @@ impl<M: 'static> Component<M> for List<M> {
                 } else {
                     RowState::Normal
                 };
+                let (k, row) = source.at(i, state).expect("index inside the source");
                 let theme: String = match &row_theme {
                     Some(f) => f(i, state),
                     None => state.theme().to_string(),
@@ -472,11 +537,15 @@ impl<M: 'static> Component<M> for List<M> {
             }))
             .action_handler(Intent::Up, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
-                Rc::new(move |_: &Event| select(sel.saturating_sub(1), &up, &a, &f))
+                // With nothing selected, Up lands on the last row and Down
+                // on the first — the two ends a walk can start from.
+                Rc::new(move |_: &Event| {
+                    select(sel.map_or(last, |s| s.saturating_sub(1)), &up, &a, &f)
+                })
             })
             .action_handler(Intent::Down, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
-                Rc::new(move |_: &Event| select((sel + 1).min(n.saturating_sub(1)), &up, &a, &f))
+                Rc::new(move |_: &Event| select(sel.map_or(0, |s| (s + 1).min(last)), &up, &a, &f))
             })
             .action_handler(Intent::Home, {
                 let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
@@ -487,7 +556,7 @@ impl<M: 'static> Component<M> for List<M> {
                 Rc::new(move |_: &Event| select(n.saturating_sub(1), &up, &a, &f))
             });
 
-        if let Some(f) = self.on_activate.clone() {
+        if let (Some(f), Some(sel)) = (self.on_activate.clone(), sel) {
             node = node.action_handler(Intent::Confirm, Rc::new(move |_: &Event| f(sel)));
         }
         if self.autofocus {
