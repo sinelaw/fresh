@@ -202,6 +202,11 @@ pub struct SettingsState {
     pub hover_position: Option<(u16, u16)>,
     /// Current hover hit result (computed from hover_position and cached layout)
     pub hover_hit: Option<SettingsHit>,
+    /// The open dropdown pop-over's hovered option, as a decimal index, or
+    /// empty. The dialog renders its own controls with no panel behind them,
+    /// so its pop-over's hover has nowhere else to live; see
+    /// `UiFact::WidgetPopupHover`.
+    pub hovered_popup_row: String,
     /// Stack of entry dialogs (for nested editing of Maps/ObjectArrays)
     /// The top of the stack (last element) is the currently active dialog.
     pub entry_dialog_stack: Vec<EntryDialogState>,
@@ -418,6 +423,7 @@ impl SettingsState {
             available_status_bar_tokens,
             hover_position: None,
             hover_hit: None,
+            hovered_popup_row: String::new(),
             entry_dialog_stack: Vec::new(),
             target_layer,
             layer_sources,
@@ -2258,16 +2264,6 @@ impl SettingsState {
     }
 
     pub(crate) fn sync_tree_cursor_to_body_scroll(&mut self) {
-        if std::env::var("FRESH_DBG").is_ok() {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/freshdbg.log")
-            {
-                let _=writeln!(f,"DBG sync: top_item={:?} selected_item={} computed_section={:?} cursor_was={:?}", self.topmost_visible_item_index(), self.selected_item, self.current_section_index(), self.tree_cursor_section);
-            }
-        }
         if let Some(section_idx) = self.current_section_index() {
             self.tree_cursor_section = Some(section_idx);
         }

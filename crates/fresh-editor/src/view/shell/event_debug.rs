@@ -68,7 +68,7 @@ pub fn layer(d: &EventDebug) -> Node<UiMsg> {
 fn dialog(d: &EventDebug) -> Node<UiMsg> {
     let ring = pair("ui.popup_border_fg", "ui.popup_bg");
     let ink = pair("ui.popup_text_fg", "ui.popup_bg");
-    let dim = pair("ui.line_number_fg", "ui.popup_bg");
+    let dim = pair("editor.line_number_fg", "ui.popup_bg");
 
     let mut history: Vec<Node<UiMsg>> = Vec::new();
     match &d.recent_label {
@@ -82,7 +82,7 @@ fn dialog(d: &EventDebug) -> Node<UiMsg> {
             for (i, e) in d.history.iter().enumerate() {
                 let newest = i == 0;
                 let style = match newest {
-                    true => attrs("ui.diagnostic_info_fg", "ui.popup_bg", &["bold"]),
+                    true => attrs("diagnostic.info_fg", "ui.popup_bg", &["bold"]),
                     false => ink.clone(),
                 };
                 let mut spans: Vec<Node<UiMsg>> = vec![
@@ -96,7 +96,7 @@ fn dialog(d: &EventDebug) -> Node<UiMsg> {
                 ];
                 if let Some(n) = &e.normalized {
                     spans.push(text("    (Normalized: ").theme(dim.clone()));
-                    spans.push(text(n.clone()).theme(pair("ui.diagnostic_hint_fg", "ui.popup_bg")));
+                    spans.push(text(n.clone()).theme(pair("diagnostic.hint_fg", "ui.popup_bg")));
                     spans.push(text(")").theme(dim.clone()));
                 }
                 history.push(row().h(Sizing::Cells(1)).children(spans));

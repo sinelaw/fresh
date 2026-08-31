@@ -5637,6 +5637,7 @@ impl Editor {
             closable: !as_dock && closable,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
             popup: None,
             popup_hits: Vec::new(),
             popup_rect: None,
@@ -5656,6 +5657,7 @@ impl Editor {
                 &prev_focus,
                 panel_width,
                 self.floating_panel_inner_height(slot),
+                "",
                 "",
                 "",
                 Some(crate::widgets::MarkdownCtx {
@@ -5739,6 +5741,10 @@ impl Editor {
             .panel(slot)
             .map(|f| f.hovered_item_key.clone())
             .unwrap_or_default();
+        let hover_popup_row = self
+            .panel(slot)
+            .map(|f| f.hovered_popup_row.clone())
+            .unwrap_or_default();
         let out = {
             let theme_guard = self.theme.read().unwrap();
             super::widget_runtime::render_floating_spec(
@@ -5750,6 +5756,7 @@ impl Editor {
                 self.floating_panel_inner_height(slot),
                 &hover_key,
                 &hover_item_key,
+                &hover_popup_row,
                 Some(crate::widgets::MarkdownCtx {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),

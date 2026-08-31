@@ -191,7 +191,7 @@ pub fn search_result_row(result: &SearchResult) -> crate::view::shell::settings:
             &name,
             &result.name_matches,
             String::new(),
-            attrs("ui.diagnostic_warning_fg", "ui.popup_bg", &["bold"]),
+            attrs("diagnostic.warning_fg", "ui.popup_bg", &["bold"]),
         ),
         breadcrumb: format!("{} > {}", result.breadcrumb, result.item.path),
         desc,

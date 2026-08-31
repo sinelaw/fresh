@@ -700,7 +700,7 @@ fn json_line_row(
                     start: content_start + col_to_byte(from),
                     end: content_start + col_to_byte(to),
                     style: OverlayOptions {
-                        bg: Some(OverlayColorSpec::theme_key("ui.selection_bg")),
+                        bg: Some(OverlayColorSpec::theme_key("editor.selection_bg")),
                         ..Default::default()
                     },
                     properties: Default::default(),

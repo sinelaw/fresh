@@ -531,6 +531,18 @@ pub enum UiFact {
     /// learned this by hit-testing the pointer's cell against every item's
     /// rectangle on every move; entering and leaving are the two things that
     /// actually happen.
+    /// The pointer entered (or left) one option of an open widget dropdown's
+    /// pop-over.
+    ///
+    /// **A pop-over's rows are not panel rows.** `update_widget_hover` probes
+    /// the runtime's own entries, and a pop-over floats beside them
+    /// (`out.popups`), so no hover ever reached one and the option list was
+    /// the one list in the editor whose rows did not light under the pointer.
+    /// The tree knows, because the row is a node; this is it saying so.
+    WidgetPopupHover {
+        slot: super::widgets::Slot,
+        index: Option<usize>,
+    },
     SettingsItemHover(Option<usize>),
     /// A press on a nullable setting's `[Inherit]`, which unsets it.
     SettingsInherit(usize),

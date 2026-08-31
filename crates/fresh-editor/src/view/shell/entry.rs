@@ -163,7 +163,7 @@ pub fn layer(d: &Dialog) -> Node<UiMsg> {
                 // One name for the ring and its caption: a dirty form rings
                 // and titles in the warning colour together.
                 let ring_fg = match d.dirty {
-                    true => "ui.diagnostic_warning_fg",
+                    true => "diagnostic.warning_fg",
                     false => "ui.popup_border_fg",
                 };
                 let ring = pair(ring_fg, "ui.popup_bg");
@@ -201,14 +201,14 @@ fn body(d: &Dialog) -> Node<UiMsg> {
     };
     let helper = match &d.helper {
         Some(t) => text(t.clone())
-            .theme(attrs("ui.line_number_fg", "ui.popup_bg", &["italic"]))
+            .theme(attrs("editor.line_number_fg", "ui.popup_bg", &["italic"]))
             .elide(fresh_ui::Elide::Tail)
             .h(Sizing::Cells(1)),
         None => row().h(Sizing::Cells(1)),
     };
     let legend = match &d.legend {
-        Legend::Keys(t) => text(t.clone()).theme(pair("ui.line_number_fg", "ui.popup_bg")),
-        Legend::Warn(t) => text(t.clone()).theme(pair("ui.diagnostic_warning_fg", "ui.popup_bg")),
+        Legend::Keys(t) => text(t.clone()).theme(pair("editor.line_number_fg", "ui.popup_bg")),
+        Legend::Warn(t) => text(t.clone()).theme(pair("diagnostic.warning_fg", "ui.popup_bg")),
     };
     // The painter's `inner` starts two columns in from the box, which is one
     // past its border.
@@ -230,7 +230,7 @@ fn item(it: &Item) -> Node<UiMsg> {
     if let Some(name) = &it.section {
         rows.push(
             text(format!("── {name} ──"))
-                .theme(attrs("ui.line_number_fg", "ui.popup_bg", &["bold"]))
+                .theme(attrs("editor.line_number_fg", "ui.popup_bg", &["bold"]))
                 .h(Sizing::Cells(1)),
         );
         rows.push(row().h(Sizing::Cells(1)));
@@ -273,7 +273,7 @@ fn item(it: &Item) -> Node<UiMsg> {
 fn rule() -> Node<UiMsg> {
     layout_reader(|info: LayoutInfo| {
         text("─".repeat(info.constraints.max_w.max(1) as usize))
-            .theme(pair("ui.line_number_fg", "ui.popup_bg"))
+            .theme(pair("editor.line_number_fg", "ui.popup_bg"))
     })
     .h(Sizing::Cells(1))
 }
@@ -346,9 +346,9 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
         let label: String = format!("{label}: ").chars().take(cell as usize).collect();
         return row().h(Sizing::Cells(1)).children([
             text(label)
-                .theme(pair("ui.editor_fg", band))
+                .theme(pair("editor.fg", band))
                 .w(Sizing::Cells(cell)),
-            text(value.clone()).theme(pair("ui.line_number_fg", band)),
+            text(value.clone()).theme(pair("editor.line_number_fg", band)),
         ]);
     }
     let spec = it.spec.clone();
@@ -362,6 +362,7 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
             avail_height: None,
             surface: surface.clone(),
         };
@@ -377,13 +378,13 @@ fn affordance(item: usize, a: &Affordance, band: &str) -> Node<UiMsg> {
         vec![row().w(Sizing::Flex(1)).pointer_mode(PointerMode::Ignore)];
     match a {
         Affordance::Badge(label) => {
-            kids.push(text(label.clone()).theme(attrs("ui.line_number_fg", band, &["italic"])))
+            kids.push(text(label.clone()).theme(attrs("editor.line_number_fg", band, &["italic"])))
         }
         Affordance::Actions(actions) => {
             for (i, action) in actions.iter().enumerate() {
                 let theme = match action.focused {
                     true => attrs("ui.menu_hover_fg", "ui.menu_hover_bg", &["bold"]),
-                    false => pair("ui.line_number_fg", band),
+                    false => pair("editor.line_number_fg", band),
                 };
                 kids.push(gesture(text(action.label.clone()).theme(theme)).on(
                     GestureKind::Press,
@@ -395,7 +396,14 @@ fn affordance(item: usize, a: &Affordance, band: &str) -> Node<UiMsg> {
                         Some(UiMsg::Ui(UiFact::SettingsEntryFieldAction(item, i)))
                     }),
                 ));
-                kids.push(row().w(Sizing::Cells(1)).pointer_mode(PointerMode::Ignore));
+                // Themed, not bare: this column lies over the control, and a
+                // transparent one shows a column of whatever the control
+                // painted under it.
+                kids.push(
+                    text(" ")
+                        .theme(pair("editor.line_number_fg", band))
+                        .pointer_mode(PointerMode::Ignore),
+                );
             }
         }
     }
@@ -427,12 +435,12 @@ fn buttons(bs: &[Button]) -> Node<UiMsg> {
         // Selected Delete keeps its red as a "still destructive" cue while the
         // band signals the keyboard is on it.
         let theme = match (b.focused, b.hovered, b.destructive) {
-            (true, _, true) => attrs("ui.diagnostic_error_fg", "ui.popup_selection_bg", &["bold"]),
+            (true, _, true) => attrs("diagnostic.error_fg", "ui.popup_selection_bg", &["bold"]),
             (true, _, false) => attrs("ui.popup_selection_fg", "ui.popup_selection_bg", &["bold"]),
-            (_, true, true) => attrs("ui.diagnostic_error_fg", "ui.menu_hover_bg", &["bold"]),
+            (_, true, true) => attrs("diagnostic.error_fg", "ui.menu_hover_bg", &["bold"]),
             (_, true, false) => pair("ui.menu_hover_fg", "ui.menu_hover_bg"),
-            (_, _, true) => attrs("ui.diagnostic_error_fg", "ui.popup_bg", &["bold"]),
-            _ => pair("ui.editor_fg", "ui.popup_bg"),
+            (_, _, true) => attrs("diagnostic.error_fg", "ui.popup_bg", &["bold"]),
+            _ => pair("editor.fg", "ui.popup_bg"),
         };
         let label = format!("{marker}{}", b.label);
         kids.push(

@@ -1810,6 +1810,7 @@ mod wave_dismiss_tests {
             closable: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
             popup: None,
             popup_hits: Vec::new(),
             popup_rect: None,

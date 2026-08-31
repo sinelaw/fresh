@@ -18,6 +18,8 @@ pub enum HoverTarget {
     SubmenuItem(usize, usize),
     /// Hovering over the file explorer border (for resize)
     FileExplorerBorder,
+    /// Hovering over the orchestrator dock's right border (for resize)
+    DockBorder,
     /// Hovering over a file browser navigation shortcut
     FileBrowserNavShortcut(usize),
     /// Hovering over a file browser file/directory entry

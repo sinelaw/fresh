@@ -72,8 +72,17 @@ pub fn fit(info: LayoutInfo) -> Option<(u16, u16)> {
 /// layer is `PointerMode::Ignore` instead: a rectangle and nothing else.
 pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
     let c = c.cloned();
+    // **Centred on the frame, not on the chrome beside the dock.** The
+    // painter was explicit about it — "`area` is the whole frame — these are
+    // full-screen modals, so the dim pass covers the dock column too and each
+    // dialog centres in the full window" — and it is the better reading
+    // anyway: a dialog squeezed into whatever is left of the width next to a
+    // wide dock is a dialog the dock has taken half of. `within` here confused
+    // this modal with the *floating plugin panel*, which really does lay into
+    // `chrome_area`. Layers fold in the overlay band, after every legacy
+    // painter, so covering the dock column is safe now in a way it was not
+    // when this was painted by hand.
     let l = fresh_ui::layer()
-        .within(super::frame::chrome_key())
         .anchor(Anchor::Screen(Align::Center))
         .place(Place::Over);
     let l = match c.is_some() {
@@ -292,7 +301,7 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
         (
             fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur,
             false,
-        ) => pair("ui.menu_fg", "ui.selection_bg"),
+        ) => pair("ui.menu_fg", "editor.selection_bg"),
         _ => ink(),
     })
     .on_select({
@@ -351,10 +360,16 @@ pub const RESULT_ROWS: u16 = 3;
 pub fn results(r: &Results) -> Node<UiMsg> {
     let rows: std::rc::Rc<Vec<ResultRow>> = std::rc::Rc::new(r.rows.clone());
     let n = rows.len();
+    // **The marker is the model's, not the row state's.** `row_theme` says
+    // what a selected row *looks* like, and a card list's selection reads as a
+    // band; the painter also wrote a `▸ ` in front of the name, which is the
+    // only thing that survives a theme whose selection colour is close to its
+    // ground. The selection is controlled here, so the builder can be told.
+    let sel = r.selected;
     let list = fresh_ui::List::windowed(
         n,
         |i| fresh_ui::Key::Pair("settings_result".into(), i as u64),
-        move |i| result_card(&rows[i]),
+        move |i| result_card(&rows[i], i == sel),
     )
     .row_rows(RESULT_ROWS)
     .focusable(false)
@@ -379,9 +394,20 @@ pub fn results(r: &Results) -> Node<UiMsg> {
 /// One result's three rows. The `▸` marks the cursor; the row's own theme
 /// says whether it is the selected one, so the marker is the only thing here
 /// that has to know.
-fn result_card(r: &ResultRow) -> Node<UiMsg> {
-    let dim = pair("ui.line_number_fg", "ui.popup_bg");
-    let mut name: Vec<Node<UiMsg>> = vec![text("  ")];
+fn result_card(r: &ResultRow, selected: bool) -> Node<UiMsg> {
+    let dim = pair("editor.line_number_fg", "ui.popup_bg");
+    let marker = match selected {
+        true => "\u{25b8} ",
+        false => "  ",
+    };
+    let mut name: Vec<Node<UiMsg>> = vec![match selected {
+        true => text(marker).theme(attrs(
+            "ui.settings_selected_fg",
+            "ui.settings_selected_bg",
+            &["bold"],
+        )),
+        false => text(marker),
+    }];
     name.extend(
         r.name
             .iter()
@@ -391,7 +417,7 @@ fn result_card(r: &ResultRow) -> Node<UiMsg> {
         row().h(Sizing::Cells(1)).children(name),
         line(
             format!("  {}", r.breadcrumb),
-            attrs("ui.line_number_fg", "ui.popup_bg", &["italic"]),
+            attrs("editor.line_number_fg", "ui.popup_bg", &["italic"]),
         ),
         match &r.desc {
             Some(d) => line(format!("  {d}"), dim).elide(fresh_ui::Elide::Tail),
@@ -451,7 +477,7 @@ fn strip_band(s: &Strip) -> Node<UiMsg> {
     }
     col().children([
         row().h(Sizing::Cells(1)).children(kids),
-        line(s.hint.clone(), pair("ui.line_number_fg", "ui.popup_bg")),
+        line(s.hint.clone(), pair("editor.line_number_fg", "ui.popup_bg")),
         row().h(Sizing::Cells(1)),
         rule(),
     ])
@@ -465,12 +491,12 @@ fn strip_band(s: &Strip) -> Node<UiMsg> {
 fn page_header(p: &Page) -> Node<UiMsg> {
     let mut rows: Vec<Node<UiMsg>> = vec![line(
         p.title.clone(),
-        attrs("ui.editor_fg", "ui.popup_bg", &["bold"]),
+        attrs("editor.fg", "ui.popup_bg", &["bold"]),
     )];
     if let Some(label) = &p.clear {
         let theme = match p.clear_hovered {
             true => pair("ui.menu_hover_fg", "ui.menu_hover_bg"),
-            false => pair("ui.line_number_fg", "ui.popup_bg"),
+            false => pair("editor.line_number_fg", "ui.popup_bg"),
         };
         rows.push(
             row().h(Sizing::Cells(1)).children([
@@ -535,7 +561,7 @@ fn card(c: &Card) -> Node<UiMsg> {
         rows.push(row().h(Sizing::Cells(1)));
         rows.push(line(
             name.clone(),
-            attrs("ui.editor_fg", "ui.popup_bg", &["bold"]),
+            attrs("editor.fg", "ui.popup_bg", &["bold"]),
         ));
     }
     rows.push(card_box(c));
@@ -635,20 +661,77 @@ fn gutter(c: &Card, band: &str) -> Node<UiMsg> {
 fn control(c: &Card, band: &str) -> Node<UiMsg> {
     let spec = c.spec.clone();
     let focus_key = c.focus_key.clone();
-    let surface =
-        crate::app::shell_host::shell_theme::Ink::keys("ui.popup_text_fg", band.to_string());
+    let hovered_popup_row = c.hovered_popup_row.clone();
+    use crate::app::shell_host::shell_theme::Ink;
+    let banded = Ink::keys("ui.popup_text_fg", band.to_string());
+    let ground = Ink::keys("ui.popup_text_fg", "ui.popup_bg".to_string());
     layout_reader(move |info: LayoutInfo| {
-        let cx = super::widgets::Ctx {
+        let w = info.constraints.max_w.max(1);
+        let cx = |surface: &Ink| super::widgets::Ctx {
             slot: super::widgets::Slot::Settings,
             states: super::widgets::no_state(),
             focus_key: focus_key.clone(),
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
+            hovered_popup_row: hovered_popup_row.clone(),
             avail_height: None,
             surface: surface.clone(),
         };
-        super::widgets::node(&spec, info.constraints.max_w.max(1), &cx)
+        // **The band is a row, not a run.** `Ctx::surface` gives the
+        // control's own glyphs their ground, which stops where the text does;
+        // the painter filled the whole row first and drew over it. A themed
+        // node emits its own `Draw::Fill`, so a full-width wrapper around the
+        // banded row is that fill, said by the row that owns it.
+        //
+        // Only ever wrapped around something one row tall — the wrapper pins
+        // that height, and a `DualList` given it came out as a single row with
+        // its two columns clipped away.
+        let strip = |n: Node<UiMsg>| {
+            row()
+                .w(Sizing::Flex(1))
+                .h(Sizing::Cells(1))
+                .theme(banded.to_string())
+                .children([n, row().flex(1)])
+        };
+        use fresh_core::api::WidgetSpec as W;
+        match &spec {
+            // **The band is the label row's ground, not the whole card's.**
+            // The painter said so outright — "limited to the label row so
+            // chip / description text below stays on popup_bg and remains
+            // legible regardless of how saturated the theme's highlight bg
+            // is" — and a composite control is where it shows: a selected
+            // Detectors card came out as one solid block of the selection
+            // colour, and the *row* highlight inside its list, which is the
+            // only thing that says which entry the arrows are on, was the
+            // same colour as the block it sat in and so was invisible.
+            //
+            // Split here rather than in the widget adapter: the band belongs
+            // to the settings card, and a `Col`'s first child is its label by
+            // the same construction that builds it (`widget_map`'s composite
+            // arms all open with `raw_row("{label}:")`). Every other surface
+            // that renders a `WidgetSpec` keeps one ground for the whole of
+            // it, which is what `Ctx::surface` means everywhere else.
+            W::Col { children, .. } if children.len() > 1 => col().children(
+                children
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ch)| match i {
+                        0 => strip(super::widgets::node(ch, w, &cx(&banded))),
+                        _ => super::widgets::node(ch, w, &cx(&ground)),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            // A scalar control *is* its label row, so the band is the whole
+            // of it. The rest — a `DualList`'s two columns, a `Json` editor's
+            // box — is many rows the painter left on the dialog's ground, and
+            // there is no first child to split off, so it keeps the band it
+            // has always had rather than being pinned to one row.
+            W::Toggle { .. } | W::Text { .. } | W::Number { .. } | W::Dropdown { .. } => {
+                strip(super::widgets::node(&spec, w, &cx(&banded)))
+            }
+            _ => super::widgets::node(&spec, w, &cx(&banded)),
+        }
     })
 }
 
@@ -680,7 +763,7 @@ fn description(c: &Card) -> Option<Node<UiMsg>> {
     Some(
         row().children([
             text(body)
-                .theme(pair("ui.line_number_fg", "ui.popup_bg"))
+                .theme(pair("editor.line_number_fg", "ui.popup_bg"))
                 .wrap()
                 .w(Sizing::Flex(1)),
             // The painter's `description_right_padding_cols`, so wrapped text does
@@ -694,12 +777,12 @@ fn description(c: &Card) -> Option<Node<UiMsg>> {
 fn inherit(idx: usize, i: &Inherit, band: &str) -> Node<UiMsg> {
     let node = match i {
         Inherit::Badge(label) => {
-            text(label.clone()).theme(attrs("ui.line_number_fg", band, &["italic"]))
+            text(label.clone()).theme(attrs("editor.line_number_fg", band, &["italic"]))
         }
         Inherit::Button { label, hovered } => {
             let theme = match hovered {
                 true => pair("ui.menu_hover_fg", "ui.menu_hover_bg"),
-                false => pair("ui.line_number_fg", band),
+                false => pair("editor.line_number_fg", band),
             };
             gesture(text(label.clone()).theme(theme))
                 .on(
@@ -721,8 +804,13 @@ fn inherit(idx: usize, i: &Inherit, band: &str) -> Node<UiMsg> {
         row().w(Sizing::Flex(1)).pointer_mode(PointerMode::Ignore),
         node,
         // The painter's trailing column, so the affordance is not flush
-        // against the border.
-        row().w(Sizing::Cells(1)).pointer_mode(PointerMode::Ignore),
+        // against the border — and it carries the band's own background,
+        // because it lies *over* the control. Left transparent it showed one
+        // column of whatever the control had painted there, which on a narrow
+        // card is the middle of a value: "Default Language  (Inherited))".
+        text(" ")
+            .theme(pair("editor.line_number_fg", band))
+            .pointer_mode(PointerMode::Ignore),
     ])
 }
 
@@ -932,6 +1020,10 @@ pub struct Card {
     /// key while it is being edited, empty otherwise. It is what makes a text
     /// field paint its caret.
     pub focus_key: String,
+    /// The open dropdown pop-over's hovered option, as a decimal index, or
+    /// empty. The pop-over's rows report their own hover, because a settings
+    /// control has no panel behind it for the runtime's probe to walk.
+    pub hovered_popup_row: String,
     pub description: Option<String>,
     /// `user`, `project` or `session` — the layer the value came from, shown
     /// after the description. `None` for a schema default.
@@ -1148,6 +1240,11 @@ fn footer_row(f: &Footer) -> Node<UiMsg> {
         // the slack pushed the right-hand group off the box's edge and the
         // last button came out cut in half.
         kids.push(row().flex(1).children(keyhints(&f.help)));
+        // The hints are clipped to that flexible child, so at a narrow width
+        // they run right up against the first button and read as one word:
+        // "↑↓ Naviga[ User ]". The same two columns that separate the buttons
+        // separate them from the hints.
+        kids.push(text("  ").theme(ink()));
         for (on, b, label) in [
             (show_layer, Button::Layer, &f.layer),
             (show_reset, Button::Reset, &f.reset),
@@ -1169,7 +1266,7 @@ fn footer_row(f: &Footer) -> Node<UiMsg> {
 /// `Key:Action  Key:Action` as runs: the key reverse-videoed, the action dim.
 fn keyhints(text_: &str) -> Vec<Node<UiMsg>> {
     let key = pair("ui.popup_text_fg", "ui.split_separator_fg");
-    let desc = pair("ui.line_number_fg", "ui.popup_bg");
+    let desc = pair("editor.line_number_fg", "ui.popup_bg");
     let mut out: Vec<Node<UiMsg>> = Vec::new();
     for (i, seg) in text_.split("  ").enumerate() {
         let seg = seg.trim();
@@ -1338,7 +1435,7 @@ pub fn dialog_layer(d: &Dialog) -> Node<UiMsg> {
                     Dialog::EntryDiscard(_) | Dialog::EntryDelete(_) => 7,
                 };
                 let h = want.min(info.constraints.max_h.saturating_sub(4));
-                let warn = pair("ui.status_warning_fg", "ui.popup_bg");
+                let warn = pair("diagnostic.warning_fg", "ui.popup_bg");
                 let (ring, node) = match &d {
                     Dialog::Help { title, lines } => (
                         pair("ui.menu_highlight_fg", "ui.popup_bg"),
@@ -1406,7 +1503,7 @@ fn choice_box(c: &Choice, target: impl Fn(usize) -> Target + 'static) -> Node<Ui
     let mut rows: Vec<Node<UiMsg>> = vec![
         line(
             format!(" {} ", c.title),
-            attrs("ui.status_warning_fg", "ui.popup_bg", &["bold"]),
+            attrs("diagnostic.warning_fg", "ui.popup_bg", &["bold"]),
         ),
         line(c.prompt.clone(), ink()),
         blank(),
@@ -1429,15 +1526,15 @@ fn choice_box(c: &Choice, target: impl Fn(usize) -> Target + 'static) -> Node<Ui
     rows.push(buttons(c, target));
     rows.push(line(
         c.help.clone(),
-        pair("ui.line_number_fg", "ui.popup_bg"),
+        pair("editor.line_number_fg", "ui.popup_bg"),
     ));
     col().flex(1).children(rows)
 }
 
 fn ring_of(k: &Destructive) -> String {
     match k.grave {
-        true => pair("ui.diagnostic_error_fg", "ui.popup_bg"),
-        false => pair("ui.status_warning_fg", "ui.popup_bg"),
+        true => pair("diagnostic.error_fg", "ui.popup_bg"),
+        false => pair("diagnostic.warning_fg", "ui.popup_bg"),
     }
 }
 
@@ -1446,9 +1543,9 @@ fn grave_box(k: &Destructive, target: impl Fn(usize) -> Target + 'static) -> Nod
     let mut kids: Vec<Node<UiMsg>> = vec![row().flex(1)];
     for (i, label) in k.buttons.iter().enumerate() {
         let theme = match (i == k.selected, i == k.destructive) {
-            (true, true) => attrs("ui.diagnostic_error_fg", "ui.popup_selection_bg", &["bold"]),
+            (true, true) => attrs("diagnostic.error_fg", "ui.popup_selection_bg", &["bold"]),
             (true, false) => attrs("ui.popup_selection_fg", "ui.popup_selection_bg", &["bold"]),
-            (false, true) => attrs("ui.diagnostic_error_fg", "ui.popup_bg", &["bold"]),
+            (false, true) => attrs("diagnostic.error_fg", "ui.popup_bg", &["bold"]),
             (false, false) => ink(),
         };
         let marker = match i == k.selected {
@@ -1478,8 +1575,8 @@ fn grave_box(k: &Destructive, target: impl Fn(usize) -> Target + 'static) -> Nod
             format!(" {} ", k.title),
             attrs(
                 match k.grave {
-                    true => "ui.diagnostic_error_fg",
-                    false => "ui.status_warning_fg",
+                    true => "diagnostic.error_fg",
+                    false => "diagnostic.warning_fg",
                 },
                 "ui.popup_bg",
                 &["bold"],
@@ -1488,7 +1585,7 @@ fn grave_box(k: &Destructive, target: impl Fn(usize) -> Target + 'static) -> Nod
         line(k.message.clone(), ink()),
         row().flex(1),
         row().h(Sizing::Cells(1)).children(kids),
-        line(k.help.clone(), pair("ui.line_number_fg", "ui.popup_bg")),
+        line(k.help.clone(), pair("editor.line_number_fg", "ui.popup_bg")),
     ])
 }
 
@@ -1551,7 +1648,7 @@ mod tests {
     use fresh_ui::{Size, Ui};
 
     fn chrome() -> Chrome {
-        let dim = pair("ui.line_number_fg", "ui.popup_bg");
+        let dim = pair("editor.line_number_fg", "ui.popup_bg");
         Chrome {
             title: " Settings [user] ".into(),
             search: Search::Hint(vec![Span::new("Press / to search settings...", dim)]),
@@ -1633,7 +1730,7 @@ mod tests {
                 }),
                 suffix: vec![Span::new(
                     " (3 results)",
-                    pair("ui.line_number_fg", "ui.popup_bg"),
+                    pair("editor.line_number_fg", "ui.popup_bg"),
                 )],
             },
             // A search replaces the body, so neither the tree nor the page
@@ -1696,6 +1793,7 @@ mod tests {
                         key: None,
                     },
                     focus_key: String::new(),
+                    hovered_popup_row: String::new(),
                     description: None,
                     layer: None,
                     selected: index == 0,
@@ -1906,15 +2004,26 @@ mod tests {
         assert_eq!(r.x, (200 - MAX_WIDTH as i32) / 2);
     }
 
-    /// **Beside the dock.** The painter added `area.x` back by hand because
-    /// centring on the frame put the modal's left edge under the dock, which
-    /// over-drew its title bar and clipped its rounded corner.
+    /// **Over the dock, not beside it.** The painter's own words: "`area` is
+    /// the whole frame — these are full-screen modals, so the dim pass covers
+    /// the dock column too and each dialog centres in the full window."
+    ///
+    /// It said that *and* nudged the box right by `area.x`, because it drew
+    /// the dock after the modal and a left edge under the dock came out
+    /// over-drawn — its title bar back on top, its rounded corner clipped. The
+    /// tree has no such ordering problem: a layer folds in the overlay band,
+    /// after every legacy painter, so the box keeps the whole frame's centre
+    /// and the dock dims behind it.
     #[test]
-    fn the_box_centres_beside_the_dock() {
+    fn the_box_centres_on_the_frame_over_a_dock() {
         let ui = laid_out(200, 60, Some(40));
         let r = boxed(&ui);
-        assert!(r.x >= 40, "clear of the dock, at {}", r.x);
-        assert_eq!(r.x, 40 + (160 - (160 * 90 / 100)) / 2);
+        assert_eq!(
+            r.x,
+            (200 - MAX_WIDTH as i32) / 2,
+            "the dock does not move the box"
+        );
+        assert!(r.x < 40, "and its left edge is inside the dock column");
     }
 
     /// An area below the guard has no dialog in it — the painter writes that

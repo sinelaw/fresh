@@ -94,6 +94,11 @@ pub struct Ctx<'a> {
     /// The `List`/`Tree` row the pointer is over. Every row of one list
     /// shares the list's own key, so the row identity travels separately.
     pub hovered_item_key: String,
+    /// The open dropdown pop-over's hovered option, as a decimal index, or
+    /// empty. A pop-over's rows are not panel rows, so the runtime's own hover
+    /// probe never sees them; the tree reports this one and hands it back here
+    /// for the sub-render that draws the rows.
+    pub hovered_popup_row: String,
     /// Row budget for auto-sized `List`/`Tree` widgets, when the host knows
     /// the surface's inner height.
     pub avail_height: Option<u32>,
@@ -133,6 +138,7 @@ impl Ctx<'static> {
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
             avail_height: None,
             surface: panel_surface(),
         }
@@ -308,6 +314,53 @@ impl Site {
     }
 }
 
+/// The ground a row's own runs are built from, for each state the list reports.
+///
+/// **It has to agree with `row_theme` cell for cell.** The theme names the row
+/// node, which fills the row; the builder's runs then paint over that fill, and
+/// every run built from an editor `TextPropertyEntry` carries *both* halves —
+/// a description has no "already" for a fill to show through. Built from the
+/// plain ground while the theme filled a selection colour, a selected row came
+/// out highlighted only in the gaps between its glyphs. That is what the
+/// orchestrator dock's active session looked like: a band on the padding after
+/// the name and nowhere else.
+/// The whole-entry style a `Row`'s leading child would have tinted its merged
+/// line with, if there is one.
+///
+/// **A Row of inline pieces is one line, and its ground is its leading
+/// child's.** The runtime collapses such a row into a single
+/// `TextPropertyEntry` (`assemble_inline_row`), and `merge_inline` keeps the
+/// *first* piece's whole-entry `style` while dropping every later one's — so a
+/// plugin tints the whole strip by putting the style on the first child and
+/// says so out loud: "a Row's inline collapse keeps the leading child's entry
+/// style for the merged line ... `base` tints the title, the spacer, and the
+/// button alike" (`orchestrator.ts`, `dockTitleRow`).
+///
+/// Laid as separate nodes, that tint stopped where the first child's text
+/// stopped: the dock's title bar was a band the width of the word
+/// "Orchestrator" with the rest of the row on the editor's ground.
+fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::OverlayOptions> {
+    match children.first()? {
+        WidgetSpec::Raw { entries, .. } => entries.first()?.style.as_ref(),
+        _ => None,
+    }
+}
+
+fn row_surface(st: fresh_ui::widgets::RowState, plain: &Ink) -> Ink {
+    use fresh_ui::widgets::RowState;
+    match st {
+        RowState::Selected | RowState::SelectedBlur => Ink::new(
+            Paint::key("ui.popup_selection_fg"),
+            Paint::key("ui.popup_selection_bg"),
+        ),
+        RowState::Hover => Ink::new(
+            Paint::key("ui.menu_hover_fg"),
+            Paint::key("ui.menu_hover_bg"),
+        ),
+        RowState::Normal => plain.clone(),
+    }
+}
+
 fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMsg> {
     let axis = site.axis;
     match spec {
@@ -329,13 +382,33 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 children,
                 width as u32,
             );
+            // An inline-only row's ground is its leading child's — see
+            // `leading_row_style`. A themed node emits its own fill, so the
+            // band spans the row; the children are built *from* the same ink
+            // so their own runs do not paint the editor's ground back over it.
+            let inline_only = !children
+                .iter()
+                .any(crate::widgets::kinds::containers::predicts_block);
+            let band = match inline_only {
+                true => leading_row_style(children).map(|st| ink_of(st, &cx.surface)),
+                false => None,
+            };
+            let inner = Ctx {
+                surface: band.clone().unwrap_or_else(|| cx.surface.clone()),
+                states: cx.states,
+                focus_key: cx.focus_key.clone(),
+                hovered_key: cx.hovered_key.clone(),
+                hovered_item_key: cx.hovered_item_key.clone(),
+                hovered_popup_row: cx.hovered_popup_row.clone(),
+                ..*cx
+            };
             let r = row().children(
                 children
                     .iter()
                     .zip(widths)
                     .map(|(c, w)| {
                         let w = (w as u16).max(1);
-                        let n = node_in(c, w, cx, site.across());
+                        let n = node_in(c, w, &inner, site.across());
                         match crate::widgets::kinds::containers::predicts_block(c) {
                             true => n.w(Sizing::Cells(w)),
                             false => n,
@@ -343,6 +416,10 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                     })
                     .collect::<Vec<_>>(),
             );
+            let r = match &band {
+                Some(ink) => r.theme(ink.to_string()),
+                None => r,
+            };
             match wrap {
                 true => r.wrap_children(),
                 false => r,
@@ -777,7 +854,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             let slot = cx.slot;
             let sel = *selected_index;
             let hit_keys = keys.clone();
-            let list = fresh_ui::List::windowed(
+            let list = fresh_ui::List::windowed_stateful(
                 n,
                 {
                     let keys = keys.clone();
@@ -790,7 +867,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 {
                     let rows = rows.clone();
                     let surface = cx.surface.clone();
-                    move |i| entry_row(&rows[i], &surface)
+                    move |i, st| entry_row(&rows[i], &row_surface(st, &surface))
                 },
             )
             // The panel's focus is the host's — the runtime resolves a focus
@@ -799,16 +876,8 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             .focusable(false)
             .scrollbar()
             .row_theme({
-                let plain = cx.surface.to_string();
-                move |_, st| match st {
-                    fresh_ui::widgets::RowState::Selected
-                    | fresh_ui::widgets::RowState::SelectedBlur => Ink::new(
-                        Paint::key("ui.popup_selection_fg"),
-                        Paint::key("ui.popup_selection_bg"),
-                    )
-                    .to_string(),
-                    _ => plain.clone(),
-                }
+                let plain = cx.surface.clone();
+                move |_, st| row_surface(st, &plain).to_string()
             })
             .on_activate_handler(Rc::new(move |i| {
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
@@ -835,10 +904,18 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                     at: None,
                 }))
             }));
-            let list = match sel >= 0 {
-                true => list.selected(sel as usize),
-                false => list,
-            };
+            // **`-1` is a controlled empty selection, not "no opinion".** A
+            // `WidgetSpec::List` says which row is selected and says `-1` when
+            // none is — the settings `[+] Add new` sentinel is a one-row list
+            // that is only selected when the arrows are on it. Leaving the
+            // element to its own selection highlighted row zero, so the
+            // sentinel looked focused whether it was or not, and on a selected
+            // card the real row highlight was the same colour as the band it
+            // sat in.
+            let list = list.selection(match sel >= 0 {
+                true => Some(sel as usize),
+                false => None,
+            });
             let node = fresh_ui::ComponentExt::node(list);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(*r as u16)),
@@ -889,6 +966,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                         focus_key: &cx.focus_key,
                         hover_key: cx.hovered_key.as_deref().unwrap_or(""),
                         hover_item_key: &cx.hovered_item_key,
+                        hover_popup_row: "",
                         markdown: None,
                         marker_gutter: cx.marker_gutter,
                         avail_height: cx.avail_height,
@@ -1189,7 +1267,8 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             let row_at = {
                 let (nodes, keys, visible) = (nodes.clone(), keys.clone(), visible.clone());
                 let tree_key = tree_key.clone();
-                move |i: usize| -> Node<UiMsg> {
+                move |i: usize, st: fresh_ui::widgets::RowState| -> Node<UiMsg> {
+                    let surface = row_surface(st, &surface);
                     let abs = visible[i];
                     let mut node = nodes[abs].clone();
                     node.text.normalize_widths();
@@ -1267,7 +1346,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 }
             };
 
-            let list = fresh_ui::List::windowed(
+            let list = fresh_ui::List::windowed_stateful(
                 n,
                 {
                     let (keys, visible) = (keys.clone(), visible.clone());
@@ -1285,24 +1364,15 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             .focusable(false)
             .scrollbar()
             .row_theme({
-                let plain = cx.surface.to_string();
-                move |_, st| match st {
-                    fresh_ui::widgets::RowState::Selected
-                    | fresh_ui::widgets::RowState::SelectedBlur => Ink::new(
-                        Paint::key("ui.popup_selection_fg"),
-                        Paint::key("ui.popup_selection_bg"),
-                    )
-                    .to_string(),
-                    _ => plain.clone(),
-                }
+                let plain = cx.surface.clone();
+                move |_, st| row_surface(st, &plain).to_string()
             });
             // The spec's selection is an index into the *whole* array; the
             // list's is into the visible window, which is the same array with
             // the collapsed subtrees taken out.
-            let list = match visible.iter().position(|&a| a as i32 == sel_abs) {
-                Some(i) => list.selected(i),
-                None => list,
-            };
+            // A selection the window does not contain is *no* selection here,
+            // not the element's own — see the `List` arm above.
+            let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
             let node = fresh_ui::ComponentExt::node(list);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(*r as u16)),
@@ -1356,6 +1426,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                     focus_key: &cx.focus_key,
                     hover_key: cx.hovered_key.as_deref().unwrap_or(""),
                     hover_item_key: &cx.hovered_item_key,
+                    hover_popup_row: "",
                     markdown: None,
                     marker_gutter: cx.marker_gutter,
                     avail_height: cx.avail_height,
@@ -1405,10 +1476,7 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
             // "Selected" here means "where the caret is", which is what the
             // list reveals when it moves. That is the whole of the auto-clamp
             // the runtime did by hand.
-            let list = match sel {
-                Some(i) => list.selected(i),
-                None => list,
-            };
+            let list = list.selection(sel);
             let body = fresh_ui::ComponentExt::node(list).h(Sizing::Cells(*rows as u16));
             match head {
                 0 => body,
@@ -1541,6 +1609,7 @@ fn collected(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, escape: u16) -> Node<U
             focus_key: &cx.focus_key,
             hover_key: cx.hovered_key.as_deref().unwrap_or(""),
             hover_item_key: &cx.hovered_item_key,
+            hover_popup_row: &cx.hovered_popup_row,
             markdown: None,
             marker_gutter: cx.marker_gutter,
             avail_height: cx.avail_height,
@@ -1716,6 +1785,21 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
 /// `Dropdown` crosses through the adapter rather than waiting for a
 /// substitution, unlike the kinds whose scrollbar the painter draws.
 fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
+    // **A float sits on its own ground, not on its trigger's.** `cx.surface`
+    // is whatever the widget that opened this is standing on — and in the
+    // settings dialog that is the selected card's *band*, so every option in
+    // the list came out painted in the selection colour and the one actually
+    // selected was indistinguishable from the rest. The box names its ground
+    // one line below; the rows are built from the same.
+    let ground = Ink::new(Paint::key(BASE_FG), Paint::key("ui.popup_bg"));
+    fn hover_row(slot: Slot, index: Option<usize>) -> fresh_ui::Handler<UiMsg> {
+        std::rc::Rc::new(move |_: &fresh_ui::Event| {
+            Some(UiMsg::Ui(super::msg::UiFact::WidgetPopupHover {
+                slot,
+                index,
+            }))
+        })
+    }
     let rows: Vec<Node<UiMsg>> = p
         .entries
         .iter()
@@ -1725,7 +1809,7 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
                 e,
                 (0, e.text.len()),
                 cx.slot,
-                &cx.surface,
+                &ground,
                 crate::widgets::HitArea {
                     row_target: true,
                     context_click: false,
@@ -1740,7 +1824,18 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
                     owner_key: None,
                 },
             ),
-            None => entry_row(e, &cx.surface),
+            None => entry_row(e, &ground),
+        })
+        // The row's own hover, which nothing else can report: the runtime's
+        // probe walks the panel's entries and a pop-over floats beside them.
+        // See `UiFact::WidgetPopupHover`. A `gesture` of its own rather than
+        // listeners on the piece the hit produced, because a row split into
+        // several hit pieces is a plain `row` and only a gesture node listens.
+        .enumerate()
+        .map(|(i, n)| {
+            fresh_ui::gesture(n)
+                .on_enter(hover_row(cx.slot, p.row_indices.get(i).copied()))
+                .on_leave(hover_row(cx.slot, None))
         })
         .collect();
     // A press anywhere in the box that is not on an option — its border — is
@@ -1797,6 +1892,30 @@ fn hit_node(n: Node<UiMsg>, slot: Slot, hit: crate::widgets::HitArea) -> Node<Ui
     )
 }
 
+/// The ground an entry asks to keep past the end of its text, if it asks.
+///
+/// **`extend_to_line_end` is a word the ink grammar does not have.** The
+/// painter drew every widget row as a `Paragraph` over the whole row rect with
+/// the entry's fill style, so an overlay carrying this flag coloured the
+/// trailing cells too. A description's runs stop at the glyphs — there is no
+/// rect behind them — so a hover band ended at the toggle's chip, a selected
+/// dropdown option was highlighted over its word and not its padding, and a
+/// selected folder header in the dock's card tree lit only its name.
+///
+/// Only a background can extend: a fill paints spaces, and a foreground on a
+/// space is nothing. So this reports the ink of the last overlay that asks and
+/// carries one, and the row wears it — under its own runs, which paint over it
+/// exactly where they have glyphs.
+fn extended_ground(entry: &TextPropertyEntry, base: &Ink) -> Option<Ink> {
+    entry
+        .inline_overlays
+        .iter()
+        .filter(|o| o.style.extend_to_line_end && o.style.bg.is_some())
+        .next_back()
+        .map(|o| ink_of(&o.style, base))
+}
+
+/// One styled row, from a `TextPropertyEntry`.
 /// One styled row, from a `TextPropertyEntry`.
 ///
 /// **The load-bearing helper**: most variants of the runtime end in an entry,
@@ -1806,7 +1925,18 @@ fn hit_node(n: Node<UiMsg>, slot: Slot, hit: crate::widgets::HitArea) -> Node<Ui
 /// *names* kept instead of resolved colours, because the fold resolves them
 /// and that is what makes the row inspectable and the web able to paint it.
 pub fn entry_row(entry: &TextPropertyEntry, surface: &Ink) -> Node<UiMsg> {
-    text_runs(entry_runs(entry, &[], surface).into_iter().map(|(_, r)| r)).h(Sizing::Cells(1))
+    let n =
+        text_runs(entry_runs(entry, &[], surface).into_iter().map(|(_, r)| r)).h(Sizing::Cells(1));
+    match extended_ground(entry, surface) {
+        // Flexed as well as themed: a fill only reaches the end of the line if
+        // the node does, and "to the end of the line" is the whole claim.
+        Some(ink) => row()
+            .h(Sizing::Cells(1))
+            .w(Sizing::Flex(1))
+            .theme(ink.to_string())
+            .child(n),
+        None => n,
+    }
 }
 
 /// One styled row whose `range` of bytes answers a press with `hit`.
@@ -2019,6 +2149,9 @@ fn ink_of(o: &OverlayOptions, under: &Ink) -> Ink {
         (o.italic, Attrs::ITALIC),
         (o.underline, Attrs::UNDERLINE),
         (o.strikethrough, Attrs::STRIKETHROUGH),
+        // The block caret. Dropping it left a focused field's bracketed cell
+        // empty while it was being typed into — see `Attrs::REVERSED`.
+        (o.reversed, Attrs::REVERSED),
     ] {
         if on {
             attrs = attrs | a;
@@ -2057,6 +2190,7 @@ mod tests {
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
             avail_height: None,
             surface: panel_surface(),
         }
@@ -2084,6 +2218,51 @@ mod tests {
     /// the display list, in paint order.
     fn tree_rows(spec: &WidgetSpec) -> Vec<String> {
         tree_text(spec, &cx())
+    }
+
+    /// **A title bar's tint spans its strip, and its button stays at the
+    /// right edge.**
+    ///
+    /// The runtime collapses an inline-only `Row` into one entry and keeps the
+    /// *leading* child's whole-entry style for the merged line, which is how
+    /// the orchestrator dock tints its title bar and pins its `[×]`. Both
+    /// halves have to survive the tree: the oracle is the runtime itself.
+    #[test]
+    fn a_title_rows_band_spans_it_and_its_button_stays_right() {
+        use fresh_core::api::{OverlayColorSpec, OverlayOptions};
+        let mut title = TextPropertyEntry::text("Orchestrator");
+        title.style = Some(OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key("ui.menu_fg")),
+            bg: Some(OverlayColorSpec::theme_key("ui.menu_bg")),
+            ..Default::default()
+        });
+        let spec = WidgetSpec::Row {
+            children: vec![
+                WidgetSpec::Raw {
+                    entries: vec![title],
+                    key: None,
+                },
+                WidgetSpec::Spacer {
+                    cols: 0,
+                    flex: true,
+                    key: None,
+                },
+                WidgetSpec::Button {
+                    label: "\u{d7}".into(),
+                    focused: false,
+                    intent: Default::default(),
+                    key: Some("dock-close".into()),
+                    disabled: false,
+                    focusable: false,
+                    bare: true,
+                    full_width: false,
+                    hover_style: None,
+                },
+            ],
+            key: None,
+            wrap: false,
+        };
+        assert_eq!(runtime_rows(&spec), tree_rows(&spec));
     }
 
     fn hint(keys: &str, label: &str) -> HintEntry {
@@ -3502,7 +3681,10 @@ mod tests {
             .map(|e| {
                 let mut n = e.clone();
                 n.normalize_widths();
-                n.text.trim_end_matches('\n').trim_end().to_string()
+                // Not `trim_end`: the pop-over pads every row to the widest
+                // option, and that padding is where the selected row's
+                // highlight reaches the box's edge.
+                n.text.trim_end_matches('\n').to_string()
             })
             .collect();
         let got = layer_rows(&ui);

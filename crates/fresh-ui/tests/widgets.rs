@@ -281,6 +281,47 @@ fn the_selected_row_is_marked_in_the_display_list() {
     assert_eq!(themes_of(&ui, "item 3"), vec!["list.row"]);
 }
 
+/// **A controlled selection can be empty, and an empty one marks nothing.**
+///
+/// `selected(i)` says two things at once — "the owner holds the selection" and
+/// "it is on row i" — so an owner whose selection is empty could only omit it,
+/// which hands the selection back to the element and its own starts at row
+/// zero. A one-row list that is only selected when the keyboard is on it (a
+/// settings field's `[+] Add new` sentinel) then looked selected always.
+#[test]
+fn a_controlled_empty_selection_marks_no_row() {
+    let items: Vec<usize> = (0..6).collect();
+    let list = |sel: Option<usize>| {
+        List::keyed(
+            &items,
+            |i| fresh_ui::Key::from(*i),
+            |i| fresh_ui::text(format!("item {i}")),
+        )
+        .selection(sel)
+        .on_select(Msg::Selected)
+        .on_activate(Msg::Activated)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(None), FRAME);
+    for i in 0..6 {
+        assert_eq!(
+            themes_of(&ui, &format!("item {i}")),
+            vec!["list.row"],
+            "row {i} must not be marked while the selection is empty"
+        );
+    }
+    // Confirm has nothing to confirm; the arrows start a walk from either end.
+    key(&mut ui, KeyCode::Tab);
+    assert_eq!(key(&mut ui, KeyCode::Enter), Vec::<Msg>::new());
+    assert_eq!(key(&mut ui, KeyCode::Down), vec![Msg::Selected(0)]);
+    ui.frame(list(None), FRAME);
+    assert_eq!(key(&mut ui, KeyCode::Up), vec![Msg::Selected(5)]);
+    // And a selection that is `Some` still marks its row.
+    ui.frame(list(Some(2)), FRAME);
+    assert_eq!(themes_of(&ui, "item 2"), vec!["list.row.selected"]);
+}
+
 /// **A host names its own row appearance.** The stamped vocabulary
 /// (`list.row.selected` and the rest) overwrites whatever the row builder set,
 /// so a host migrating a surface that already has theme names had no way to
