@@ -290,14 +290,10 @@ impl Editor {
                     );
                 }
 
-                // The reactions keyed on the pointer's *cell* rather than on
-                // what is under it — the dock's overlay scrollbar, which
-                // reveals itself while the pointer is over the sessions list.
-                // The target-keyed reactions are driven by `UiFact::Hover`,
-                // where the target comes from.
-                for c in super::chrome::components() {
-                    needs_render = c.on_pointer_moved(self, col, row) || needs_render;
-                }
+                // The cell-keyed fan-out was here, for one reaction: the
+                // dock's overlay scrollbar. Its column is a node and reports
+                // its own Enter and Leave, so every motion event no longer has
+                // to be offered to every component to find out.
 
                 // Ctrl+hover over a resolvable path in the live terminal
                 // underlines it to signal it's clickable. RULING: stays

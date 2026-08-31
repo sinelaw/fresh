@@ -101,6 +101,14 @@ pub struct Interior {
     /// empty. See [`super::widgets::Ctx::hovered_popup_row`].
     pub hovered_popup_row: String,
     pub marker_gutter: bool,
+    /// The row budget auto-sized lists and trees are windowed to.
+    ///
+    /// `None` for a pane-mounted panel, and that is not "unknown": the dock
+    /// and the floating panel know their inner height as *state* — it is the
+    /// box they were placed in — while a pane's is whatever rectangle layout
+    /// hands the subtree, so `Slot::Pane` reads it off its own constraints
+    /// instead. Recording it here would be a paint-time rectangle travelling
+    /// back into the description that produced it.
     pub avail_height: Option<u32>,
     /// See [`super::widgets::Ctx::scrollbar_reveal`].
     pub scrollbar_reveal: Option<bool>,

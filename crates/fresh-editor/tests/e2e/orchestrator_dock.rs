@@ -744,10 +744,11 @@ fn dock_list_scrollbar_shows_only_on_hover() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    // The dock's bar is an overlay: it floats over the last column of the
-    // panel's inner area — the slack column between the content and the
-    // divider — rather than carving a gutter out of the content.
-    let sb_col = wall_col.saturating_sub(1);
+    // The dock's bar is an overlay — it floats over the last column of the
+    // list rather than carving a gutter out of it — and the list is as wide
+    // as the panel wraps, which is two columns short of the divider: one for
+    // the divider, one for the slack column the runtime wraps against.
+    let sb_col = wall_col.saturating_sub(2);
     // Styles of the scrollbar column across the list rows; the bar's presence
     // shows up as a change here (it paints background-coloured cells).
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
@@ -815,10 +816,11 @@ fn dock_scrollbar_ignores_stale_per_window_cursor_when_blurred() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    // The dock's bar is an overlay: it floats over the last column of the
-    // panel's inner area — the slack column between the content and the
-    // divider — rather than carving a gutter out of the content.
-    let sb_col = wall_col.saturating_sub(1);
+    // The dock's bar is an overlay — it floats over the last column of the
+    // list rather than carving a gutter out of it — and the list is as wide
+    // as the panel wraps, which is two columns short of the divider: one for
+    // the divider, one for the slack column the runtime wraps against.
+    let sb_col = wall_col.saturating_sub(2);
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
     };
@@ -3125,10 +3127,11 @@ fn dock_list_scrollbar_flashes_on_keyboard_nav_and_expires() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    // The dock's bar is an overlay: it floats over the last column of the
-    // panel's inner area — the slack column between the content and the
-    // divider — rather than carving a gutter out of the content.
-    let sb_col = wall_col.saturating_sub(1);
+    // The dock's bar is an overlay — it floats over the last column of the
+    // list rather than carving a gutter out of it — and the list is as wide
+    // as the panel wraps, which is two columns short of the divider: one for
+    // the divider, one for the slack column the runtime wraps against.
+    let sb_col = wall_col.saturating_sub(2);
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
     };

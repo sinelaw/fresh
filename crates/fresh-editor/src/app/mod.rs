@@ -1599,14 +1599,15 @@ pub(crate) struct FloatingWidgetState {
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
-    /// Screen-space regions (one per overflowing list) over which the
-    /// pointer reveals that list's overlay scrollbar. Refreshed every
-    /// draw alongside `scrollbar_tracks`; empty when no list overflows.
-    /// Only the dock populates this — its scrollbars are hover-revealed.
-    pub scrollbar_hover_zones: Vec<ratatui::layout::Rect>,
-    /// Whether the pointer was last seen inside a `scrollbar_hover_zone`.
-    /// Memoised so the mouse-move handler only forces a re-render on the
-    /// enter/leave transition rather than on every motion event.
+    /// Whether the pointer is over the dock's column.
+    ///
+    /// **The tree says so** (`UiFact::DockHover`), because the column is a
+    /// node and a node knows when the pointer crosses its edge. What this
+    /// replaced was a list of screen-space rectangles the painter's scrollbar
+    /// pass recorded every draw, which a mouse arm then tested every motion
+    /// event against — so the reveal worked only while there was a painter to
+    /// record them, and stopped when the dock's interior became a
+    /// description.
     pub scrollbar_zone_hovered: bool,
     /// Deadline until which the dock's overlay scrollbar is "flashed"
     /// visible after a keyboard selection move (Up/Down/Page in the dock
@@ -2246,7 +2247,6 @@ mod tests {
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
             last_inner_rect: None,
-            scrollbar_hover_zones: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,

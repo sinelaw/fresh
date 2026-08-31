@@ -839,6 +839,16 @@ impl Editor {
         } = body.finish();
         self.shell_ui = Some(ui);
 
+        // **A described mounted panel's caret is still the pane's caret.**
+        // Before C.5's flip the runtime wrote the panel's focus cursor into
+        // the mirror buffer and `paint_leaf` placed the hardware cursor from
+        // it; the pane's text pass no longer runs, so the cell comes from the
+        // marker node the description put at the caret's byte. It rides the
+        // same slot the buffer's caret did — through the guards that ask
+        // whether a later overlay covered it — because that is what it is.
+        let pending_hardware_cursor =
+            pending_hardware_cursor.or_else(|| self.described_pane_caret());
+
         drop(_content_span);
         let _post_content_span = tracing::info_span!("render_post_content").entered();
 
@@ -4122,6 +4132,7 @@ impl Editor {
         // nodes.
         let pane_chrome = self.pane_chrome();
         let groups = self.active_window().pane_groups();
+        let interiors = self.pane_interiors();
         let splits = self.active_window().buffers.splits().map(|(mgr, _)| {
             // Which buttons the strips carry, by the painter's own rule. Both
             // are frame-wide: they read "is there more than one pane" and "is
@@ -4137,6 +4148,7 @@ impl Editor {
                     close: several && !is_maximized,
                 },
                 groups,
+                interiors,
             }
         });
         let trust = self.trust_description(ratatui::layout::Rect {
@@ -7006,7 +7018,19 @@ impl Editor {
             .into_iter()
             .filter_map(|(pane, buffer)| self.pane_content_rect(pane).map(|r| (pane, buffer, r)))
             .collect();
+        let described = self.described_panes();
         for (split_id, buffer_id, content_rect) in &panes {
+            // **A described panel draws its own bar.** Its lists are
+            // viewports, and `Node::scrollbar` puts the bar at the list's own
+            // right edge — so this pass, which reads the runtime's
+            // `LayoutBox` scroll payloads and paints a second one at the
+            // pane's edge, is the duplicate C.5 exists to remove. Standing
+            // down here is also what empties `split_widget_scrollbar_tracks`,
+            // and with it the last thing arming `PointerGrab::WidgetScrollbar`
+            // for anything but a `WindowEmbed` panel (E.3).
+            if described.contains(split_id) {
+                continue;
+            }
             let panels = self.widget_registry.panels_for_buffer(*buffer_id);
             if panels.is_empty() {
                 continue;
@@ -7323,8 +7347,12 @@ impl Editor {
             // zero-width marker at the caret's byte, so the cell is where the
             // glyphs put it. A focused panel with no field still parks the
             // caret in its corner, for the same reason as below.
-            match self.panel_rect(&crate::view::shell::widgets::caret_key()) {
-                Some(r) => frame.set_cursor_position((r.x, r.y)),
+            let caret_slot = match is_dock {
+                true => crate::view::shell::widgets::Slot::Dock,
+                false => crate::view::shell::widgets::Slot::Floating,
+            };
+            match self.shell_cell(&crate::view::shell::widgets::caret_key(caret_slot)) {
+                Some(at) => frame.set_cursor_position(at),
                 None if panel_focused => frame.set_cursor_position((
                     inner.x + inner.width.saturating_sub(1),
                     inner.y + inner.height.saturating_sub(1),
@@ -7439,7 +7467,6 @@ impl Editor {
         let dock_overlay_scrollbar = is_dock;
         let scrollbar_flash_active =
             scrollbar_flash_until.is_some_and(|until| self.time_source().now() < until);
-        let mut scrollbar_hover_zones: Vec<ratatui::layout::Rect> = Vec::new();
         {
             use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
             let colors = ScrollbarColors::from_theme(&theme);
@@ -7482,16 +7509,6 @@ impl Editor {
                     width: 1,
                     height: sb_h,
                 };
-                // Hover zone = the list's whole visible region; hovering it
-                // anywhere reveals the bar. Recorded every draw so the
-                // mouse-move handler can re-render on enter/leave.
-                let zone = ratatui::layout::Rect {
-                    x: inner.x,
-                    y: sb_y,
-                    width: inner.width,
-                    height: sb_h,
-                };
-                scrollbar_hover_zones.push(zone);
                 let show =
                     !dock_overlay_scrollbar || scrollbar_zone_hovered || scrollbar_flash_active;
                 if !show {
@@ -7676,7 +7693,6 @@ impl Editor {
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.last_inner_rect = Some(inner);
             fwp.scrollbar_tracks = scrollbar_tracks;
-            fwp.scrollbar_hover_zones = scrollbar_hover_zones;
             fwp.popup_hits = popup_hits;
             fwp.popup_rect = popup_rect;
         }
@@ -8166,6 +8182,16 @@ impl Editor {
         crate::view::shell::rect_of(ui, key, ratatui::layout::Rect::new(0, 0, f.width, f.height))
     }
 
+    /// The cell a keyed element of the shell tree starts at, zero-size
+    /// included. See [`crate::view::shell::cell_of`] — the caret's marker is
+    /// zero-width by construction, so [`Self::panel_rect`] answers `None` for
+    /// every one of them.
+    pub(crate) fn shell_cell(&self, key: &fresh_ui::Key) -> Option<(u16, u16)> {
+        let ui = self.shell_ui.as_ref()?;
+        let f = self.active_chrome().last_frame;
+        crate::view::shell::cell_of(ui, key, ratatui::layout::Rect::new(0, 0, f.width, f.height))
+    }
+
     /// The panel's interior as a description, when every variant of its spec
     /// is one the tree describes.
     ///
@@ -8179,6 +8205,23 @@ impl Editor {
     /// `None` sends the whole panel down the runtime's path. A panel is
     /// described or painted and never half of each, so `covered` asks the
     /// whole tree — see `view::shell::widgets::covered`.
+    /// The mounted panel a pane is showing, if it is showing one.
+    ///
+    /// **A pane is one buffer, and a buffer names its panel.** That is the
+    /// whole of what `Slot::Pane` has to carry: everything else about a
+    /// mounted panel — its spec, its state, its hits — is the same as the
+    /// dock's, because `widgets::node` never asks where a surface lives.
+    pub(crate) fn pane_panel_key(
+        &self,
+        pane: crate::model::event::LeafId,
+    ) -> Option<crate::widgets::PanelKey> {
+        let buffer = self.active_window().pane_buffer(pane)?;
+        self.widget_registry
+            .panels_for_buffer(buffer)
+            .into_iter()
+            .next()
+    }
+
     /// Whether the tree describes this panel's interior, without building it.
     ///
     /// [`Self::panel_interior`] clones the spec and the whole instance-state
@@ -8189,6 +8232,179 @@ impl Editor {
         self.panel(slot)
             .and_then(|p| self.widget_registry.get(&p.panel_key))
             .is_some_and(|w| crate::view::shell::widgets::covered(&w.spec))
+    }
+
+    /// The described mounted panel each visible pane is showing.
+    ///
+    /// Every pane of this window, the panes *inside* a buffer group included —
+    /// a group's leaves are panes of the same grid, dispatched into their
+    /// outer pane's interior, and the review-diff sidebar is exactly one of
+    /// them. Empty for a window whose panes all show buffers, which is the
+    /// common case and costs one walk of the split tree.
+    pub(crate) fn pane_interiors(
+        &self,
+    ) -> std::collections::HashMap<crate::model::event::LeafId, crate::view::shell::panel::Interior>
+    {
+        let mut out = std::collections::HashMap::new();
+        for (leaf, buffer) in self.window_panes() {
+            if let Some(i) = self.pane_panel_interior(buffer) {
+                out.insert(leaf, i);
+            }
+        }
+        out
+    }
+
+    /// The cell the *active* pane's described panel put its caret in.
+    ///
+    /// Only the active pane's, and that is the whole subtlety: a panel reports
+    /// a focused field from its own plugin state, which does not stop being
+    /// true because the keyboard went somewhere else. The search panel in the
+    /// pane below goes on saying its query field is focused while you type in
+    /// the buffer above it, so asking any pane would park the hardware cursor
+    /// in a panel nobody is editing. `caret_key` is keyed per pane so the
+    /// question can be asked of one.
+    fn described_pane_caret(&self) -> Option<(u16, u16)> {
+        let mgr = self.active_window().buffers.splits().map(|(m, _)| m)?;
+        let active = mgr.active_split();
+        if !self.described_panes().contains(&active) {
+            return None;
+        }
+        let key =
+            crate::view::shell::widgets::caret_key(crate::view::shell::widgets::Slot::Pane(active));
+        self.shell_cell(&key)
+    }
+
+    /// The panes the shell tree describes rather than paints.
+    ///
+    /// The key set [`Self::pane_interiors`] would produce, answered without
+    /// building one: this is the painter's question, asked once per frame, and
+    /// an `Interior` clones the spec and the whole instance-state map.
+    pub(crate) fn described_panes(&self) -> std::collections::HashSet<crate::model::event::LeafId> {
+        self.window_panes()
+            .into_iter()
+            .filter(|(_, buffer)| self.pane_panel_is_described(*buffer))
+            .map(|(leaf, _)| leaf)
+            .collect()
+    }
+
+    /// Every pane of the active window with the buffer it shows — the panes
+    /// *inside* a buffer group included.
+    ///
+    /// A group's leaves are panes of the same grid, dispatched at render time
+    /// into their outer pane's interior, and `SplitManager::visible_leaves`
+    /// does not walk into them because a group's layout lives in a side map.
+    /// Both halves of C.5 need the same list, so it is stated once.
+    fn window_panes(&self) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
+        let win = self.active_window();
+        let Some((mgr, _)) = win.buffers.splits() else {
+            return Vec::new();
+        };
+        let mut out = mgr.visible_leaves();
+        for g in win.pane_groups().values() {
+            out.extend(g.visible_leaves());
+        }
+        out
+    }
+
+    /// The `Interior` for the panel a pane's buffer holds, when it is one the
+    /// adapter covers.
+    ///
+    /// The pane half of [`Self::panel_interior`], and the differences are the
+    /// four facts a mounted panel does not have. It reserves no focus-marker
+    /// gutter (`rerender_widget_panel` passes `focus_marker: false` for a
+    /// panel with no slot). It carries no hover memo, because the runtime's
+    /// `update_widget_hover` only ever probed the dock and the floating panel
+    /// — a mounted panel's rows have never lit under the pointer, so nothing
+    /// is lost by not saying so. Its bars are ordinary bars, not the dock's
+    /// overlay pair. And its row budget is layout's, not state's — see
+    /// [`crate::view::shell::panel::Interior::avail_height`].
+    fn pane_panel_interior(
+        &self,
+        buffer: fresh_core::BufferId,
+    ) -> Option<crate::view::shell::panel::Interior> {
+        use std::rc::Rc;
+        if !self.pane_panel_owns_its_scroll(buffer) {
+            return None;
+        }
+        let key = self
+            .widget_registry
+            .panels_for_buffer(buffer)
+            .into_iter()
+            .next()?;
+        let spec = self.widget_registry.get(&key)?.spec.clone();
+        if !crate::view::shell::widgets::covered(&spec) {
+            return None;
+        }
+        Some(crate::view::shell::panel::Interior {
+            spec: Rc::new(spec),
+            states: Rc::new(
+                self.widget_registry
+                    .instance_states(&key)
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            focus_key: self
+                .widget_registry
+                .focus_key(&key)
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+        })
+    }
+
+    /// Whether the tree describes this pane's mounted panel, without building
+    /// it — the painter's half of the gate, asked once per pane per frame.
+    ///
+    /// Same shape and same reason as [`Self::panel_is_described`]: the
+    /// interior clones the spec and the whole instance-state map, which is the
+    /// right price where the description is built and the wrong one in a
+    /// paint loop.
+    pub(crate) fn pane_panel_is_described(&self, buffer: fresh_core::BufferId) -> bool {
+        if !self.pane_panel_owns_its_scroll(buffer) {
+            return false;
+        }
+        self.widget_registry
+            .panels_for_buffer(buffer)
+            .into_iter()
+            .next()
+            .and_then(|key| self.widget_registry.get(&key))
+            .is_some_and(|w| crate::view::shell::widgets::covered(&w.spec))
+    }
+
+    /// Whether a mounted panel's buffer is one the **panel** scrolls rather
+    /// than the pane.
+    ///
+    /// **This is C.5's real boundary, and the pre-existing code drew it
+    /// first.** `handle_editor_click` has two answers for a click in a mounted
+    /// panel: a *non-scrollable* buffer — "it owns its own scroll window, e.g.
+    /// Search & Replace" — takes the focus and stops, deliberately, because
+    /// "the buffer's cursor is hidden, but the viewport still follows it, so
+    /// the click scrolls the panel's own header and buttons out of view".
+    /// A *scrollable* one falls through to cursor placement, and that is a
+    /// contract plugins read: `git_log`'s commit list says "Selection is
+    /// cursor-driven … a row click places the buffer cursor, and
+    /// `cursor_moved` mirrors it into the selection."
+    ///
+    /// A described panel cannot honour that half. Its rows are laid out by the
+    /// tree, so the mirror's line *n* is no longer screen row *n* once a list
+    /// inside it scrolls, and the screen→line projection the caret needs
+    /// (`view_line_mappings`) is filled by the very text pass a described pane
+    /// does not run. And it does not need to: the panels that own their scroll
+    /// are the ones this was designed for, and they never had a caret to
+    /// place.
+    ///
+    /// So the flip takes the panels whose scroll is their own and leaves the
+    /// ones that ride the buffer's — not as a deferral of taste, but because
+    /// the second group's scroll and the second group's cursor are the same
+    /// mechanism, and replacing it is C.2's substitution rather than this
+    /// step's.
+    fn pane_panel_owns_its_scroll(&self, buffer: fresh_core::BufferId) -> bool {
+        self.active_window().is_non_scrollable_buffer(buffer)
     }
 
     pub(crate) fn panel_interior(

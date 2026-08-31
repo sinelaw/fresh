@@ -5,48 +5,17 @@ use super::{ChromeComponent, Editor};
 pub(crate) struct Dock;
 
 impl ChromeComponent for Dock {
-    fn on_pointer_moved(&self, ed: &mut Editor, col: u16, row: u16) -> bool {
-        // **Only while the dock is painted.** The zones below are rectangles
-        // the painter's scrollbar pass records on its way past, and a
-        // described dock never reaches that pass — so an empty list is not
-        // "the pointer is nowhere near", it is "nothing here has an opinion",
-        // and answering `false` anyway would overwrite the memo the tree's
-        // own `UiFact::DockHover` had just set. The tree's is the one to
-        // keep; this arm retires with the safety valve it belongs to.
-        if ed
-            .dock
-            .as_ref()
-            .is_none_or(|d| d.scrollbar_hover_zones.is_empty())
-        {
-            return false;
-        }
-        // The dock's overlay scrollbar follows the pointer: reveal it
-        // while the mouse is over the sessions list, hide it otherwise.
-        // Tracked off the actual motion events we receive (not gated on
-        // `mouse_hover_enabled`, which only governs terminal-level mode
-        // 1003 — and is off by default on Windows): if a Moved event
-        // arrives, use it. Keyed on the cell, not on a hover target, which
-        // is why it is `on_pointer_moved` and not `on_hover_change`.
-        // Re-render only on the enter/leave transition (not every
-        // motion) so it fades in/out without churn.
-        let now_over = ed
-            .dock
-            .as_ref()
-            .map(|d| {
-                d.scrollbar_hover_zones.iter().any(|z| {
-                    col >= z.x && col < z.x + z.width && row >= z.y && row < z.y + z.height
-                })
-            })
-            .unwrap_or(false);
-        if let Some(d) = ed.dock.as_mut() {
-            if d.scrollbar_zone_hovered != now_over {
-                d.scrollbar_zone_hovered = now_over;
-                return true;
-            }
-        }
-        false
-    }
-
+    // **No `on_pointer_moved` either, and the reason is the same shape.**
+    // The dock's overlay scrollbar reveals itself while the pointer is over
+    // the column, and this arm answered that by testing every motion event's
+    // cell against `scrollbar_hover_zones` — rectangles the painter's
+    // scrollbar pass recorded on its way past, so the reveal only worked
+    // while there was a painter to record them.
+    //
+    // The column is a node, and a node knows when the pointer crosses its
+    // edge: `view::shell::dock::column` reports it as `UiFact::DockHover`,
+    // for a painted interior exactly as for a described one, because the
+    // gesture wraps the `Host` leaf and the description alike.
     // **No `on_layer_key`.** A focused dock's keys are the tree's now
     // (`view::shell::panel::keys_layer`): a `Modality::Focus` layer confines
     // the keyboard to the panel without swallowing the shortcuts it does not
