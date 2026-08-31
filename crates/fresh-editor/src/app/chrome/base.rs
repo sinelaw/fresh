@@ -37,19 +37,18 @@ impl ChromeComponent for Base {
         ));
     }
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &crate::app::overlay::Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
-        // The keyboard owner of last resort ALWAYS answers — the walk
-        // terminates here (`handle_key` relies on it).
-        Some(
-            ed.dispatch_base_key(event.code, event.modifiers)
-                .map(|_| crate::input::handler::InputResult::Consumed),
-        )
-    }
+    // **No `on_layer_key`, because there is no walk left to be on.** The
+    // keyboard owner of last resort ALWAYS answered, so the walk terminated
+    // here — and every other member has since crossed: the four modals and
+    // the context menu claim by containment, the menu and the popups by their
+    // own layers, the prompt and the two plugin panels by `Modality::Focus`,
+    // and the unfocused-popup interception turned out to be a rung of the
+    // keymap rather than a layer's dispatch (see `dispatch_base_key`). A walk
+    // over one entry is a call, so `handle_key` makes it.
+    //
+    // `layers` above stays: the `EDITOR_BASE` layer is what `get_key_context`
+    // resolves against and what the PTY gate counts. Those two are what A.4
+    // has left to derive.
 }
 
 /// Behavior owned by this component: the key pipeline's tail (moved
@@ -62,13 +61,27 @@ impl Editor {
     /// dismissed a popup (completion returning `Ignored` closes it via
     /// deferred actions), and the old pipeline's post-modal recalc is
     /// exactly this.
-    pub(super) fn dispatch_base_key(
+    pub(crate) fn dispatch_base_key(
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
         use crate::input::router;
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+
+        // **The unfocused-popup interception, first.** A merely-visible popup
+        // holds no focus, so nothing in the tree is listening for it, and the
+        // user's bound popup-cancel (default Esc) and popup-focus (default
+        // Alt+T) are ordinary editor bindings that must still find it — which
+        // makes this a rung of the keymap rather than a layer's dispatch. It
+        // rode `chrome::Popups::on_layer_key` at `layer_rank::POPUP` only
+        // because the ranked walk was the one place a rung could sit; the two
+        // ranks between it and this one are off the walk now, so running it
+        // here is the same order it always had.
+        if let Some(r) = self.dispatch_popup_keys(&key_event) {
+            return r.map(|_| ());
+        }
+
         let context = self.get_key_context();
 
         // Only check buffer mode keybindings when the editor buffer has focus.

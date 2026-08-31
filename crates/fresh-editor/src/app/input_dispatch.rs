@@ -100,61 +100,6 @@ impl Editor {
         None
     }
 
-    /// THE key walk: iterate the owner-stamped overlay stack
-    /// ([`Editor::overlay_stack`]) top-down, offering the key to each
-    /// layer's declaring component through
-    /// [`crate::app::chrome::ChromeComponent::on_layer_key`] — the
-    /// keyboard analogue of `dispatch_pointer` walking `hit_stack`
-    /// over owner-stamped boxes. A component consuming stops the
-    /// walk; a declining layer (`None`) falls through to the next
-    /// layer down. Routing is DERIVED from the registered layers —
-    /// no kind ladder; a new surface registers a component and its
-    /// keys route with no edit here.
-    ///
-    /// Returns `None` when no layer claims the key, letting
-    /// `handle_key` fall through to the pipeline tail (mode bindings,
-    /// the composite router, chord/keybinding resolution — slice K4's
-    /// migration target).
-    ///
-    /// Every modal band routes through this walk: the capture-all
-    /// modals (Settings, KeybindingEditor, CalibrationWizard, Menu),
-    /// the workspace-trust prompt, the prompt rungs
-    /// (`dispatch_prompt_key`), and the popup rungs
-    /// (`dispatch_popup_keys`) — each reached at its layer's declared
-    /// rank, in the same stack `get_key_context()`, the
-    /// terminal-input gate and the mouse modal-capture path read.
-    ///
-    /// RULING — why the keyboard side does NOT get the mouse side's
-    /// one-derived-structure-per-event treatment: the stack below is
-    /// built once for THE WALK's routing, but handlers may MUTATE
-    /// state and then decline (the popup rung processes a deferred
-    /// ClosePopup and falls through), so a lower handler's
-    /// `get_key_context()` must re-derive against post-mutation
-    /// state — a pre-walk snapshot would hand it a stale context.
-    /// Same-event is not same-state mid-walk here, unlike the pointer
-    /// walks (whose handlers consume whenever they mutate). The
-    /// handler-level rebuilds (`chrome/base.rs`, `chrome/dock.rs`)
-    /// are therefore load-bearing, not waste; folding them away needs
-    /// the invalidation-aware derivation recorded for the
-    /// forward-design arc (sinelaw/fresh#3024).
-    pub(super) fn dispatch_layer_keyboard(
-        &mut self,
-        event: &KeyEvent,
-    ) -> Option<AnyhowResult<InputResult>> {
-        let stack = self.overlay_stack();
-        for entry in &stack {
-            // `owner: None` is the hardcoded event-debug head — a
-            // pre-walk intercept (`handle_key` handled it already).
-            let Some(owner) = entry.owner else { continue };
-            if let Some(result) =
-                crate::app::chrome::components()[owner].on_layer_key(self, &entry.layer, event)
-            {
-                return Some(result);
-            }
-        }
-        None
-    }
-
     /// Process deferred actions collected during input handling.
     pub fn process_deferred_actions(&mut self, ctx: InputContext) {
         // Set status message if provided

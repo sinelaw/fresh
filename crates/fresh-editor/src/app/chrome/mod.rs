@@ -13,7 +13,7 @@
 //! is what keeps stale-geometry races impossible; see the plan's "what NOT
 //! to do"). It IS memoized, though: [`chrome_tree`] caches the last build
 //! and reuses it only when a VALIDATED claim holds — the coarse `ui_gen`
-//! epoch matches AND a fresh (cheap, never-memoized) `overlay_stack` build
+//! epoch matches AND a fresh (cheap, never-memoized) `overlay_layers` build
 //! equals the snapshot the cached tree was built from. Staleness is
 //! checked, not trusted: surface changes from any Editor API show up in
 //! the stack comparison without a hand-maintained bump roster, and debug
@@ -55,7 +55,6 @@ pub(crate) mod layer_rank {
     pub(crate) const DOCK: u16 = 810;
     pub(crate) const EDITOR_BASE: u16 = 0;
 }
-use anyhow::Result as AnyhowResult;
 
 /// The active pointer GRAB, if any: press-established routing that
 /// owns the pointer until release. Grabs are NOT bubble dispatch — a
@@ -199,40 +198,27 @@ pub(crate) trait ChromeComponent: Sync {
     /// component instead of a central conditional ladder.
     fn layers(&self, _ed: &Editor, _out: &mut Vec<(u16, crate::app::overlay::Layer)>) {}
 
-    /// Layer-targeted keyboard dispatch — THE key walk. After the
-    /// pre-band (event-debug, terminal input, getNextKey capture),
-    /// `Editor::dispatch_layer_keyboard` walks the
-    /// owner-stamped `overlay_stack()` top-down, offering the key to
-    /// each layer's declaring component through this method — the
-    /// keyboard analogue of `dispatch_pointer` walking `hit_stack`
-    /// over owner-stamped boxes. `None` = this layer declines and the
-    /// walk continues to the next layer down; `Some` = this layer
-    /// dealt with the key, with the handler's result — including
-    /// `Some(Ok(Ignored))`, which still stops the walk (the
-    /// query-replace confirm prompt consumes every key that way).
-    /// The error channel carries `handle_action` failures up through
-    /// `handle_key`, matching the old staged pipeline's `?`s.
-    /// Interiors stay bespoke, per the modal-mouse ruling: the
-    /// component is the dispatch slot, only ROUTING is derived.
-    fn on_layer_key(
-        &self,
-        _ed: &mut Editor,
-        _layer: &crate::app::overlay::Layer,
-        _event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
-        None
-    }
+    // **No keyboard dispatch.** This was `on_layer_key`: the key walk,
+    // offered down `layer_rank`'s ordering, the keyboard analogue of
+    // `dispatch_pointer` over owner-stamped boxes. Every member has crossed
+    // — by containment for the modals and the context menu, by their own
+    // layers for the menu and the popups, by `Modality::Focus` for the prompt
+    // and the two plugin panels — and the editor base is a direct call from
+    // `handle_key`. What a component still declares is where its layer sits
+    // and what that layer means, which is `layers` above.
 }
 
 /// The ONE chrome registry — every surface with keyboard behaviour, once.
 ///
-/// **Precedence is the layer walk's**, not this list's: `overlay_layers`
-/// ranks the layers and `on_layer_key` is offered down that ranking. Order
-/// here decides nothing any more. It used to: every gesture scanned a
-/// z-ordered list of rectangles, and within a band the registry order *was*
-/// precedence, so components pushed specific targets before guards. That walk
-/// is gone — the pointer is the shell tree's, and a `ChromeComponent` is what
-/// is left of a surface once its pointer half has migrated.
+/// **Precedence is not this list's**, and no longer anything else's here
+/// either: it is the order the frame declares its layers in. Order here
+/// decides nothing. It used to: every gesture scanned a z-ordered list of
+/// rectangles, and within a band the registry order *was* precedence, so
+/// components pushed specific targets before guards. Then it was the ranked
+/// key walk's. Both are gone — the pointer and the keyboard are the shell
+/// tree's, and a `ChromeComponent` is what is left of a surface once both its
+/// input halves have migrated: a declaration of where its layer sits in the
+/// stack `get_key_context` and the PTY gate still read.
 ///
 /// The order below is the one the pointer walk left behind, kept because it
 /// still reads as "outermost first" and nothing gains by shuffling it.
@@ -330,13 +316,13 @@ mod tests {
         assert_eq!(set.len(), ranks.len(), "two layers share a rank");
     }
 
-    /// The base-layer contract `handle_key` degrades on (and
-    /// `dispatch_layer_keyboard` terminates through): the stack of a
-    /// live editor ALWAYS ends with the editor base layer, owned by a
-    /// registered component, owning the keyboard. `Base::layers` must
-    /// never grow a state gate.
+    /// The base-layer contract: the stack of a live editor ALWAYS ends with
+    /// the editor base layer, owning the keyboard. `Base::layers` must never
+    /// grow a state gate — `get_key_context` resolves against the first
+    /// owning layer with a context and `expect`s one, so a gate here would
+    /// panic the input path.
     #[test]
-    fn overlay_stack_always_ends_with_an_owning_base_layer() {
+    fn the_stack_always_ends_with_an_owning_base_layer() {
         let temp = tempfile::tempdir().unwrap();
         let dir_context = crate::config_io::DirectoryContext::for_testing(temp.path());
         let ed = crate::app::Editor::for_test(
@@ -353,19 +339,16 @@ mod tests {
             false,
         )
         .unwrap();
-        let stack = ed.overlay_stack();
+        let stack = ed.overlay_layers();
         let last = stack.last().expect("stack never empty");
         assert!(
-            matches!(last.layer.kind, crate::app::overlay::LayerKind::Editor),
+            matches!(last.kind, crate::app::overlay::LayerKind::Editor),
             "the editor base terminates the stack"
         );
+        assert!(last.owns_keyboard, "the base always owns the keyboard");
         assert!(
-            last.layer.owns_keyboard,
-            "the base always owns the keyboard"
-        );
-        assert!(
-            last.owner.is_some(),
-            "the base is a registered component (the walk can dispatch to it)"
+            last.key_context.is_some(),
+            "the base names a context, which `get_key_context` expects to find"
         );
     }
 }

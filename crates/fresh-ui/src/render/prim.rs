@@ -1327,8 +1327,12 @@ impl RenderObject for LayerRender {
 
     /// A modal layer groups the focusables inside it without being one: that is
     /// all "traversal is confined to the modal" means.
+    ///
+    /// Asked of the *keyboard* channel, so a `Modality::Pointer` layer opens
+    /// no scope: it never claimed the keyboard, and grouping focusables under
+    /// it would confine traversal to a layer that has no business holding it.
     fn focus_reg(&self) -> Option<FocusReg> {
-        (self.geom.modality != crate::desc::Modality::None).then_some(FocusReg {
+        self.geom.modality.owns_keyboard().then_some(FocusReg {
             ordinal: None,
             skip: true,
             scope: true,

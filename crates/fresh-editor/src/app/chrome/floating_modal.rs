@@ -14,34 +14,12 @@ fn panel_up(ed: &Editor) -> bool {
 }
 
 impl ChromeComponent for FloatingModal {
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        layer: &crate::app::overlay::Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<anyhow::Result<crate::input::handler::InputResult>> {
-        // The focused floating panel claims all keys while its layer
-        // owns the keyboard. Esc unmounts + fires a `widget_event`
-        // "cancel"; smart-key names (Tab/Return/Backspace/…/Up/Down)
-        // route through the widget command dispatcher; printable chars
-        // feed `textInputChar` to the focused TextInput. Riding the
-        // walk at rank FLOATING_MODAL (820) — above DOCK (810), so a
-        // focused centered modal takes keyboard precedence over the
-        // dock beneath it (the New-Session form), and below the
-        // prompt/popup/menu layers, whose keys it can no longer
-        // preempt the way the old pre-band grab did. The ranks are
-        // now the ONE precedence source.
-        if layer.owns_keyboard
-            && ed.dispatch_floating_widget_key(
-                crate::app::PanelSlot::Floating,
-                event.code,
-                event.modifiers,
-            )
-        {
-            return Some(Ok(crate::input::handler::InputResult::Consumed));
-        }
-        None
-    }
+    // **No `on_layer_key`.** As the dock's: a focused centred panel's keys
+    // arrive through `view::shell::panel::keys_layer`, a `Modality::Focus`
+    // layer that confines the keyboard and hands back what
+    // `dispatch_floating_widget_key` declines. Declared over the dock's and
+    // under the popups', which is `POPUP > FLOATING_MODAL > DOCK` without the
+    // integers.
 
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
         use crate::app::overlay::{Layer, LayerKind};

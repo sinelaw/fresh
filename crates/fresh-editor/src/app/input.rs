@@ -158,8 +158,9 @@ impl Editor {
         // (#2234, item 4): while the dock is mounted, record its host-side focus
         // plus the active window's key context for *every* key, before any
         // routing. If a repro shows `dock_focused=true` for keys the user aimed
-        // at the buffer, the dock is swallowing them (`chrome/dock.rs`'s
-        // `on_layer_key`) — a
+        // at the buffer, the dock is swallowing them (its
+        // `view::shell::panel::keys_layer`, whose applier runs
+        // `dispatch_floating_widget_key`) — a
         // host-focus / plugin-`dockBlurred` desync; if `dock_focused=false`,
         // the keys reached the window and the issue is in key-context routing.
         if let Some(focused) = self.dock.as_ref().map(|d| d.focused) {
@@ -296,33 +297,21 @@ impl Editor {
             None => {}
         }
 
-        // THE derived key walk: every registered overlay layer —
-        // capture-all modals, workspace trust, the prompt rungs, the
-        // popup rungs (including the unfocused popup-cancel/-focus
-        // interception), down to the editor base, whose handler is the
-        // pipeline tail (mode bindings, composite routing,
-        // chord/keybinding resolution — see `dispatch_base_key` in
-        // `chrome/base.rs`) — offered the key top-down in declared
-        // rank order. See `dispatch_layer_keyboard`.
-        let result = self.dispatch_layer_keyboard(&key_event);
-        // The base layer answers every key by contract (`Base::layers`
-        // pushes EDITOR_BASE unconditionally and `Base::on_layer_key`
-        // always returns `Some` — both commented as load-bearing at
-        // their sites, and pinned by `overlay_stack` unit tests). If
-        // that contract ever breaks anyway, an unhandled key is a far
-        // better failure mode on the main input path than a panic:
-        // degrade to Ignored in release, scream in debug.
-        debug_assert!(
-            result.is_some(),
-            "editor base layer must answer every key — a walk fell past Base \
-             (did Base::layers grow a gate, or Base::on_layer_key a None path?)"
-        );
-        match result {
-            Some(r) => {
-                r?;
-            }
-            None => {}
-        }
+        // **The pipeline tail.** Everything that used to be offered the key
+        // ahead of this — the capture-all modals, the workspace-trust prompt,
+        // the menu, the popups, the prompt, a focused dock or plugin panel —
+        // is a layer in the shell tree now and claimed above if it wanted the
+        // key. What is left is the editor content's own keyboard: mode
+        // bindings, composite routing, the unfocused-popup interception and
+        // chord/keybinding resolution, in `chrome::base`.
+        //
+        // This was `dispatch_layer_keyboard`, a walk down an owner-stamped
+        // `overlay_stack()` offering each layer's component an `on_layer_key`.
+        // The stack is still derived and still read — by `get_key_context`,
+        // the PTY gate and the caret suppression — but nothing dispatches
+        // through it any more, so the walk is a call and the owner stamp that
+        // addressed the dispatch is gone with it (`overlay_layers`).
+        self.dispatch_base_key(code, modifiers)?;
         Ok(())
     }
 

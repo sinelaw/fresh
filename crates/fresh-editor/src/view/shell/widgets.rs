@@ -1859,11 +1859,20 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
         }),
     );
     let box_node = float_route(box_node, cx.slot);
+    let slot = cx.slot;
     fresh_ui::layer()
         .anchor(fresh_ui::Anchor::Parent)
         .place(fresh_ui::Place::Below)
         .offset(p.anchor_col as i16, 0)
         .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))
+        // **When it closes is the layer's to say.** A press outside an open
+        // option list is spent closing it — that *is* the gesture, and the
+        // list was in the way of it — and Escape means the same thing. Written
+        // by hand it was written once (the settings dialog's own outside-click
+        // rule) and missed once (the panel runtime had none, so a press inside
+        // the dock but outside its dropdown left the list up).
+        .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER.or(fresh_ui::Dismiss::ESCAPE))
+        .on_dismiss(move |_| UiMsg::Ui(super::msg::UiFact::WidgetPopupDismiss { slot }))
         .child(box_node)
 }
 

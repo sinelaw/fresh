@@ -1,16 +1,17 @@
 //! Flat per-surface input handlers for the bespoke modal interiors.
 //!
 //! Each [`InputHandler`] is one surface's keyboard interior — Settings,
-//! the menu, the prompt, the popup stacks, the file browser, the
-//! query-replace confirm, terminal mode — invoked FROM its owning
-//! chrome component's `on_layer_key` (or, for terminal mode, the
-//! documented pre-band stage). Between-surface routing does NOT happen
-//! here: precedence lives in the derived overlay-layer walk
-//! (`Editor::dispatch_layer_keyboard`), and a handler's `Ignored`
-//! becomes the walk's fall-through. Principles:
+//! the prompt, the file browser, the query-replace confirm, terminal
+//! mode — reached through the `UiFact` its surface's layer emits (or,
+//! for terminal mode, the documented pre-band stage). Between-surface
+//! routing does NOT happen here, and no longer happens in a walk
+//! either: precedence is the order the shell tree declares its layers
+//! in, and a handler's `Ignored` is what lets a `Modality::Focus`
+//! surface hand the key back to the editor's own resolution.
+//! Principles:
 //!
-//! 1. **Explicit consumption**: return `InputResult::Consumed` to stop
-//!    the walk or `InputResult::Ignored` to fall through.
+//! 1. **Explicit consumption**: return `InputResult::Consumed` to claim
+//!    the key or `InputResult::Ignored` to fall through.
 //! 2. **Modals consume by default**: modal interiors return `Consumed`
 //!    for unhandled keys to prevent input leakage, opting out per key
 //!    (e.g. Ctrl+P toggling Quick Open closed while it's open).

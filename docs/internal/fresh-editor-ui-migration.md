@@ -194,29 +194,92 @@ provided at is the scope they belong to.
 
 | # | What | How | Avoid |
 |---|---|---|---|
-| A.1 | ~~`context_menu`~~, ~~`menu`~~, ~~`popups`~~ done; `base` and `prompt` still implement `on_layer_key`. | The surface declares `focusable()` / `focus_scope()`; its bindings ride down as `Shortcut { key, intent }` data and the library's Shortcuts → Intents → Actions chain resolves them. **The menu closed the gap that kept a surface half-migrated**: its navigation had been intents since decision 1, but a whole input handler stayed alive to *swallow* the keys it declined, because `Modality` was one knob for two channels and the chain could not take the keyboard without taking the pointer from the bar it hangs off. `Modality::Keyboard` says the one without the other; `blocks_pointer` and `owns_keyboard` are what the framework now asks, per channel, at each site. **The popups then needed the opposite** — a layer that owns the keyboard and can still step out of the way of one key — which is `Dismiss::passing_through` beating the modal claim, and is what a completion list's Enter has always meant. `view/ui/menu_input.rs`, `view/popup_input.rs`, `view/popup/input/` (four files), `Menu::on_layer_key` and the three capturing rungs of `dispatch_popup_keys` are gone. | Resolving key → action *before* dispatch and handing the tree an `Action`. §6.2 decision 1 settled this the other way: bindings flow down as data, the tree resolves. |
-| A.2 | `dock` + `floating_modal` `on_layer_key` hand the key to the widget dispatcher. | Rides with C. | Migrating them early behind a shim that calls the old dispatcher from a `GestureKind::Key` handler. That is the walk with a new caller. |
+| ~~A.1~~ **Done.** | ~~`context_menu`~~, ~~`menu`~~, ~~`popups`~~, ~~`prompt`~~, ~~`base`~~ — **`on_layer_key` is gone from the trait, and `dispatch_layer_keyboard` with it.** The prompt needed a word the library did not have, and so did A.2 — see the note under this table. The popups' last rung turned out not to be a layer's dispatch at all (an unfocused popup holds no focus, so its cancel/focus keys are ordinary editor bindings) and is the first rung of `dispatch_base_key` now. With one member left, the walk is a call: `handle_key` invokes `chrome::base` directly. **What `base` still owes is A.5**, not a seam — the keymap riding down as `Shortcut { key, intent }` data. | The surface declares `focusable()` / `focus_scope()`; its bindings ride down as `Shortcut { key, intent }` data and the library's Shortcuts → Intents → Actions chain resolves them. **The menu closed the gap that kept a surface half-migrated**: its navigation had been intents since decision 1, but a whole input handler stayed alive to *swallow* the keys it declined, because `Modality` was one knob for two channels and the chain could not take the keyboard without taking the pointer from the bar it hangs off. `Modality::Keyboard` says the one without the other; `blocks_pointer` and `owns_keyboard` are what the framework now asks, per channel, at each site. **The popups then needed the opposite** — a layer that owns the keyboard and can still step out of the way of one key — which is `Dismiss::passing_through` beating the modal claim, and is what a completion list's Enter has always meant. `view/ui/menu_input.rs`, `view/popup_input.rs`, `view/popup/input/` (four files), `Menu::on_layer_key` and the three capturing rungs of `dispatch_popup_keys` are gone. | Resolving key → action *before* dispatch and handing the tree an `Action`. §6.2 decision 1 settled this the other way: bindings flow down as data, the tree resolves. |
+| ~~A.2~~ **Done.** | `dock` + `floating_modal` `on_layer_key` handed the key to the widget dispatcher. | `view::shell::panel::keys_layer` — the prompt's seam, for the two surfaces that reach `dispatch_floating_widget_key`. It did *not* have to ride with C after all: what blocked it was the same missing word, not the interior. The `ToggleDockFocus` pre-resolution that had to run ahead of the panel's own dispatch (so the toggle stays symmetric once you have dived in) moved into the applier with it. | Migrating them early behind a shim that calls the old dispatcher from a `GestureKind::Key` handler. That is the walk with a new caller — and the difference is that a `Modality::Focus` layer is *offered* the key by containment rather than by a walk, and hands back what it declines. |
 | ~~A.3~~ **Done.** | The four `modals` handed the key to painter interiors through a capture-all `on_layer_key` apiece, offered in `layer_rank` order. | Containment, the same way the pointer crossed: each is a `Modality::Exclusive` layer, so it owns the keyboard, focus goes inside it, and `modal::keys` — an `on_key` at the top of that subtree — sees what the subtree declined. `UiFact::ModalKey(KeySlot)` names the surface; the interior is unchanged, which is the ruling that let `ModalPointer` cross the same seam. **The claim goes on every exclusive layer the surface can raise**, not only the band underneath: with a dialog or an entry level up, the band is no longer on the focus path. And on the *trust* prompt it is gated by `Trust::captures`, because an exclusive layer with nobody listening inside it stops a key rather than routing it — whether to claim has to be decided where the claim is made. |
 | A.4 | `layer_rank` — a central ordered list of surfaces. | Delete it. Precedence is *derived*: layer order, `Modality::Exclusive`, focus-scope containment — all already in the tree. | A `key_rank` property on layers, or a `Behavior` that walks them in order. Goal 2 forbids the central list by name; a renamed one is the same list. |
 | A.5 | `KeyContext` — the mode enum the walk keyed on, and the largest remnant by reference count. | "Which bindings apply" becomes *where focus is*: a scope provides its shortcut set as an ambient, resolution walks the focus path up. | Keeping `KeyContext` as an ambient. That is the enum with a new home; the point is that containment already answers it. |
 
-**Why `base`, `prompt`, `dock` and `floating_modal` are the ones left, and
-what actually blocks them.** Not effort — a rule. Every surface that has
-crossed *claims* the keys it declines: a menu, a popup and a modal are each in
-the way of the keystroke, so the tree can answer "this is yours" before
-anything runs. The four that remain **decline**: an unhandled prompt key falls
-through to keymap resolution (that is how the file browser's Alt toggles and
-Ctrl+P reach their bindings), an unhandled dock shortcut blurs the dock, and
-the base *is* the fall-through. A claim in the tree is made during dispatch;
-whether those four consumed a key is only known after their interior has run,
-in the host. So the tree cannot say it for them — which is exactly the sense
-in which A.1 and A.2 "ride with B and C": what unblocks them is not a shim
-around the dispatcher but the interior itself becoming nodes that answer, at
-which point declining is a node not stopping the flow rather than a handler
-returning `Ignored` afterwards.
+**The two words that unblocked three of the four: `Modality::Focus` and
+`Modality::Pointer`.**
+`Modality` was a single knob for two questions — *confinement* (traversal
+stays inside the layer, so its own focus chain is offered the key first) and
+*swallowing* (a key that chain declines stops there rather than reaching the
+host behind the tree). Every variant above `None` did both, and the prompt,
+the dock and the floating panel need the first without the second: while a
+prompt is up it is unambiguously where the keyboard is, and yet the keys it
+does not act on are still the editor's. `owns_keyboard` keeps the first
+meaning and `swallows_keys` is split out beside it, exactly the way
+`blocks_pointer` was split out for the other channel. `Modality` now answers
+three questions rather than one — does the pointer stop here, is focus
+confined here, does a declined key stop here — and the three variants between
+`None` and `Exclusive` each say one channel without the other.
 
-That is also why A.4 and A.5 cannot come yet: `layer_rank` still orders the
-walk those four are on, and the PTY gate and `get_key_context` still read it.
+**`Modality::Pointer` is the mirror, and the migration needed it too.** The
+floating plugin panel's modal slot claims the *pointer*: the box swallows
+every press outside it, while its keys are the widget runtime's and arrive on
+the panel's own `Focus` layer. Saying `Exclusive` for that took the keyboard
+as well, and the cost was exact: an exclusive layer owns the keyboard, so
+containment made the slot the focus scope, found nothing focusable inside it,
+and dropped focus — and the panel's real keyboard layer stopped being the one
+the tree looked in. The dock's plugin context menu stopped closing on Escape.
+That is the same lesson as `Focus` in the other direction, and the same one
+this document keeps recording: **a description is exhaustive where a painter
+was incremental**, so a claim a surface does *not* make needs a word as much
+as one it does.
+
+With it, precedence is declaration order and the ranks are redundant for
+dispatch: `keys_layer` for the dock is declared first, the floating panel's
+next, then the overlay card, the suggestion list, the popups, the prompt's,
+the menu dropdowns and the context menu — which is
+`CONTEXT_MENU > MENU > PROMPT > POPUP > FLOATING_MODAL > DOCK` without a
+single integer. The claim's second half is the host's, and has to be: a modal
+swallows what its interior ignores, so the tree can claim while routing and be
+right, but a declining surface's answer is only known once its interior has
+run in the applier. `Editor::shell_interior_took_key` is that answer, folded
+into what `shell_dispatch` returns, so the authoritative party answers last.
+
+**Why `base` is the one left, and what actually blocks it.** Not effort — a
+rule, and a different one from the three above it. The prompt, the dock and
+the floating panel decline, and declining is now sayable: a `Modality::Focus`
+layer plus a host that completes the claim. `base` is not a surface that
+declines. It is the *fall-through itself* — mode bindings, composite routing,
+and chord/keybinding resolution against the current context — so there is
+nothing for it to hand a key back to. Making it a node means the keymap riding
+down as `Shortcut { key, intent }` data on the editor pane's focus scope,
+which is what A.1's *Avoid* column asks for and what A.5 is: not a seam, but
+`KeyContext` becoming "where focus is". That is the change those two are one
+change, and it is the largest single item left in section A.
+
+A.4 and A.5 are closer than that paragraph left them, and one step further
+apart than they look. `layer_rank` no longer orders any *dispatch* — the walk
+is gone and `OwnedLayer`'s owner stamp with it — but three readers of
+`overlay_layers()` remain, and they do not all want the same thing:
+`any_layer_blocks_terminal_input` and `cursor_suppressed_by_late_overlay` read
+the stack as a *set*, so the ranks are already irrelevant to them;
+`popup_blocked_by_higher_modal` and `get_key_context` read it as an *order*.
+
+**And `get_key_context` cannot become a read of the tree.** The obvious form
+of A.5 — every keyboard-owning layer `provide`s its `KeyContext`, and the host
+looks the ambient up at the focused element — is wrong for a reason the
+dispatcher already wrote down: a rung may mutate state and then decline (the
+popup rung processes a deferred `ClosePopup` and falls through), so a lower
+rung's `get_key_context()` must re-derive against *post-mutation* state.
+`overlay_layers` is deliberately never memoized for exactly that reason — it
+is ~17 cheap predicates rebuilt on every call, and its own comment says it is
+the ground truth every derived cache validates against. The shell tree is
+rebuilt once per *frame*, so an ambient read at focus would hand every rung a
+snapshot from before the keystroke, and a key would resolve in the surface's
+previous context.
+
+So A.5 is not "the enum with a new home", and it is not an ambient lookup
+either: it is the keymap itself riding down as `Shortcut { key, intent }` data,
+which is what A.1's *Avoid* column has said all along. Resolved in the tree at
+dispatch time, "which bindings apply" is answered where focus is with no
+snapshot in between, and there is no host-side `get_key_context` left to be
+stale. That dissolves A.4's ordering reader rather than working around it,
+which is why the two are one change and the largest single item left in
+section A.
 
 ### B. The modal interiors
 
@@ -693,7 +756,15 @@ already has:
 
 - a "context-aware action dispatcher" resolving keys to intents — that is the
   `focus/` module's Shortcuts → Intents → Actions chain, shipped. A.1 is
-  adoption, not construction.
+  adoption, not construction. **With one correction, found by doing it**: the
+  chain was there, but `Modality` was a single knob for two questions —
+  confining focus and swallowing the keys the confined chain declines — and
+  the four surfaces left on the walk needed the first without the second. That
+  is one variant and one predicate (`Modality::Focus`, `swallows_keys`), not a
+  dispatcher; the ratio still holds. It is worth recording because the *shape*
+  of the gap was the one this section describes in the other direction: a
+  capability the library nearly had, missing a distinction the editor had been
+  making with integers.
 - an explicit pointer-capture API — shipped, and E.3 is adoption.
 - a "paint-phase theme context" so a colour change does not relayout —
   `ThemeKey` is resolved at fold time, so it already cannot.
@@ -703,7 +774,8 @@ gaps a reader sees in this migration are mostly capabilities the library has
 and the editor has not adopted.
 
 **The real gaps were smaller and more specific than any of those, and every
-one of them was found by driving the editor rather than by reading it.** Each
+one of them was found by driving the editor or by a suite catching what
+driving it had missed — never by reading it.** Each
 is the same shape: a *vocabulary* the painter had that the description had no
 word for, so the thing it said was dropped in silence.
 
@@ -735,13 +807,26 @@ word for, so the thing it said was dropped in silence.
   most themes is close enough to the popup ground to look like nothing at all.
   It `debug_assert!`s now, so the next one fails a test instead of a screen.
 
-The lesson the five share: **a description is exhaustive where a painter was
+- **And `Modality` was one knob for three questions.** A layer either took
+  everything or nothing, and the surfaces whose *interior* lives host-side
+  need one channel without the others: a prompt confines the keyboard but
+  hands back what it declines (`Focus`), and a plugin panel's modal slot takes
+  the pointer while its keys go to its own layer (`Pointer`). Both failures
+  were silent in the same way as the paint ones — the prompt's would have kept
+  it on a ranked walk forever, and the panel's made the slot the focus scope,
+  found nothing focusable inside it, and dropped focus, so the dock's plugin
+  context menu stopped closing on Escape.
+
+The lesson the six share: **a description is exhaustive where a painter was
 incremental.** The painter could leave a cell's background unset and let what
 was already there show through; a description has to say every half of every
 cell, so anything the old vocabulary expressed by *omission* needs a word — and
-until it has one, it is dropped without a diagnostic. Every gap above was
-invisible to the type checker and to the test suite, and visible immediately to
-anyone using the editor.
+until it has one, it is dropped without a diagnostic. The `Modality` pair
+generalises it past paint: a *claim a surface does not make* needs a word as
+much as one it does, because the tree acts on the claim it was given rather
+than on the one the surface meant. Every gap above was invisible to the type
+checker, and all but one were invisible to the test suite too — visible
+immediately to anyone using the editor.
 
 **One suggestion worth keeping and not acting on yet.** Several engines make a
 document scope an *event* boundary as well as a state one, so an event in one

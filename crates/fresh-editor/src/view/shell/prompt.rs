@@ -781,6 +781,58 @@ pub fn suggestions_window(spec: &fresh_ui::LayoutSpec) -> Option<(usize, usize)>
         .or(Some((0, 0)))
 }
 
+/// **The prompt as the keyboard's owner — confinement without a swallow.**
+///
+/// `chrome::Prompt::on_layer_key` was offered every key by the ranked overlay
+/// walk at `layer_rank::PROMPT`, and the rank existed because nothing else
+/// could say what a prompt is to a keyboard. Two facts had to hold at once and
+/// no single `Modality` could state them:
+///
+/// * While a prompt is up it is unambiguously *where the keyboard is*. A
+///   focused dock, a mounted plugin panel and a visible popup must not take a
+///   keystroke ahead of it — which is confinement, and `PROMPT > POPUP`,
+///   `PROMPT > FLOATING_MODAL` and `PROMPT > DOCK` are that fact written as
+///   numbers.
+/// * A key the prompt does not act on is still the *editor's*. That is how the
+///   file browser's `Alt+H` reaches its hidden-files toggle and `Ctrl+P`
+///   reaches quick-open: `dispatch_prompt_key` returns `None` and the walk
+///   carries on to keybinding resolution in the `Prompt` context.
+///
+/// `Modality::Focus` is those two together, so the rank is derivable now:
+/// **this layer is declared between the popups and the menu dropdowns**, which
+/// is `MENU > PROMPT > POPUP` stated as the order the frame declares its
+/// layers in rather than as three integers in a table.
+///
+/// The seam itself is `modal::keys`' — an `on_key` at the top of the confined
+/// subtree, naming the surface and leaving the meaning to its interior — with
+/// the one difference that makes `Focus` necessary: it does not `stop()`.
+/// Whether the key was taken is only known once `dispatch_prompt_key` has run,
+/// which happens in the applier, so the *host* completes the claim rather than
+/// the tree guessing at it (`Editor::shell_interior_took_key`).
+///
+/// It paints nothing and takes no pointer: the prompt row, its card and its
+/// suggestion list are described elsewhere, and this is only the keyboard.
+pub fn keys_layer() -> Node<UiMsg> {
+    use fresh_ui::{layer, Align, Anchor, Modality, Place, PointerMode};
+    layer()
+        .anchor(Anchor::Screen(Align::Start))
+        // The whole frame, so the confinement is unambiguous — and
+        // `PointerMode::Ignore` so covering it costs nothing: neither this
+        // node nor anything under it is hittable, and every press goes to the
+        // surface it was aimed at. `Modality::Focus` does not block the
+        // pointer either, so this layer is invisible to that channel twice
+        // over, deliberately.
+        .place(Place::Fill)
+        .pointer_mode(PointerMode::Ignore)
+        .modality(Modality::Focus)
+        .child(
+            fresh_ui::focusable(row())
+                .pointer_mode(PointerMode::Ignore)
+                .autofocus()
+                .on_key(|_| Some(UiMsg::Ui(UiFact::PromptKey))),
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

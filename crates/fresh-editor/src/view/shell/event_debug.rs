@@ -55,6 +55,15 @@ pub fn layer(d: &EventDebug) -> Node<UiMsg> {
     fresh_ui::layer()
         .anchor(Anchor::Screen(Align::Center))
         .place(Place::Over)
+        // **Exclusive with nothing focusable inside it, which is safe here
+        // and nowhere else.** An exclusive layer owns the keyboard, so
+        // containment makes it the focus scope; with no focusable in it,
+        // `apply_autofocus` has nowhere to put focus and drops it — which is
+        // what stopped the plugin panel's own keyboard layer being found (see
+        // `modal::layer`, and `Modality::Pointer`). This dialog gets away with
+        // it because its keys never reach the tree at all: `handle_key`
+        // intercepts them in the pre-band, ahead of every other path. If that
+        // ever stops being true, this needs a seam or `Modality::Pointer`.
         .modality(Modality::Exclusive)
         .scrim(Some(Scrim::Dim))
         .child(
