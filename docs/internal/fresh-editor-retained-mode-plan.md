@@ -240,7 +240,7 @@ that matters:
 *Exit:* no fold is written by one party and read by another, and the hit-test
 probe has no described-versus-painted branch.
 
-*Progress:* the render walk no longer decides anything for `Dropdown`, `Number`
+*Done.* The render walk no longer decides anything for `Dropdown`, `Number`
 or `DualList` — all three were writing derivations back — and carries their
 stored entry through only so the whole-map replace does not collect it. One rule
 had to move rather than vanish: a blur closes a dropdown, which the walk used to
@@ -250,12 +250,23 @@ enforce by storing its result, and which is now applied at every read.
 runtime state at all, because the element already owns the window. The registry's
 copy is vestigial for a described panel and retires with the painter, in 2.4.
 
-`Text` is the remainder and the only real one. Five of its seven fields were
-merely carried and now are; the two that are left — the caret window and the
-completion popup's forward-only offset — are folds, and they are still decided
-by the walk at the width the *registry* recorded while the description computes
-the same fold at the width layout gave it. The two agree only while those widths
-agree.
+`Text` was the remainder and the only real one. Five of its seven fields were
+merely carried and now are. Of the two folds left, the caret window has moved
+into element state — a component whose state is a `Cell`, seeded once from the
+registry and never read from there again — which settles the disagreement where
+the walk decided the window at the width the *registry* recorded while the
+description drew it at the width layout gave.
+
+**No library change was needed, and the belief that one was is worth recording.**
+`Component::build` takes `&Self::State` and so cannot mutate it, which reads like
+a prohibition on owning a fold. It is not: a component's state is its own
+scratch, nothing in reconciliation reads it, and memoisation compares props — so
+interior mutability is the entire mechanism. The same argument the library
+already makes for a caret ("it exists only while this field is on screen")
+applies to a window.
+
+The completion list's forward-only offset is the same shape and has not moved: it
+is carried on the runtime's `SetCompletions` state, which is the plugin's.
 
 **2.2 Describe the five collected variants for real.** Text, list, tree, dropdown
 and dual-list stop going through the runtime's collector. Each becomes a
@@ -308,8 +319,24 @@ same step that lets the layout reader go — and that is 2.2's job, not this one
 *Exit:* deleting the mirror changes no pixel. Met for height and for every other
 slot; the anchored width is the one remaining read, and it is named in the code.
 
-**2.4 Then delete the second renderer.** The widget runtime's paint role goes;
-it keeps only what the plugin API genuinely needs.
+**2.4 Then delete the second renderer.** *Done.* The widget runtime's paint role
+is gone; it keeps only what the plugin API genuinely needs.
+
+The unlock was not a deletion but the removal of an *exclusion*.
+`WindowEmbed` — a real editor window inside a panel — was held out of the
+coverage gate on the reading that painting its own cells and being described are
+alternatives. They are not: painting its own cells is what a host leaf *is*, and
+the tree has handed rectangles to host leaves all along. Once the embed became
+one, the gate had no `false` left to return, every branch on it was dead, and
+the second renderer went with them: the generic collector adapter, the interior
+painter, two probes that had become no-ops on every path, and three helpers each
+of which had already been replaced by a description — including the one that
+located the dock's active card by scanning painted cells for box glyphs.
+
+Two things were deliberately kept and are worth knowing. `probe_floating_widget`
+looks dead and is not: a dock open with *no* mounted panel has no interior, so
+its column still emits a press that reaches it. And the stored overlay rows stay
+with that probe, since it is their only reader.
 
 The same audit named the fields of the runtime's per-panel output whose every
 consumer is a path a described panel never takes: the window-embed rectangles
@@ -353,6 +380,87 @@ nodes. The per-surface "here is your key back" facts shrink and then go.
 *Exit:* tab order in the settings dialog is the tree's, and the base key
 dispatcher is not reached while a modal is up.
 
+*Progress:* the settings category tree interprets its own keys — eight of them
+arrive as what they *mean* rather than as a raw key handed back — and the plugin
+widgets are on the tree's ring, which leaves the registry's focused-key string a
+mirror written from one place rather than the authority on which control is live.
+
+**Its exit condition had two blockers and one is now gone.** The first was that
+the dialog's middle tab stop — the settings *body* — had nothing focus could
+land on: its controls are plugin widgets, and no plugin widget was on the ring
+at all. They are now, and the body renders through the same adapter, so the ring
+has real targets there.
+
+**But "so `move_focus` has real targets there" was itself an overclaim**, caught
+by the review in §6, and in the same shape as the Tab blocker below. Being on the
+ring is necessary and is not sufficient: (i) the `WidgetFocus` applier returns
+early for every slot but Dock and Floating, so a `FocusGained` from a settings
+widget is dropped; and (ii) the dialog attaches an `on_key` that stops every key,
+and the library runs the focused chain *before* intent resolution, so Tab becomes
+`UiFact::ModalKey(Settings)` and `move_focus` is never reached.
+
+**And following that thread to the dock says the ring is inert there too, for a
+different reason and a worse one.** `panel::keys_layer` is a `Modality::Focus`
+layer holding a single `autofocus()`ed focusable whose `on_key` emits
+`UiFact::PanelKey(slot)` — and it is declared for exactly the case that matters,
+a panel with the keyboard. `Modality::Focus` makes it the topmost modal, and
+`focus_scope` retains only focusables *within* the topmost modal. The panel's
+widgets are in the dock column, not in that layer. So:
+
+- the panel's focus scope contains one node, the key sink, and traversal there
+  cannot reach a widget at all; and
+- `apply_autofocus` pulls focus back into the active scope on the next frame, so
+  a widget focused by a click is un-focused by the frame that follows it.
+
+`UiFact::WidgetFocus` still fires, because the transient `FocusGained` happens
+before the settle — which is why the registry key looked like a mirror. It is a
+mirror of a focus the tree does not keep.
+
+So 3.2's honest state is: **every interactive widget is focusable and none of
+them is reachable.** The remaining work is not "re-enable the ring" but making
+the panel's keyboard the widgets' own — the panel's subtree inside the keyboard
+scope, with `PanelKey` as the fallback for keys no widget claims, rather than a
+sink that owns the scope and holds focus. Until that lands, "delete the second
+focus ring" is not available: the box-arena ring in `handle_widget_focus_advance`
+is the only ring that works.
+
+**The second blocker, as previously recorded here, was not real.** It was written
+down twice — that Tab is overloaded inside the body, committing an edit and
+staying put, so reaching the next control takes two presses, pinned by three
+tests. Checking the source says otherwise. `handle_text_editing_input`'s Tab arm
+already does `commit_text_edit(); stop_editing(); toggle_focus()` — commit *and*
+advance, in one press, and its comment explains the commit was added because a
+value typed and dismissed with Tab was being dropped on Save. Of the three tests
+cited, two use Tab only to commit and assert the value was accepted, and the
+third asserts merely that the screen changes, explicitly allowing either "move to
+the next setting" or "move to the footer panel". None pins a two-press model.
+
+What is actually left is smaller and is a design question rather than an
+obstacle. `toggle_focus` advances to the next *panel* — Categories → Settings →
+Footer — so Tab inside the body leaves the body rather than stepping to the next
+control in it. That was the only thing it could mean while the body's controls
+were not focusable. They are now, so Tab there could step control by control and
+leave the panel only at the end, which is what the ring makes available and what
+this kind of dialog does elsewhere. Whether it *should* is a taste call about the
+dialog, not a migration blocker.
+
+*What the plugin widgets need, now established.* The adapter contains exactly one
+`focusable` call — the `Component` arm's scope — so **no plugin widget is on the
+tree's ring at all**; the runtime's focus key, a string resolved across the whole
+panel, is the sole authority, and the adapter's remaining `focusable(false)`
+calls say so outright.
+
+The library has the piece required: `on_focus_change` on a focusable node. So the
+shape is available — declare each interactive widget focusable and keyed, and let
+that handler write the runtime's focus key, making it a *mirror* of the tree
+rather than a competitor. That is the same one-authority move Phase 2.1 made for
+the folds.
+
+The constraint to respect is that this cannot be done one *kind* at a time. A
+ring containing only buttons would let Tab cycle buttons and skip fields, which
+is worse than a ring the tree does not own at all. The unit is a panel: every
+interactive kind in it goes on the ring together, or none does.
+
 **3.3 Reconsider the focus and pointer modalities.** Their own documentation says
 they are only meaningful for a surface whose interior lives outside the tree.
 They are migration-shaped API in a general-purpose library; when 3.2 completes
@@ -366,8 +474,21 @@ fold stops being cut in half and the tree's z-order becomes authoritative.
 
 **4.1 Every region but the body stops being a `Host`.** The dock, menu bar,
 explorer, status bar, search options and prompt line each become descriptions all
-the way down. The body — the split grid, buffers, terminals and the text pipeline
-— stays a `Host`, permanently and correctly.
+the way down. Of those, only the prompt line is still painted: the others are
+described, and an empty dock or an itemless status bar is the only way their
+`Host` is reached at all.
+
+The body — the split grid, buffers, terminals and the text pipeline — stays a
+`Host`, permanently and correctly. **But the tab strip is inside that boundary
+and does not belong to it.** `view/ui/tabs.rs` is 1,369 non-test lines of
+ordinary chrome — tabs, close buttons, a `+`, scroll arrows — and it is the last
+painter-recorded-rectangle hit-test in the editor: `render.rs` files
+`tab_layouts` and the event path in `app/chrome/splits.rs` and `app/tab_drag.rs`
+reads them back. `view/shell/splits.rs` says so plainly ("The strip is the node;
+its interior is still the painter's"). Declaring the body permanent is right for
+the text; extending that to the strip fences the hardest remaining piece of
+chrome inside a boundary labelled out of scope. **4.1 is not finished while the
+strip is hit-tested against what it painted.**
 
 **4.2 F.2.** `Paint::Lit` retires into a dynamic theme tier once plugins can
 register named keys, after which provenance is total.
@@ -443,7 +564,61 @@ Three additions, in priority order:
 
 ---
 
-## 6. Merge posture for the current branch
+## 6. What an independent review found
+
+A reviewer with no stake in this plan read the branch (354 commits, ~52k
+insertions) and was told only the objective — that the plan itself might be
+wrong. Its verdict is recorded here because it is sharper than this document was:
+
+> substantially, genuinely retained for the editor's chrome, and not retained at
+> all for the plugin-widget half
+
+and it judged this document's remaining-work list to understate the gap "by a
+wide margin". The specific corrections, all verified against the source:
+
+- **Four comments argued for properties the code lacks** — the class §1.4 exists
+  to close. One of them was written *while closing that class*, claiming the
+  status bar is a `Host` because its prompt states paint outside the fold; the
+  prompt row is a different region and is painted inside the fold. Another
+  declared F.6 open twenty lines below the commit that fixed it. Three separate
+  reviewers had been misled by these. Fixed.
+- **The card bands sat in the region host-id space**, resolving to `Dock`,
+  `MenuBar`, `Explorer`, `Body` and `StatusBar`. Fixed, with a tag and a test.
+- **2.2's exit is not met, and the two survivors are the expensive ones**: a
+  `render_collected` per card per frame, and one that formats a multi-line text
+  field's *whole document* per frame — both from inside the retained description
+  build. Two more immediate-mode renders sit on the click path purely to resolve
+  a caret byte by measuring the text they just produced.
+- **3.1 is barely started at the seam that matters.** Three memo sites, three
+  `Component` impls. Worse, the three memos wrap the node build *after*
+  `shell_frame` has already run the menu walk, the status-bar content pass and a
+  deep clone of every panel's spec — the expensive half is outside the memo.
+- **There are two focus rings over one `focus_key`.** The tree's writes it via
+  `UiFact::WidgetFocus`; `handle_widget_focus_advance` writes it from the
+  immediate-mode box arena. No gate between them.
+- **3.2's note here was wrong in the same shape as the Tab claim.** The settings
+  body's widgets are on the tree's ring, but the applier drops every slot but
+  Dock and Floating, and the dialog's `on_key` stops every key before intent
+  resolution — so the tree's ring in the settings dialog is inert.
+- **F.2 is wider than "plugins cannot register named keys."** Provenance drops
+  any item whose ink resolved to literals, and the status bar hard-codes literals
+  for its own separator, so provenance is blank there today with no plugin
+  involved.
+
+The gate it named, which supersedes the ordering in §3 for this branch: close the
+two `render_collected` calls and the two click-path re-renders; delete the second
+focus ring or make the arena one a mirror; fix the host-id collision; sweep the
+four comments.
+
+It also named what should not be re-litigated: the read-back family reads the
+tree that painted rather than a parallel walk, the settings dialog's painter is
+down to a box and a divider column, the widget-panel interior painter really is
+deleted, and `fresh-ui`'s own focus fixes are real bugs found with the right
+explanation.
+
+---
+
+## 7. Merge posture for the current branch
 
 The branch is a large net improvement and should land — but not as-is. Phase 1 is
 the gate: F.6 is a shipped feature dead over most of the chrome, 1.1 is a live

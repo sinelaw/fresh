@@ -64,6 +64,11 @@ impl CardRegion {
     pub fn id(self) -> u64 {
         self as u64
     }
+
+    /// The inverse, for [`super::frame::HostTarget::from_host_id`].
+    pub fn from_id(id: u64) -> Option<CardRegion> {
+        CardRegion::ALL.into_iter().find(|r| r.id() == id)
+    }
 }
 
 /// Below this many columns the preview is hidden and the results take the whole
@@ -100,7 +105,7 @@ pub fn region_key(r: CardRegion) -> fresh_ui::Key {
 }
 
 fn region(r: CardRegion) -> Node<UiMsg> {
-    host(r.id()).key(region_key(r))
+    host(super::frame::card_host_id(r)).key(region_key(r))
 }
 
 /// The card, as a layer over the chrome column.

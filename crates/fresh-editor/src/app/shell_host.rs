@@ -383,6 +383,13 @@ impl crate::view::shell::fold::HostPainter for BodyPainter<'_> {
         let region = match target {
             HostTarget::Pane(leaf) => return self.pane(leaf, rect, buf, caret),
             HostTarget::Embed(window_id) => return self.embed(window_id, rect, buf),
+            // A band of the overlay prompt's card. Nothing paints per band:
+            // `render_overlay_prompt` draws the card whole, between the two
+            // fold bands, and the tree's job there is to say where the bands
+            // are so that painter and every read-back share one set of
+            // rectangles. Reached only if the card's layer is ever folded in a
+            // hosts-painting band; today it is not.
+            HostTarget::Card(_) => return,
             HostTarget::Region(r) => r,
         };
         match region {
@@ -395,17 +402,18 @@ impl crate::view::shell::fold::HostPainter for BodyPainter<'_> {
             // The prompt's input row: cells the fold writes, at the rectangle
             // layout gave the region.
             HostRegion::PromptLine => self.editor.render_prompt_line(buf, rect, caret),
-            // **Neither paints, and they reach here for different reasons.**
+            // **Neither paints, and both reach here only when empty.**
             //
             // The dock emits a `Host` only for a column with no mounted panel
             // — an empty dock, which has nothing to draw. It used to be the
             // seam the panel painter drew the interior through; that painter
             // is deleted, and the dock's content is the tree's.
             //
-            // The status bar's rectangle is a `Host` because its *prompt
-            // states* are the one row `Editor::render` still paints outside
-            // the fold. That is 4.1's remaining work for this region, not a
-            // no-op like the dock's.
+            // The status bar emits one only when it has no items: with items
+            // it is described down to the run, and the description leaves no
+            // `Host` behind. The prompt row is not this region — it is
+            // `HostRegion::PromptLine`, painted three arms above, inside the
+            // fold and at the rectangle layout gave it.
             HostRegion::Dock | HostRegion::StatusBar => {}
         }
     }
@@ -1541,6 +1549,42 @@ impl Editor {
             // it is next built, and the row renderers take the highlight from
             // there — where `update_widget_hover` had to ask the plugin to
             // re-render before the painter could show it.
+            // **The registry's focus key becomes a mirror of the tree's.**
+            //
+            // It was the authority: the runtime resolved one focused key
+            // across a panel's whole spec, the description read it back, and
+            // the tree's own ring was declined. Now the ring is the tree's and
+            // this writes what it decided — so the plugin's `focus` event, the
+            // kinds' key handlers and the web projection all keep reading the
+            // field they already read, and it has one writer.
+            //
+            // The plugin is told, exactly as `deliver_widget_hit`'s
+            // click-to-focus told it, because a plugin that mirrors focus
+            // cannot tell a click from a Tab and should not have to.
+            UiFact::WidgetFocus { slot, widget } => {
+                use crate::view::shell::widgets::Slot;
+                let panel = match slot {
+                    Slot::Dock => crate::app::PanelSlot::Dock,
+                    Slot::Floating => crate::app::PanelSlot::Floating,
+                    _ => return,
+                };
+                let Some(key) = self.panel(panel).map(|p| p.panel_key.clone()) else {
+                    return;
+                };
+                if self.widget_registry.focus_key(&key) == Some(widget.as_str()) {
+                    return;
+                }
+                // **Through the same door every other focus move uses.** This
+                // wrote `set_focus_key` directly while the comment above
+                // claimed the plugin was told, and it was not: the plugin's
+                // `focus` event and the kinds' own `on_focus_change` hook —
+                // which is how a `Tree` keeps its selected row coherent with
+                // focus — both hang off `set_panel_focus_and_notify`, and
+                // neither ran for a focus the tree decided. Tab ran them and
+                // a click did not.
+                self.set_panel_focus_and_notify(&key, widget);
+                self.rerender_widget_panel(&key);
+            }
             UiFact::WidgetHover {
                 slot,
                 widget,

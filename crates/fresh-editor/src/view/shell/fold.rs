@@ -522,6 +522,14 @@ mod tests {
                     fill(buf, rect, '@', Style::default(), rect);
                     return;
                 }
+                // A card band paints nothing at all; see `paint_host`'s arm.
+                // Filled here for the same reason as the embed: so a frame
+                // that starts folding the card's layer in a hosts-painting
+                // band shows up.
+                HostTarget::Card(_) => {
+                    fill(buf, rect, '%', Style::default(), rect);
+                    return;
+                }
                 HostTarget::Region(r) => r,
             };
             self.calls.push((region, rect));
