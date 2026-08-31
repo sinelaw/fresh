@@ -307,10 +307,13 @@ impl Editor {
         //
         // This was `dispatch_layer_keyboard`, a walk down an owner-stamped
         // `overlay_stack()` offering each layer's component an `on_layer_key`.
-        // The stack is still derived and still read — by `get_key_context`,
-        // the PTY gate and the caret suppression — but nothing dispatches
+        // The stack is still derived and still read, but nothing dispatches
         // through it any more, so the walk is a call and the owner stamp that
-        // addressed the dispatch is gone with it (`overlay_layers`).
+        // addressed the dispatch is gone with it. Two readers still need it
+        // ORDERED — `get_key_context` and the unfocused-popup guard below;
+        // the rest (the PTY gate, the LSP-hover suppressor, the caret
+        // suppression) ask only whether a layer is present and read
+        // `Editor::overlay_layer_set`.
         self.dispatch_base_key(code, modifiers)?;
         Ok(())
     }

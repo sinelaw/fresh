@@ -134,13 +134,48 @@ impl Panel {
     /// The box's height, borders included. The request is a hint in this
     /// direction and always has been: shorter content shrinks the box, taller
     /// content grows it up to the frame.
-    fn rows(&self) -> u16 {
+    ///
+    /// **A described interior states its own height; a painted one cannot.**
+    /// The counts in `Spot` are the row and column tallies of the widget
+    /// runtime's text mirror, and for a described panel they are a *second*
+    /// measurement of a subtree layout is about to measure anyway — the last
+    /// thing on this branch that made the mirror a rendering input rather than
+    /// a text mirror. `Auto` is "whatever the content needs, within the
+    /// incoming constraint", which is exactly the fit-to-content rule the
+    /// arithmetic was spelling out.
+    ///
+    /// A painted interior is a `Host` leaf. A host has no intrinsic size by
+    /// definition — the tree hands it a rectangle and knows nothing about what
+    /// goes in it — so `Auto` there would collapse the box to its border. The
+    /// counts stay for exactly that case, and go with it.
+    fn height(&self) -> Sizing {
+        if self.interior.is_some() {
+            return Sizing::Auto;
+        }
         let content = match self.spot {
             Spot::Centered { content_rows, .. } | Spot::Anchored { content_rows, .. } => {
                 content_rows
             }
         };
-        content.saturating_add(2).max(3)
+        Sizing::Cells(content.saturating_add(2).max(3))
+    }
+
+    /// **An anchored popup's width stays the mirror's count, even described,
+    /// and this is not an omission.**
+    ///
+    /// The box hugs its content horizontally, so `Auto` is what it wants to
+    /// say — but the interior is built by a `layout_reader`, which needs a
+    /// *number* for the width before it can produce a row, and under `Auto`
+    /// the number it would be handed is the whole screen. A divider would come
+    /// out a hundred columns wide and set the very width it was asked about.
+    /// The height has no such loop: nothing in the interior is built from a
+    /// row budget it would then determine.
+    ///
+    /// So this one measurement outlives the rest, and what removes it is the
+    /// interior stating its own natural width — the same step that lets the
+    /// `layout_reader` go.
+    fn anchored_width(&self, content_cols: u16) -> Sizing {
+        Sizing::Cells(content_cols.saturating_add(2).max(6))
     }
 }
 
@@ -207,7 +242,11 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
                     frame_box(p)
                         .w(Sizing::Pct(*width_pct))
                         .min_w(20)
-                        .h(Sizing::Cells(p.rows()))
+                        .h(p.height())
+                        // The floor the arithmetic carried: a box is its two
+                        // border rows and at least one row of content, even
+                        // when the spec produced none.
+                        .min_h(3)
                         .key(key()),
                 )
         }
@@ -221,8 +260,10 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
             .fit(Fit::CLAMP)
             .child(
                 frame_box(p)
-                    .w(Sizing::Cells(content_cols.saturating_add(2).max(6)))
-                    .h(Sizing::Cells(p.rows()))
+                    .w(p.anchored_width(*content_cols))
+                    .min_w(6)
+                    .h(p.height())
+                    .min_h(3)
                     .key(key()),
             ),
     }
@@ -360,10 +401,21 @@ fn close_button(p: &Panel) -> Node<UiMsg> {
 /// widgets answer their own presses and a press that reaches the area but no
 /// widget is the panel's to swallow, not the buffer's.
 fn body(p: &Panel) -> Node<UiMsg> {
-    let area = row().flex(1).key(body_key());
     let Some(i) = p.interior.clone() else {
-        return area.pointer_mode(PointerMode::Transparent);
+        // **A host fills the box; it does not size it.** The box's height came
+        // from the mirror's row count precisely because a `Host` leaf has no
+        // intrinsic size, so the body takes the remainder it was given.
+        return row()
+            .flex(1)
+            .key(body_key())
+            .pointer_mode(PointerMode::Transparent);
     };
+    // **A described body is as tall as its rows, and the box follows it.**
+    // `flex(1)` here would fill a remainder that no longer exists — the box's
+    // own height is `Auto` now, and a flexible child measures as nothing under
+    // an indefinite constraint, so the frame would collapse to its border.
+    // Width still fills: the cross axis of the enclosing column, stretched.
+    let area = row().w(Sizing::Flex(1)).key(body_key());
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
     // knows the content width until the box has been measured — and the
@@ -661,6 +713,56 @@ mod tests {
             content_rows: 4,
         })));
         assert!(rect(&ui, &close_key()).is_none());
+    }
+
+    /// **A described box is as tall as its rows, not as tall as the mirror
+    /// said.** The `Spot`'s count is deliberately wrong here — nine rows for a
+    /// two-row spec — and the box comes out four cells: two rows of content
+    /// between two border rows. That is 2.3's exit condition for this slot:
+    /// the runtime's text mirror no longer feeds the panel's geometry, so
+    /// deleting it would move nothing.
+    ///
+    /// The count still governs a *painted* panel, and the case above this one
+    /// pins that. A `Host` leaf has no intrinsic size; the mirror is the only
+    /// thing that can answer for it.
+    #[test]
+    fn a_described_box_is_measured_not_counted() {
+        use fresh_core::api::WidgetSpec;
+        let spec = WidgetSpec::Raw {
+            entries: vec![
+                fresh_core::text_property::TextPropertyEntry::text("alpha"),
+                fresh_core::text_property::TextPropertyEntry::text("beta"),
+            ],
+            key: None,
+        };
+        let mut p = panel(Spot::Centered {
+            width_pct: 60,
+            content_rows: 9,
+        });
+        p.interior = Some(Interior {
+            spec: std::rc::Rc::new(spec),
+            states: Default::default(),
+            focus_key: String::new(),
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+        });
+        let described = rect(&laid_out(Some(p.clone())), &key()).expect("a described box");
+        assert_eq!(described.height, 4, "two rows inside two borders");
+
+        // The same spot with no interior is the painter's, and still counts.
+        let mut painted = p;
+        painted.interior = None;
+        assert_eq!(
+            rect(&laid_out(Some(painted)), &key())
+                .expect("a painted box")
+                .height,
+            11,
+            "nine rows inside two borders, because a host cannot say"
+        );
     }
 
     /// **The interior is in the tree.** A described panel's widget rows are

@@ -858,45 +858,89 @@ impl SettingsState {
         }
     }
 
-    /// Handle input when Categories panel is focused
-    fn handle_categories_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
-        match event.code {
-            KeyCode::Up => {
-                self.select_prev();
-                InputResult::Consumed
-            }
-            KeyCode::Down => {
-                self.select_next();
-                InputResult::Consumed
-            }
-            KeyCode::PageUp => {
-                // Page up in the tree view scrolls by viewport height.
+    /// The category tree's own keys, wherever they came in.
+    ///
+    /// **One implementation, two entry points.** The tree's node claims these
+    /// when it holds focus and sends `UiFact::SettingsTree`; the arms below
+    /// call this when it does not. They must not drift, which is why they are
+    /// not two `match`es: what moved onto the node in Phase 3.2 is the
+    /// *interpretation* of the key, not the behaviour behind it.
+    pub fn tree_key(&mut self, k: crate::view::shell::settings::TreeKey) {
+        use crate::view::shell::settings::TreeKey as T;
+        match k {
+            T::Prev => self.select_prev(),
+            T::Next => self.select_next(),
+            // Page up and down in the tree scroll by viewport height.
+            T::PageUp => {
                 let viewport = self.categories_scroll.scroll.viewport.max(1) as i32;
                 self.tree_step(-viewport);
-                InputResult::Consumed
             }
-            KeyCode::PageDown => {
+            T::PageDown => {
                 let viewport = self.categories_scroll.scroll.viewport.max(1) as i32;
                 self.tree_step(viewport);
-                InputResult::Consumed
             }
-            KeyCode::Home => {
+            T::First => {
                 let rows = self.visible_tree();
                 let cur = self.tree_cursor_index(&rows) as i32;
                 if cur > 0 {
                     self.tree_step(-cur);
                 }
-                InputResult::Consumed
             }
-            KeyCode::End => {
+            T::Last => {
                 let rows = self.visible_tree();
                 let cur = self.tree_cursor_index(&rows) as i32;
                 let last = rows.len() as i32 - 1;
                 if last > cur {
                     self.tree_step(last - cur);
                 }
-                InputResult::Consumed
             }
+            T::Expand => {
+                // Right ONLY expands an expandable category. Does not move
+                // focus into the body panel — that's Tab's job.
+                let cat_idx = self.selected_category;
+                if self.is_category_expandable(cat_idx)
+                    && !self.expanded_categories.contains(&cat_idx)
+                {
+                    self.expanded_categories.insert(cat_idx);
+                }
+            }
+            T::Collapse => {
+                // Left ONLY collapses an expanded category. No-op otherwise.
+                let cat_idx = self.selected_category;
+                if self.expanded_categories.contains(&cat_idx) {
+                    self.expanded_categories.remove(&cat_idx);
+                    // Sections aren't visible anymore — pull the cursor
+                    // back to the category row so the next Down step
+                    // walks to the *next* category, not into the
+                    // (now-hidden) sections.
+                    self.tree_cursor_section = None;
+                }
+            }
+        }
+    }
+
+    /// Handle input when Categories panel is focused
+    fn handle_categories_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
+        use crate::view::shell::settings::TreeKey as T;
+        // The eight the tree's node claims for itself when it has focus. They
+        // are here too because focus can be left on a seam whose panel no
+        // longer has the keyboard — see `view::shell::settings::tree_keys`.
+        let tree = match event.code {
+            KeyCode::Up => Some(T::Prev),
+            KeyCode::Down => Some(T::Next),
+            KeyCode::PageUp => Some(T::PageUp),
+            KeyCode::PageDown => Some(T::PageDown),
+            KeyCode::Home => Some(T::First),
+            KeyCode::End => Some(T::Last),
+            KeyCode::Right => Some(T::Expand),
+            KeyCode::Left => Some(T::Collapse),
+            _ => None,
+        };
+        if let Some(k) = tree {
+            self.tree_key(k);
+            return InputResult::Consumed;
+        }
+        match event.code {
             KeyCode::Tab => {
                 self.toggle_focus();
                 InputResult::Consumed
@@ -915,30 +959,6 @@ impl SettingsState {
             }
             KeyCode::Esc => {
                 self.request_close(ctx);
-                InputResult::Consumed
-            }
-            KeyCode::Right => {
-                // Right ONLY expands an expandable category. Does not move
-                // focus into the body panel — that's Tab's job.
-                let cat_idx = self.selected_category;
-                if self.is_category_expandable(cat_idx)
-                    && !self.expanded_categories.contains(&cat_idx)
-                {
-                    self.expanded_categories.insert(cat_idx);
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Left => {
-                // Left ONLY collapses an expanded category. No-op otherwise.
-                let cat_idx = self.selected_category;
-                if self.expanded_categories.contains(&cat_idx) {
-                    self.expanded_categories.remove(&cat_idx);
-                    // Sections aren't visible anymore — pull the cursor
-                    // back to the category row so the next Down step
-                    // walks to the *next* category, not into the
-                    // (now-hidden) sections.
-                    self.tree_cursor_section = None;
-                }
                 InputResult::Consumed
             }
             _ => InputResult::Ignored, // Let modal catch it

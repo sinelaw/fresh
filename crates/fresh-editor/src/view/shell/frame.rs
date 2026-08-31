@@ -465,10 +465,16 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         .h(cells(f.search_options.is_some())),
         region(HostRegion::PromptLine).h(cells(f.prompt_line)),
     ]);
-    // Overlays, in paint order. Menu-bar dropdowns first, then a context menu
-    // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
-    // states in the precedence table, expressed here as the order they are
-    // declared in.
+    // Overlays, in paint order — which is declaration order, and is decided
+    // here and nowhere else. Menu-bar dropdowns first, then a context menu
+    // over them: a menu row's right-click menu has to paint on top of the
+    // dropdown it was opened from.
+    //
+    // **Not `layer_rank`, which says the opposite** (`MENU` 860 above
+    // `CONTEXT_MENU` 830) and is right to: that table ranks who owns the
+    // KEYBOARD, and an open menu owns it over a context menu even while the
+    // context menu is drawn over the menu. The two orders are independent by
+    // design — see the note on `chrome::layer_rank`.
     //
     // **The two panel keyboards lead, because they are the floor of the
     // routable band.** `DOCK` was the lowest rank and `FLOATING_MODAL` the

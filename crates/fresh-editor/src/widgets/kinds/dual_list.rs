@@ -303,37 +303,75 @@ fn apply_op(
     }
 }
 
-struct DualListSeed<'a> {
-    included: &'a [String],
-    excluded: &'a [String],
-    active_included: bool,
-    available_cursor: usize,
-    included_cursor: usize,
+/// Spec-supplied starting state for a `DualList`: what the host asks for
+/// before the widget has instance state of its own — and, for a host that
+/// owns the control's state itself (the Settings dialog re-emits its model
+/// every frame and keeps none), on every frame.
+pub(crate) struct DualListSeed<'a> {
+    pub included: &'a [String],
+    /// Options of this spec that a sibling control has claimed, so the
+    /// Available column must not offer them.
+    pub excluded: &'a [String],
+    pub active_included: bool,
+    pub available_cursor: usize,
+    pub included_cursor: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collect_dual_list(
+/// A `DualList`'s live model: the two columns as they will be drawn, which
+/// one the keyboard is driving, and where each column's cursor sits.
+pub(crate) struct Resolved {
+    /// The Included column, in host order, sanitized against this spec.
+    pub included: Vec<String>,
+    /// The Available column: the options neither included nor excluded.
+    pub available: Vec<String>,
+    /// Which column the keyboard drives.
+    pub active_included: bool,
+    /// Cursor rows, each clamped into its own column.
+    pub available_cursor: usize,
+    pub included_cursor: usize,
+    /// Whether the widget holds focus. Every marker the control draws is
+    /// `focused && …` — an unfocused DualList shows no cursor and no active
+    /// column — so focus is resolved once, here, rather than re-derived by
+    /// each caller alongside the state it belongs with.
+    pub focused: bool,
+}
+
+impl Resolved {
+    /// How many body rows the control draws: one per row of the longer
+    /// column, but never fewer than the spec's `visible_rows`, so the
+    /// control keeps its height as items move across instead of resizing
+    /// the panel under the pointer.
+    pub(crate) fn body_rows(&self, visible_rows: u32) -> usize {
+        self.available
+            .len()
+            .max(self.included.len())
+            .max(visible_rows as usize)
+    }
+}
+
+/// **Where a `DualList`'s columns and cursors actually come from.**
+///
+/// Instance state is authoritative after first render; the spec's
+/// `included`/`active_included`/cursor fields are a seed, used on the first
+/// frame and on every frame for a host that owns the control's state itself.
+///
+/// Whichever the source, the included set is sanitized against *this* spec's
+/// options and each cursor is clamped into its own column: the option set can
+/// change under a stored state, and a cursor left past the end of a shortened
+/// column would mark a row that no longer exists.
+///
+/// Pulled out of the collector because the *description* needs the same
+/// answer, and a second copy of these rules is a second place for them to
+/// drift. Pure, and in particular it never writes `next_state` — the
+/// collector persists the answer, so instance state keeps one writer — which
+/// is what lets a description call it.
+pub(crate) fn resolve(
     options: &[DualListOption],
-    seed: DualListSeed<'_>,
-    label: &str,
-    hint: &str,
-    focused: bool,
-    visible_rows: u32,
+    seed: &DualListSeed<'_>,
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
-    next_state: &mut HashMap<String, WidgetInstanceState>,
-    ctx: RenderContext<'_>,
-    panel_width: u32,
-) -> CollectedOutput {
-    let mut out = CollectedOutput::default();
-    let excluded = seed.excluded;
-    // A keyed widget takes focus from the host's resolved focus key; an
-    // unkeyed one falls back to the spec's initial-only `focused` hint.
-    let is_focused = if key.is_some_and(|k| !k.is_empty()) {
-        ctx.is_focused(key)
-    } else {
-        focused
-    };
+    focused: bool,
+) -> Resolved {
     let seed_state = || {
         (
             seed.included.to_vec(),
@@ -342,7 +380,6 @@ fn collect_dual_list(
             seed.included_cursor,
         )
     };
-    // Instance state is authoritative after first render.
     let (included, active_included, mut avail_cur, mut incl_cur) = match key {
         Some(k) if !k.is_empty() => match prev.get(k) {
             Some(WidgetInstanceState::DualList {
@@ -361,8 +398,7 @@ fn collect_dual_list(
         _ => seed_state(),
     };
     let included = dual_sanitize_included(options, &included);
-    let available = dual_available_values(options, &included, excluded);
-    // Clamp cursors into their columns.
+    let available = dual_available_values(options, &included, seed.excluded);
     if !available.is_empty() {
         avail_cur = avail_cur.min(available.len() - 1);
     } else {
@@ -373,35 +409,23 @@ fn collect_dual_list(
     } else {
         incl_cur = 0;
     }
-    if let Some(k) = key {
-        if !k.is_empty() {
-            next_state.insert(
-                k.to_string(),
-                WidgetInstanceState::DualList {
-                    included: included.clone(),
-                    active_included,
-                    available_cursor: avail_cur as u32,
-                    included_cursor: incl_cur as u32,
-                },
-            );
-        }
+    Resolved {
+        included,
+        available,
+        active_included,
+        available_cursor: avail_cur,
+        included_cursor: incl_cur,
+        focused,
     }
+}
 
-    let col_w = dual_col_width(panel_width);
-    let widget_key = key.unwrap_or("").to_string();
-
-    // Optional label row.
-    if !label.is_empty() {
-        let mut e = TextPropertyEntry::text(label);
-        ensure_trailing_newline(&mut e);
-        out.entries.push(e);
-    }
-    // Header row. Each title carries the same two-column gutter its
-    // cells do, and the column the keyboard is driving is marked with
-    // `▾ ` plus the accent fg — so "which side am I on?" survives both
-    // a monochrome terminal and a color-only reading.
-    let avail_active = is_focused && !active_included;
-    let incl_active = is_focused && active_included;
+/// The header row. Each title carries the same two-column gutter its cells
+/// do, and the column the keyboard is driving is marked with `▾ ` plus the
+/// accent fg — so "which side am I on?" survives both a monochrome terminal
+/// and a color-only reading.
+pub(crate) fn header_row(st: &Resolved, col_w: usize) -> TextPropertyEntry {
+    let avail_active = st.focused && !st.active_included;
+    let incl_active = st.focused && st.active_included;
     let avail_head = format!(
         "{}{}",
         if avail_active {
@@ -442,113 +466,176 @@ fn collect_dual_list(
         });
     }
     ensure_trailing_newline(&mut header_entry);
-    let header_row = out.entries.len() as u32;
-    out.entries.push(header_entry);
+    header_entry
+}
 
-    // Body rows — one per max(available, included), at least
-    // `visible_rows`.
-    let body_rows = available
-        .len()
-        .max(included.len())
-        .max(visible_rows as usize);
-    for i in 0..body_rows {
-        let left_val = available.get(i);
-        let right_val = included.get(i);
-        let left = left_val.map(|v| dual_label(options, v)).unwrap_or("");
-        let right = right_val.map(|v| dual_label(options, v)).unwrap_or("");
-        // Per-column cursor gutter. The active column's cursor row
-        // gets the filled `▸ `, the idle column's the hollow `▹ ` so
-        // both cursors are readable at once — the idle marker is what
-        // tells you where Left/Right will drop you. Rows that hold no
-        // cursor still reserve the two columns, so nothing shifts as
-        // the cursor moves.
-        let left_gutter = dual_cursor_marker(
-            is_focused && left_val.is_some() && i == avail_cur,
-            !active_included,
-        );
-        let right_gutter = dual_cursor_marker(
-            is_focused && right_val.is_some() && i == incl_cur,
-            active_included,
-        );
-        let left_cell = format!("{left_gutter}{}", cell(left, col_w));
-        let right_cell = format!("{right_gutter}{}", cell(right, col_w));
-        let text = format!("{}  {}", left_cell, right_cell);
-        let left_start = 0usize;
-        let left_end = left_cell.len();
-        let right_start = left_end + 2;
-        let right_end = right_start + right_cell.len();
+/// One body row of a `DualList`: two cells side by side, and where each of
+/// them sits in the row's text.
+pub(crate) struct Row {
+    /// The row as the collector pushes it, trailing newline included.
+    pub entry: TextPropertyEntry,
+    /// The Available cell's byte range, present only when a value occupies
+    /// the cell — an empty cell answers no press, so it gets no hit area.
+    pub available: Option<(usize, usize)>,
+    /// The Included cell's byte range, on the same terms.
+    pub included: Option<(usize, usize)>,
+}
 
-        let mut entry = TextPropertyEntry::text(&text);
-        // Cursor highlight, spanning the marker *and* the label so the
-        // whole cell reads as one selected row. The active column gets
-        // the full fg/bg flip; the idle column gets a dimmed marker
-        // only (below) so the two never compete for attention.
-        if is_focused {
-            let (hs, he) = if active_included {
-                if right_val.is_some() && i == incl_cur {
-                    (right_start, right_end)
-                } else {
-                    (0, 0)
-                }
-            } else if left_val.is_some() && i == avail_cur {
-                (left_start, left_end)
+/// One body row: the two columns' cells side by side, each with its own
+/// cursor gutter.
+///
+/// The active column's cursor row gets the filled `▸ `, the idle column's the
+/// hollow `▹ ` so both cursors are readable at once — the idle marker is what
+/// tells you where Left/Right will drop you. Rows that hold no cursor still
+/// reserve the two columns, so nothing shifts as the cursor moves.
+///
+/// The cell ranges come back with the row rather than being left for the
+/// caller to measure back out of the rendered text: the press target is the
+/// cell this function just laid out, and re-deriving a range by scanning
+/// output is the duplication that put hover and the context menu on different
+/// rows elsewhere in this migration.
+pub(crate) fn body_row(options: &[DualListOption], st: &Resolved, i: usize, col_w: usize) -> Row {
+    let left_val = st.available.get(i);
+    let right_val = st.included.get(i);
+    let left = left_val.map(|v| dual_label(options, v)).unwrap_or("");
+    let right = right_val.map(|v| dual_label(options, v)).unwrap_or("");
+    let left_gutter = dual_cursor_marker(
+        st.focused && left_val.is_some() && i == st.available_cursor,
+        !st.active_included,
+    );
+    let right_gutter = dual_cursor_marker(
+        st.focused && right_val.is_some() && i == st.included_cursor,
+        st.active_included,
+    );
+    let left_cell = format!("{left_gutter}{}", cell(left, col_w));
+    let right_cell = format!("{right_gutter}{}", cell(right, col_w));
+    let text = format!("{}  {}", left_cell, right_cell);
+    let left_start = 0usize;
+    let left_end = left_cell.len();
+    let right_start = left_end + 2;
+    let right_end = right_start + right_cell.len();
+
+    let mut entry = TextPropertyEntry::text(&text);
+    // Cursor highlight, spanning the marker *and* the label so the
+    // whole cell reads as one selected row. The active column gets
+    // the full fg/bg flip; the idle column gets a dimmed marker
+    // only (below) so the two never compete for attention.
+    if st.focused {
+        let (hs, he) = if st.active_included {
+            if right_val.is_some() && i == st.included_cursor {
+                (right_start, right_end)
             } else {
                 (0, 0)
-            };
-            if he > hs {
-                entry.inline_overlays.push(InlineOverlay {
-                    start: hs,
-                    end: he,
-                    style: OverlayOptions {
-                        fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
-                        bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
-                        bold: true,
-                        ..Default::default()
-                    },
-                    properties: Default::default(),
-                    unit: OffsetUnit::Byte,
-                });
             }
-            // Idle-column marker: dimmed, no background, so it reads
-            // as "the other cursor is parked here".
-            let idle = if active_included {
-                (left_val.is_some() && i == avail_cur).then_some(left_start)
-            } else {
-                (right_val.is_some() && i == incl_cur).then_some(right_start)
-            };
-            if let Some(start) = idle {
-                entry.inline_overlays.push(InlineOverlay {
-                    start,
-                    end: start + DUAL_CURSOR_IDLE.len(),
-                    style: OverlayOptions {
-                        fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
-                        ..Default::default()
-                    },
-                    properties: Default::default(),
-                    unit: OffsetUnit::Byte,
-                });
-            }
-        }
-        ensure_trailing_newline(&mut entry);
-        let row = header_row + 1 + i as u32;
-        // Click hit areas: clicking a cell focuses that column +
-        // cursor row.
-        if left_val.is_some() {
-            out.hits.push(HitArea {
-                row_target: false,
-                context_click: false,
-                overlay: false,
-                widget_key: widget_key.clone(),
-                widget_kind: "dual_list",
-                buffer_row: row,
-                byte_start: left_start,
-                byte_end: left_end,
-                payload: json!({ "column": "available", "index": i }),
-                event_type: "dual_focus",
-                owner_key: None,
+        } else if left_val.is_some() && i == st.available_cursor {
+            (left_start, left_end)
+        } else {
+            (0, 0)
+        };
+        if he > hs {
+            entry.inline_overlays.push(InlineOverlay {
+                start: hs,
+                end: he,
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                    bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                    bold: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
             });
         }
-        if right_val.is_some() {
+        // Idle-column marker: dimmed, no background, so it reads
+        // as "the other cursor is parked here".
+        let idle = if st.active_included {
+            (left_val.is_some() && i == st.available_cursor).then_some(left_start)
+        } else {
+            (right_val.is_some() && i == st.included_cursor).then_some(right_start)
+        };
+        if let Some(start) = idle {
+            entry.inline_overlays.push(InlineOverlay {
+                start,
+                end: start + DUAL_CURSOR_IDLE.len(),
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
+    }
+    ensure_trailing_newline(&mut entry);
+    Row {
+        entry,
+        available: left_val.is_some().then_some((left_start, left_end)),
+        included: right_val.is_some().then_some((right_start, right_end)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_dual_list(
+    options: &[DualListOption],
+    seed: DualListSeed<'_>,
+    label: &str,
+    hint: &str,
+    focused: bool,
+    visible_rows: u32,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    ctx: RenderContext<'_>,
+    panel_width: u32,
+) -> CollectedOutput {
+    let mut out = CollectedOutput::default();
+    // A keyed widget takes focus from the host's resolved focus key; an
+    // unkeyed one falls back to the spec's initial-only `focused` hint.
+    let is_focused = if key.is_some_and(|k| !k.is_empty()) {
+        ctx.is_focused(key)
+    } else {
+        focused
+    };
+    let st = resolve(options, &seed, key, prev, is_focused);
+    // The resolver answers; persisting the answer stays here, so instance
+    // state has one writer and every reader — this collector, the
+    // description — gets it from the same rules.
+    if let Some(k) = key {
+        if !k.is_empty() {
+            next_state.insert(
+                k.to_string(),
+                WidgetInstanceState::DualList {
+                    included: st.included.clone(),
+                    active_included: st.active_included,
+                    available_cursor: st.available_cursor as u32,
+                    included_cursor: st.included_cursor as u32,
+                },
+            );
+        }
+    }
+
+    let col_w = dual_col_width(panel_width);
+    let widget_key = key.unwrap_or("").to_string();
+
+    if let Some(e) = label_row(label) {
+        out.entries.push(e);
+    }
+    let header_row_idx = out.entries.len() as u32;
+    out.entries.push(header_row(&st, col_w));
+
+    for i in 0..st.body_rows(visible_rows) {
+        let Row {
+            entry,
+            available,
+            included,
+        } = body_row(options, &st, i, col_w);
+        let row = header_row_idx + 1 + i as u32;
+        // Click hit areas: clicking a cell focuses that column +
+        // cursor row.
+        for (range, column) in [(available, "available"), (included, "included")] {
+            let Some((byte_start, byte_end)) = range else {
+                continue;
+            };
             out.hits.push(HitArea {
                 row_target: false,
                 context_click: false,
@@ -556,9 +643,9 @@ fn collect_dual_list(
                 widget_key: widget_key.clone(),
                 widget_kind: "dual_list",
                 buffer_row: row,
-                byte_start: right_start,
-                byte_end: right_end,
-                payload: json!({ "column": "included", "index": i }),
+                byte_start,
+                byte_end,
+                payload: json!({ "column": column, "index": i }),
                 event_type: "dual_focus",
                 owner_key: None,
             });
@@ -570,23 +657,50 @@ fn collect_dual_list(
     // move an item across, Shift+↑↓ to reorder) aren't guessable from
     // its shape, so the host supplies a localized one-liner and it
     // rides with the control instead of only in a panel footer.
-    if !hint.is_empty() {
-        let text = format!("{DUAL_GUTTER_BLANK}{hint}");
-        let mut e = TextPropertyEntry::text(&text);
-        e.inline_overlays.push(InlineOverlay {
-            start: 0,
-            end: text.len(),
-            style: OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
-                ..Default::default()
-            },
-            properties: Default::default(),
-            unit: OffsetUnit::Byte,
-        });
-        ensure_trailing_newline(&mut e);
+    if let Some(e) = hint_row(hint) {
         out.entries.push(e);
     }
     out
+}
+
+/// The optional label above the columns. `None` when the plugin gave none,
+/// which is what "empty = omitted" means — an empty row is not the same as no
+/// row, because the column band below it would start one line lower.
+pub(crate) fn label_row(label: &str) -> Option<TextPropertyEntry> {
+    if label.is_empty() {
+        return None;
+    }
+    let mut e = TextPropertyEntry::text(label);
+    ensure_trailing_newline(&mut e);
+    Some(e)
+}
+
+/// The key hint under the columns.
+///
+/// The control's bindings — Shift+←/→ to move an item across, Shift+↑/↓ to
+/// reorder — are not guessable from its shape, so the host supplies a
+/// localized one-liner and it rides *with the control* rather than living only
+/// in a panel footer, where a control on a surface with no footer would lose
+/// it. Indented by the same blank gutter the cells reserve, so it lines up
+/// under the Available column rather than under the cursor channel.
+pub(crate) fn hint_row(hint: &str) -> Option<TextPropertyEntry> {
+    if hint.is_empty() {
+        return None;
+    }
+    let text = format!("{DUAL_GUTTER_BLANK}{hint}");
+    let mut e = TextPropertyEntry::text(&text);
+    e.inline_overlays.push(InlineOverlay {
+        start: 0,
+        end: text.len(),
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+    ensure_trailing_newline(&mut e);
+    Some(e)
 }
 
 /// Kind policy for the plugin `SetDualIncluded` mutation: drop values
@@ -618,5 +732,83 @@ pub(crate) fn set_included_state(
         active_included: active,
         available_cursor: avail_cur,
         included_cursor: incl_cur,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widgets::render::DUAL_CURSOR_ACTIVE;
+
+    fn opts(values: &[&str]) -> Vec<DualListOption> {
+        values
+            .iter()
+            .map(|v| DualListOption {
+                value: v.to_string(),
+                label: format!("{v} label"),
+            })
+            .collect()
+    }
+
+    fn seed<'a>(included: &'a [String], excluded: &'a [String]) -> DualListSeed<'a> {
+        DualListSeed {
+            included,
+            excluded,
+            active_included: false,
+            available_cursor: 0,
+            included_cursor: 0,
+        }
+    }
+
+    /// Stored state outranks the seed, but is never trusted about *this*
+    /// spec: options can change under it, so an included value that is no
+    /// longer an option goes, and a cursor left past the end of the column it
+    /// shortened would otherwise mark a row that does not exist.
+    #[test]
+    fn stored_state_outranks_the_seed_and_is_clamped_into_its_columns() {
+        let options = opts(&["a", "b", "c"]);
+        let spec_included = vec!["a".to_string()];
+        let mut prev = HashMap::new();
+        prev.insert(
+            "k".to_string(),
+            WidgetInstanceState::DualList {
+                included: vec!["b".to_string(), "gone".to_string()],
+                active_included: true,
+                available_cursor: 9,
+                included_cursor: 9,
+            },
+        );
+        let st = resolve(&options, &seed(&spec_included, &[]), Some("k"), &prev, true);
+        assert_eq!(st.included, vec!["b".to_string()]);
+        assert_eq!(st.available, vec!["a".to_string(), "c".to_string()]);
+        assert_eq!(st.included_cursor, 0);
+        assert_eq!(st.available_cursor, 1);
+        assert!(st.active_included);
+    }
+
+    /// A row answers a press only where a value sits, and reports the range
+    /// it laid the cell out at rather than leaving the caller to measure it
+    /// back out of the text. An empty row still reserves both gutters, so
+    /// nothing shifts as the cursor moves.
+    #[test]
+    fn a_row_reports_a_press_target_only_where_a_value_sits() {
+        let options = opts(&["a"]);
+        let st = resolve(&options, &seed(&[], &[]), None, &HashMap::new(), true);
+
+        let filled = body_row(&options, &st, 0, 8);
+        let (start, end) = filled.available.expect("the Available cell holds a value");
+        assert_eq!(
+            &filled.entry.text[start..end],
+            format!("{DUAL_CURSOR_ACTIVE}{}", cell("a label", 8))
+        );
+        assert_eq!(filled.included, None);
+
+        let empty = body_row(&options, &st, 1, 8);
+        assert_eq!(empty.available, None);
+        assert_eq!(empty.included, None);
+        assert_eq!(
+            empty.entry.text.trim_end_matches('\n').chars().count(),
+            filled.entry.text.trim_end_matches('\n').chars().count()
+        );
     }
 }

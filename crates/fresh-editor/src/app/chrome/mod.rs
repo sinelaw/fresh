@@ -1,23 +1,21 @@
 //! Chrome surfaces as REGISTERED components.
 //!
-//! This is slice 0 of `docs/internal/chrome-event-model-plan.md`: the
-//! central `chrome_boxes()` enumeration is dissolved into one
-//! [`ChromeComponent`] per surface, each contributing its own boxes to
-//! the per-event tree from the live state and paint caches it owns.
-//! The registry below ([`components`]) is the ONE list — the chrome
-//! analogue of `widgets::kinds::behavior()`. Later slices grow the
-//! trait (per-gesture handlers, `hit_stack` dispatch, parent links,
-//! keyboard) without moving this code again.
+//! What a [`ChromeComponent`] declares today is two things: the overlay
+//! LAYER its surface contributes (`layers`, ranked by [`layer_rank`]) and
+//! how the surface reacts to a hover-target change (`on_hover_change`).
+//! Everything else this registry once carried has crossed to the shell
+//! tree — the per-event box tree and its validated memo, the pointer walk
+//! over those boxes, and the ranked keyboard walk. Their retirement is
+//! recorded in `docs/internal/fresh-editor-ui-migration.md`; nothing here
+//! memoizes, and no cache is consulted on the way to a layer.
 //!
-//! The tree is DERIVED from live state — never hand-maintained (derivation
-//! is what keeps stale-geometry races impossible; see the plan's "what NOT
-//! to do"). It IS memoized, though: [`chrome_tree`] caches the last build
-//! and reuses it only when a VALIDATED claim holds — the coarse `ui_gen`
-//! epoch matches AND a fresh (cheap, never-memoized) `overlay_layers` build
-//! equals the snapshot the cached tree was built from. Staleness is
-//! checked, not trusted: surface changes from any Editor API show up in
-//! the stack comparison without a hand-maintained bump roster, and debug
-//! builds oracle-check every hit against a full rebuild besides.
+//! What keeps the registry alive is that the layer stack must stay DERIVED
+//! from live state. A surface's presence, keyboard ownership, `KeyContext`
+//! and PTY blocking are declared next to the surface that owns them, so
+//! they cannot drift the way the central conditional ladders they replaced
+//! did (`app::overlay`'s header names the three that had already gone out
+//! of sync with each other). [`components`] is the ONE list; its order
+//! decides nothing — see the note on that function.
 
 mod base;
 mod context_menu;
@@ -35,12 +33,21 @@ use super::types::HoverTarget;
 use super::Editor;
 
 /// Overlay-layer ranks, DESCENDING = higher keyboard/modal precedence.
-/// Deliberately independent of both registry order and box z: the menu
-/// LAYER outranks the prompt's and the popups' (an open menu owns the
-/// keyboard over them) while its boxes sit in a lower pointer band,
-/// and the native context menus rank BELOW the popup layer (the
-/// unfocused-popup guard's `take_while` must not see them) while their
-/// boxes sit at the very top. Event-debug (1000) is hardcoded in
+///
+/// **A keyboard table, and nothing else.** It is not paint order and not
+/// the frame's declaration order: `MENU` outranks `CONTEXT_MENU` here
+/// because an open menu owns the keyboard, while the frame declares the
+/// context menu *after* the menu-bar dropdowns so it paints on top of
+/// them; and `CONTEXT_MENU` sits below `POPUP` so the unfocused-popup
+/// guard's `take_while` cannot see it, while a context menu paints above
+/// every popup. Reading the two orders as one has already produced a wrong
+/// comment in `view::shell::frame` — when the question is "what is drawn
+/// over what", the answer is that frame's declaration order, never this.
+///
+/// Only the two ordered readers of `Editor::overlay_layers` consult these
+/// ranks (`resolve_focus_context` and `popup_blocked_by_higher_modal`); a
+/// gate that merely asks whether a layer is present reads the unordered
+/// `Editor::overlay_layer_set` instead. Event-debug (1000) is hardcoded in
 /// `overlay_layers` — a debugging instrument, not a component.
 pub(crate) mod layer_rank {
     pub(crate) const SETTINGS: u16 = 900;
@@ -132,22 +139,20 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     None
 }
 
-/// One registered chrome surface: `collect` contributes its boxes for
-/// THIS event from the live state/caches the surface owns, and the
-/// per-gesture handlers own its behavior (slice 1: hover, right-click,
-/// double-click — left-click and wheel still ride the central kind
-/// arrays until slice 2). Handlers receive the box they were offered
-/// and decline (`None`/`Pass`) where its geometry is coarser than
-/// their real target, exactly as the central match arms did.
 /// Whether a cell is inside a rectangle.
 ///
-/// A plain geometry helper, in the argument order the pointer handlers here
-/// read in — cell first, rectangle second. The predicate itself is
-/// [`crate::view::ui::layout::point_in_rect`]; this was a third copy of it.
+/// A plain geometry helper, cell first and rectangle second — its callers'
+/// order, and the reverse of the predicate it forwards to,
+/// [`crate::view::ui::layout::point_in_rect`], of which this was a third
+/// copy.
 ///
-/// It outlived the box walk it was written for: the surfaces that hit-test
-/// rectangles their own painters recorded — a modal's interior, a plugin
-/// panel's widgets — still ask it.
+/// It outlived the box walk it was written for because three probes still
+/// test a rectangle some *other* writer published, none of them a node's
+/// hit-test: the widget runtime, against the hit list and popup rect its own
+/// painter recorded; the transient-popup probe in `mouse_input`, against
+/// `active_chrome().popup_areas`; and `chrome::splits`, against the pane and
+/// tab-strip rectangles the split layout and the shell tree report. The
+/// modals no longer ask — their interiors answer their own presses.
 pub(crate) fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
     crate::view::ui::layout::point_in_rect(rect, col, row)
 }
@@ -184,9 +189,9 @@ pub(crate) trait ChromeComponent: Sync {
 
     /// This component's overlay-layer contributions, from live state:
     /// `(rank, Layer)` pairs pushed into `out` (see [`layer_rank`]).
-    /// `Editor::overlay_layers()` concatenates every component's
-    /// contributions and sorts by rank descending — the layer stack is
-    /// DERIVED from the registry, so a surface's presence, keyboard
+    /// `Editor::layer_contributions` concatenates every component's, and
+    /// only its ordered reader sorts by rank descending — the layer stack
+    /// is DERIVED from the registry, so a surface's presence, keyboard
     /// ownership, `KeyContext`, and PTY blocking are declared by its
     /// component instead of a central conditional ladder.
     fn layers(&self, _ed: &Editor, _out: &mut Vec<(u16, crate::app::overlay::Layer)>) {}
@@ -236,12 +241,17 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
 mod tests {
     use super::layer_rank::*;
 
-    /// The rank block is the ONE precedence source for the keyboard
-    /// walk, the PTY gate, `get_key_context`,
-    /// and `popup_blocked_by_higher_modal` — a one-character edit here
-    /// changes behavior in five places, so the deliberate relations
-    /// are pinned. Each assert names the behavior that regresses if it
-    /// flips.
+    /// The rank block is the ONE precedence source for the two readers
+    /// that consume `Editor::overlay_layers` as an ORDER — the
+    /// `resolve_focus_context` walk behind `get_key_context`, and
+    /// `popup_blocked_by_higher_modal`'s `take_while` behind
+    /// `resolve_unfocused_popup_action`. Everything else that consults the
+    /// stack (the PTY gate, the LSP-hover suppressor, the chrome-caret
+    /// gate) asks a membership question and reads the unordered
+    /// `Editor::overlay_layer_set`, so a one-character edit here cannot
+    /// reach it. Two places, then — but neither has any other statement of
+    /// its precedence, so the deliberate relations are pinned. Each assert
+    /// names the behavior that regresses if it flips.
     #[test]
     fn deliberate_rank_relations_are_pinned() {
         // The capture-all modal band outranks everything routable.

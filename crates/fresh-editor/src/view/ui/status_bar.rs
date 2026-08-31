@@ -398,16 +398,6 @@ impl TruncatedPath {
             format!("{}{}", self.prefix, self.suffix)
         }
     }
-
-    /// Get the display length. The ellipsis marker is one separator column
-    /// plus "[...]" regardless of which separator is in use.
-    pub fn display_len(&self) -> usize {
-        if self.truncated {
-            self.prefix.len() + self.sep.len_utf8() + "[...]".len() + self.suffix.len()
-        } else {
-            self.prefix.len() + self.suffix.len()
-        }
-    }
 }
 
 /// The separator a path string is written with: `\` for a Windows-style

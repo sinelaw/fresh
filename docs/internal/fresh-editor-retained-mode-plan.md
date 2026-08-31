@@ -110,11 +110,14 @@ dim is painted after the tree's overlay band.
 | **F.8** | The dock's active card keeps its heavy selection marker and never becomes the seamless tab: the pass that rewrites it sits behind the described-panel early-out. |
 | **F.2** | `Paint::Lit` — the one colour in the display list with no theme name. |
 | **F.7** | Pre-existing, identical on `master`: an LSP tooltip left through the gutter can never be dismissed by moving the mouse, because the dismissal is gated on request state the gutter branch clears. |
-| **F.9** | A press on a described *pane*-mounted panel's dead space still reaches the editor-click path, which scans the runtime's stored hit list and resolves it against a screen-to-line projection that is empty for that pane. Every other probe was gated on "is this panel described"; this one was not. Presses that land on a widget are stopped by the node, so what gets here is exactly the case the projection cannot answer. |
+| **F.9** | A press on a described *pane*-mounted panel's dead space still reaches the editor-click path, which scans the runtime's stored hit list and resolves it against a screen-to-line projection that is empty for that pane. Every other probe was gated on "is this panel described"; this one was not. Presses that land on a widget are stopped by the node, so what gets here is exactly the case the projection cannot answer. The projection now says `None`, which all three of its readers already expect. |
 
-F.6, F.7 and F.8 are fixed on this branch; F.2 and F.9 are open. The table is kept
+F.6, F.7, F.8 and F.9 are fixed on this branch; F.2 is open. The table is kept
 whole because each row names a *class* of defect the migration produces, and the
-fix is only interesting next to the shape that caused it.
+fix is only interesting next to the shape that caused it. F.9's class is the one
+worth restating: a gate applied at four of five sites is not a gate, and the site
+that was missed was the one whose fallback was silently degenerate rather than
+merely stale.
 
 ---
 
@@ -239,20 +242,33 @@ multi-line text field likewise. What is wholly uncrossed is the single-line text
 field — every form field in the editor — and the dual list.
 *Exit:* the runtime's collector has no caller in the shell.
 
-**2.3 Retire the mirror as a rendering input.** Once 2.2 lands, the text-property
-mirror is only a *text* mirror — for search, copy and change counting — and no
-longer feeds paint.
+*Progress:* the dropdown has crossed, and is the worked example for the rest.
+Remaining: the single-line text field, the dual list, a residual tree shape, and
+three calls the already-described arms still make into the collector for a card
+list's item subtrees, a multi-line field's document, and a card tree.
 
-**This is one function.** An audit of every reader found the mirror's paint role
-already stood down for pane-mounted panels (the text pass and the scrollbar pass
-both return early for a described pane) and never existed for the dock (whose box
-is the carved column). What remains is the *centered and anchored* floating
-panel, whose outer box is sized by arithmetic over the mirror: its row count
-becomes the frame's height and the widest row's display width becomes its width.
-The interior is already a node whose intrinsic size layout can measure, so the
-fix is for the spot to carry no counts at all. Until it does, deleting the mirror
-shrinks every centered plugin modal and every right-click context popup.
-*Exit:* deleting the mirror changes no pixel.
+**2.3 Retire the mirror as a rendering input.** *Done, bar one measurement.* The
+text-property mirror is now only a *text* mirror — for search, copy and change
+counting.
+
+An audit of every reader found the paint role had already stood down for
+pane-mounted panels (the text pass and the scrollbar pass both return early for a
+described pane) and never existed for the dock, whose box is the carved column.
+What was left was the floating panel's frame, sized by arithmetic over the
+mirror's row count and widest row. A described box now measures its own interior;
+the counts stay for a *painted* one and go with it, because a `Host` leaf has no
+intrinsic size and the mirror is the only thing that can answer for it.
+
+**The exception, which is a real one.** An anchored popup's *width* is still the
+mirror's count even when described. The box hugs its content horizontally, so the
+tree wants to say "as wide as you need" — but the interior is built by a layout
+reader, which needs a width as a *number* before it can produce a row, and under
+an indefinite constraint that number is the whole screen: a divider would come
+out screen-wide and set the very width it was asked about. The height has no such
+loop. What removes it is the interior stating its own natural width, which is the
+same step that lets the layout reader go — and that is 2.2's job, not this one's.
+*Exit:* deleting the mirror changes no pixel. Met for height and for every other
+slot; the anchored width is the one remaining read, and it is named in the code.
 
 **2.4 Then delete the second renderer.** The widget runtime's paint role goes;
 it keeps only what the plugin API genuinely needs.
@@ -318,18 +334,31 @@ the way down. The body — the split grid, buffers, terminals and the text pipel
 **4.2 F.2.** `Paint::Lit` retires into a dynamic theme tier once plugins can
 register named keys, after which provenance is total.
 
-**4.3 Delete the dead painters, carefully.** This is a smaller prize than it
-sounds. An audit during this work found that the tab, menu, status-bar, file
-browser, file explorer, scrollbar and scroll-panel modules all still have live
-callers, mostly through the split renderer and the settings/widget stack.
-Reachability has to be established properly: a public function with no external
-callers is not dead if its own module calls it, and one only its tests call is
-coverage rather than weight.
+**4.3 Delete the dead painters, carefully.** *Done, and it was the smaller prize
+the warning promised.* Reachability was established properly this time — a public
+function with no external callers is not dead if its own module calls it, and one
+only its tests call is coverage rather than weight — and what survived that check
+was one scroll-panel painter with its three layout types, an orphaned constructor
+set, two stray accessors, and a dead-in-place query API. The large chrome
+painters the phase hoped to reclaim (the file browser, the file-open prompt, the
+menu's layout pass, the tab renderer) are all still load-bearing through the
+render module. One whole type is unreachable and was left standing because
+removing it reaches outside this phase's files; it is named in the code.
 
-**4.4 Macro replay stops using the retained tree as a calculator.** It currently
-takes the tree, runs a full frame for geometry, and puts it back — per replayed
-action. A full frame mounts and disposes elements, applies autofocus and can fire
-a reveal. Bounded blast radius, wrong shape.
+**4.4 Macro replay stops using the retained tree as a calculator.** *Done.* It
+took the tree, ran a full frame for geometry, and put it back — per replayed
+action, so a frame's side effects were multiplied by the length of the macro. The
+library now offers a geometry pass: build, reconcile, measure, arrange, and stop.
+Autofocus, queued reveals, behaviour delivery and paint are the things a frame
+*does* because it was shown, and a question is not one.
+
+Caching the answer was considered and rejected: the key would have to be the
+frame description, which is deliberately not comparable, and a hand-picked subset
+of its fields is the same replica-of-a-layout that this call site already carried
+once and got wrong three ways. A scratch tree was rejected for a sharper reason —
+descriptions are not tree-agnostic here, because a description carries handles
+that bind to whichever tree reconciles them, so laying one out twice takes the
+binding away from the live tree. Two writers for one fact.
 
 ---
 

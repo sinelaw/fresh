@@ -597,6 +597,16 @@ pub enum UiFact {
     /// per expandable row, filed so a chain of `point_in_rect` could tell the
     /// chevron from the label beside it.
     SettingsCategoryDisclosure(usize),
+    /// **A key the category tree answered for itself.** The first of the
+    /// settings dialog's keys to arrive as what it *means* rather than as
+    /// `ModalKey` — "here is your key back, work out whose it was". The node
+    /// holding focus resolved that, and it only claims while the description
+    /// says the tree is the panel with the keyboard, which is the same gate
+    /// `dispatch_settings_key` applies one layer down.
+    SettingsTree(super::settings::TreeKey),
+    /// The same, for the two keys that walk a running search's results.
+    /// `true` is Down.
+    SettingsSearchStep(bool),
     /// A press on the settings panel header's `[Clear …]`. It was
     /// `layout.clear_category_button` — a rectangle the painter filed as it
     /// drew the button, for a chain of `point_in_rect` to find again.

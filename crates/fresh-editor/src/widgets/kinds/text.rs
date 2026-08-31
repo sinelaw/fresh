@@ -379,38 +379,59 @@ fn effective_text_field_width(
         .max(1)
 }
 
-/// Emit a focused Text widget's completion popup as floating overlay
-/// rows on `out`, returning the scroll offset to persist for the next
-/// render (0 when there are no completions).
+/// The completion pop-over's rows, in paint order: the dim separator that
+/// takes over the enclosing section's bottom border, the windowed candidate
+/// rows, and the popup's own bottom border.
+pub(crate) struct CompletionPopup {
+    /// Separator, items, bottom border — one entry per row, each already
+    /// carrying its own `│ … │` chrome.
+    pub rows: Vec<TextPropertyEntry>,
+    /// The scroll offset to persist for the next render.
+    pub scroll: u32,
+    /// How many candidate rows the window shows, which is the height of the
+    /// popup less its two chrome rows.
+    pub visible: u32,
+}
+
+/// **The completion pop-over: how many rows, which ones, and what they say.**
 ///
-/// `panel_width` is the inner width the wrapping `LabeledSection` handed
-/// us (already minus its 4 columns of `│ … │` chrome); the popup widens
-/// by 4 so the side borders it paints line up with the section's.
+/// `panel_width` is the inner width the wrapping `LabeledSection` handed us
+/// (already minus its 4 columns of `│ … │` chrome); the popup widens by 4 so
+/// the side borders it paints line up with the section's. That is why the
+/// float it becomes has to start two columns *left* of the child — see
+/// `view::shell::widgets`'s `Site::escape`.
 ///
-/// Scroll is *forward-only*: when the selection walks past the bottom of
-/// the window the view pulls forward to keep it visible, but it is never
-/// pulled back if the selection sits above the window — the mouse-wheel
-/// handler deliberately diverges scroll from selection, and a back-pull
-/// would undo the wheel on the next render.
+/// Scroll is *forward-only*: when the selection walks past the bottom of the
+/// window the view pulls forward to keep it visible, but it is never pulled
+/// back if the selection sits above the window — the mouse-wheel handler
+/// deliberately diverges scroll from selection, and a back-pull would undo the
+/// wheel on the next render.
 ///
-/// Overlay anchors: 1 = the `LabeledSection`'s bottom border (the dim
-/// separator paints over it), 2..N+1 = item rows, N+2 = the popup's own
-/// bottom border.
-#[allow(clippy::too_many_arguments)]
-fn emit_completion_overlays(
-    out: &mut CollectedOutput,
-    key: Option<&str>,
+/// Default popup height is 5 visible rows. Plugins override per-widget by
+/// setting `completions_visible_rows`; 0 falls back to the default so the
+/// orchestrator's existing `text({...})` calls Just Work.
+///
+/// Pulled out of the collector because the *description* needs the same rows,
+/// and a second copy of the windowing would be a second place for it to drift
+/// from the scroll offset the collector persists. Pure — no `out`, no
+/// `next_state` — which is what lets a description call it.
+pub(crate) fn completion_popup(
     completions: &[fresh_core::api::CompletionItem],
-    visible_rows: u32,
+    completions_visible_rows: u32,
     panel_width: u32,
     selected_idx: usize,
     navigated: bool,
     prev_scroll: u32,
     marker_gutter: bool,
-) -> u32 {
+) -> Option<CompletionPopup> {
     if completions.is_empty() {
-        return 0;
+        return None;
     }
+    let visible_rows = if completions_visible_rows == 0 {
+        5u32
+    } else {
+        completions_visible_rows
+    };
     let popup_total = (panel_width as usize).saturating_add(4); // re-add section chrome
     let total = completions.len() as u32;
     let visible = visible_rows.max(1).min(total);
@@ -424,12 +445,8 @@ fn emit_completion_overlays(
         scroll = max_scroll;
     }
 
-    let mut anchor: u32 = 1;
-    out.overlays.push(OverlayRow {
-        buffer_row: anchor,
-        entry: render_completion_dim_separator_overlay(popup_total),
-    });
-    anchor += 1;
+    let mut rows = Vec::with_capacity(visible as usize + 2);
+    rows.push(render_completion_dim_separator_overlay(popup_total));
     let needs_scrollbar = total > visible;
     let end = (scroll + visible).min(total) as usize;
     for (visible_row, i) in (scroll as usize..end).enumerate() {
@@ -439,27 +456,65 @@ fn emit_completion_overlays(
         } else {
             None
         };
-        out.overlays.push(OverlayRow {
-            buffer_row: anchor,
-            entry: render_completion_item_overlay(
-                &item.value,
-                item.kind.as_deref(),
-                // Only paint a selected-row highlight once the user
-                // has stepped into the dropdown (↓/↑). A freshly
-                // surfaced popup shows plain suggestions so it's
-                // clear Enter acts on the form, not the list.
-                navigated && i == selected_idx,
-                popup_total,
-                thumb,
-                marker_gutter,
-            ),
-        });
-        anchor += 1;
+        rows.push(render_completion_item_overlay(
+            &item.value,
+            item.kind.as_deref(),
+            // Only paint a selected-row highlight once the user
+            // has stepped into the dropdown (↓/↑). A freshly
+            // surfaced popup shows plain suggestions so it's
+            // clear Enter acts on the form, not the list.
+            navigated && i == selected_idx,
+            popup_total,
+            thumb,
+            marker_gutter,
+        ));
     }
-    out.overlays.push(OverlayRow {
-        buffer_row: anchor,
-        entry: render_completion_bottom_border(popup_total),
-    });
+    rows.push(render_completion_bottom_border(popup_total));
+    Some(CompletionPopup {
+        rows,
+        scroll,
+        visible,
+    })
+}
+
+/// Emit a focused Text widget's completion popup as floating overlay
+/// rows on `out`, returning the scroll offset to persist for the next
+/// render (0 when there are no completions).
+///
+/// Overlay anchors: 1 = the `LabeledSection`'s bottom border (the dim
+/// separator paints over it), 2..N+1 = item rows, N+2 = the popup's own
+/// bottom border. The rows themselves are [`completion_popup`]'s; what is
+/// here is the immediate-mode packaging of them.
+#[allow(clippy::too_many_arguments)]
+fn emit_completion_overlays(
+    out: &mut CollectedOutput,
+    key: Option<&str>,
+    completions: &[fresh_core::api::CompletionItem],
+    completions_visible_rows: u32,
+    panel_width: u32,
+    selected_idx: usize,
+    navigated: bool,
+    prev_scroll: u32,
+    marker_gutter: bool,
+) -> u32 {
+    let Some(popup) = completion_popup(
+        completions,
+        completions_visible_rows,
+        panel_width,
+        selected_idx,
+        navigated,
+        prev_scroll,
+        marker_gutter,
+    ) else {
+        return 0;
+    };
+    let visible = popup.visible;
+    for (i, entry) in popup.rows.into_iter().enumerate() {
+        out.overlays.push(OverlayRow {
+            buffer_row: 1 + i as u32,
+            entry,
+        });
+    }
     // The popup is a real box in the panel's layout tree: one
     // stacking level up, opaque (a click inside it that resolves to
     // nothing must not fall through to the rows it covers), spanning
@@ -479,7 +534,7 @@ fn emit_completion_overlays(
         b.scrollable = true;
         b
     });
-    scroll
+    popup.scroll
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -768,15 +823,6 @@ fn render_widget_text(
         );
     }
     let mut out = CollectedOutput::default();
-    // Default popup height: 5 visible rows. Plugins override per-widget
-    // by setting `completions_visible_rows`; 0 falls back to the default
-    // so the orchestrator's existing `text({...})` calls Just Work.
-    let effective_visible_rows = if completions_visible_rows == 0 {
-        5u32
-    } else {
-        completions_visible_rows
-    };
-
     // A keyed widget takes focus from the host's resolved focus key; an
     // unkeyed one falls back to the spec's initial-only `focused` hint.
     let is_focused = if key.is_some_and(|k| !k.is_empty()) {
@@ -784,125 +830,39 @@ fn render_widget_text(
     } else {
         focused
     };
-    // Host-owned value/cursor (+ scroll, multi-line only):
-    // read instance state if it exists; else seed from spec
-    // on first render. See WidgetInstanceState::Text doc.
-    //
     // `rows == 0` shouldn't happen because of serde's
     // default = 1, but if it slips through (raw struct
     // construction in tests, etc.) treat it as single-line.
     let multiline = rows > 1;
-    let mut effective_editor: crate::primitives::text_edit::TextEdit;
-    let prev_scroll: u32;
-    // Completions + selected index ride along on the
-    // Text widget's instance state — neither comes from
-    // the spec (plugins push via `SetCompletions`), so we
-    // carry them across renders verbatim and clamp the
-    // index to the current list size below.
-    let mut prev_completions: Vec<fresh_core::api::CompletionItem> = Vec::new();
-    let mut prev_completion_idx: usize = 0;
-    let mut prev_completion_scroll: u32 = 0;
-    let mut prev_completion_navigated = false;
-    match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
-        Some(WidgetInstanceState::Text {
-            editor,
-            scroll,
-            completions,
-            completion_selected_index,
-            completion_scroll_offset,
-            completion_navigated,
-            ..
-        }) => {
-            effective_editor = editor.clone();
-            prev_scroll = *scroll;
-            prev_completions = completions.clone();
-            prev_completion_idx = *completion_selected_index;
-            prev_completion_scroll = *completion_scroll_offset;
-            prev_completion_navigated = *completion_navigated;
-        }
-        _ => {
-            effective_editor = if multiline {
-                crate::primitives::text_edit::TextEdit::with_text(value)
-            } else {
-                crate::primitives::text_edit::TextEdit::single_line_with_text(value)
-            };
-            let seed = if cursor_byte < 0 {
-                value.len()
-            } else {
-                (cursor_byte as usize).min(value.len())
-            };
-            effective_editor.set_cursor_from_flat(seed);
-            prev_scroll = 0;
-        }
-    }
-    // Clamp once per render so a list that shrank
-    // host-side (or arrived empty) doesn't keep a stale
-    // out-of-bounds index alive.
-    if !prev_completions.is_empty() {
-        prev_completion_idx = prev_completion_idx.min(prev_completions.len() - 1);
-    } else {
-        prev_completion_idx = 0;
-    }
-    let effective_value = effective_editor.value();
-    let effective_cursor_byte = effective_editor.flat_cursor_byte() as i32;
-    let effective_cursor = if is_focused {
-        effective_cursor_byte
-    } else {
-        -1
-    };
-    // Form-column alignment: when `label_width > 0`, pad the label to
-    // the column and terminate it with `:` so the value cell's `[` lines
-    // up with the sibling Toggle/Number/Dropdown cells (which render
-    // `{label}: [..]`). `render_text_input` appends the ` ` + `[`, so the
-    // composed label carries only up to the colon. `label_width == 0`
-    // keeps the compact `{label} [..]` plugins get by default. This is
-    // computed before the field width so the value cell is sized against
-    // the *padded* label overhead (else the wider label overflows the
-    // control's right edge). Only meaningful for single-line fields.
-    let composed_label;
-    let effective_label: &str = if label_width > 0 && !label.is_empty() && !multiline {
-        let lw = form_label_width(
-            label_width,
-            focus_gutter_prefix(is_focused, ctx.marker_gutter).len(),
-            // Reserve the bracketed cell + a couple cells of value so the
-            // field opening stays on-screen on a narrow surface.
-            "[  ]".len(),
-            panel_width,
-        );
-        composed_label = format!("{}:", fit_label(label, lw));
-        &composed_label
-    } else {
-        label
-    };
-    let effective_field_width = effective_text_field_width(
-        full_width,
-        multiline,
-        effective_label,
-        panel_width,
-        field_width,
-        ctx.marker_gutter,
-    );
-    // Selection overlay is only meaningful for the focused
-    // widget — passing `None` otherwise keeps the no-selection
-    // rendering paths unchanged. The editor's own selection wins;
-    // a spec-seeded render (stateless surfaces like Settings, which
-    // re-emit their model each frame) falls back to the spec's
-    // `sel_start`/`sel_end` byte range, clamped into the value.
-    let selection_for_render = if is_focused {
-        effective_editor.selection_flat_range().or({
-            let (a, b) = spec_sel;
-            if a >= 0 && b > a {
-                let len = effective_value.len();
-                Some(((a as usize).min(len), (b as usize).min(len)))
-            } else {
-                None
-            }
-        })
-    } else {
-        None
-    };
+    let Resolved {
+        editor: effective_editor,
+        scroll: prev_scroll,
+        completions: prev_completions,
+        completion_index: prev_completion_idx,
+        completion_scroll: mut prev_completion_scroll,
+        completion_navigated: prev_completion_navigated,
+    } = resolve(value, cursor_byte, multiline, key, prev);
     let new_scroll;
     if multiline {
+        let effective_value = effective_editor.value();
+        let effective_cursor = if is_focused {
+            effective_editor.flat_cursor_byte() as i32
+        } else {
+            -1
+        };
+        let selection_for_render = selection_of(&effective_editor, is_focused, spec_sel);
+        // A multi-line field takes the plugin's `field_width` verbatim —
+        // `render_text_area` fills the panel width itself — and its label is
+        // its own row, so neither the form-column rule nor the gutter reserve
+        // applies. See [`effective_text_field_width`].
+        let effective_field_width = effective_text_field_width(
+            full_width,
+            multiline,
+            label,
+            panel_width,
+            field_width,
+            ctx.marker_gutter,
+        );
         let rendered = render_text_area(
             &effective_value,
             effective_cursor,
@@ -955,91 +915,34 @@ fn render_widget_text(
             out.entries.push(e);
         }
     } else {
-        let rendered = render_text_input(
-            &effective_value,
-            effective_cursor,
-            selection_for_render,
-            is_focused,
-            effective_label,
-            placeholder,
-            max_visible_chars,
-            effective_field_width,
-            full_width,
+        let line = single_line(
+            &effective_editor,
             prev_scroll,
+            label,
+            placeholder,
+            field_width,
+            max_visible_chars,
+            full_width,
+            block_caret,
+            spec_sel,
+            label_width,
+            is_focused,
+            key,
+            ctx.marker_gutter,
+            panel_width,
         );
         // Single-line fields spend `scroll` on the horizontal window
         // (the first painted value char), so a caret that walks into
         // the hidden head brings the view with it.
-        new_scroll = rendered.scroll_chars;
-        let mut entry = rendered.entry;
-        // Lead the single-line input with the focus-marker gutter
-        // (`▸ ` when focused, two spaces otherwise) so focus is
-        // legible from a plain capture — the hardware cursor lands
-        // inside the field too, but a cursor doesn't show up in
-        // `tmux capture-pane`. Shift the cursor offset and every
-        // inline overlay right by the gutter's byte length so the
-        // bracket bg / placeholder / selection spans still line up.
-        // The field width was already reduced by the gutter's two
-        // columns above, so the box doesn't overflow, and the gutter
-        // is present whether or not the field is focused so the
-        // layout never shifts.
-        let gutter = focus_gutter_prefix(is_focused, ctx.marker_gutter);
-        let marker_bytes = gutter.len();
-        let mut cursor_in_row = rendered.cursor_byte_in_entry;
-        if marker_bytes > 0 {
-            entry.text.insert_str(0, gutter);
-            for ov in entry.inline_overlays.iter_mut() {
-                ov.start += marker_bytes;
-                ov.end += marker_bytes;
-            }
-            cursor_in_row = cursor_in_row.map(|c| c + marker_bytes);
-        }
-        if let Some(byte_in_row) = cursor_in_row {
+        new_scroll = line.scroll;
+        if let Some(byte_in_row) = line.caret {
             out.focus_cursor = Some(FocusCursor {
                 buffer_row: 0,
                 byte_in_row: byte_in_row as u32,
             });
-            // Modal surfaces paint the caret as a REVERSED cell in the
-            // row itself (no hardware cursor over a modal).
-            if block_caret {
-                push_block_caret_overlay(&mut entry, byte_in_row);
-            }
         }
-        // A click anywhere on the input line focuses the field so a mouse user
-        // can type. Text widgets previously emitted no hit area, so clicks fell
-        // through and the field stayed unfocused (#2234 item 1). Focusing is
-        // driven by the tabbable path in `handle_floating_widget_click`; the
-        // `focus` event keeps the plugin's focus mirror in step.
-        //
-        // The payload carries the value-layout breadcrumbs the click
-        // handler needs to reposition the cursor to the clicked column
-        // (#2573): `valueInnerStart` is where the value's `<inner>`
-        // region begins in this row's text (after the gutter that was
-        // just prepended), and the truncation fields translate a click
-        // over a `…`-prefixed tail view back to a value byte.
-        if let Some(k) = key.filter(|k| !k.is_empty()) {
-            let inner_start = marker_bytes + rendered.inner_byte_start;
-            out.hits.push(HitArea {
-                row_target: false,
-                context_click: false,
-                overlay: false,
-                widget_key: k.to_string(),
-                widget_kind: "text",
-                buffer_row: 0,
-                byte_start: 0,
-                byte_end: entry.text.len(),
-                payload: json!({
-                    "valueInnerStart": inner_start,
-                    "valueDropped": rendered.value_dropped_bytes,
-                    "ellipsisBytes": rendered.ellipsis_bytes,
-                    "valueLen": rendered.value_len,
-                }),
-                event_type: "focus",
-                owner_key: None,
-            });
-        }
-        ensure_trailing_newline(&mut entry);
-        out.entries.push(entry);
+        out.hits.extend(line.hit);
+        out.entries.push(line.entry);
     }
     // Emit the completion popup (if any) as floating overlay rows so
     // the rest of the form below the input keeps its position and the
@@ -1048,7 +951,7 @@ fn render_widget_text(
         &mut out,
         key,
         &prev_completions,
-        effective_visible_rows,
+        completions_visible_rows,
         panel_width,
         prev_completion_idx,
         prev_completion_navigated,
@@ -1075,6 +978,288 @@ fn render_widget_text(
         );
     }
     out
+}
+
+/// A `Text`'s state, once the spec and the instance map have been reconciled.
+///
+/// Host-owned value and cursor (plus scroll, and the completion fields the
+/// plugin pushes rather than the spec): instance state if it exists, else
+/// seeded from the spec on first render. See `WidgetInstanceState::Text`.
+pub(crate) struct Resolved {
+    /// The editor the row is rendered from — cursor and selection included.
+    pub editor: crate::primitives::text_edit::TextEdit,
+    /// First visible row (multi-line) or first painted value char
+    /// (single-line): the window the previous render left behind.
+    pub scroll: u32,
+    /// The candidate list the plugin pushed through `SetCompletions`.
+    pub completions: Vec<fresh_core::api::CompletionItem>,
+    /// The highlighted candidate, clamped into `completions`.
+    pub completion_index: usize,
+    /// The completion window's first visible candidate.
+    pub completion_scroll: u32,
+    /// Whether the user has stepped into the list (↑/↓/wheel) — which is what
+    /// makes Enter act on the candidate rather than on the form.
+    pub completion_navigated: bool,
+}
+
+/// **Where a `Text`'s value, cursor and completion list actually come from.**
+///
+/// Instance state is authoritative once it exists; the spec's `value` /
+/// `cursor_byte` are a seed for the first render only. Completions never come
+/// from the spec at all — plugins push them through `SetCompletions` — so they
+/// are carried across renders verbatim, and the index is clamped **once per
+/// render** so a list that shrank host-side (or arrived empty) does not keep a
+/// stale out-of-bounds index alive.
+///
+/// Pulled out of the collector because the *description* needs the same
+/// answer, and a second copy of these rules is a second place for them to
+/// drift. Pure — it never writes `next_state` — which is what lets a
+/// description call it. See `view::shell::widgets`'s single-line `Text` arm.
+pub(crate) fn resolve(
+    value: &str,
+    cursor_byte: i32,
+    multiline: bool,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+) -> Resolved {
+    let mut st = match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
+        Some(WidgetInstanceState::Text {
+            editor,
+            scroll,
+            completions,
+            completion_selected_index,
+            completion_scroll_offset,
+            completion_navigated,
+            ..
+        }) => Resolved {
+            editor: editor.clone(),
+            scroll: *scroll,
+            completions: completions.clone(),
+            completion_index: *completion_selected_index,
+            completion_scroll: *completion_scroll_offset,
+            completion_navigated: *completion_navigated,
+        },
+        _ => {
+            let mut editor = if multiline {
+                crate::primitives::text_edit::TextEdit::with_text(value)
+            } else {
+                crate::primitives::text_edit::TextEdit::single_line_with_text(value)
+            };
+            let seed = if cursor_byte < 0 {
+                value.len()
+            } else {
+                (cursor_byte as usize).min(value.len())
+            };
+            editor.set_cursor_from_flat(seed);
+            Resolved {
+                editor,
+                scroll: 0,
+                completions: Vec::new(),
+                completion_index: 0,
+                completion_scroll: 0,
+                completion_navigated: false,
+            }
+        }
+    };
+    st.completion_index = match st.completions.len() {
+        0 => 0,
+        n => st.completion_index.min(n - 1),
+    };
+    st
+}
+
+/// The byte range the selection band paints over, or `None`.
+///
+/// Only meaningful for the focused widget — `None` otherwise keeps the
+/// no-selection rendering paths unchanged. The editor's own selection wins; a
+/// spec-seeded render (stateless surfaces like Settings, which re-emit their
+/// model each frame) falls back to the spec's `sel_start`/`sel_end` byte
+/// range, clamped into the value.
+fn selection_of(
+    editor: &crate::primitives::text_edit::TextEdit,
+    is_focused: bool,
+    spec_sel: (i32, i32),
+) -> Option<(usize, usize)> {
+    if !is_focused {
+        return None;
+    }
+    editor.selection_flat_range().or({
+        let (a, b) = spec_sel;
+        if a >= 0 && b > a {
+            let len = editor.value().len();
+            Some(((a as usize).min(len), (b as usize).min(len)))
+        } else {
+            None
+        }
+    })
+}
+
+/// A single-line `Text`'s one row: what it says, where the caret is in it, and
+/// what a press on it means.
+pub(crate) struct SingleLine {
+    /// The rendered row, gutter prepended and block caret (if any) already on
+    /// it.
+    pub entry: TextPropertyEntry,
+    /// Byte offset of the caret within `entry.text`, gutter included; `None`
+    /// when the field is unfocused.
+    pub caret: Option<usize>,
+    /// The `focus` hit, present only for a keyed field.
+    pub hit: Option<HitArea>,
+    /// The horizontal window `render_text_input` chose — the first painted
+    /// value char, to hand back on the next render.
+    pub scroll: u32,
+}
+
+/// **The single-line field's row: label column, value cell, focus gutter,
+/// caret and hit.**
+///
+/// Pulled out of the collector whole, because every one of the rules below is
+/// a rule about *this row* rather than about the immediate-mode walk that used
+/// to contain it, and the description needs each of them. Pure — no
+/// `next_state`, no `CollectedOutput` — which is what lets a description call
+/// it. See `view::shell::widgets`'s single-line `Text` arm.
+///
+/// `scroll` cannot be written back by a description: it is the horizontal
+/// window the *next* render starts from, and only the runtime's own pass owns
+/// that write. A described field therefore reads the offset the runtime last
+/// persisted, which is the same position the described `Dropdown` is in. 2.1
+/// is where that stops being two parties.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn single_line(
+    editor: &crate::primitives::text_edit::TextEdit,
+    prev_scroll: u32,
+    label: &str,
+    placeholder: Option<&str>,
+    field_width: u32,
+    max_visible_chars: u32,
+    full_width: bool,
+    block_caret: bool,
+    spec_sel: (i32, i32),
+    label_width: u32,
+    is_focused: bool,
+    key: Option<&str>,
+    marker_gutter: bool,
+    panel_width: u32,
+) -> SingleLine {
+    let value = editor.value();
+    let cursor = if is_focused {
+        editor.flat_cursor_byte() as i32
+    } else {
+        -1
+    };
+    // Form-column alignment: when `label_width > 0`, pad the label to
+    // the column and terminate it with `:` so the value cell's `[` lines
+    // up with the sibling Toggle/Number/Dropdown cells (which render
+    // `{label}: [..]`). `render_text_input` appends the ` ` + `[`, so the
+    // composed label carries only up to the colon. `label_width == 0`
+    // keeps the compact `{label} [..]` plugins get by default. This is
+    // computed before the field width so the value cell is sized against
+    // the *padded* label overhead (else the wider label overflows the
+    // control's right edge).
+    let composed_label;
+    let effective_label: &str = if label_width > 0 && !label.is_empty() {
+        let lw = form_label_width(
+            label_width,
+            focus_gutter_prefix(is_focused, marker_gutter).len(),
+            // Reserve the bracketed cell + a couple cells of value so the
+            // field opening stays on-screen on a narrow surface.
+            "[  ]".len(),
+            panel_width,
+        );
+        composed_label = format!("{}:", fit_label(label, lw));
+        &composed_label
+    } else {
+        label
+    };
+    let rendered = render_text_input(
+        &value,
+        cursor,
+        selection_of(editor, is_focused, spec_sel),
+        is_focused,
+        effective_label,
+        placeholder,
+        max_visible_chars,
+        effective_text_field_width(
+            full_width,
+            false,
+            effective_label,
+            panel_width,
+            field_width,
+            marker_gutter,
+        ),
+        full_width,
+        prev_scroll,
+    );
+    let mut entry = rendered.entry;
+    // Lead the single-line input with the focus-marker gutter
+    // (`▸ ` when focused, two spaces otherwise) so focus is
+    // legible from a plain capture — the hardware cursor lands
+    // inside the field too, but a cursor doesn't show up in
+    // `tmux capture-pane`. Shift the cursor offset and every
+    // inline overlay right by the gutter's byte length so the
+    // bracket bg / placeholder / selection spans still line up.
+    // The field width was already reduced by the gutter's two
+    // columns above, so the box doesn't overflow, and the gutter
+    // is present whether or not the field is focused so the
+    // layout never shifts.
+    let gutter = focus_gutter_prefix(is_focused, marker_gutter);
+    let marker_bytes = gutter.len();
+    let mut cursor_in_row = rendered.cursor_byte_in_entry;
+    if marker_bytes > 0 {
+        entry.text.insert_str(0, gutter);
+        for ov in entry.inline_overlays.iter_mut() {
+            ov.start += marker_bytes;
+            ov.end += marker_bytes;
+        }
+        cursor_in_row = cursor_in_row.map(|c| c + marker_bytes);
+    }
+    if let Some(byte_in_row) = cursor_in_row {
+        // Modal surfaces paint the caret as a REVERSED cell in the
+        // row itself (no hardware cursor over a modal).
+        if block_caret {
+            push_block_caret_overlay(&mut entry, byte_in_row);
+        }
+    }
+    // A click anywhere on the input line focuses the field so a mouse user
+    // can type. Text widgets previously emitted no hit area, so clicks fell
+    // through and the field stayed unfocused (#2234 item 1). Focusing is
+    // driven by the tabbable path in `handle_floating_widget_click`; the
+    // `focus` event keeps the plugin's focus mirror in step.
+    //
+    // The payload carries the value-layout breadcrumbs the click
+    // handler needs to reposition the cursor to the clicked column
+    // (#2573): `valueInnerStart` is where the value's `<inner>`
+    // region begins in this row's text (after the gutter that was
+    // just prepended), and the truncation fields translate a click
+    // over a `…`-prefixed tail view back to a value byte.
+    //
+    // An *unkeyed* field emits none: with nothing to name, the hit could not
+    // say which widget was focused.
+    let hit = key.filter(|k| !k.is_empty()).map(|k| HitArea {
+        row_target: false,
+        context_click: false,
+        overlay: false,
+        widget_key: k.to_string(),
+        widget_kind: "text",
+        buffer_row: 0,
+        byte_start: 0,
+        byte_end: entry.text.len(),
+        payload: json!({
+            "valueInnerStart": marker_bytes + rendered.inner_byte_start,
+            "valueDropped": rendered.value_dropped_bytes,
+            "ellipsisBytes": rendered.ellipsis_bytes,
+            "valueLen": rendered.value_len,
+        }),
+        event_type: "focus",
+        owner_key: None,
+    });
+    ensure_trailing_newline(&mut entry);
+    SingleLine {
+        entry,
+        caret: cursor_in_row,
+        hit,
+        scroll: rendered.scroll_chars,
+    }
 }
 
 /// Is this Text widget's completion popup showing?

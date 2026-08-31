@@ -173,15 +173,28 @@ fn collect_dropdown(
         selected: cur,
         open,
     } = resolve(options, spec_selected, spec_open, key, prev, is_focused);
-    if let Some(k) = key {
-        if !k.is_empty() {
-            next_state.insert(
-                k.to_string(),
-                WidgetInstanceState::Dropdown {
-                    selected_index: cur,
-                    open,
-                },
-            );
+    // **The walk carries this widget's state; it does not decide it.**
+    //
+    // It used to write the *resolved* pair back — the clamped index and the
+    // focus-gated open flag — which made the render walk an authority on
+    // state that `set_selection` and `set_open` also write, and made the
+    // description read a value the painter had computed a frame earlier. Both
+    // of those are the defect this phase exists to remove.
+    //
+    // Nothing is lost by carrying the stored pair through instead, because
+    // neither derivation was ever *storage*: [`resolve`] applies the clamp and
+    // the focus gate on every read, so a reader gets the same answer whether
+    // or not the walk wrote it down. What the pass-through still buys is
+    // collection — `update_side_effects` replaces the whole map, so a widget
+    // the spec no longer contains loses its state, and one this walk did not
+    // mention would lose it too.
+    //
+    // An absent entry stays absent: the spec is the seed until a handler makes
+    // a decision, which is exactly what "instance state is authoritative after
+    // first render" should have meant all along.
+    if let Some(k) = key.filter(|k| !k.is_empty()) {
+        if let Some(stored) = prev.get(k) {
+            next_state.insert(k.to_string(), stored.clone());
         }
     }
 
@@ -403,11 +416,22 @@ pub(crate) fn popup_of(
 }
 
 /// Is this Dropdown's option popup open?
+///
+/// **The focus gate is applied here, because it is not stored.** A blur closes
+/// the list, and that rule used to be enforced by the render walk writing the
+/// gated flag back — so this could read the raw field and still get the gated
+/// answer. The walk no longer decides ([`collect_dropdown`]), so the gate has
+/// to be where every other reader applies it: at the read. Without this, a
+/// press on the trigger of a dropdown that was blurred while open would toggle
+/// a flag the user cannot see, and the list would stay shut on the click that
+/// should have opened it.
 pub(crate) fn is_open(widget_key: &str, panel: &crate::widgets::WidgetPanelState) -> bool {
-    matches!(
-        panel.instance_states.get(widget_key),
-        Some(WidgetInstanceState::Dropdown { open: true, .. })
-    )
+    !widget_key.is_empty()
+        && panel.focus_key == widget_key
+        && matches!(
+            panel.instance_states.get(widget_key),
+            Some(WidgetInstanceState::Dropdown { open: true, .. })
+        )
 }
 
 /// Step the selection by `delta` with wraparound, preserving the

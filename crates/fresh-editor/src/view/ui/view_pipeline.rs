@@ -753,17 +753,18 @@ pub fn should_show_line_number(line: &ViewLine) -> bool {
 // Layout: The computed display state for a view
 // ============================================================================
 
-use std::collections::BTreeMap;
-
 /// The Layout represents the computed display state for a view.
 ///
 /// This is **View state**, not Buffer state. Each split has its own Layout
 /// computed from its base tokens.
 ///
-/// The Layout provides:
-/// - ViewLines for the current viewport region
-/// - Bidirectional mapping between source bytes and view positions
-/// - Scroll limit information
+/// **Nothing reads one.** The only `Layout` in the editor is
+/// `SplitView::layout`, written by `SplitView::ensure_layout` and read by
+/// `SplitView::get_layout` — neither of which has a caller. Its query
+/// methods (`source_byte_to_view_position`, `view_position_to_source_byte`,
+/// `get_source_byte_for_line`, `find_nearest_view_line`, `max_top_line`,
+/// `has_content_below`) and the `byte_to_line` index they walked are gone;
+/// the type itself should follow once `view::split` can be touched.
 #[derive(Debug, Clone)]
 pub struct Layout {
     /// Display lines for the current viewport region
@@ -777,24 +778,11 @@ pub struct Layout {
 
     /// Total injected lines in entire document (from view transform)
     pub total_injected_lines: usize,
-
-    /// Fast lookup: source byte → view line index
-    byte_to_line: BTreeMap<usize, usize>,
 }
 
 impl Layout {
     /// Create a new Layout from ViewLines
     pub fn new(lines: Vec<ViewLine>, source_range: Range<usize>) -> Self {
-        let mut byte_to_line = BTreeMap::new();
-
-        // Build the byte→line index from char_source_bytes
-        for (line_idx, line) in lines.iter().enumerate() {
-            // Find the first source byte in this line
-            if let Some(first_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                byte_to_line.insert(first_byte, line_idx);
-            }
-        }
-
         // Estimate total view lines (for now, just use what we have)
         let total_view_lines = lines.len();
         let total_injected_lines = lines.iter().filter(|l| !should_show_line_number(l)).count();
@@ -804,7 +792,6 @@ impl Layout {
             source_range,
             total_view_lines,
             total_injected_lines,
-            byte_to_line,
         }
     }
 
@@ -817,73 +804,6 @@ impl Layout {
         let lines: Vec<ViewLine> =
             ViewLineIterator::new(tokens, false, false, tab_size, false).collect();
         Self::new(lines, source_range)
-    }
-
-    /// Find the view position (line, visual column) for a source byte
-    pub fn source_byte_to_view_position(&self, byte: usize) -> Option<(usize, usize)> {
-        // Find the view line containing this byte
-        if let Some((&_line_start_byte, &line_idx)) = self.byte_to_line.range(..=byte).last() {
-            if line_idx < self.lines.len() {
-                let line = &self.lines[line_idx];
-                // Find the character with this source byte, then get its visual column
-                for (char_idx, mapping) in line.char_source_bytes.iter().enumerate() {
-                    if *mapping == Some(byte) {
-                        return Some((line_idx, line.visual_col_at_char(char_idx)));
-                    }
-                }
-                // Byte is in this line's range but not at a character boundary
-                // Return end of line (visual width)
-                return Some((line_idx, line.visual_width()));
-            }
-        }
-        None
-    }
-
-    /// Find the source byte for a view position (line, visual column)
-    pub fn view_position_to_source_byte(&self, line_idx: usize, col: usize) -> Option<usize> {
-        if line_idx >= self.lines.len() {
-            return None;
-        }
-        let line = &self.lines[line_idx];
-        if col < line.visual_width() {
-            // Use O(1) lookup via visual_to_char -> char_source_bytes
-            line.source_byte_at_visual_col(col)
-        } else if !line.char_source_bytes.is_empty() {
-            // Past end of line, return last valid byte
-            line.char_source_bytes.iter().rev().find_map(|m| *m)
-        } else {
-            None
-        }
-    }
-
-    /// Get the source byte for the start of a view line
-    pub fn get_source_byte_for_line(&self, line_idx: usize) -> Option<usize> {
-        if line_idx >= self.lines.len() {
-            return None;
-        }
-        self.lines[line_idx]
-            .char_source_bytes
-            .iter()
-            .find_map(|m| *m)
-    }
-
-    /// Find the nearest view line for a source byte (for stabilization)
-    pub fn find_nearest_view_line(&self, byte: usize) -> usize {
-        if let Some((&_line_start_byte, &line_idx)) = self.byte_to_line.range(..=byte).last() {
-            line_idx.min(self.lines.len().saturating_sub(1))
-        } else {
-            0
-        }
-    }
-
-    /// Calculate the maximum top line for scrolling
-    pub fn max_top_line(&self, viewport_height: usize) -> usize {
-        self.lines.len().saturating_sub(viewport_height)
-    }
-
-    /// Check if there's content below the current layout
-    pub fn has_content_below(&self, buffer_len: usize) -> bool {
-        self.source_range.end < buffer_len
     }
 }
 

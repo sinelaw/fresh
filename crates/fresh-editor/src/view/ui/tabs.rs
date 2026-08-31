@@ -51,6 +51,10 @@ pub struct TabHitArea {
 
 impl TabHitArea {
     /// Backwards-compatible access: returns the buffer id if this is a buffer tab.
+    ///
+    /// **Only the e2e tests call it** (`copy_buffer_path`,
+    /// `extract_tab_to_workspace`, `tab_drag`) — the shell reads `target`
+    /// directly. It is coverage for the buffer/group split, not weight.
     pub fn buffer_id(&self) -> Option<BufferId> {
         self.target.as_buffer()
     }
