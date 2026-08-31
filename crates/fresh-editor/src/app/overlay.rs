@@ -11,17 +11,22 @@
 //! `dispatch_terminal_input`'s `in_modal` predicate over-listed the same
 //! fields, the unfocused-popup guard re-listed Settings/Menu/Prompt).
 //!
-//! This module makes the stack a first-class ordered list. Every callsite
-//! that asks "which overlay is in charge?" — keyboard focus
-//! (`get_key_context`), the unfocused-popup modal guard
-//! (`resolve_unfocused_popup_action`), the terminal-input gate
-//! (`dispatch_terminal_input`) and the mouse early-capture ladder
-//! (`handle_mouse`) — reads from the *same* `Editor::overlay_layers()`
-//! list, so the precedence rules live in one place. The `impl Editor`
-//! block at the bottom of this file is that source of truth: it builds
-//! the layer stack from live editor state and answers the shared focus
-//! queries (`popups_capture_keys`, `get_key_context`, …) every input
-//! path consults.
+//! This module makes the stack a first-class list, derived from the chrome
+//! registry, so those rules live in one place. Its readers are split by
+//! what they actually need of it:
+//!
+//! * **Order** — [`Editor::overlay_layers`], top-first. Two callers, and
+//!   both consume a prefix of it: `resolve_focus_context` (behind
+//!   `get_key_context`) takes the first owning layer, and
+//!   `popup_blocked_by_higher_modal` (behind
+//!   `resolve_unfocused_popup_action`) takes the layers above the popup.
+//! * **Membership** — [`Editor::overlay_layer_set`], the same layers with
+//!   no order to read. The PTY gate, the LSP-hover suppressor and the
+//!   chrome-caret gate ask only whether such a layer is up.
+//!
+//! The mouse is in neither list. Pointer routing is the shell tree's, and
+//! the early-capture ladder that used to read this stack went with it —
+//! `handle_mouse` has not consulted a layer since.
 
 use super::Editor;
 use crate::input::keybindings::KeyContext;
@@ -53,9 +58,9 @@ pub(crate) enum LayerKind {
     /// close-split confirmation (`Window::open_context_menu` resolves
     /// which). One kind for all four: they share the geometry core,
     /// are mutually exclusive, and get identical treatment — a modal
-    /// chrome menu whose custom key dispatcher (the chrome
-    /// `ContextMenu` component's `on_key`) makes it transparent to
-    /// `KeyContext` resolution while it blocks PTY routing.
+    /// chrome menu that owns the keyboard from its `Modality::Exclusive`
+    /// layer in the shell tree and so names no `KeyContext` here, leaving
+    /// `resolve_focus_context` to walk past it while it blocks PTY routing.
     ContextMenu,
     /// The centered widget modal (`floating_widget_panel`).
     FloatingModal,
@@ -104,10 +109,15 @@ pub(crate) fn resolve_focus_context(layers: &[Layer]) -> Option<KeyContext> {
         .and_then(|l| l.key_context.clone())
 }
 
-/// True iff any layer in the stack currently blocks routing to the PTY
-/// child of a terminal buffer underneath.
-pub(crate) fn any_layer_blocks_terminal_input(layers: &[Layer]) -> bool {
-    layers.iter().any(|l| l.blocks_terminal_input)
+/// True iff any layer present blocks routing to the PTY child of a
+/// terminal buffer underneath.
+///
+/// Takes an ITERATOR where the two readers below take an ordered slice, and
+/// the asymmetry is the point: this is a membership question, and a caller
+/// that cannot index cannot come to depend on a rank it has no business
+/// reading. See [`Editor::overlay_layer_set`].
+pub(crate) fn any_layer_blocks_terminal_input(layers: impl IntoIterator<Item = Layer>) -> bool {
+    layers.into_iter().any(|l| l.blocks_terminal_input)
 }
 
 /// True iff a layer ranked *above* the popup layer currently owns the
@@ -141,6 +151,19 @@ pub(crate) fn popup_blocked_by_higher_modal(layers: &[Layer]) -> bool {
 }
 
 impl Editor {
+    /// True while the workspace-trust prompt is the TOP of the global
+    /// popup stack — the state in which its dedicated mouse/key
+    /// handlers (and its dedicated overlay layer) take over from the
+    /// generic popup treatment.
+    pub(crate) fn workspace_trust_on_top(&self) -> bool {
+        self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )
+        })
+    }
+
     /// Whether editor-pane popups (LSP completion, hover, signature help,
     /// global plugin popups, …) should intercept keyboard input.
     ///
@@ -159,19 +182,6 @@ impl Editor {
     ///
     /// Single source of truth for both `get_key_context` (binding resolution)
     /// and `dispatch_popup_keys` (handler routing) so the two cannot drift.
-    /// True while the workspace-trust prompt is the TOP of the global
-    /// popup stack — the state in which its dedicated mouse/key
-    /// handlers (and its dedicated overlay layer) take over from the
-    /// generic popup treatment.
-    pub(crate) fn workspace_trust_on_top(&self) -> bool {
-        self.global_popups.top().is_some_and(|p| {
-            matches!(
-                p.resolver,
-                crate::view::popup::PopupResolver::WorkspaceTrust
-            )
-        })
-    }
-
     pub(crate) fn popups_capture_keys(&self) -> bool {
         use crate::input::keybindings::KeyContext;
         use crate::view::popup::PopupResolver;
@@ -209,17 +219,16 @@ impl Editor {
         false
     }
 
-    /// Build the editor's overlay stack, ordered top-first (highest
-    /// keyboard-focus precedence first), ending with the always-present
-    /// editor base layer.
+    /// Every present layer with the rank its component declared, in the
+    /// order they were contributed (the event-debug instrument, then the
+    /// registry) — the raw contributions, before anything ranks them.
     ///
-    /// This is the single source of truth for overlay precedence: focus
-    /// resolution (`get_key_context`), the unfocused-popup modal guard
-    /// (`resolve_unfocused_popup_action`), the terminal-input gate
-    /// (`dispatch_terminal_input`), and the mouse early-capture ladder
-    /// (`handle_mouse`) all read from this list rather than keeping their
-    /// own conditional ladders.
-    pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
+    /// Both public readers start here, which is what makes "the sort
+    /// reorders and changes nothing else" structural rather than a claim:
+    /// [`Self::overlay_layers`] sorts this list, [`Self::overlay_layer_set`]
+    /// drops the ranks. Neither adds nor removes a layer, so a membership
+    /// question has the same answer through either.
+    fn layer_contributions(&self) -> Vec<(u16, Layer)> {
         let mut ranked: Vec<(u16, Layer)> = Vec::new();
         // Event-debug intercepts every key ahead of every other path
         // (see `handle_key_event`) — a debugging instrument with a
@@ -238,6 +247,39 @@ impl Editor {
         for c in crate::app::chrome::components() {
             c.layers(self, &mut ranked);
         }
+        ranked
+    }
+
+    /// Every layer currently present, with no order to read: the answer to
+    /// "is such a layer up?" and nothing else.
+    ///
+    /// Three gates ask only that — the PTY gate
+    /// ([`Self::presents_blocking_overlay`]), the LSP-hover suppressor
+    /// ([`Self::modal_overlay_active`]) and the chrome-caret gate
+    /// (`render::cursor_suppressed_by_late_overlay`) — and they get an
+    /// iterator so that they cannot start reading a position. `layer_rank`
+    /// is a KEYBOARD-precedence table, deliberately not the frame's paint
+    /// order (`chrome::layer_rank`); handing a membership gate a ranked list
+    /// invites reading the ranks as z-order, which is a mistake that has
+    /// already been written down — see the context-menu comment in
+    /// `view::shell::frame`.
+    pub(crate) fn overlay_layer_set(&self) -> impl Iterator<Item = Layer> {
+        self.layer_contributions().into_iter().map(|(_, l)| l)
+    }
+
+    /// The editor's overlay stack ORDERED top-first (highest keyboard-focus
+    /// precedence first), ending with the always-present editor base layer.
+    ///
+    /// Two callers need this order, and both consume a prefix of it:
+    /// `resolve_focus_context` (behind [`Self::get_key_context`]) takes the
+    /// first owning layer with a context, and `popup_blocked_by_higher_modal`
+    /// (behind `resolve_unfocused_popup_action`) takes the layers above the
+    /// popup. Anything else that consults the stack wants
+    /// [`Self::overlay_layer_set`]: sorting before an `any` is not merely
+    /// wasted work, it states a precedence dependency the caller does not
+    /// have.
+    pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
+        let mut ranked = self.layer_contributions();
         // Stable sort: within a rank, declaration (registry) order is
         // preserved — the ordering this has always had.
         ranked.sort_by(|a, b| b.0.cmp(&a.0));
@@ -245,10 +287,13 @@ impl Editor {
     }
 
     /// True iff any overlay layer is currently blocking key routing to a
-    /// terminal buffer's PTY child. The single source of truth for the
-    /// "is anything modal up?" question.
+    /// terminal buffer's PTY child — the one place that question is
+    /// answered, so a new overlay reaches the PTY gate by declaring
+    /// `blocks_terminal_input` and not by being added to a list here.
+    /// Distinct from [`Self::modal_overlay_active`]: a merely-visible popup
+    /// blocks the PTY without being modal.
     pub(crate) fn presents_blocking_overlay(&self) -> bool {
-        crate::app::overlay::any_layer_blocks_terminal_input(&self.overlay_layers())
+        crate::app::overlay::any_layer_blocks_terminal_input(self.overlay_layer_set())
     }
 
     /// True iff a modal overlay — a prompt (Open File dialog, command
@@ -269,7 +314,7 @@ impl Editor {
     /// content the user cannot see (sinelaw/fresh#2912).
     pub(crate) fn modal_overlay_active(&self) -> bool {
         use crate::app::overlay::LayerKind;
-        self.overlay_layers().iter().any(|l| {
+        self.overlay_layer_set().any(|l| {
             !matches!(
                 l.kind,
                 LayerKind::Popup | LayerKind::Dock | LayerKind::Editor
@@ -339,7 +384,7 @@ mod tests {
     fn base_layer_terminates_the_walk() {
         let layers = [base()];
         assert_eq!(resolve_focus_context(&layers), Some(KeyContext::Normal));
-        assert!(!any_layer_blocks_terminal_input(&layers));
+        assert!(!any_layer_blocks_terminal_input(layers));
     }
 
     /// Custom-dispatch modals own the keyboard but expose no
@@ -354,7 +399,7 @@ mod tests {
             base(),
         ];
         assert_eq!(resolve_focus_context(&layers), Some(KeyContext::Normal));
-        assert!(any_layer_blocks_terminal_input(&layers));
+        assert!(any_layer_blocks_terminal_input(layers));
     }
 
     /// A merely-visible (unfocused) popup blocks PTY routing — it
@@ -370,14 +415,12 @@ mod tests {
             resolve_focus_context(&popup_visible_not_capturing),
             Some(KeyContext::Normal),
         );
-        assert!(any_layer_blocks_terminal_input(
-            &popup_visible_not_capturing
-        ));
+        assert!(any_layer_blocks_terminal_input(popup_visible_not_capturing));
 
         let blurred_dock = [
             layer(LayerKind::Dock, false, Some(KeyContext::Dock), false),
             base(),
         ];
-        assert!(!any_layer_blocks_terminal_input(&blurred_dock));
+        assert!(!any_layer_blocks_terminal_input(blurred_dock));
     }
 }

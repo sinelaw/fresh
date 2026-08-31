@@ -2209,6 +2209,27 @@ impl Editor {
                 self.settings_jump_to_section(cat, section)
             }
             UiFact::SettingsCategoryDisclosure(idx) => self.settings_toggle_category(idx),
+            // **The tree's own keys, arriving as what they mean.** The eight
+            // arms behind this are the eight `handle_categories_input` still
+            // has: one implementation (`SettingsState::tree_key`), reached
+            // either from the node that holds focus or from the dispatcher
+            // when it does not. The second entry point is not redundancy —
+            // nothing in the tree can move focus to the settings body or the
+            // query field, because neither is a node, so a seam can be left
+            // holding focus for a panel that no longer has the keyboard.
+            UiFact::SettingsTree(k) => {
+                if let Some(s) = self.settings_state.as_mut() {
+                    s.tree_key(k);
+                }
+            }
+            UiFact::SettingsSearchStep(forward) => {
+                if let Some(s) = self.settings_state.as_mut() {
+                    match forward {
+                        true => s.search_next(),
+                        false => s.search_prev(),
+                    }
+                }
+            }
             UiFact::SettingsClearCategory => {
                 if let Some(s) = self.settings_state.as_mut() {
                     s.clear_current_category();

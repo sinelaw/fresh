@@ -31,19 +31,27 @@
 //! **Read `covered` as what it says: the adapter has an arm for this variant.**
 //! It does not say the arm is native, and this doc used to imply it did — that
 //! the gate was "what remains of a boundary that has closed". The boundary has
-//! not closed. Most variants are written out below as nodes; five of them —
-//! `Text`, `List`, `Tree`, `Dropdown` and `DualList` — reach [`collected`],
-//! which calls `crate::widgets::render::render_collected`, the immediate-mode
-//! runtime, and wraps what comes back: its rows become nodes, each `HitArea`
-//! becomes a gesture on the sub-range it names, each overlay row becomes a
-//! layer. That is a real gain, and the reason to do it in one step — the
-//! byte-range scan and the `LayoutBox` arena go, and a press is resolved
-//! against a rectangle layout produced. But the runtime is still the thing that
-//! decides what a list row, a tree's indent guides and a dropdown's trigger
-//! look like, so seventeen thousand lines of it are still on the render path
-//! for those five. `collected`'s own doc puts it exactly: "It is a stage, not
-//! the end." The gate has closed over `WidgetSpec`'s variants; it has not
-//! closed over the runtime.
+//! not closed. Most variants are written out below as nodes; three of them —
+//! `List`, `Tree` and `DualList` — still reach [`collected`], which calls
+//! `crate::widgets::render::render_collected`, the immediate-mode runtime, and
+//! wraps what comes back: its rows become nodes, each `HitArea` becomes a
+//! gesture on the sub-range it names, each overlay row becomes a layer. That is
+//! a real gain, and the reason to do it in one step — the byte-range scan and
+//! the `LayoutBox` arena go, and a press is resolved against a rectangle layout
+//! produced. But the runtime is still the thing that decides what a list row
+//! and a tree's indent guides look like, so seventeen thousand lines of it are
+//! still on the render path for those three. `collected`'s own doc puts it
+//! exactly: "It is a stage, not the end." The gate has closed over
+//! `WidgetSpec`'s variants; it has not closed over the runtime.
+//!
+//! `Dropdown` and `Text` have already left it (Phase 2.2): each is built from
+//! its own spec, calling the runtime's *formatter* through the pure functions
+//! `kinds::dropdown::{resolve, anchor_col, popup_of}` and
+//! `kinds::text::{resolve, single_line, completion_popup}`, which the
+//! collector calls too — one copy of each rule rather than two that can
+//! drift. A multi-line `Text` is the exception still: its rows come from
+//! `render_collected` because a text *area* is a wrapping engine, and it is
+//! windowed here rather than described.
 
 use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::TextPropertyEntry;
@@ -1771,11 +1779,280 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
                 popup_layer(&popup, cx).anchor(fresh_ui::Anchor::Node(anchor)),
             ])
         }
+        // **The single-line field stops going through the collector** — the
+        // second of the five to leave it, after `Dropdown`.
+        //
+        // Only this half. The multi-line arm above owns the window and the
+        // scrollbar but still asks `render_collected` for its rows, because a
+        // text *area* is a wrapping engine and wrapping is not what this phase
+        // is moving. A one-row field has nothing to wrap.
+        //
+        // A single-line field is one row and, when the plugin has pushed
+        // candidates, a list floating under it — and neither half needed the
+        // collector. What it needed was the collector's *formatter*
+        // (`render_text_input` for the `label: [value]` cell, and the
+        // separator / item / border rows the completion box paints), plus the
+        // rules the collector had buried in its walk: where the value, cursor
+        // and candidate list come from, how the label is padded into the form
+        // column, how wide the value cell is left, where the focus-marker
+        // gutter shifts everything, and how the candidate window is clamped.
+        // Those are now `kinds::text`'s `resolve`, `single_line` and
+        // `completion_popup`, called from here and from the collector both, so
+        // there is one copy of each.
+        //
+        // What goes away is the round trip. `collected` ran the whole
+        // immediate-mode render to get one row and its byte ranges, threw the
+        // state it wrote into a scratch map, and rebuilt the node from the
+        // cells — so a click that has to land on a *column* of the value was
+        // resolved by matching a byte range in a row the painter had produced.
+        //
+        // The state is still read from `cx.states`: the value and the cursor
+        // are what the plugin is told about through `text_change`, and the
+        // candidate list is what it pushed through `SetCompletions`. Making
+        // the field's own view state — the horizontal window — the element's
+        // is 2.1, and it needs the runtime to stop writing it in its own walk
+        // first. Until then the window `render_text_input` picks here is
+        // *read*, never written back: the runtime's pass persists it, and this
+        // description reads what that pass last left.
+        WidgetSpec::Text {
+            value,
+            cursor_byte,
+            focused,
+            label,
+            placeholder,
+            rows,
+            field_width,
+            max_visible_chars,
+            full_width,
+            completions: _,
+            completions_visible_rows,
+            block_caret,
+            sel_start,
+            sel_end,
+            label_width,
+            read_only: _,
+            // `markdown` only means anything to a multi-line field — the arm
+            // above owns that — so a one-row field renders as input chrome
+            // whatever it says.
+            markdown: _,
+            key,
+        } if *rows <= 1 => {
+            use crate::widgets::kinds::text as tx;
+            let key = key.as_deref();
+            // A keyed widget takes focus from the host's resolved focus key; an
+            // unkeyed one falls back to the spec's initial-only `focused` hint.
+            let is_focused = match key.is_some_and(|k| !k.is_empty()) {
+                true => cx.is_focused(key),
+                false => *focused,
+            };
+            let st = tx::resolve(value, *cursor_byte, false, key, cx.states);
+            let line = tx::single_line(
+                &st.editor,
+                st.scroll,
+                label,
+                placeholder.as_deref(),
+                *field_width,
+                *max_visible_chars,
+                *full_width,
+                *block_caret,
+                (*sel_start, *sel_end),
+                *label_width,
+                is_focused,
+                key,
+                cx.marker_gutter,
+                width as u32,
+            );
+            // One hit or none — an unkeyed field emits none, because a hit
+            // with no widget to name could not say what it focused — and the
+            // caret's marker rides in the same split, exactly as
+            // `rows_with_hits` places it: the `block_caret` overlay is already
+            // on the entry, and this is the *cell* the host drops a hardware
+            // cursor into.
+            let hits: Vec<((usize, usize), crate::widgets::HitArea)> = line
+                .hit
+                .into_iter()
+                .map(|h| ((h.byte_start, h.byte_end), h))
+                .collect();
+            let field = match hits.is_empty() && line.caret.is_none() {
+                true => entry_row(&line.entry, &cx.surface),
+                false => row_pieces(
+                    &line.entry,
+                    cx.slot,
+                    &cx.surface,
+                    &hits,
+                    line.caret,
+                    Fill::ToRowEnd,
+                ),
+            };
+            let Some(popup) = tx::completion_popup(
+                &st.completions,
+                *completions_visible_rows,
+                width as u32,
+                st.completion_index,
+                st.completion_navigated,
+                st.completion_scroll,
+                cx.marker_gutter,
+            ) else {
+                return field;
+            };
+            // **The candidate list is one float, not one float per row.**
+            //
+            // The collector emits it as N+2 *overlay rows* and
+            // `rows_with_hits` gives each its own layer, which is the shape an
+            // immediate-mode renderer can express — a row is all it has. A box
+            // that clamps row by row is not the same box: near the frame's
+            // bottom edge each row clamps independently and the list piles up
+            // on the last one. One layer holding the rows clamps as a unit,
+            // which is what a floating box means, and it is the shape the
+            // described `Dropdown`'s pop-over already has.
+            //
+            // It is *not* [`popup_layer`], though, because this box's chrome
+            // is not that box's. A completion list has no top border of its
+            // own: its first row is a dashed separator that paints *over* the
+            // enclosing `LabeledSection`'s bottom border, so the two read as
+            // one frame — and its side walls and its scrollbar column live in
+            // the row text itself (`render_completion_item_overlay`), not in a
+            // `Draw::Border`. Wrapping it in a bordered box would draw a
+            // second frame around a frame. Nor does it take
+            // `Dismiss::OUTSIDE_POINTER`: a completion list is closed by
+            // Escape (`Text::on_key`) or by the plugin sending an empty list,
+            // never by a press landing elsewhere.
+            //
+            // The rows are `panel_width + 4` wide because they re-add the
+            // section chrome they paint over, so the float starts `escape`
+            // columns left of the child — see [`Site::escape`].
+            let ground = Ink::new(Paint::key(BASE_FG), Paint::key("ui.popup_bg")).to_string();
+            let box_rows: Vec<Node<UiMsg>> = popup
+                .rows
+                .iter()
+                .map(|e| {
+                    row()
+                        .h(Sizing::Cells(1))
+                        .theme(ground.clone())
+                        .child(entry_row(e, &cx.surface))
+                })
+                .collect();
+            fresh_ui::stack().children([
+                field,
+                fresh_ui::layer()
+                    .anchor(fresh_ui::Anchor::Parent)
+                    .place(fresh_ui::Place::Over)
+                    // Row 1 of the sub-render: directly under the input, where
+                    // the section's bottom border is.
+                    .offset(-(site.escape as i16), 1)
+                    .fit(fresh_ui::Fit::CLAMP)
+                    .child(float_route(col().children(box_rows), cx.slot)),
+            ])
+        }
+        // **The dual list stops going through the collector** — the third of
+        // the five, after `Dropdown` and the single-line field.
+        //
+        // It never scrolled, which is why it crossed the coverage boundary
+        // early and then sat behind the adapter anyway: it emits every row it
+        // has, so there was no bar to lose and nothing but the round trip
+        // keeping it there.
+        //
+        // The rules the collector buried in its walk are now
+        // `kinds::dual_list`'s `resolve`, `header_row`, `body_row`,
+        // `label_row` and `hint_row`, called from the collector and from here
+        // both. `resolve` is the interesting one: which column the keyboard
+        // drives and where each cursor sits survive in instance state, the
+        // included set is sanitized against *this* spec's options, and each
+        // cursor is clamped into its own column — because the option set can
+        // change under a stored state and a cursor left past the end of a
+        // shortened column would mark a row that is no longer there.
+        //
+        // **Each row carries two press targets, and the ranges come back with
+        // the row.** A dual list's row is two cells side by side, each its own
+        // `dual_focus` target, and `Some` means exactly what the collector's
+        // `is_some()` guard meant: a value occupies the cell, so it can be
+        // pressed. Handing the ranges back with the row is the point — a
+        // caller given only the rendered text would have to measure it to find
+        // where the columns are, and re-deriving geometry from painted output
+        // is the duplication this migration exists to remove.
+        WidgetSpec::DualList {
+            options,
+            included,
+            excluded,
+            label,
+            focused,
+            active_included,
+            available_cursor,
+            included_cursor,
+            hint,
+            visible_rows,
+            key,
+        } => {
+            use crate::widgets::kinds::dual_list as dl;
+            let key = key.as_deref();
+            // A keyed widget takes focus from the host's resolved focus key; an
+            // unkeyed one falls back to the spec's initial-only `focused` hint.
+            let is_focused = match key.is_some_and(|k| !k.is_empty()) {
+                true => cx.is_focused(key),
+                false => *focused,
+            };
+            let st = dl::resolve(
+                options,
+                &dl::DualListSeed {
+                    included,
+                    excluded,
+                    active_included: *active_included,
+                    available_cursor: *available_cursor as usize,
+                    included_cursor: *included_cursor as usize,
+                },
+                key,
+                cx.states,
+                is_focused,
+            );
+            let col_w = crate::widgets::render::dual_col_width(width as u32);
+            let widget_key = key.unwrap_or("").to_string();
+            let mut kids: Vec<Node<UiMsg>> = Vec::new();
+            if let Some(e) = dl::label_row(label) {
+                kids.push(entry_row(&e, &cx.surface));
+            }
+            kids.push(entry_row(&dl::header_row(&st, col_w), &cx.surface));
+            for i in 0..st.body_rows(*visible_rows) {
+                let r = dl::body_row(options, &st, i, col_w);
+                let hits: Vec<((usize, usize), crate::widgets::HitArea)> =
+                    [(r.available, "available"), (r.included, "included")]
+                        .into_iter()
+                        .filter_map(|(range, column)| {
+                            let (byte_start, byte_end) = range?;
+                            Some((
+                                (byte_start, byte_end),
+                                crate::widgets::HitArea {
+                                    row_target: false,
+                                    context_click: false,
+                                    overlay: false,
+                                    widget_key: widget_key.clone(),
+                                    widget_kind: "dual_list",
+                                    buffer_row: 0,
+                                    byte_start,
+                                    byte_end,
+                                    payload: serde_json::json!({
+                                        "column": column,
+                                        "index": i,
+                                    }),
+                                    event_type: "dual_focus",
+                                    owner_key: None,
+                                },
+                            ))
+                        })
+                        .collect();
+                kids.push(match hits.is_empty() {
+                    true => entry_row(&r.entry, &cx.surface),
+                    false => entry_row_hits(&r.entry, cx.slot, &cx.surface, &hits),
+                });
+            }
+            if let Some(e) = dl::hint_row(hint) {
+                kids.push(entry_row(&e, &cx.surface));
+            }
+            col().children(kids)
+        }
         // The rest, with collectors of their own. See [`collected`].
-        WidgetSpec::Text { .. }
-        | WidgetSpec::List { .. }
-        | WidgetSpec::Tree { .. }
-        | WidgetSpec::DualList { .. } => collected(spec, width, cx, site.escape),
+        WidgetSpec::List { .. } | WidgetSpec::Tree { .. } => {
+            collected(spec, width, cx, site.escape)
+        }
         // `covered` gates this; reaching it is a bug in the caller rather than
         // a spec the plugin got wrong, so it is loud in debug and empty in
         // release rather than silently dropping a panel's content.
@@ -3666,41 +3943,102 @@ mod tests {
         let _ = plain;
     }
 
-    /// **The five that go through their own collectors.** Their rows are the
-    /// runtime's — reproducing seven thousand lines of formatting by hand
-    /// would be rewriting it to get the same cells — so what this asserts is
-    /// that routing them through the adapter changes none of them.
+    /// **A described single-line field says what the collector said.**
+    ///
+    /// It used to *be* the collector — this test was written when a `Text`
+    /// went through `collected`, and its cases are unchanged. Now the row is
+    /// built from the spec through `kinds::text::single_line`, and the runtime
+    /// is the oracle it has to keep agreeing with: label column, value cell,
+    /// focus gutter, placeholder and the horizontal window are all rules the
+    /// description would otherwise have restated slightly wrong.
     #[test]
-    fn the_collected_variants_render_what_the_runtime_renders() {
-        let cases: Vec<(&str, WidgetSpec)> = vec![(
-            "a text field",
-            WidgetSpec::Text {
-                value: "hello".into(),
-                cursor_byte: -1,
-                focused: false,
-                label: "name".into(),
-                placeholder: None,
-                rows: 1,
-                field_width: 12,
-                max_visible_chars: 0,
-                full_width: false,
-                completions: Vec::new(),
-                completions_visible_rows: 0,
-                block_caret: false,
-                sel_start: -1,
-                sel_end: -1,
-                label_width: 0,
-                read_only: false,
-                markdown: false,
-                key: Some("t".into()),
-            },
-        )];
+    fn a_single_line_field_renders_what_the_runtime_renders() {
+        let field = |label: &str,
+                     value: &str,
+                     placeholder: Option<&str>,
+                     field_width: u32,
+                     full_width: bool,
+                     label_width: u32| WidgetSpec::Text {
+            value: value.into(),
+            cursor_byte: -1,
+            focused: false,
+            label: label.into(),
+            placeholder: placeholder.map(|p| p.into()),
+            rows: 1,
+            field_width,
+            max_visible_chars: 0,
+            full_width,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width,
+            read_only: false,
+            markdown: false,
+            key: Some("t".into()),
+        };
+        let cases: Vec<(&str, WidgetSpec)> = vec![
+            ("a text field", field("name", "hello", None, 12, false, 0)),
+            ("unlabelled", field("", "hello", None, 12, false, 0)),
+            // The form-column rule: the label is padded to `label_width` and
+            // terminated with `:` so the `[` lines up with its siblings'.
+            (
+                "in a form column",
+                field("name", "hello", None, 12, false, 10),
+            ),
+            // A label wider than the column it is given, which `fit_label`
+            // has to cut rather than let overflow the control's right edge.
+            (
+                "a label wider than its column",
+                field("a very long field label indeed", "hi", None, 12, false, 8),
+            ),
+            // `full_width` sizes the value cell against the *padded* label,
+            // the brackets, the cursor park and the gutter reserve.
+            ("full width", field("name", "hello", None, 0, true, 0)),
+            (
+                "full width in a form column",
+                field("name", "hello", None, 0, true, 10),
+            ),
+            // Empty and unfocused is the placeholder's only state.
+            (
+                "a placeholder",
+                field("path", "", Some("~/project"), 12, false, 0),
+            ),
+            // Longer than the cell: the horizontal window and its `…`.
+            (
+                "a value past the window",
+                field(
+                    "name",
+                    "a value far wider than its cell",
+                    None,
+                    12,
+                    false,
+                    0,
+                ),
+            ),
+        ];
         for (label, spec) in cases {
             assert!(covered(&spec), "{label} should be covered");
             assert_eq!(
                 tree_text(&spec, &cx()),
                 runtime_text(&spec, &cx()),
                 "{label}"
+            );
+            // Focused, with the marker gutter the forms that want
+            // capture-legible focus turn on: the `▸ ` is four bytes and two
+            // columns, and every overlay on the row shifts by the bytes while
+            // the cell shrinks by the columns. Getting either half wrong
+            // moves the brackets.
+            let marked = Ctx {
+                focus_key: "t".into(),
+                marker_gutter: true,
+                ..cx()
+            };
+            assert_eq!(
+                tree_text(&spec, &marked),
+                runtime_text(&spec, &marked),
+                "{label}, focused with the marker gutter"
             );
         }
     }
@@ -5096,6 +5434,211 @@ mod tests {
             Size::new(WIDTH, 8),
         );
         assert!(ui.find_by_key(&caret_key(Slot::Floating)).is_none());
+    }
+
+    /// **A press on the field carries the value's layout, not just its key.**
+    ///
+    /// Click-to-position-cursor (#2573) needs to translate a clicked *column*
+    /// back to a byte of the value, and a windowed field is showing a tail
+    /// view with an `…` in front of it — so the row's own bytes are not the
+    /// value's. The four breadcrumbs are how the click handler bridges that,
+    /// and they are measured against the row *after* the focus-marker gutter
+    /// was prepended. The runtime's own hit is the oracle: the description has
+    /// to name the same numbers or a click lands on the wrong character.
+    #[test]
+    fn a_field_press_carries_the_value_layout_the_click_handler_reads() {
+        let spec = text_field("a value far wider than its cell", 0, true);
+        let focused = Ctx {
+            focus_key: "field".into(),
+            marker_gutter: true,
+            ..cx()
+        };
+        let want = crate::widgets::render_spec_with_options(
+            &spec,
+            &Default::default(),
+            WIDTH as u32,
+            crate::widgets::RenderOptions {
+                prev_focus_key: "field",
+                auto_focus_first: false,
+                marker_gutter: true,
+                ..Default::default()
+            },
+        )
+        .hits
+        .into_iter()
+        .next()
+        .expect("the runtime records one focus hit for a keyed field");
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &focused), Size::new(WIDTH, 8));
+        let got = facts(ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(4, 0),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        let UiFact::WidgetHit { hit, .. } = got.first().expect("a hit") else {
+            panic!("expected a widget hit, got {got:?}");
+        };
+        assert_eq!(hit.event_type, "focus");
+        assert_eq!(hit.widget_key, "field");
+        assert_eq!(hit.payload, want.payload, "the value-layout breadcrumbs");
+    }
+
+    /// An unkeyed field answers nothing: `key.filter(|k| !k.is_empty())` gates
+    /// the hit, because a hit with no widget to name could not say what it
+    /// focused. The runtime records none either.
+    #[test]
+    fn an_unkeyed_field_answers_no_press() {
+        let mut spec = text_field("hello", -1, false);
+        if let WidgetSpec::Text { key, .. } = &mut spec {
+            *key = None;
+        }
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 8));
+        let got = facts(ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(2, 0),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        assert!(
+            !got.iter().any(|f| matches!(f, UiFact::WidgetHit { .. })),
+            "an unkeyed field emits no hit: {got:?}"
+        );
+    }
+
+    /// A field's instance state carrying a completion list.
+    ///
+    /// There is no other way to have one: candidates never come from the spec
+    /// — plugins push them through `SetCompletions` — so a described field
+    /// reads them from the same state map the collector does.
+    fn field_states(
+        value: &str,
+        items: &[&str],
+        selected: usize,
+        navigated: bool,
+        scroll: u32,
+    ) -> std::collections::HashMap<String, crate::widgets::WidgetInstanceState> {
+        let mut editor = crate::primitives::text_edit::TextEdit::single_line_with_text(value);
+        editor.set_cursor_from_flat(value.len());
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            "field".to_string(),
+            crate::widgets::WidgetInstanceState::Text {
+                editor,
+                scroll: 0,
+                completions: items.iter().map(|s| (*s).into()).collect(),
+                completion_selected_index: selected,
+                completion_scroll_offset: scroll,
+                completion_navigated: navigated,
+                user_scrolled: false,
+            },
+        );
+        m
+    }
+
+    /// A keyed single-line field inside the section that wraps a real form
+    /// field, so the completion box's four columns of re-added chrome land on
+    /// the section's own borders — which is the whole point of `Site::escape`.
+    fn sectioned_field() -> WidgetSpec {
+        WidgetSpec::LabeledSection {
+            label: String::new(),
+            child: Box::new(text_field("he", 2, true)),
+            width_pct: None,
+            key: None,
+        }
+    }
+
+    /// **The completion list paints the rows the collector windowed.**
+    ///
+    /// Every rule about which candidates show — the forward-only scroll, the
+    /// window clamp, the scrollbar thumb, the highlight that only appears once
+    /// the user has stepped into the list — lives in `completion_popup`, which
+    /// the collector calls too. So the runtime's own overlay rows are the
+    /// oracle, and the box the tree floats has to be made of exactly them.
+    #[test]
+    fn the_completion_list_paints_the_rows_the_collector_windowed() {
+        let items: Vec<String> = (0..9).map(|i| format!("candidate{i}")).collect();
+        let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
+        let states = field_states("he", &refs, 6, true, 0);
+        let spec = sectioned_field();
+        let ctx = Ctx {
+            focus_key: "field".into(),
+            states: Box::leak(Box::new(states.clone())),
+            ..cx()
+        };
+        let want: Vec<String> = crate::widgets::render_spec_with_options(
+            &spec,
+            &states,
+            WIDTH as u32,
+            crate::widgets::RenderOptions {
+                prev_focus_key: "field",
+                auto_focus_first: false,
+                ..Default::default()
+            },
+        )
+        .overlays
+        .iter()
+        .map(|o| {
+            let mut n = o.entry.clone();
+            n.normalize_widths();
+            n.text.trim_end_matches('\n').trim_end().to_string()
+        })
+        .collect();
+        assert!(
+            want.len() == 7,
+            "five of nine candidates, a separator and a border: {want:?}"
+        );
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &ctx), Size::new(WIDTH, 24));
+        assert_eq!(layer_rows(&ui), want);
+    }
+
+    /// **The list is one float, and it drops under the field wherever the
+    /// field is.**
+    ///
+    /// The collector emits it as N+2 overlay *rows*, each of which
+    /// `rows_with_hits` gives its own layer — a shape an immediate-mode
+    /// renderer is stuck with, and one that clamps row by row near a frame
+    /// edge. A described field floats the box whole, so its rows are
+    /// contiguous and start one row under the input: the section's bottom
+    /// border, which the dim separator is drawn to paint over.
+    #[test]
+    fn the_completion_list_opens_under_the_field_wherever_it_is() {
+        let states = field_states("he", &["hello", "help", "hedge"], 0, false, 0);
+        let spec = col_of(vec![
+            WidgetSpec::Raw {
+                entries: vec![raw("above one")],
+                key: None,
+            },
+            WidgetSpec::Raw {
+                entries: vec![raw("above two")],
+                key: None,
+            },
+            sectioned_field(),
+        ]);
+        let ctx = Ctx {
+            focus_key: "field".into(),
+            states: Box::leak(Box::new(states)),
+            ..cx()
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &ctx), Size::new(WIDTH, 24));
+        let rects: Vec<fresh_ui::Rect> = ui.spec().layers().iter().map(|i| i.rect).collect();
+        let top = rects
+            .iter()
+            .min_by_key(|r| (r.y, r.x))
+            .copied()
+            .expect("a completion box");
+        // Two rows above, the section's top border, the input row: the
+        // separator takes the row after it.
+        assert_eq!(top.y, 4, "under the field, not under row 0: {rects:?}");
+        // Four columns wider than the section's interior, which is what
+        // "re-add section chrome" means — so it starts at the section's own
+        // left border rather than two columns in.
+        assert_eq!(top.x, 0, "flush with the section's frame: {rects:?}");
+        assert!(
+            rects.iter().all(|r| r.y >= top.y && r.y < top.y + 5),
+            "one contiguous box, not a layer per row: {rects:?}"
+        );
     }
 
     fn text_area(value: &str, cursor: i32, rows: u32, label: &str) -> WidgetSpec {

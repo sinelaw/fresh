@@ -139,9 +139,8 @@ fn collect_number(
     } else {
         focused
     };
-    // Instance state is authoritative once the widget has rendered;
-    // the spec's `value` is a seed only. Read prior value by key,
-    // clamp, and persist for the next render.
+    // Instance state is authoritative once a handler has written one; the
+    // spec's `value` is the seed until then.
     let cur = match key {
         Some(k) if !k.is_empty() => match prev.get(k) {
             Some(WidgetInstanceState::Number { value }) => *value,
@@ -150,9 +149,17 @@ fn collect_number(
         _ => spec_value,
     };
     let cur = clamp_number(cur, min, max);
-    if let Some(k) = key {
-        if !k.is_empty() {
-            next_state.insert(k.to_string(), WidgetInstanceState::Number { value: cur });
+    // **The walk carries this widget's state; it does not decide it.** The
+    // clamp above is a derivation, applied on every read, so writing it back
+    // stored nothing a reader could not work out — while making the render
+    // walk a second writer of a field `on_key` and `on_pointer` also own. The
+    // pass-through is what keeps the entry alive across the whole-map replace
+    // in `update_side_effects`; an absent one stays absent, so a number nobody
+    // has touched still reads its value from the spec. Same rule as
+    // `kinds::dropdown`, and for the same reason.
+    if let Some(k) = key.filter(|k| !k.is_empty()) {
+        if let Some(stored) = prev.get(k) {
+            next_state.insert(k.to_string(), stored.clone());
         }
     }
 

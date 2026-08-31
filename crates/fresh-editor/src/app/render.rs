@@ -5337,7 +5337,11 @@ impl Editor {
         // (beside the chrome, not over it), and the editor base. A new
         // modal surface registers a layer and is suppressed here with
         // no edit.
-        self.overlay_layers().iter().any(|l| {
+        //
+        // The SET, not `overlay_layers`: which layer outranks which for
+        // the keyboard says nothing about whether one paints over a
+        // caret, so this must not be reading a ranked list.
+        self.overlay_layer_set().any(|l| {
             !matches!(
                 l.kind,
                 LayerKind::Popup | LayerKind::Dock | LayerKind::Editor | LayerKind::Prompt

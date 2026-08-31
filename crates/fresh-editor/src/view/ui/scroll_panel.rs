@@ -1,18 +1,19 @@
-//! Reusable scrollable panel for lists with variable-height items
+//! Scroll bookkeeping for lists with variable-height items
 //!
-//! This module provides a `ScrollablePanel` that handles:
-//! - Row-based scrolling (not item-based) for variable-height items
-//! - Automatic ensure-visible for focused items
-//! - Sub-focus support for navigating within large items (e.g., TextList rows)
-//! - Scrollbar rendering with proper thumb sizing
+//! What is left of the old panel: the arithmetic that turns a list of
+//! variable-height items and a focused index into a scroll offset.
 //!
-//! Inspired by patterns from Flutter (Sliver), WPF (ScrollViewer), Qt (QAbstractScrollArea).
+//! **The painter is gone.** `ScrollablePanel::render` walked the items,
+//! called back per item and drew the scrollbar itself; the settings tree
+//! describes its own rows now and the fold paints them, so `render`,
+//! `ScrollablePanelLayout`, `ItemLayoutInfo` and `RenderInfo` — the layout
+//! record `render` handed back for hit-testing — went with it.
 //!
-//! # Usage Flow
+//! # Usage flow
 //!
-//! 1. **Define items** - Implement `ScrollItem` for your item type. Sizing is
-//!    width-aware: callers pass the column count available to the item, which
-//!    lets each item compute its own height (e.g. text wrapping):
+//! 1. **Define items** — implement [`ScrollItem`] for your item type. Sizing
+//!    is width-aware: callers pass the column count available to the item, so
+//!    each item can compute its own height (e.g. text wrapping):
 //!    ```ignore
 //!    impl ScrollItem for MyItem {
 //!        fn height(&self, width: u16) -> u16 { ... }
@@ -20,39 +21,19 @@
 //!    }
 //!    ```
 //!
-//! 2. **Store state** - Keep a `ScrollablePanel` in your component state
+//! 2. **Store state** — keep a [`ScrollablePanel`] in your component state.
 //!
-//! 3. **On selection change** - Call `ensure_focused_visible()` to scroll the
-//!    focused item into view:
+//! 3. **On selection change** — call [`ScrollablePanel::ensure_focused_visible`]
+//!    to scroll the focused item into view:
 //!    ```ignore
 //!    panel.ensure_focused_visible(&items, selected_index, sub_focus, width);
 //!    ```
 //!
-//! 4. **On render** - Update viewport, then call `render()` with a callback:
-//!    ```ignore
-//!    panel.set_viewport(available_height);
-//!    panel.update_content_height(&items, available_width);
-//!    let layout = panel.render(frame, area, &items, |f, rect, item, idx| {
-//!        render_my_item(f, rect, item, idx)
-//!    }, theme);
-//!    ```
-//!
-//! 5. **Use layout** - The returned `ScrollablePanelLayout` contains:
-//!    - `content_area` - Area used for content (excluding scrollbar)
-//!    - `scrollbar_area` - Scrollbar rect if visible (for drag hit testing)
-//!    - `item_layouts` - Per-item layout info from your render callback
-//!
 //! # Sub-focus
 //!
-//! For items with internal navigation (e.g., a list of strings), implement
+//! For items with internal navigation (e.g. a list of strings), implement
 //! `focus_regions()` to return focusable sub-areas. Then pass the sub-focus
 //! ID to `ensure_focused_visible()` to scroll that specific region into view.
-
-use ratatui::layout::Rect;
-use ratatui::Frame;
-
-use super::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
-use crate::view::theme::Theme;
 
 /// A focusable region within an item
 #[derive(Debug, Clone, Copy)]
@@ -164,50 +145,6 @@ impl ScrollState {
     pub fn needs_scrollbar(&self) -> bool {
         self.content_height > self.viewport
     }
-
-    /// Convert to ScrollbarState for rendering
-    pub fn to_scrollbar_state(&self) -> ScrollbarState {
-        ScrollbarState::new(
-            self.content_height as usize,
-            self.viewport as usize,
-            self.offset as usize,
-        )
-    }
-}
-
-/// Layout info returned by ScrollablePanel::render
-#[derive(Debug, Clone)]
-pub struct ScrollablePanelLayout<L> {
-    /// Content area (excluding scrollbar)
-    pub content_area: Rect,
-    /// Scrollbar area (if visible)
-    pub scrollbar_area: Option<Rect>,
-    /// Per-item layouts with their indices and Y positions
-    pub item_layouts: Vec<ItemLayoutInfo<L>>,
-}
-
-/// Layout info for a single item
-#[derive(Debug, Clone)]
-pub struct ItemLayoutInfo<L> {
-    /// Item index
-    pub index: usize,
-    /// Y position in content coordinates (before scroll)
-    pub content_y: u16,
-    /// Rendered area on screen
-    pub area: Rect,
-    /// Custom layout data from render callback
-    pub layout: L,
-}
-
-/// Info passed to render callback for partial item rendering
-#[derive(Debug, Clone, Copy)]
-pub struct RenderInfo {
-    /// Screen area to render into
-    pub area: Rect,
-    /// Number of rows to skip at top of item (for partial visibility)
-    pub skip_top: u16,
-    /// Item index
-    pub index: usize,
 }
 
 /// Manages scrolling for a list of items
@@ -235,11 +172,6 @@ impl ScrollablePanel {
     /// Update scroll state for new viewport size
     pub fn set_viewport(&mut self, height: u16) {
         self.scroll.set_viewport(height);
-    }
-
-    /// Get current viewport height
-    pub fn viewport_height(&self) -> usize {
-        self.scroll.viewport as usize
     }
 
     /// Calculate total content height from items at the given area width.
@@ -309,118 +241,6 @@ impl ScrollablePanel {
             (item_y, item_h)
         };
         self.scroll.ensure_visible(focus_y, focus_h);
-    }
-
-    /// Render visible items and scrollbar
-    ///
-    /// # Arguments
-    /// * `frame` - The ratatui frame
-    /// * `area` - Total area for the panel (including scrollbar)
-    /// * `items` - Slice of items to render
-    /// * `render_item` - Callback to render each item, receives (frame, RenderInfo, item).
-    ///   RenderInfo contains area, skip_top (rows to skip for partial visibility), and index.
-    /// * `theme` - Theme for scrollbar colors
-    ///
-    /// # Returns
-    /// Layout info for hit testing
-    pub fn render<I, F, L>(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        items: &[I],
-        render_item: F,
-        theme: &Theme,
-    ) -> ScrollablePanelLayout<L>
-    where
-        I: ScrollItem,
-        F: Fn(&mut Frame, RenderInfo, &I) -> L,
-    {
-        let scrollbar_width = if self.scroll.needs_scrollbar() { 1 } else { 0 };
-        let content_area = Rect::new(
-            area.x,
-            area.y,
-            area.width.saturating_sub(scrollbar_width),
-            area.height,
-        );
-        let item_width = content_area.width;
-
-        let mut layouts = Vec::new();
-        let mut content_y = 0u16; // Y in content coordinates
-        let mut render_y = area.y; // Y on screen
-
-        for (idx, item) in items.iter().enumerate() {
-            let item_h = item.height(item_width);
-
-            // Skip items entirely before scroll offset
-            if content_y + item_h <= self.scroll.offset {
-                content_y += item_h;
-                continue;
-            }
-
-            // Stop if we're past the viewport
-            if render_y >= area.y + area.height {
-                break;
-            }
-
-            // Calculate visible portion of item
-            let skip_top = self.scroll.offset.saturating_sub(content_y);
-            let available_h = (area.y + area.height).saturating_sub(render_y);
-            let visible_h = (item_h - skip_top).min(available_h);
-
-            if visible_h > 0 {
-                let item_area = Rect::new(content_area.x, render_y, content_area.width, visible_h);
-                let info = RenderInfo {
-                    area: item_area,
-                    skip_top,
-                    index: idx,
-                };
-                let layout = render_item(frame, info, item);
-                layouts.push(ItemLayoutInfo {
-                    index: idx,
-                    content_y,
-                    area: item_area,
-                    layout,
-                });
-            }
-
-            render_y += visible_h;
-            content_y += item_h;
-        }
-
-        // Render scrollbar if needed
-        let scrollbar_area = if self.scroll.needs_scrollbar() {
-            let sb_area = Rect::new(area.x + content_area.width, area.y, 1, area.height);
-            let scrollbar_state = self.scroll.to_scrollbar_state();
-            let scrollbar_colors = ScrollbarColors::from_theme(theme);
-            render_scrollbar(
-                frame.buffer_mut(),
-                sb_area,
-                &scrollbar_state,
-                &scrollbar_colors,
-            );
-            Some(sb_area)
-        } else {
-            None
-        };
-
-        ScrollablePanelLayout {
-            content_area,
-            scrollbar_area,
-            item_layouts: layouts,
-        }
-    }
-
-    // Scroll operations
-    pub fn scroll_up(&mut self, rows: u16) {
-        self.scroll.scroll_by(-(rows as i16));
-    }
-
-    pub fn scroll_down(&mut self, rows: u16) {
-        self.scroll.scroll_by(rows as i16);
-    }
-
-    pub fn scroll_to_ratio(&mut self, ratio: f32) {
-        self.scroll.scroll_to_ratio(ratio);
     }
 
     /// Get current scroll offset
@@ -650,10 +470,10 @@ mod tests {
     ///
     /// ## Background
     ///
-    /// `ScrollablePanel::render()` reserves one column for the scrollbar when
-    /// `needs_scrollbar()` is true, so items are rendered at `area_width - 1`.
-    /// Before the fix, `ensure_focused_visible` computed Y-offsets using the
-    /// *full* `area_width`, not the narrower render width. When items are
+    /// A rendered panel reserves one column for the scrollbar when
+    /// `needs_scrollbar()` is true, so items are laid out at `area_width - 1`
+    /// (`content_width`). Before the fix, `ensure_focused_visible` computed
+    /// Y-offsets using the *full* `area_width`, not the narrower one. When items are
     /// taller at the narrow width (because description text wraps onto an
     /// extra line), the cumulative Y position of items deep in the list drifts
     /// below the offset that `ensure_focused_visible` calculated — leaving the

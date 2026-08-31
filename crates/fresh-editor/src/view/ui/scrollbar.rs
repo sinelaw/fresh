@@ -235,32 +235,7 @@ pub struct ScrollbarColors {
     pub thumb: Color,
 }
 
-impl Default for ScrollbarColors {
-    fn default() -> Self {
-        Self {
-            track: Color::DarkGray,
-            thumb: Color::Gray,
-        }
-    }
-}
-
 impl ScrollbarColors {
-    /// Colors for an active/focused scrollbar
-    pub fn active() -> Self {
-        Self {
-            track: Color::DarkGray,
-            thumb: Color::Gray,
-        }
-    }
-
-    /// Colors for an inactive/unfocused scrollbar
-    pub fn inactive() -> Self {
-        Self {
-            track: Color::Black,
-            thumb: Color::DarkGray,
-        }
-    }
-
     /// Create from theme colors
     pub fn from_theme(theme: &crate::view::theme::Theme) -> Self {
         Self {

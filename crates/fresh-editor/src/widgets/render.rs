@@ -2346,10 +2346,6 @@ pub(crate) const DUAL_COLUMN_ACTIVE: &str = "▾ ";
 /// never reflow as the cursor or the active column moves.
 pub(crate) const DUAL_GUTTER_BLANK: &str = "  ";
 
-/// Spec-supplied starting state for a `DualList`, used when the host
-/// has no instance state for the widget yet — or, for hosts that own
-/// the control's state themselves (Settings), on every frame.
-
 /// The two-column gutter a `DualList` cell leads with: `▸ ` when the
 /// cursor is on this cell and its column is the active one, `▹ ` when
 /// the cursor is parked here in the idle column, two spaces otherwise.
@@ -6914,7 +6910,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn number_seeds_and_clamps_instance_state() {
+    fn a_number_render_clamps_without_recording_it() {
         let spec = WidgetSpec::Number {
             label_width: 0,
             edit_text: None,
@@ -6931,12 +6927,22 @@ pub(crate) mod tests {
             focused: false,
             key: Some("n".into()),
         };
-        let (_out, _hits, state) = render_no_focus(&spec, &HashMap::new());
-        // Spec value 42 clamps to max 10 and persists as instance state.
-        match state.get("n") {
-            Some(WidgetInstanceState::Number { value }) => assert_eq!(*value, 10.0),
-            other => panic!("expected Number instance state, got {other:?}"),
-        }
+        let (out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        // Spec value 42 clamps to max 10 in what is drawn — and is not written
+        // down. The clamp is a derivation applied on every read, so persisting
+        // it stored nothing a reader could not work out, while making the
+        // render walk a second writer of a field the key and pointer handlers
+        // own. See `kinds::number`.
+        assert!(
+            out[0].text.contains("10"),
+            "the out-of-range value clamps to max: {:?}",
+            out[0].text
+        );
+        assert!(
+            state.get("n").is_none(),
+            "and nothing is recorded: {:?}",
+            state.get("n")
+        );
     }
 
     #[test]
@@ -7057,16 +7063,66 @@ pub(crate) mod tests {
         assert_eq!(dp.anchor_row, 0, "trigger is the panel's row 0");
     }
 
+    /// **Rendering clamps; it does not write the clamp down.**
+    ///
+    /// An out-of-range spec index still selects the last option — the clamp is
+    /// applied on every read by `kinds::dropdown::resolve`, which is what both
+    /// the painter and the description call. What changed is that the walk no
+    /// longer *persists* the clamped value: a derived answer is not storage,
+    /// and writing it back made the render walk an authority on state that the
+    /// key and pointer handlers also write.
+    ///
+    /// So a spec that has never been interacted with contributes no entry at
+    /// all. That is what "the spec is the seed until a handler makes a
+    /// decision" means, and the web frontend depends on it — an absent entry
+    /// is how it knows to show the spec's own value.
     #[test]
-    fn dropdown_seeds_and_clamps_instance_state() {
-        // Out-of-range spec index clamps into the option set.
+    fn a_render_clamps_the_selection_without_recording_it() {
         let spec = make_dropdown(&["a", "b", "c"], 9, Some("d"));
-        let (_out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let (out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        assert!(
+            out[0].text.contains("[c "),
+            "the out-of-range index clamps to the last option: {:?}",
+            out[0].text
+        );
+        assert!(
+            state.get("d").is_none(),
+            "and nothing is written down: {:?}",
+            state.get("d")
+        );
+    }
+
+    /// **What the walk still does for state is carry it.**
+    ///
+    /// `update_side_effects` replaces the whole map, so a widget the walk does
+    /// not mention loses its state — which is the collection that drops the
+    /// state of widgets a new spec no longer contains. A stored entry
+    /// therefore has to survive a render that decides nothing, verbatim.
+    #[test]
+    fn a_render_carries_a_stored_selection_through_unchanged() {
+        let spec = make_dropdown(&["a", "b", "c"], 0, Some("d"));
+        let mut prev = HashMap::new();
+        prev.insert(
+            "d".to_string(),
+            WidgetInstanceState::Dropdown {
+                selected_index: 2,
+                open: true,
+            },
+        );
+        let (_out, _hits, state) = render_no_focus(&spec, &prev);
         match state.get("d") {
-            Some(WidgetInstanceState::Dropdown { selected_index, .. }) => {
-                assert_eq!(*selected_index, 2)
+            Some(WidgetInstanceState::Dropdown {
+                selected_index,
+                open,
+            }) => {
+                assert_eq!(*selected_index, 2, "the stored index, not the spec's");
+                assert!(
+                    *open,
+                    "and the stored flag verbatim — the focus gate is applied \
+                     by every reader, not baked in here"
+                );
             }
-            other => panic!("expected Dropdown instance state, got {other:?}"),
+            other => panic!("expected the stored entry to survive, got {other:?}"),
         }
     }
 

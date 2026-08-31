@@ -82,14 +82,12 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
     // `chrome_area`. Layers fold in the overlay band, after every legacy
     // painter, so covering the dock column is safe now in a way it was not
     // when this was painted by hand.
+    let has_chrome = c.is_some();
+    let chrome = c.clone();
     let l = fresh_ui::layer()
         .anchor(Anchor::Screen(Align::Center))
         .place(Place::Over);
-    let l = match c.is_some() {
-        true => l,
-        false => l.pointer_mode(PointerMode::Ignore),
-    };
-    l.child(layout_reader(move |info: LayoutInfo| {
+    let body = layout_reader(move |info: LayoutInfo| {
         let (w, h) = fit(info).unwrap_or((0, 0));
         // **Which layout is a question about this box, and it is answered
         // where the box is measured.** It used to be answered by asking the
@@ -216,7 +214,93 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                 route(n.children(rows))
             }
         }
-    }))
+    });
+    match has_chrome {
+        // **The dialog's keyboard is claimed here, not by the modal slot
+        // behind it.** `modal::layer(Slot::Settings)` is a *full-frame* layer
+        // and its `keys` wrapper lives inside it, so while that was the
+        // topmost keyboard-owning layer the focus scope was the empty frame
+        // node: `focus_scope` retains only focusables within the topmost
+        // modal, and every node of this box is in a different layer. Nothing
+        // inside the dialog could hold focus, so nothing inside it could ever
+        // be offered a key — which is why the whole surface was routed by one
+        // `ModalKey` fact.
+        //
+        // `Modality::Keyboard` rather than `Exclusive`: the pointer is still
+        // the slot's. `handle_settings_mouse` answers the wheel, the presses
+        // the tree's own nodes decline, and a press on the dim outside the
+        // box — all of which arrive because the layer *below* this one blocks
+        // the pointer and this one does not.
+        true => l
+            .modality(Modality::Keyboard)
+            .child(keys(seam(&chrome, body))),
+        false => l.pointer_mode(PointerMode::Ignore).child(body),
+    }
+}
+
+/// The keyboard of whichever of the dialog's panels has it, around the box.
+///
+/// **Not on the control, and that is a library constraint rather than a
+/// choice.** The obvious home for these listeners is the node that draws the
+/// control — the category list, the query row — but every one of those is
+/// built inside the box's `layout_reader`, and a focus registration created
+/// during the layout pass is not one `apply_autofocus` can hand focus to:
+/// measured across two frames, such a registration was in the scope after the
+/// first frame and gone after the second, so the seam held focus for exactly
+/// one frame and then silently stopped answering. Declared here it is an
+/// ordinary child of the layer, built in the reconcile pass like everything
+/// else, and it is an *ancestor* of the control either way — listeners run
+/// from the focused element outward, so a click that focuses a list row still
+/// reaches it.
+///
+/// **Exactly one exists at any time, and which one is a stated fact.** A
+/// search replaces the category tree with its results (`Search::Active` is
+/// `search_active`, which is the same condition that makes `categories` and
+/// `strip` `None`), so the two are never both wanted. That matters more than
+/// it looks: `apply_autofocus` hands focus on only when the element holding
+/// it has been destroyed, so the seam has to *leave* when its panel loses the
+/// keyboard, or the baton never comes back.
+///
+/// The `false` arm is unreachable from `app::render`'s chrome — `categories`
+/// and `strip` are the same `then` — and is a seam that declines everything
+/// rather than no seam at all, because a scope with nothing focusable in it
+/// drops focus, and with focus nowhere the modal stops swallowing.
+fn seam(c: &Option<Chrome>, content: Node<UiMsg>) -> Node<UiMsg> {
+    let Some(c) = c else { return content };
+    match &c.search {
+        Search::Active { .. } => search_keys(content),
+        Search::Hint(_) => tree_keys(
+            content,
+            c.categories
+                .as_ref()
+                .map(|x| x.focused)
+                .or_else(|| c.strip.as_ref().map(|x| x.focused))
+                .unwrap_or(false),
+        ),
+    }
+}
+
+/// The dialog's keyboard seam: the focus scope its controls live in, and the
+/// catch-all that hands back whatever they decline.
+///
+/// The same shape as [`super::modal::keys`], and for the same reason —
+/// listeners run from the focused element outward, so a control that answers
+/// its own key stops it before this sees it — with one difference: **no
+/// `autofocus`.** This node is the fallback holder of focus, not the wanted
+/// one. `apply_autofocus` prefers a node that asks for focus and only falls
+/// back to the first in the scope, so marking this one would win over every
+/// control inside it and nothing in the dialog would ever be focused.
+///
+/// It is still *reachable* — no `skip_traversal` — because it has to be. A
+/// scope with nothing focusable in it drops focus altogether, and with focus
+/// nowhere `Ui::keyboard_owned` is false: the modal would stop swallowing and
+/// its keys would reach the buffer underneath. The narrow layout while no
+/// search is running is exactly that state, so this is not a hypothetical.
+fn keys(content: Node<UiMsg>) -> Node<UiMsg> {
+    fresh_ui::focusable(content).on_key(|e: &Event| {
+        e.stop();
+        Some(UiMsg::Ui(UiFact::ModalKey(super::modal::KeySlot::Settings)))
+    })
 }
 
 /// Send every pointer event that reaches this node to the modal slot, which
@@ -265,6 +349,26 @@ pub fn panel_key() -> fresh_ui::Key {
 
 /// The category tree as a `widgets::List` in the window it scrolls in.
 ///
+/// **It is on the focus ring now.** The `focusable(false)` that used to be
+/// here said the keyboard was somewhere else — and it was, in the strongest
+/// sense: the settings box was not the focus scope at all, because the
+/// topmost keyboard-owning layer was the full-frame modal slot and
+/// `focus_scope` retains only what is inside *that*. A focusable here could
+/// not be reached, so declining the ring cost nothing and said nothing. The
+/// box claims the keyboard itself now (see [`layer`]), and what the ring buys
+/// is the click: a press on a row asks for focus, so the pointer and the
+/// keyboard agree on which control is live.
+///
+/// **What it does not buy is the arrows.** The list's own `Intent::Up` and
+/// `Intent::Down` move its selection and call `on_select`, and `on_select`
+/// here is the *click's* meaning — pick this category, auto-expand it, put
+/// the body back at the top. A keyboard step is `tree_step` over the display
+/// rows, categories and sections alike, and stops on rows `on_select` would
+/// treat as a jump. So the arrows are claimed by [`tree_keys`] before they
+/// are ever resolved to an intent — raw key listeners run first, which is the
+/// mechanism that lets a host override a widget's own keyboard without
+/// forking the widget.
+///
 /// **The rows answer their own presses and the list owns its window**, which
 /// is the whole of what the painter recorded here: `layout.categories`,
 /// `layout.sections`, `layout.disclosures`, `categories_scrollbar_area` and
@@ -291,7 +395,6 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
             move |i| cat_row(&rows[i], selected == Some(i), focused)
         },
     )
-    .focusable(false)
     .scrollbar()
     .row_theme(move |_, st| match (st, focused) {
         (
@@ -318,6 +421,85 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
         (_, Some(i)) => list.selected(i.min(n - 1)),
     };
     fresh_ui::ComponentExt::node(list).key(categories_key())
+}
+
+/// A key the category tree answers for itself.
+///
+/// One fact rather than eight, because the eight arms it replaces are eight
+/// arms of one `match` on one panel's `KeyEvent` and they share a receiver:
+/// [`crate::view::settings::state::SettingsState::tree_key`] is the single
+/// implementation, and `handle_categories_input` calls it too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeKey {
+    Prev,
+    Next,
+    PageUp,
+    PageDown,
+    First,
+    Last,
+    /// `Right` — opens an expandable category. It does *not* move focus into
+    /// the body; that is Tab's, and the painter's handler said so in a
+    /// comment before this did.
+    Expand,
+    /// `Left` — closes an expanded one, and pulls the cursor back onto the
+    /// category row so the next `Down` walks to the next category rather than
+    /// into sections that are no longer drawn.
+    Collapse,
+}
+
+/// The category tree's own keyboard.
+///
+/// One seam for both layouts, because it is one panel:
+/// `FocusPanel::Categories` is the wide layout's list and the narrow layout's
+/// strip alike, and `handle_categories_input` was already the same code for
+/// both.
+///
+/// **`focused` is the gate, and it is a stated fact, not a re-derivation.**
+/// `Categories::focused` / `Strip::focused` is `FocusPanel::Categories`,
+/// resolved once where the description is built; it is the same condition
+/// under which `dispatch_settings_key` routes to `handle_categories_input`.
+/// So the node claims exactly the keys the dispatcher's categories arm would
+/// have claimed, and declines every other key to the seam above it.
+///
+/// **And the dispatcher's arm stays.** Tree focus and `FocusPanel` are still
+/// two facts with one authority, and the authority is `FocusPanel`: nothing
+/// in the tree can *move* focus to the settings body or the query field,
+/// because neither is a node — both are `WidgetSpec`s the widget adapter
+/// renders — so `apply_autofocus` hands the baton on only when the node
+/// holding it is destroyed. Where that leaves focus on a seam whose panel no
+/// longer has the keyboard, this declines and `handle_categories_input`
+/// answers, exactly as before. Removing that floor is Phase 2.1's to earn.
+///
+/// `autofocus` because this is the wanted holder of focus while the tree is
+/// the panel with the keyboard, and the dialog's own seam deliberately does
+/// not ask. It is marked whether or not `focused` is set: the mark decides
+/// where focus *lands*, and a seam that stopped asking the moment the body
+/// took the keyboard would hand focus back to the dialog's catch-all, which
+/// never gives it up.
+fn tree_keys(n: Node<UiMsg>, focused: bool) -> Node<UiMsg> {
+    fresh_ui::focusable(n).autofocus().on_key(move |e: &Event| {
+        if !focused {
+            return None;
+        }
+        let k = e.key?;
+        // Modifiers deliberately unread: `handle_categories_input` matches on
+        // `event.code` alone, so Shift+Down is a step there and has to stay
+        // one here. A chord that means something else — Ctrl+S — is answered
+        // above this, before the panel is asked at all.
+        let t = match k.code {
+            fresh_ui::KeyCode::Up => TreeKey::Prev,
+            fresh_ui::KeyCode::Down => TreeKey::Next,
+            fresh_ui::KeyCode::PageUp => TreeKey::PageUp,
+            fresh_ui::KeyCode::PageDown => TreeKey::PageDown,
+            fresh_ui::KeyCode::Home => TreeKey::First,
+            fresh_ui::KeyCode::End => TreeKey::Last,
+            fresh_ui::KeyCode::Right => TreeKey::Expand,
+            fresh_ui::KeyCode::Left => TreeKey::Collapse,
+            _ => return None,
+        };
+        e.stop();
+        Some(UiMsg::Ui(UiFact::SettingsTree(t)))
+    })
 }
 
 pub fn clear_key() -> fresh_ui::Key {
@@ -372,6 +554,12 @@ pub fn results(r: &Results) -> Node<UiMsg> {
         move |i| result_card(&rows[i], i == sel),
     )
     .row_rows(RESULT_ROWS)
+    // **Not focusable, and the reason still holds.** While a search is
+    // running the keyboard is the query field's — every key goes to
+    // `handle_search_input` — and this list is *controlled*: its selection is
+    // `selected_search_result`, moved by `search_prev`/`search_next`, not by
+    // the list's own `Intent::Up`. Its cursor keys are answered by the search
+    // row's seam ([`search_keys`]), which is where focus is.
     .focusable(false)
     .scrollbar()
     .scrollbar_theme(pair("ui.split_separator_fg", "ui.popup_bg"))
@@ -918,6 +1106,37 @@ fn search_row(s: &Search) -> Node<UiMsg> {
         }
     }
     row().h(Sizing::Cells(1)).key(search_key()).children(kids)
+}
+
+/// The query field's keyboard while a search is running.
+///
+/// The seam this replaces is the category tree's: a search is exactly when
+/// `categories` and `strip` are `None`, so the two swap rather than coexist,
+/// and the swap is what moves focus (see [`seam`]).
+///
+/// **The whole dialog is the query field's then**, which is why this is the
+/// focusable and the results list below it is not: `handle_search_input`
+/// consumes every key, the results are a *controlled* list whose selection is
+/// `selected_search_result`, and Up/Down there move that selection rather
+/// than the list's own.
+///
+/// Only Up and Down are the node's. Enter, Escape, Left/Right/Home/End and
+/// every printable character edit or commit the query, and that is one text
+/// field's behaviour that has not migrated — the field is a `WidgetSpec`
+/// rendered through the widget adapter, not a node, so there is nothing here
+/// to give them to. They fall through to the seam above and reach
+/// `handle_search_input` exactly as before.
+fn search_keys(n: Node<UiMsg>) -> Node<UiMsg> {
+    fresh_ui::focusable(n).autofocus().on_key(|e: &Event| {
+        let k = e.key?;
+        let forward = match k.code {
+            fresh_ui::KeyCode::Up => false,
+            fresh_ui::KeyCode::Down => true,
+            _ => return None,
+        };
+        e.stop();
+        Some(UiMsg::Ui(UiFact::SettingsSearchStep(forward)))
+    })
 }
 
 /// One styled run of the modal's chrome.
@@ -2100,6 +2319,123 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn press_key(ui: &mut Ui<UiMsg>, code: fresh_ui::KeyCode) -> Vec<UiFact> {
+        facts(ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress::with(
+            code,
+            fresh_ui::Mods::NONE,
+        ))))
+    }
+
+    /// **The category tree answers its own keys.** Not `ModalKey` — the key
+    /// arrives as what it means, resolved by the node that holds focus rather
+    /// than by a dispatcher working out whose panel it was.
+    ///
+    /// The seam is only reachable because the box claims the keyboard itself:
+    /// while the full-frame modal slot was the topmost keyboard-owning layer,
+    /// `focus_scope` retained only what was inside *it*, and every node here
+    /// is in a different layer.
+    #[test]
+    fn the_category_tree_answers_its_own_keys() {
+        let mut ui = laid_out(100, 30, None);
+        for (code, want) in [
+            (fresh_ui::KeyCode::Down, TreeKey::Next),
+            (fresh_ui::KeyCode::Up, TreeKey::Prev),
+            (fresh_ui::KeyCode::PageDown, TreeKey::PageDown),
+            (fresh_ui::KeyCode::PageUp, TreeKey::PageUp),
+            (fresh_ui::KeyCode::Home, TreeKey::First),
+            (fresh_ui::KeyCode::End, TreeKey::Last),
+            (fresh_ui::KeyCode::Right, TreeKey::Expand),
+            (fresh_ui::KeyCode::Left, TreeKey::Collapse),
+        ] {
+            assert_eq!(
+                press_key(&mut ui, code),
+                vec![UiFact::SettingsTree(want)],
+                "{code:?} is the tree's"
+            );
+        }
+    }
+
+    /// And only while the description says the tree is the panel with the
+    /// keyboard. Focus does not move when `FocusPanel` does — nothing in the
+    /// tree can move it to the settings body, which is not a node — so the
+    /// seam can be left holding focus for a panel that has lost it, and it
+    /// has to decline rather than steer the wrong cursor.
+    #[test]
+    fn the_tree_declines_the_arrows_once_the_body_has_the_keyboard() {
+        let mut c = chrome();
+        c.categories.as_mut().expect("wide layout").focused = false;
+        let mut ui = with_chrome(c, 100, 30, None);
+        assert_eq!(
+            press_key(&mut ui, fresh_ui::KeyCode::Down),
+            vec![UiFact::ModalKey(
+                crate::view::shell::modal::KeySlot::Settings
+            )],
+        );
+    }
+
+    /// Tab is still the dialog's. Three panels take turns at the keyboard and
+    /// only one of them is a node, so traversal has nowhere to put focus —
+    /// the dispatcher's `toggle_focus` remains the authority until the body
+    /// and the query field are elements of their own (Phase 2.1).
+    #[test]
+    fn tab_is_still_the_dialogs() {
+        let mut ui = laid_out(100, 30, None);
+        for code in [fresh_ui::KeyCode::Tab, fresh_ui::KeyCode::BackTab] {
+            assert_eq!(
+                press_key(&mut ui, code),
+                vec![UiFact::ModalKey(
+                    crate::view::shell::modal::KeySlot::Settings
+                )],
+                "{code:?} is the dialog's"
+            );
+        }
+    }
+
+    /// A running search moves the seam to the query row, which is where the
+    /// keyboard is then. Up and Down walk the results; everything else edits
+    /// or commits the query and is still the dispatcher's.
+    #[test]
+    fn a_running_search_takes_the_seam_to_the_query_row() {
+        let mut ui = with_chrome(searching("tab"), 100, 30, None);
+        assert_eq!(
+            press_key(&mut ui, fresh_ui::KeyCode::Down),
+            vec![UiFact::SettingsSearchStep(true)],
+        );
+        assert_eq!(
+            press_key(&mut ui, fresh_ui::KeyCode::Up),
+            vec![UiFact::SettingsSearchStep(false)],
+        );
+        assert_eq!(
+            press_key(&mut ui, fresh_ui::KeyCode::Home),
+            vec![UiFact::ModalKey(
+                crate::view::shell::modal::KeySlot::Settings
+            )],
+            "Home is the query's cursor, not the list's"
+        );
+    }
+
+    /// **Focus never leaves the dialog, even where nothing in it wants it.**
+    /// The narrow layout while no search is running has no focusable control
+    /// at all — its categories are a strip and the strip is not the wide
+    /// layout's list — and a scope with nothing focusable in it drops focus,
+    /// which turns `Ui::keyboard_owned` off and lets the modal's keys reach
+    /// the buffer underneath. The dialog's own seam is the holder of last
+    /// resort, which is why it is not `skip_traversal`.
+    #[test]
+    fn a_key_never_escapes_a_layout_with_no_focusable_control() {
+        let mut c = chrome();
+        c.categories = None;
+        c.strip = None;
+        let mut ui = with_chrome(c, 100, 30, None);
+        assert_eq!(
+            press_key(&mut ui, fresh_ui::KeyCode::Down),
+            vec![UiFact::ModalKey(
+                crate::view::shell::modal::KeySlot::Settings
+            )],
+        );
+        assert!(ui.keyboard_owned(), "the dialog still owns the keyboard");
     }
 
     /// **The `[Clear …]` answers its own press**, where the painter filed a
