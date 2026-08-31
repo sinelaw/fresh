@@ -880,6 +880,21 @@ pub struct TextRender {
     /// The wrapped rows, computed at measure time and reused by paint so the
     /// two cannot disagree. Each row is its fragments, in order.
     rows: Vec<Vec<Frag>>,
+    /// Whether [`Self::rows`] was shaped from the props now held.
+    ///
+    /// **A props change that does not reach a re-measure must not paint the
+    /// old text.** `rows` is a cache of `props`, and the framework replaces
+    /// `props` in place whenever the description changes; it is the *measure*
+    /// that refreshes the cache. Normally a changed run marks the element for
+    /// layout and the two happen together — but a `layout_reader` rebuilds
+    /// during the layout pass itself, and the dirt its reconcile raises is
+    /// against render links the relink immediately afterwards replaces, so
+    /// the mark is dropped and the measure never comes. The text then painted
+    /// one frame behind the description it was built from.
+    ///
+    /// Rather than depend on every path remembering to re-measure, the cache
+    /// says whether it is still true, and paint re-shapes when it is not.
+    pub(crate) stale: bool,
 }
 
 impl TextRender {
@@ -887,6 +902,7 @@ impl TextRender {
         TextRender {
             props,
             rows: Vec::new(),
+            stale: false,
         }
     }
 }
@@ -905,9 +921,11 @@ impl RenderObject for TextRender {
                 c.max_w.min(natural.max(1))
             };
             self.rows = wrap_runs(&self.props.runs, w, self.props.wrap);
+            self.stale = false;
             c.constrain(Size::new(w, self.rows.len().min(u16::MAX as usize) as u16))
         } else {
             self.rows = wrap_runs(&self.props.runs, 0, Wrap::None);
+            self.stale = false;
             c.constrain(Size::new(natural, self.rows.len().max(1) as u16))
         }
     }
@@ -916,13 +934,26 @@ impl RenderObject for TextRender {
         // What was actually given, cut to fit. Wrapped text has no overflow to
         // mark, and `Elide::None` is the whole of today's behaviour, so both
         // pass straight through.
+        // The cache is only usable while it still describes these props; see
+        // [`TextRender::stale`]. Re-shaping here uses the width layout settled
+        // on, which is the width the rows would have been shaped to.
+        let reshaped: Vec<Vec<Frag>>;
+        let shaped: &[Vec<Frag>] = match self.stale {
+            false => &self.rows,
+            true => {
+                reshaped = match self.props.wrap {
+                    Wrap::None => wrap_runs(&self.props.runs, 0, Wrap::None),
+                    wrap => wrap_runs(&self.props.runs, g.rect.w, wrap),
+                };
+                &reshaped
+            }
+        };
         let elided: Vec<Vec<Frag>>;
         let rows: &[Vec<Frag>] =
             if self.props.wrap != Wrap::None || self.props.elide == crate::desc::Elide::None {
-                &self.rows
+                shaped
             } else {
-                elided = self
-                    .rows
+                elided = shaped
                     .iter()
                     .map(|r| elide_row(r, g.rect.w, self.props.elide))
                     .collect();

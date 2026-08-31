@@ -242,6 +242,17 @@ pub struct SettingsState {
     /// and scrolling the body updates this so Up/Down resumes from the
     /// section the user is actually looking at.
     pub tree_cursor_section: Option<usize>,
+    /// Whether the next body-window move is one the tree cursor asked for.
+    ///
+    /// **The tree follows the body only when the body moved on its own.**
+    /// `sync_tree_cursor_to_body_scroll` exists so the highlight tracks the
+    /// wheel and the scrollbar, but a cursor move scrolls the body too — and
+    /// the window it reports lands a frame later, by which time the cursor has
+    /// moved on. The sync then snapped the cursor back to the section under
+    /// the *previous* key's scroll, so roughly every third Down did nothing.
+    /// Set where the cursor drives the body, and taken by the frame that
+    /// carries out that scroll.
+    pub(crate) cursor_drove_body: bool,
     /// Snapshot of a plain `Text` control taken when its edit began, so Esc
     /// can revert an abandoned edit to exactly what it was. `None` whenever a
     /// Text edit is not in progress. See [`Self::start_editing`] /
@@ -415,6 +426,7 @@ impl SettingsState {
             expanded_categories: std::collections::HashSet::new(),
             categories_scroll: ScrollablePanel::new(),
             tree_cursor_section: None,
+            cursor_drove_body: false,
             text_edit_snapshot: None,
             widget_states: std::collections::HashMap::new(),
             theme_options,
@@ -694,6 +706,7 @@ impl SettingsState {
         // view, leaving `topmost_visible_item_index` on an earlier section
         // and making the cursor visually "stick" on the previous row.
         let key = super::super::shell::settings::card_key(self.selected_item);
+        self.cursor_drove_body = true;
         match matches!(rows[target], TreeRow::Section { .. }) {
             true => self.body_anchor.top_key(key),
             false => self.body_anchor.reveal_key(key),
@@ -782,6 +795,7 @@ impl SettingsState {
         self.selected_category = cat_idx;
         self.selected_item = target_item;
         self.tree_cursor_section = Some(section_idx);
+        self.cursor_drove_body = true;
         self.focus.set(FocusPanel::Settings);
         // Take the body to the top of the section. Revealing it would move
         // just enough to bring the target into view, which puts it at the
@@ -2234,7 +2248,26 @@ impl SettingsState {
     /// left-panel highlight follows wheel/scrollbar interaction in both
     /// directions, and a subsequent Up/Down on the tree resumes from
     /// the section the user is actually looking at.
+    /// Whether the body move now being reported is the cursor's own.
+    ///
+    /// One-shot: each cursor move sets the flag and the frame that carries
+    /// out its scroll takes it, so a later wheel or scrollbar drag still
+    /// moves the highlight.
+    pub(crate) fn take_cursor_drove_body(&mut self) -> bool {
+        std::mem::take(&mut self.cursor_drove_body)
+    }
+
     pub(crate) fn sync_tree_cursor_to_body_scroll(&mut self) {
+        if std::env::var("FRESH_DBG").is_ok() {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/freshdbg.log")
+            {
+                let _=writeln!(f,"DBG sync: top_item={:?} selected_item={} computed_section={:?} cursor_was={:?}", self.topmost_visible_item_index(), self.selected_item, self.current_section_index(), self.tree_cursor_section);
+            }
+        }
         if let Some(section_idx) = self.current_section_index() {
             self.tree_cursor_section = Some(section_idx);
         }

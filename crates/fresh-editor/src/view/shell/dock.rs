@@ -261,10 +261,16 @@ mod tests {
     #[test]
     fn a_right_press_reports_where_on_either_side_of_the_seam() {
         for mut ui in [described(Some(24), 100, 30), laid_out(Some(24), 100, 30)] {
-            assert_eq!(
-                press(&mut ui, 5, 7, MouseButton::Right),
-                vec![UiFact::DockContext { x: 5, y: 7 }]
-            );
+            // `ClearTabMenus` rides along on either side: it is the
+            // frame-wide right-click observer (`shell::splits::tab_menu_guard`)
+            // firing wherever the click lands, not something the column says.
+            // Filtered here for the same reason
+            // `a_right_press_in_the_column_reports_where` filters it.
+            let said: Vec<_> = press(&mut ui, 5, 7, MouseButton::Right)
+                .into_iter()
+                .filter(|f| *f != UiFact::ClearTabMenus)
+                .collect();
+            assert_eq!(said, vec![UiFact::DockContext { x: 5, y: 7 }]);
         }
     }
 

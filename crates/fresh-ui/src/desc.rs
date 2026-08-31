@@ -1641,7 +1641,19 @@ impl<M: 'static> Desc<M> {
                 || BoxRender { props: p.clone() },
                 |o| o.props = p.clone(),
             ),
-            Desc::TextRun(p) => sync(obj, || TextRender::new(p.clone()), |o| o.props = p.clone()),
+            // Replacing the props leaves the shaped rows describing the old
+            // ones, so the cache is marked stale unless the props are
+            // unchanged. See `TextRender::stale`.
+            Desc::TextRun(p) => sync(
+                obj,
+                || TextRender::new(p.clone()),
+                |o: &mut TextRender| {
+                    if o.props != *p {
+                        o.props = p.clone();
+                        o.stale = true;
+                    }
+                },
+            ),
             Desc::Viewport(p) => sync(
                 obj,
                 || ViewportRender::new(p.clone()),

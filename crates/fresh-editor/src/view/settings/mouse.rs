@@ -417,6 +417,7 @@ impl Editor {
         let Some(idx) = dialog.items.iter().position(|i| i.path == path) else {
             return;
         };
+        let label_width = dialog.label_column();
         if dialog.items[idx].read_only {
             return;
         }
@@ -445,21 +446,56 @@ impl Editor {
             }
             return;
         }
+        // **A composite field's rows open the field, they do not edit it.** A
+        // `Map` or `ObjectArray` is edited through a nested dialog — which is
+        // what Enter on it does — and its `[+] Add new` row is the only way to
+        // add an entry with the mouse. Falling through to the text path below
+        // instead selected the field and put it into `editing_text`, so the
+        // add row was inert and the *next* Enter read as "commit this field"
+        // and moved on. The page's own rule decides when: an add row activates
+        // on a single press, an existing row on a double one (#604).
+        if matches!(
+            dialog.items[idx].control,
+            SettingControl::Map(_) | SettingControl::ObjectArray(_)
+        ) && hit.widget_kind == "list"
+        {
+            let entry = match part {
+                "add" => None,
+                _ => Some(row()),
+            };
+            self.entry_composite_press(idx, entry);
+            return;
+        }
         // A press on a text field also says where in the value the caret goes.
         let caret = match hit.widget_kind == "text" {
             false => None,
             true => at.and_then(|col| {
                 let item = &dialog.items[idx];
+                // **Both of these have to match what the tree drew.** The
+                // label column decides where the value starts in the row, and
+                // the width decides the window a long value slides through; a
+                // byte resolved at any other pair is not the byte under the
+                // pointer. The description passes `label_column()` and the
+                // control's own constraint, so this does too.
                 let spec = super::widget_map::setting_control_to_widget_aligned(
                     &item.path,
                     &item.control,
-                    None,
+                    label_width,
                 );
+                let w = self
+                    .panel_rect(&crate::view::shell::entry::item_key(idx))
+                    // The item row is the gutter plus the control; the control
+                    // is what is being rendered here.
+                    .map_or(0, |r| {
+                        (r.width as u32)
+                            .saturating_sub(crate::view::shell::entry::GUTTER_COLS as u32)
+                    })
+                    .max(1);
                 let out = crate::widgets::render_spec_no_autofocus(
                     &spec,
                     crate::view::shell::widgets::no_state(),
                     "",
-                    u32::MAX,
+                    w,
                 );
                 crate::widgets::WidgetTextClickGeometry::from_render_output(&out, 0)
                     .map(|g| g.value_byte_in_cell(hit.byte_start, col))
@@ -493,6 +529,16 @@ impl Editor {
             if let Some(dialog) = state.entry_dialog_mut() {
                 if idx >= dialog.items.len() || dialog.items[idx].read_only {
                     return;
+                }
+                // **Clicking away from a field commits it.** `editing_text` is
+                // the dialog's flag and `selected_item` names the field it
+                // applies to, so moving the selection with the flag still up
+                // pointed the edit at a field that was never seeded — and the
+                // next Esc reverted the field the user had *left*, wiping the
+                // value they had just typed. Enter and Tab already commit; a
+                // press on another field is the third way to leave one.
+                if dialog.editing_text && dialog.selected_item != idx {
+                    dialog.stop_editing();
                 }
                 dialog.focus_on_buttons = false;
                 dialog.selected_item = idx;
@@ -564,6 +610,54 @@ impl Editor {
     /// reports. The trailing `[x]` / `[+]` is then a question for the module
     /// that wrote the row — [`super::widget_map::text_list_target`] — rather
     /// than for a guess made from the dialog's outer width.
+    /// Focus one row of an entry-dialog `Map`/`ObjectArray` field, and open
+    /// the nested dialog for it when the press says to.
+    ///
+    /// `entry` is the committed row the pointer was on, or `None` for the
+    /// trailing `[+] Add new` sentinel — which is exactly what
+    /// `open_nested_entry_dialog` reads out of `focused_entry` /
+    /// `focused_index` to decide between editing an entry and making one.
+    pub(crate) fn entry_composite_press(&mut self, item_idx: usize, entry: Option<usize>) {
+        let double = self
+            .shell_pointer_event
+            .map(|(_, double)| double)
+            .unwrap_or(false);
+        let Some(state) = self.settings_state.as_mut() else {
+            return;
+        };
+        let Some(dialog) = state.entry_dialog_mut() else {
+            return;
+        };
+        // The same rule the text path follows: leaving a field commits it.
+        if dialog.editing_text && dialog.selected_item != item_idx {
+            dialog.stop_editing();
+        }
+        let Some(item) = dialog.items.get_mut(item_idx) else {
+            return;
+        };
+        // A row past the end is the add row however it was named.
+        let on_add = match &mut item.control {
+            SettingControl::Map(m) => {
+                let e = entry.filter(|r| *r < m.entries.len());
+                m.focused_entry = e;
+                e.is_none()
+            }
+            SettingControl::ObjectArray(a) => {
+                let e = entry.filter(|r| *r < a.bindings.len());
+                a.focused_index = e;
+                e.is_none()
+            }
+            _ => return,
+        };
+        dialog.focus_on_buttons = false;
+        dialog.field_button_focus = None;
+        dialog.selected_item = item_idx;
+        dialog.update_focus_states();
+        if on_add || double {
+            state.open_nested_entry_dialog();
+        }
+    }
+
     pub(crate) fn entry_text_list_press(
         &mut self,
         item_idx: usize,
