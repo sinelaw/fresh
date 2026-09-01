@@ -947,9 +947,20 @@ impl SplitNode {
     ///
     /// Laying out a fresh tree per call is what makes this affordable: a
     /// three-pane grid costs ~38µs cold in a debug build (measured in
-    /// `shell::splits`), against callers that run once a frame or on resize.
+    /// `shell::splits`), against callers that run on a window action or on
+    /// resize.
+    ///
+    /// **Not on the render path.** A frame reads its panes off the shell
+    /// tree it laid out — `view::shell::geometry::PaneRects` — because a
+    /// second layout of the same grid is a second answer, and where the two
+    /// differed by a cell the painter's clip hid it. What is left to this is
+    /// the model's own questions (which leaves show a buffer, a probe for the
+    /// leaf set) and the tests that use it as the oracle the tree is checked
+    /// against. `geometry::stats` counts every call so a frame that reaches
+    /// it again fails a test.
     pub fn get_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
         use crate::view::shell::splits::{grid, leaf_key};
+        crate::view::shell::geometry::stats::note_scratch_grid();
         let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
         ui.frame(
             grid::<()>(self, None),
@@ -1892,33 +1903,51 @@ impl SplitManager {
         }
     }
 
-    /// Get all split IDs that display a specific buffer
-    pub fn splits_for_buffer(&self, target_buffer_id: BufferId) -> Vec<LeafId> {
-        self.root
-            .get_leaves_with_rects(Rect {
-                x: 0,
-                y: 0,
-                width: 1,
-                height: 1,
-            })
+    /// The buffer group each visible pane is showing, by the pane showing
+    /// it — the shape `view::shell::splits::Splits::groups` takes.
+    ///
+    /// A group's layout lives in `grouped_subtrees`, keyed by the *group's*
+    /// leaf, and a pane names the group it shows through its view state's
+    /// `active_group_tab`. This is the one join of the two; the frame's
+    /// description and the session preview's offscreen layout both take it.
+    pub fn pane_groups(
+        &self,
+        view_states: &HashMap<LeafId, SplitViewState>,
+        grouped_subtrees: &HashMap<LeafId, SplitNode>,
+    ) -> HashMap<LeafId, SplitNode> {
+        self.visible_leaves()
             .into_iter()
-            .filter(|(_, buffer_id, _)| *buffer_id == target_buffer_id)
-            .map(|(split_id, _, _)| split_id)
+            .filter_map(|(leaf, _)| {
+                let group = view_states.get(&leaf)?.active_group_tab?;
+                Some((leaf, grouped_subtrees.get(&group)?.clone()))
+            })
             .collect()
     }
 
-    /// Get the buffer ID for a specific leaf split
+    /// Get all split IDs that display a specific buffer.
+    ///
+    /// A question about the leaf set, answered from the leaf set. It used to
+    /// lay the grid out in a 1×1 probe to get the same list — which put a
+    /// scratch layout on the render path once per pane per frame, through
+    /// `update_menu_context`'s "same buffer in another split" check.
+    pub fn splits_for_buffer(&self, target_buffer_id: BufferId) -> Vec<LeafId> {
+        self.root
+            .visible_leaves()
+            .into_iter()
+            .filter(|(_, buffer_id)| *buffer_id == target_buffer_id)
+            .map(|(split_id, _)| split_id)
+            .collect()
+    }
+
+    /// Get the buffer ID for a specific leaf split. See
+    /// [`Self::splits_for_buffer`] for why this walks the tree rather than
+    /// laying it out.
     pub fn buffer_for_split(&self, target_split_id: LeafId) -> Option<BufferId> {
         self.root
-            .get_leaves_with_rects(Rect {
-                x: 0,
-                y: 0,
-                width: 1,
-                height: 1,
-            })
+            .visible_leaves()
             .into_iter()
-            .find(|(split_id, _, _)| *split_id == target_split_id)
-            .map(|(_, buffer_id, _)| buffer_id)
+            .find(|(split_id, _)| *split_id == target_split_id)
+            .map(|(_, buffer_id)| buffer_id)
     }
 
     /// Maximize the active split (hide all other splits temporarily)

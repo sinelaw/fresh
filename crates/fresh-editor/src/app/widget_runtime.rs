@@ -3069,6 +3069,7 @@ mod tests {
         let chrome = Rect::new(30, 0, 50, 24);
         let shell = editor.shell_frame((Some(dock), chrome));
         let mut ui = editor.shell_ui.take().expect("the shell tree");
+        crate::view::shell::geometry::stats::note_shell_layout();
         ui.frame(
             crate::view::shell::frame::frame_tree(shell),
             fresh_ui::Size::new(80, 24),

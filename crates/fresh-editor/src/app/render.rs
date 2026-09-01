@@ -380,11 +380,22 @@ impl Editor {
             .shell_ui
             .take()
             .expect("the shell tree is taken and returned within one frame");
+        crate::view::shell::geometry::stats::note_shell_layout();
         ui.frame(
             crate::view::shell::frame::frame_tree(shell.clone()),
             fresh_ui::Size::new(size.width, size.height),
         );
         let regions = crate::view::shell::frame::regions_of(&ui, size);
+        // **The frame's one geometry pass, for the panes.** Every pane's box
+        // and content slot, off the tree just laid out. The plugin hooks below,
+        // the body painter's pass and the pane `Host`s all read this; nothing
+        // on the render path lays the grid out again to ask where a pane is.
+        // See `view::shell::geometry`.
+        let pane_rects = crate::view::shell::geometry::PaneRects::read(
+            &ui,
+            self.window_panes().into_iter().map(|(leaf, _)| leaf),
+            size,
+        );
         self.shell_ui = Some(ui);
         let region = |r: crate::view::shell::frame::HostRegion| -> ratatui::layout::Rect {
             regions
@@ -459,14 +470,17 @@ impl Editor {
         if plugins_active.unwrap_or(false) {
             let _s = tracing::info_span!("render_plugin_hooks").entered();
             let hooks_start = std::time::Instant::now();
-            // Get visible buffers and their areas
-            let visible_buffers = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .get_visible_buffers(editor_content_area);
+            // Get visible buffers and their areas — the boxes the tree placed
+            // them in.
+            let visible_buffers = pane_rects.visible(
+                &self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .visible_leaves(),
+            );
 
             let mut total_new_lines = 0usize;
             for (split_id, buffer_id, split_area) in visible_buffers {
@@ -894,7 +908,8 @@ impl Editor {
             .as_ref()
             .map(|s| s.chrome.clone())
             .unwrap_or_default();
-        let mut body = crate::app::shell_host::BodyPainter::new(self, body_state, pane_chrome);
+        let mut body =
+            crate::app::shell_host::BodyPainter::new(self, body_state, pane_chrome, pane_rects);
         let mut provenance = FoldProvenance { runs: Vec::new() };
         let pending_hardware_cursor = crate::view::shell::fold::fold_band(
             ui.spec(),
@@ -6954,25 +6969,27 @@ impl Editor {
             .shell_ui
             .take()
             .expect("the shell tree is taken and returned within one call");
+        crate::view::shell::geometry::stats::note_shell_layout();
         ui.layout_only(
             crate::view::shell::frame::frame_tree(shell),
             fresh_ui::Size::new(size.width, size.height),
         );
-        let regions = crate::view::shell::frame::regions_of(&ui, size);
+        // The panes, off this same layout — the shape every frame reads them
+        // in (`render` does the same after its `frame`). What stood here read
+        // the body's region and handed it to a pass that laid the grid out a
+        // third time to find the panes inside it.
+        let pane_rects = crate::view::shell::geometry::PaneRects::read(
+            &ui,
+            self.window_panes().into_iter().map(|(leaf, _)| leaf),
+            size,
+        );
         self.shell_ui = Some(ui);
-        let editor_content_area = regions
-            .iter()
-            .find(|(r, _)| *r == crate::view::shell::frame::HostRegion::Body)
-            .map(|(_, rect)| *rect)
-            .unwrap_or_default();
 
         // Compute layout for all visible splits and update cached view_line_mappings.
         // Take one &mut borrow on the active window's splits; destructure into
         // (&SplitManager, &mut HashMap<...>) so both arguments come from the
         // same `&mut self.windows` borrow.
         let active_window_id = self.active_window;
-        // The same resolution the frame's description and the paint both use.
-        let pane_chrome = self.pane_chrome();
         let __win_l = self
             .windows
             .get_mut(&active_window_id)
@@ -6982,7 +6999,7 @@ impl Editor {
             .buffers
             .with_all_mut(|buffers, mgr, vs_map| {
                 SplitRenderer::compute_content_layout(
-                    editor_content_area,
+                    &pane_rects,
                     &*mgr,
                     buffers,
                     vs_map,
@@ -6994,7 +7011,6 @@ impl Editor {
                     self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
                     self.software_cursor_only,
-                    &pane_chrome,
                     self.config.editor.diagnostics_inline_text,
                     self.config.editor.show_tilde,
                     crate::view::bracket_highlight_overlay::BracketHighlightSettings::from_config(

@@ -1,6 +1,7 @@
 //! Geometry, layout and the display list.
 
 pub mod geom;
+pub mod glyph;
 pub mod layout;
 pub mod object;
 pub mod paint;
