@@ -9,7 +9,7 @@ name: Theme screenshots
 on:
   pull_request:
     paths:
-      - "crates/fresh-editor/themes/**"
+      - "crates/fresh-editor-core/themes/**"
       - "crates/fresh-editor/tests/e2e/theme_screenshots.rs"
       - ".github/workflows/theme-screenshots.yml"
 

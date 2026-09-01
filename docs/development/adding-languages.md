@@ -4,7 +4,7 @@ Fresh supports a language through two independent systems — **syntax
 highlighting** and **auto-indentation**. You can add either on its own. Both are
 connected through the grammar catalog (`GrammarRegistry`), which maps a file to a
 language; detection (extension, filename, glob, shebang, configured default)
-lives in `crates/fresh-editor/src/primitives/detected_language.rs`.
+lives in `crates/fresh-editor-core/src/primitives/detected_language.rs`.
 
 | System | What powers it |
 |--------|----------------|
@@ -18,7 +18,7 @@ Pick only the pieces you need.
 ### Highlighting
 
 1. **Syntect grammar.** Add a self-contained `.sublime-syntax` file under
-   `crates/fresh-editor/src/grammars/` and register it with the catalog
+   `crates/fresh-editor-core/src/grammars/` and register it with the catalog
    (`primitives/grammar/loader.rs`).
 2. **Language pack.** Ship the same grammar as an installable pack — no recompile
    and no core change. See [Language Packs](/plugins/development/language-packs).
@@ -87,11 +87,11 @@ need a tree-sitter indent query — the rules tier covers it.
 
 | Concern | Location |
 |---------|----------|
-| Indent families & rules | `crates/fresh-editor/src/primitives/indent_rules.rs` |
-| Generic bracket fallback | `crates/fresh-editor/src/primitives/indent_pattern.rs` |
-| Tree-sitter indent | `crates/fresh-editor/src/primitives/indent.rs` |
-| Syntect grammars | `crates/fresh-editor/src/grammars/` + `primitives/grammar/loader.rs` |
-| Language detection / catalog | `crates/fresh-editor/src/primitives/detected_language.rs`, `primitives/grammar/` |
+| Indent families & rules | `crates/fresh-editor-core/src/primitives/indent_rules.rs` |
+| Generic bracket fallback | `crates/fresh-editor-core/src/primitives/indent_pattern.rs` |
+| Tree-sitter indent | `crates/fresh-editor-core/src/primitives/indent.rs` |
+| Syntect grammars | `crates/fresh-editor-core/src/grammars/` + `primitives/grammar/loader.rs` |
+| Language detection / catalog | `crates/fresh-editor-core/src/primitives/detected_language.rs`, `primitives/grammar/` |
 | User-facing indent config | [Configuration guide](/configuration/#customize-auto-indentation) |
 | Language packs (no recompile) | [Language Packs](/plugins/development/language-packs) |
 

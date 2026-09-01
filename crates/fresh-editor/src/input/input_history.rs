@@ -384,15 +384,10 @@ impl InputHistory {
 /// Get the data directory for Fresh editor state
 /// Returns $XDG_DATA_HOME/fresh or ~/.local/share/fresh on Linux
 /// Returns ~/Library/Application Support/fresh on macOS
-pub fn get_data_dir() -> std::io::Result<std::path::PathBuf> {
-    let data_dir = dirs::data_dir().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "Could not determine data directory",
-        )
-    })?;
-    Ok(data_dir.join("fresh"))
-}
+// `get_data_dir` lives in `fresh-editor-core` (model::buffer::save needs it
+// for the in-place-write recovery directory); re-exported here so the old
+// path keeps working.
+pub use fresh_editor_core::data_dir::get_data_dir;
 
 /// Get the path for search history file
 pub fn get_search_history_path() -> std::io::Result<std::path::PathBuf> {

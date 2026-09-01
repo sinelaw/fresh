@@ -17,7 +17,7 @@
 //! let msg = t!("file.saved_as", path = "/path/to/file");
 //! ```
 
-pub mod embedded;
+pub use fresh_editor_core::i18n_embedded as embedded;
 
 pub use fresh_i18n::{register_plugin_strings, translate_plugin_string, unregister_plugin_strings};
 
