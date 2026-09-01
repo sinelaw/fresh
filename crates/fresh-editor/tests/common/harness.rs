@@ -1587,7 +1587,8 @@ impl EditorTestHarness {
         // every frame the corpus renders.
         let frame = fresh::test_api::frame_counters().since(before);
         assert_eq!(
-            frame.view_data_builds, frame.buffer_layouts,
+            frame.view_data_builds,
+            frame.buffer_layouts + frame.composite_builds,
             "a frame built a pane's rows more than once: {frame:?}"
         );
         assert_eq!(
