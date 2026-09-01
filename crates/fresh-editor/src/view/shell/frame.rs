@@ -535,12 +535,29 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // is not the problem it would be for the dock's *content*: a keyboard
     // seam has nothing to lose when a workspace switch rebuilds it, and it
     // re-autofocuses on the next frame.
+    // **The scope, when there is one.** A described interior with something in
+    // it to focus is where this layer confines traversal; anything else keeps
+    // the layer's own sink, which is what every panel had before. See
+    // `panel::keys_layer`.
+    let scope_of = |i: Option<&super::panel::Interior>, slot| {
+        i.filter(|i| i.has_focus_targets)
+            .map(|_| super::panel::interior_key(slot))
+    };
     let chrome = match f.dock_keys {
-        true => chrome.child(super::panel::keys_layer(super::widgets::Slot::Dock)),
+        true => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Dock,
+            scope_of(f.dock_interior.as_ref(), super::widgets::Slot::Dock),
+        )),
         false => chrome,
     };
     let chrome = match f.panel_keys {
-        true => chrome.child(super::panel::keys_layer(super::widgets::Slot::Floating)),
+        true => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Floating,
+            scope_of(
+                f.panel.as_ref().and_then(|p| p.interior.as_ref()),
+                super::widgets::Slot::Floating,
+            ),
+        )),
         false => chrome,
     };
     // The overlay prompt's card, over everything the frame holds and under the

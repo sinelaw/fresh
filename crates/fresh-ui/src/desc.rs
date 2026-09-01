@@ -308,6 +308,33 @@ impl TextProps {
     }
 }
 
+/// How tall one item of an item-scrolled viewport is.
+///
+/// **Uniform either way; the question is only who counts.** Uniformity is what
+/// makes the window index-addressable — item `i` starts at cell `i * height`,
+/// so a scroll answers by arithmetic and nothing is measured to serve it. That
+/// invariant is the same whichever variant is chosen. What differs is whether
+/// the number can be stated up front.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ItemHeight {
+    /// The caller states it. The viewport describes nothing to find the number
+    /// out and measures nothing to use it: this is the million-item case.
+    Cells(u16),
+    /// Measured. The viewport asks its child, during layout, for the height of
+    /// one item, and takes the answer as the band — see
+    /// [`Band`](crate::render::object::Band) for the protocol.
+    ///
+    /// For content whose height is a function of the width: a list of cards,
+    /// where the tallest card sets the band and shorter ones pad. The number
+    /// does not exist before layout, so it cannot be stated, and a caller that
+    /// computes it anyway is running a second layout engine over its own
+    /// content.
+    ///
+    /// Measurement is not free — see [`Node::item_rows_measured`] for when it
+    /// is paid — but it is never paid to *scroll*.
+    Measured,
+}
+
 /// What a viewport's scroll offset counts.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ScrollMode {
@@ -319,11 +346,12 @@ pub enum ScrollMode {
     /// at all: a cell extent that large does not fit a coordinate.
     ///
     /// `height` is how many cells one item occupies, and it is uniform because
-    /// that is what makes an index answerable without measuring: a window that
-    /// has to measure every row to know which ones it holds is not a window
-    /// onto a million rows. A card list — items that are little blocks rather
-    /// than lines — is the case it exists for.
-    Items { count: u32, height: u16 },
+    /// that is what makes an index answerable without measuring *at scroll
+    /// time*: a window that has to measure every row to know which ones it
+    /// holds is not a window onto a million rows. Whether the number is stated
+    /// or measured is [`ItemHeight`]'s question, and a card list — items that
+    /// are little blocks rather than lines — is why both answers exist.
+    Items { count: u32, height: ItemHeight },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -385,6 +413,9 @@ pub struct FocusProps<M> {
     pub skip: bool,
     /// Raw key listeners, offered before intents are resolved.
     pub on_key: Vec<Handler<M>>,
+    /// Key listeners offered on the way *down*, root to target, before the
+    /// focused element sees the key. See [`Node::on_key_capture`].
+    pub on_key_capture: Vec<Handler<M>>,
     /// Key chords this subtree reads differently from the global map.
     pub shortcuts: Vec<crate::focus::Shortcut>,
     /// How *this* part of the interface carries out an intent.
@@ -405,6 +436,7 @@ impl<M> Default for FocusProps<M> {
             ordinal: None,
             skip: false,
             on_key: Vec::new(),
+            on_key_capture: Vec::new(),
             shortcuts: Vec::new(),
             actions: Vec::new(),
             on_focus_change: None,
@@ -722,6 +754,24 @@ pub struct LayerProps<M> {
     /// carrying it, else a rectangle the host published for it, else the frame.
     /// So a region the tree does not contain yet can still be named.
     pub within: Option<crate::key::Key>,
+    /// The element whose focusables this layer confines traversal to. `None`
+    /// — the default, and what every layer did before this existed — is the
+    /// layer's own subtree.
+    ///
+    /// **Keyboard precedence and paint order are already independent here**,
+    /// and deliberately: a layer declared early owns the keyboard under one
+    /// declared late, while a layer declared late paints over one declared
+    /// early. A surface whose *content* must paint late and whose *keyboard*
+    /// must rank early therefore cannot say what it means with a single node —
+    /// its keyboard layer sits in one place in the order and its content in
+    /// another, and confinement-by-containment then confines traversal to the
+    /// keyboard layer, which holds no content. The scope names the content, so
+    /// the two facts stop being welded to one node.
+    ///
+    /// Names a key and resolves the way [`Self::within`] does: an element
+    /// carrying it, else nothing — a scope that names a key no element carries
+    /// confines nothing, which is the same answer as not naming one.
+    pub scope: Option<crate::key::Key>,
     /// Where the thing this layer hangs off actually is, relative to the
     /// anchor rectangle the tree can name.
     ///
@@ -749,6 +799,7 @@ impl<M> Default for LayerProps<M> {
             fit: Fit::default(),
             align: None,
             within: None,
+            scope: None,
             offset: (0, 0),
             modality: Modality::default(),
             scrim: None,
@@ -770,6 +821,7 @@ impl<M> Clone for LayerProps<M> {
             dismiss: self.dismiss,
             on_dismiss: self.on_dismiss.clone(),
             within: self.within.clone(),
+            scope: self.scope.clone(),
             offset: self.offset,
         }
     }
@@ -912,6 +964,7 @@ impl<M> Clone for FocusProps<M> {
             ordinal: self.ordinal,
             skip: self.skip,
             on_key: self.on_key.clone(),
+            on_key_capture: self.on_key_capture.clone(),
             shortcuts: self.shortcuts.clone(),
             actions: self.actions.clone(),
             on_focus_change: self.on_focus_change.clone(),
@@ -1299,7 +1352,12 @@ impl<M> Node<M> {
     /// tall. See [`Node::item_rows`] for taller ones.
     pub fn items(mut self, count: u32) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => p.mode = ScrollMode::Items { count, height: 1 },
+            Desc::Viewport(p) => {
+                p.mode = ScrollMode::Items {
+                    count,
+                    height: ItemHeight::Cells(1),
+                }
+            }
             _ => panic!("items() applies to Viewport nodes only"),
         }
         self
@@ -1307,18 +1365,37 @@ impl<M> Node<M> {
 
     /// How many cells one item occupies. Applies after [`Node::items`], which
     /// sets the count; uniform, and at least one.
-    pub fn item_rows(mut self, height: u16) -> Self {
+    pub fn item_rows(self, height: u16) -> Self {
+        self.item_height(ItemHeight::Cells(height.max(1)))
+    }
+
+    /// The same, for items whose height only layout knows: every item is laid
+    /// out at the current width and the tallest sets the band.
+    ///
+    /// **What it costs, and when.** The measurement is O(count): every item is
+    /// described and laid out, including the ones off screen, because "the
+    /// tallest" is not a question the visible ones can answer. It is paid on
+    /// the frames where the answer could have changed — when the window's
+    /// width changes, and when this viewport's description is reconciled,
+    /// which is to say whenever whatever builds the items rebuilt. It is
+    /// **not** paid to scroll: the offset is an index and the band is cached
+    /// against the width, so a wheel, a key or a reveal moves the window
+    /// without describing anything off screen. Nor is it paid on a frame that
+    /// only paints.
+    ///
+    /// A caller that can state the number should: see [`Node::item_rows`],
+    /// which measures nothing at all.
+    pub fn item_rows_measured(self) -> Self {
+        self.item_height(ItemHeight::Measured)
+    }
+
+    fn item_height(mut self, height: ItemHeight) -> Self {
         match &mut self.desc {
             Desc::Viewport(p) => match p.mode {
-                ScrollMode::Items { count, .. } => {
-                    p.mode = ScrollMode::Items {
-                        count,
-                        height: height.max(1),
-                    }
-                }
-                ScrollMode::Cells => panic!("item_rows() applies after items()"),
+                ScrollMode::Items { count, .. } => p.mode = ScrollMode::Items { count, height },
+                ScrollMode::Cells => panic!("an item height applies after items()"),
             },
-            _ => panic!("item_rows() applies to Viewport nodes only"),
+            _ => panic!("an item height applies to Viewport nodes only"),
         }
         self
     }
@@ -1624,6 +1701,25 @@ impl<M> Node<M> {
         self
     }
 
+    /// A key listener offered on the way *down*, root to target, before the
+    /// focused element sees the key.
+    ///
+    /// **The pointer has had this since the hit path was written; keys did
+    /// not, and the asymmetry is not principled.** A surface-level policy — a
+    /// plugin's mode binding, a dialog's own chord — has to be able to pre-empt
+    /// a focused control without swallowing every key that control would have
+    /// handled, and a bubble listener can only do the second. Without it a
+    /// surface that wants to reserve one key has to claim them all, which is
+    /// exactly why the editor's plugin panels and settings dialog swallow
+    /// everything today.
+    ///
+    /// Same `Ctl` and the same stop semantics as the bubble leg: calling
+    /// `e.stop()` here ends propagation before the focused element runs.
+    pub fn on_key_capture(mut self, f: impl Fn(&Event) -> Option<M> + 'static) -> Self {
+        self.focus_props().on_key_capture.push(Rc::new(f));
+        self
+    }
+
     pub fn on_key_handler(mut self, h: Handler<M>) -> Self {
         self.focus_props().on_key.push(h);
         self
@@ -1676,6 +1772,13 @@ impl<M> Node<M> {
     /// See [`LayerProps::within`].
     pub fn within(mut self, key: crate::key::Key) -> Self {
         self.layer_props().within = Some(key);
+        self
+    }
+
+    /// Confine this layer's focus traversal to the element carrying `key`,
+    /// rather than to the layer's own subtree. See [`LayerProps::scope`].
+    pub fn scope_at(mut self, key: crate::key::Key) -> Self {
+        self.layer_props().scope = Some(key);
         self
     }
 
@@ -1780,10 +1883,20 @@ impl<M: 'static> Desc<M> {
                     }
                 },
             ),
+            // **A new description may describe new items, and a measured band
+            // is a measurement of the items.** The band is cached against the
+            // width, which catches a resize; nothing about the width catches a
+            // card whose text grew a line. What does is this: a description
+            // arriving at all means whatever builds the items ran again, so the
+            // measurement it produced is no longer known to hold. Dropping it
+            // here is conservative — a rebuild that changed only which row is
+            // hovered pays for a measurement that returns the same number — and
+            // it is the only signal at this level that never misses a change.
+            // The `Cells` path has no band and reads none of this.
             Desc::Viewport(p) => sync(
                 obj,
                 || ViewportRender::new(p.clone()),
-                |o| o.props = p.clone(),
+                |o| o.set_props(p.clone()),
             ),
             // A gesture is a pointer region and a listener list; whether it
             // absorbs a hit is `Node::pointer`, which any node carries.

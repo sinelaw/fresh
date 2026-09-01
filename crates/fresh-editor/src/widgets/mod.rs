@@ -39,4 +39,4 @@ pub use render::{
     EmbedRect, FocusCursor, MarkdownCtx, NumberEdit, OverlayRow, PanelPopup, RenderContext,
     RenderOptions, RenderOutput, RenderedTreeRow, DROPDOWN_VISIBLE_OPTIONS,
 };
-pub use text_click::{row_byte_to_value_byte, WidgetTextClickGeometry};
+pub use text_click::{row_byte_to_value_byte, value_byte_from_hit};

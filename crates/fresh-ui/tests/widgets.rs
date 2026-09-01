@@ -7,8 +7,11 @@ mod support;
 use fresh_ui::Axis;
 use fresh_ui::{
     col, Button, ComponentExt, Draw, Dropdown, Input, KeyCode, KeyPress, List, Mods, MouseButton,
-    Node, Number, Point, RadioGroup, Size, Sizing, TextField, Toggle, Tree, TreeNode, Ui,
+    Node, Number, Point, RadioGroup, RowHeight, Size, Sizing, TextField, Toggle, Tree, TreeNode,
+    Ui,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 use support::fake::Recorder;
 
 const FRAME: Size = Size { w: 30, h: 10 };
@@ -1062,6 +1065,171 @@ fn a_card_lists_items_take_a_band_of_rows_each() {
     // The window is three cards tall; a fourth is built for overscan and lands
     // below it, which is the whole of "the window knows what it holds".
     assert_eq!(band(3).0, 9, "past the window's last row");
+}
+
+/// **A stated band measures nothing, and that is what it is for.**
+///
+/// The million-row case is the one `RowHeight::Cells` defends, and the way to
+/// see it defended is that the row builder is never asked about a row the
+/// window does not hold. This is the guard on the measured band below: adding
+/// a variant that measures must not make the variant that does not.
+#[test]
+fn a_stated_row_height_never_asks_about_an_off_screen_row() {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let asked = seen.clone();
+    let card = move |i: usize| -> Node<Msg> {
+        asked.borrow_mut().push(i);
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("title {i}")))
+            .child(fresh_ui::text(format!("body {i}")))
+            .child(fresh_ui::text("────"))
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(1_000_000, fresh_ui::Key::from, card)
+            .row_rows(3)
+            .node(),
+        Size::new(20, 9),
+    );
+    let asked = seen.borrow().clone();
+    assert!(
+        asked.iter().all(|i| *i < 8),
+        "a stated band asked about {} rows, up to row {:?}",
+        asked.len(),
+        asked.iter().max()
+    );
+}
+
+/// **A measured band is the tallest item's, and the window is still a grid.**
+///
+/// The number is one nobody could have stated: it is a fact about the items at
+/// this width, and it exists only once they have been laid out. What it must
+/// not cost is the thing that makes a window a window — every item still starts
+/// at `index * band`, so the shorter ones pad rather than closing the gap.
+#[test]
+fn a_measured_card_lists_band_is_the_tallest_items() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(20, fresh_ui::Key::from, uneven_card)
+            .row_height(RowHeight::UniformMeasured)
+            .node(),
+        Size::new(20, 9),
+    );
+    let band = |i: usize| {
+        let id = ui
+            .find_by_key(&fresh_ui::Key::from(i))
+            .unwrap_or_else(|| panic!("card {i}"));
+        let r = ui.rect_of(id);
+        (r.y, r.h)
+    };
+    // Card 7 is three rows; every other card is two. The band is three.
+    assert_eq!(band(0), (0, 3), "a two-row card padded to the tallest");
+    assert_eq!(band(1), (3, 3), "and the next starts one band down");
+    assert_eq!(band(2), (6, 3));
+}
+
+/// **The invariant is index addressability at scroll time, not "never
+/// measure".**
+///
+/// The band is measured against the width and kept, so moving the window is
+/// arithmetic over an index the way it always was. The row builder is the only
+/// witness that can tell the two apart: a measurement has to ask about every
+/// item, and a scroll must ask about none but the ones it is about to show.
+#[test]
+fn a_measured_card_list_does_not_measure_to_scroll() {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let asked = seen.clone();
+    let card = move |i: usize| -> Node<Msg> {
+        asked.borrow_mut().push(i);
+        uneven_card(i)
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(20, fresh_ui::Key::from, card)
+            .row_height(RowHeight::UniformMeasured)
+            .node(),
+        Size::new(20, 9),
+    );
+    assert!(
+        seen.borrow().contains(&19),
+        "the first layout measures every item, or it cannot know the tallest"
+    );
+
+    seen.borrow_mut().clear();
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 3,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    ui.tick();
+    let asked = seen.borrow().clone();
+    assert!(!asked.is_empty(), "a scroll builds the rows it moved to");
+    assert!(
+        asked.iter().all(|i| *i < 9),
+        "a scroll asked about {asked:?} — anything past the window is a re-measure"
+    );
+    // And it moved: the window starts three items down.
+    let id = ui
+        .find_by_key(&fresh_ui::Key::from(3usize))
+        .expect("card 3");
+    assert_eq!(
+        ui.rect_of(id).y,
+        0,
+        "the fourth card is at the window's top"
+    );
+}
+
+/// **The width is the other half of the measurement, so it invalidates it.**
+///
+/// A card's height is a function of the width it wraps at, which is the whole
+/// reason the number cannot be stated. A band cached against a width the list
+/// no longer has would clip every card in it.
+#[test]
+fn a_measured_band_is_measured_again_when_the_width_changes() {
+    let card = |i: usize| -> Node<Msg> {
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("card {i}")))
+            .child(fresh_ui::text("one two three four five").wrap())
+    };
+    let list = || {
+        List::windowed(6, fresh_ui::Key::from, card)
+            .row_height(RowHeight::UniformMeasured)
+            .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(), Size::new(24, 12));
+    let band = |ui: &Ui<Msg>| {
+        let id = ui
+            .find_by_key(&fresh_ui::Key::from(0usize))
+            .expect("card 0");
+        ui.rect_of(id).h
+    };
+    let wide = band(&ui);
+    assert_eq!(wide, 2, "at twenty-four columns the body is one row");
+    ui.frame(list(), Size::new(10, 12));
+    let narrow = band(&ui);
+    assert!(
+        narrow > wide,
+        "at ten columns the body wraps, so the band grows: {wide} -> {narrow}"
+    );
+    // And the grid follows it, rather than staying on the old band.
+    let id = ui
+        .find_by_key(&fresh_ui::Key::from(1usize))
+        .expect("card 1");
+    assert_eq!(ui.rect_of(id).y, narrow as i32, "the second card's top");
+}
+
+/// Two rows of card, one of them uneven: item seven is a row taller than the
+/// rest, so it is the one that sets a measured band.
+fn uneven_card(i: usize) -> Node<Msg> {
+    let mut c = fresh_ui::col()
+        .child(fresh_ui::text(format!("title {i}")))
+        .child(fresh_ui::text(format!("body {i}")));
+    if i == 7 {
+        c = c.child(fresh_ui::text("and one more line"));
+    }
+    c
 }
 
 /// And the bar reads in items, not in cells. Nine cells of window over cards

@@ -29,6 +29,7 @@ pub use tree::FocusId;
 pub struct Focusable<M: 'static> {
     pub(crate) on_change: Option<crate::desc::Handler<M>>,
     pub(crate) on_key: Vec<crate::desc::Handler<M>>,
+    pub(crate) on_key_capture: Vec<crate::desc::Handler<M>>,
     pub(crate) shortcuts: Vec<Shortcut>,
     pub(crate) actions: Vec<(Intent, crate::desc::Handler<M>)>,
     pub(crate) ordinal: Option<i32>,
@@ -51,6 +52,7 @@ impl<M: 'static> Focusable<M> {
         Focusable {
             on_change: None,
             on_key: Vec::new(),
+            on_key_capture: Vec::new(),
             shortcuts: Vec::new(),
             actions: Vec::new(),
             ordinal: None,
@@ -93,6 +95,12 @@ impl<M: 'static> Focusable<M> {
     }
 
     /// A raw key listener, offered before intents are resolved.
+    /// See [`crate::Node::on_key_capture`].
+    pub fn on_key_capture(mut self, h: crate::desc::Handler<M>) -> Self {
+        self.on_key_capture.push(h);
+        self
+    }
+
     pub fn on_key(mut self, h: crate::desc::Handler<M>) -> Self {
         self.on_key.push(h);
         self
@@ -137,6 +145,7 @@ use crate::schedule::{DirtyCause, Ui};
 /// are the same thing to everything downstream.
 pub(crate) struct FocusConfig<M: 'static> {
     pub on_key: Vec<crate::desc::Handler<M>>,
+    pub on_key_capture: Vec<crate::desc::Handler<M>>,
     pub shortcuts: Vec<Shortcut>,
     pub actions: Vec<(Intent, crate::desc::Handler<M>)>,
     pub on_change: Option<crate::desc::Handler<M>>,
@@ -148,6 +157,7 @@ impl<M: 'static> Ui<M> {
         if let Desc::Focusable(f) = &resolve(&el.desc).desc {
             return Some(FocusConfig {
                 on_key: f.on_key.clone(),
+                on_key_capture: f.on_key_capture.clone(),
                 shortcuts: f.shortcuts.clone(),
                 actions: f.actions.clone(),
                 on_change: f.on_focus_change.clone(),
@@ -158,6 +168,7 @@ impl<M: 'static> Ui<M> {
                 .downcast_ref::<Focusable<M>>()
                 .map(|f| FocusConfig {
                     on_key: f.on_key.clone(),
+                    on_key_capture: f.on_key_capture.clone(),
                     shortcuts: f.shortcuts.clone(),
                     actions: f.actions.clone(),
                     on_change: f.on_change.clone(),
@@ -262,6 +273,8 @@ impl<M: 'static> Ui<M> {
             kind,
             pos: Point::ZERO,
             local: Point::ZERO,
+            // A focus change is not a pointer event; there is no cell.
+            text_byte: None,
             button: MouseButton::Left,
             mods: key.map(|k| k.mods).unwrap_or(Mods::NONE),
             clicks: 1,
@@ -375,11 +388,25 @@ impl<M: 'static> Ui<M> {
         FocusScope { nodes }
     }
 
-    /// The topmost layer that owns the keyboard, as an element — which is
-    /// what confines focus traversal.
+    /// The element that confines focus traversal right now.
+    ///
+    /// The topmost layer that owns the keyboard — **or the element that layer
+    /// named as its scope**, when it named one. A layer whose keyboard rank
+    /// and whose content have to sit at different points in the declaration
+    /// order cannot be both; `LayerProps::scope` is how it says which element
+    /// holds the focusables while the layer itself holds the rank.
+    ///
+    /// A scope naming a key no element carries confines nothing and falls back
+    /// to the layer, which is the same answer as not naming one.
     pub(crate) fn topmost_modal(&self) -> Option<ElementId> {
         let i = self.topmost_modal_index(Modality::owns_keyboard)?;
-        self.element_of(self.pending_layers[i].0)
+        let r = self.pending_layers[i].0;
+        if let Some(k) = self.layer_geom(r).and_then(|g| g.scope) {
+            if let Some(e) = self.find_by_key(&k) {
+                return Some(e);
+            }
+        }
+        self.element_of(r)
     }
 
     /// Where the topmost layer answering `channel` sits in resolution order.
@@ -534,10 +561,31 @@ impl<M: 'static> Ui<M> {
             // A scope with nothing marked still needs somewhere for traversal
             // to start, or Tab inside a modal would do nothing.
             .or_else(|| modal.and(scope.nodes.first()));
+        // **A scope with nothing focusable in it still has to hold focus.**
+        //
+        // `skip_traversal` says Tab does not *stop* here; it does not say focus
+        // may never *rest* here, and `focus_scope` reads it as the former when
+        // it builds the set. So a scope whose descendants are all unfocusable
+        // leaves `wanted` empty, focus is dropped below, and with focus nowhere
+        // the containment questions answer that no keyboard layer is up at all
+        // — a modal's keys then leak to whatever is behind it, which is worse
+        // than a stray highlight and is not what any caller asked for by
+        // marking a subtree skippable.
+        //
+        // Falling back to the scope's own element keeps the keyboard where the
+        // scope says it belongs. The editor reaches this whenever a plugin
+        // panel's interior is described but nothing in it takes focus, and the
+        // symptom was a dialog that would not close: Escape never reached the
+        // panel, so its scrim outlived it.
+        let wanted_id = wanted.map(|e| e.id).or_else(|| {
+            self.active_scope()
+                .filter(|_| modal.is_some())
+                .and_then(|f| self.focus_tree.get(f))
+                .map(|n| n.element)
+        });
         let mut out = Vec::new();
-        match wanted {
-            Some(e) => {
-                let id = e.id;
+        match wanted_id {
+            Some(id) => {
                 self.focus_element(id, SelectionOnFocus::SelectAll, &mut out);
             }
             // Focus was somewhere the active scope cannot reach and there is
@@ -662,13 +710,29 @@ impl<M: 'static> Ui<M> {
     /// The containment question both halves are asking, with the half as an
     /// argument: is any layer on the focused element's ancestor chain one this
     /// predicate accepts.
+    ///
+    /// **A named scope is containment too.** A layer that names one holds the
+    /// modality while some other element holds the focusables, so focus sits
+    /// outside the layer's own subtree by construction — and answering this by
+    /// the ancestor walk alone would say a panel's keyboard layer is not up
+    /// while it plainly is. Both halves would then be wrong at once: the host
+    /// would resolve keys the panel had claimed, and an unfocused popup would
+    /// intercept beneath it.
     fn focus_in_layer(&self, half: fn(crate::desc::Modality) -> bool) -> bool {
         let Some(f) = self.focus else { return false };
-        self.path_to(f).iter().any(|&n| {
+        let by_containment = self.path_to(f).iter().any(|&n| {
             self.render_for(n)
                 .and_then(|r| self.layer_geom(r))
                 .is_some_and(|g| half(g.modality))
-        })
+        });
+        by_containment
+            || self.pending_layers.iter().any(|(r, _)| {
+                self.layer_geom(*r)
+                    .filter(|g| half(g.modality))
+                    .and_then(|g| g.scope)
+                    .and_then(|k| self.find_by_key(&k))
+                    .is_some_and(|e| self.is_within(f, e))
+            })
     }
 
     fn propagate_key(&mut self, chain: &[ElementId], k: KeyPress, out: &mut Vec<M>) -> bool {
@@ -676,29 +740,49 @@ impl<M: 'static> Ui<M> {
             return false;
         };
         let ctl = Rc::new(Ctl::default());
-        for &n in chain.iter().rev() {
-            let handlers = self.focus_config(n).map(|c| c.on_key).unwrap_or_default();
-            if handlers.is_empty() {
-                continue;
-            }
-            let mut ev = self.synth_event(n, GestureKind::Key, Some(k), ctl.clone());
-            ev.target = target;
-            ev.phase = if n == target {
-                Phase::Target
-            } else {
-                Phase::Bubble
+        // **Down first, then up** — the same two legs the pointer has had since
+        // the hit path was written. A surface that must pre-empt a focused
+        // control on one key (a plugin's mode binding, a dialog's own chord)
+        // gets it on the way down without having to claim every key on the way
+        // up; a surface that only wants what the control declined keeps the
+        // bubble leg it always had.
+        for capture in [true, false] {
+            let order: Vec<ElementId> = match capture {
+                true => chain.to_vec(),
+                false => chain.iter().rev().copied().collect(),
             };
-            for h in handlers {
-                if let Some(m) = h(&ev) {
-                    out.push(m);
+            for n in order {
+                let handlers = self
+                    .focus_config(n)
+                    .map(|c| match capture {
+                        true => c.on_key_capture,
+                        false => c.on_key,
+                    })
+                    .unwrap_or_default();
+                if handlers.is_empty() {
+                    continue;
+                }
+                let mut ev = self.synth_event(n, GestureKind::Key, Some(k), ctl.clone());
+                ev.target = target;
+                ev.phase = if n == target {
+                    Phase::Target
+                } else if capture {
+                    Phase::Capture
+                } else {
+                    Phase::Bubble
+                };
+                for h in handlers {
+                    if let Some(m) = h(&ev) {
+                        out.push(m);
+                    }
+                    if ctl.flow.get() == Flow::Stop {
+                        break;
+                    }
                 }
                 if ctl.flow.get() == Flow::Stop {
-                    break;
+                    self.apply_focus_controls(&ctl, out);
+                    return true;
                 }
-            }
-            if ctl.flow.get() == Flow::Stop {
-                self.apply_focus_controls(&ctl, out);
-                return true;
             }
         }
         self.apply_focus_controls(&ctl, out);

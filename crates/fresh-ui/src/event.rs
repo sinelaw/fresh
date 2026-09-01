@@ -267,6 +267,24 @@ pub struct Event {
     pub delta: i32,
     /// Which axis `delta` moves along. `Vertical` for everything else.
     pub axis: Axis,
+    /// The byte of the text under the pointer, in the *logical* string of the
+    /// text run this event's target is — `None` when the target is not text,
+    /// or when the mapping is not well defined.
+    ///
+    /// **The library is the only thing that can answer this.** The caller
+    /// supplied the string; the library decided which of it is visible and
+    /// where each grapheme landed. Reporting only a column asks the caller to
+    /// redo that decision — which it can only do by laying the text out a
+    /// second time, and which is wrong outright if it assumes one byte per
+    /// cell. Both of those exist in this workspace's editor today, the second
+    /// as a live defect on any non-ASCII label or value.
+    ///
+    /// `None` for wrapped text: `Wrap` may drop the whitespace it breaks at,
+    /// so a row's fragments do not concatenate back to the logical string and
+    /// there is no offset to report. A wrapped field that needs a caret wants
+    /// the window to be the library's too; until then this is honestly absent
+    /// rather than approximately wrong.
+    pub text_byte: Option<usize>,
     pub key: Option<KeyPress>,
     /// Which press in a run produced this, as the host reported it: `1` for a
     /// single, `2` for a double, `3` for a triple. `1` for everything that is
@@ -296,6 +314,7 @@ impl Event {
             kind,
             pos: Point::ZERO,
             local: Point::ZERO,
+            text_byte: None,
             button: MouseButton::Left,
             mods: Mods::NONE,
             delta: 0,

@@ -112,6 +112,26 @@ pub struct Interior {
     pub avail_height: Option<u32>,
     /// See [`super::widgets::Ctx::scrollbar_reveal`].
     pub scrollbar_reveal: Option<bool>,
+    /// Whether anything in this interior can take focus.
+    ///
+    /// **A scope with nothing in it is worse than no scope.** `keys_layer`
+    /// names the interior so traversal is confined to it; if the interior has
+    /// no focusable, `apply_autofocus` finds nowhere to put focus and drops it
+    /// — and with focus nowhere, the containment questions say no keyboard
+    /// layer is up and the panel's keys leak to the buffer behind it. So a
+    /// panel with nothing to focus keeps the sink instead, which is exactly
+    /// what it had before any of this.
+    ///
+    /// The runtime already answers this: it is whether the panel has any
+    /// tabbable widget.
+    pub has_focus_targets: bool,
+    /// Whether this panel's plugin mode binds Tab.
+    ///
+    /// See [`interior`]: Tab is the one key the tree now resolves, so it is
+    /// the one place a plugin's `defineMode` binding could be taken away by
+    /// this change. When the plugin bound it, the fallback claims it and the
+    /// router hands it to the plugin exactly as before.
+    pub claims_tab: bool,
 }
 
 /// The box itself. Its rectangle is what the painter used to call
@@ -213,19 +233,96 @@ impl Panel {
 /// Paints nothing and takes no pointer: the panel's frame, its `[×]` and its
 /// described interior are all elsewhere, and every one of them answers its
 /// own press.
-pub fn keys_layer(slot: super::widgets::Slot) -> Node<UiMsg> {
+///
+/// **Where the focusables are, when the interior is described.** The layer has
+/// to be declared here — its rank among the other keyboard layers is this
+/// position in the frame — while the panel's controls are declared in the dock
+/// column or the floating box, elsewhere entirely. Confinement is containment,
+/// so without `scope` traversal was confined to *this layer*, whose only child
+/// was the sink: every widget in the panel was focusable and none was
+/// reachable, and `apply_autofocus` pulled a click-focused one back out on the
+/// next frame.
+///
+/// `scope` names the interior instead. The sink then has no reason to exist —
+/// it is outside the scope, so it can neither be focused nor see a key — and
+/// the fallback that claims what the widgets decline moves inside, where the
+/// focus chain runs through it. See [`interior`].
+pub fn keys_layer(slot: super::widgets::Slot, scope: Option<Key>) -> Node<UiMsg> {
     use fresh_ui::Modality;
-    layer()
+    let l = layer()
         .anchor(Anchor::Screen(Align::Start))
         .place(Place::Fill)
         .pointer_mode(PointerMode::Ignore)
-        .modality(Modality::Focus)
-        .child(
+        .modality(Modality::Focus);
+    match scope {
+        Some(k) => l.scope_at(k),
+        // No described interior — an empty dock, or a panel the adapter could
+        // not describe. There is nothing in the tree to confine to, so the
+        // sink stays: it holds focus so the layer keeps answering the
+        // containment questions, and claims every key for the runtime.
+        None => l.child(
             fresh_ui::focusable(row())
                 .pointer_mode(PointerMode::Ignore)
                 .autofocus()
                 .on_key(move |_| Some(UiMsg::Ui(UiFact::PanelKey(slot)))),
-        )
+        ),
+    }
+}
+
+/// The key [`keys_layer`] names as its focus scope, per slot.
+///
+/// Only the two panels with a keyboard layer have one; `Slot` also spells the
+/// settings surfaces and a pane-mounted panel, which get their keyboards from
+/// elsewhere and are not scopes.
+pub fn interior_key(slot: super::widgets::Slot) -> Key {
+    let n = match slot {
+        super::widgets::Slot::Dock => 0,
+        super::widgets::Slot::Floating => 1,
+        super::widgets::Slot::Settings => 2,
+        super::widgets::Slot::SettingsEntry => 3,
+        super::widgets::Slot::Pane(_) => 4,
+    };
+    Key::Pair("panel_interior".into(), n)
+}
+
+/// The panel's described interior: the scope its keyboard layer names, and the
+/// fallback for every key its widgets decline.
+///
+/// **One node, two jobs, and they belong together.** The scope has to be an
+/// ancestor of the controls — that is what confinement means — and the
+/// fallback has to be on the focus chain for the bubble leg to reach it, which
+/// is the same requirement. Splitting them would be two nodes with one
+/// invariant between them.
+///
+/// `claims_tab` is the one precedence question this creates. Every other key
+/// still reaches the runtime through `PanelKey` exactly as before, because a
+/// described widget attaches no key handler of its own — the kinds' key
+/// handling is host-side, so nothing in the tree competes for `Enter` or the
+/// arrows and no ordering changes for them. Tab is different: declining it is
+/// how the tree's ring moves focus, and a plugin that bound Tab through
+/// `defineMode` would lose it. So the host says whether this panel's mode
+/// binds Tab, and when it does the fallback claims it like any other key.
+pub fn interior(slot: super::widgets::Slot, claims_tab: bool, body: Node<UiMsg>) -> Node<UiMsg> {
+    let (w, h) = (body.w, body.h);
+    fresh_ui::focusable(body)
+        .w(w)
+        .h(h)
+        .key(interior_key(slot))
+        .skip_traversal()
+        .on_key(move |e: &fresh_ui::Event| {
+            let tab = e.key.is_some_and(|k| {
+                matches!(k.code, fresh_ui::KeyCode::Tab | fresh_ui::KeyCode::BackTab)
+            });
+            if tab && !claims_tab {
+                // Declined, and deliberately not stopped: `propagate_key`
+                // returns false, the key resolves to an intent, and
+                // `default_for_intent` moves focus inside this scope. That is
+                // the tree's ring doing what the box arena's ring did.
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(UiFact::PanelKey(slot)))
+        })
 }
 
 pub fn layer_for(p: &Panel) -> Node<UiMsg> {
@@ -416,6 +513,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // an indefinite constraint, so the frame would collapse to its border.
     // Width still fills: the cross axis of the enclosing column, stretched.
     let area = row().w(Sizing::Flex(1)).key(body_key());
+    let (has_focus_targets, claims_tab) = (i.has_focus_targets, i.claims_tab);
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
     // knows the content width until the box has been measured — and the
@@ -423,26 +521,32 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // what `layout_reader` is for: build the subtree from the constraints the
     // node was given. The alternative is the caller computing the percentage
     // itself, which is the second layout this migration exists to remove.
-    area.child(fresh_ui::layout_reader(
-        move |info: fresh_ui::LayoutInfo| {
-            super::widgets::node(
-                &i.spec,
-                info.constraints.max_w.max(1),
-                &super::widgets::Ctx {
-                    slot: super::widgets::Slot::Floating,
-                    states: &i.states,
-                    focus_key: i.focus_key.clone(),
-                    hovered_key: i.hovered_key.clone(),
-                    marker_gutter: i.marker_gutter,
-                    hovered_item_key: i.hovered_item_key.clone(),
-                    hovered_popup_row: i.hovered_popup_row.clone(),
-                    avail_height: i.avail_height,
-                    scrollbar_reveal: i.scrollbar_reveal,
-                    surface: super::widgets::panel_surface(),
-                },
-            )
-        },
-    ))
+    let inner = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+        super::widgets::node(
+            &i.spec,
+            info.constraints.max_w.max(1),
+            &super::widgets::Ctx {
+                slot: super::widgets::Slot::Floating,
+                states: &i.states,
+                focus_key: i.focus_key.clone(),
+                hovered_key: i.hovered_key.clone(),
+                marker_gutter: i.marker_gutter,
+                hovered_item_key: i.hovered_item_key.clone(),
+                hovered_popup_row: i.hovered_popup_row.clone(),
+                avail_height: i.avail_height,
+                scrollbar_reveal: i.scrollbar_reveal,
+                surface: super::widgets::panel_surface(),
+            },
+        )
+    });
+    // The scope its keyboard layer names, and the fallback for what its
+    // widgets decline — see `interior`, and `Interior::has_focus_targets` for
+    // why a panel with nothing to focus keeps the sink instead.
+    let inner = match has_focus_targets {
+        true => interior(super::widgets::Slot::Floating, claims_tab, inner),
+        false => inner,
+    };
+    area.child(inner)
 }
 
 #[cfg(test)]
@@ -749,6 +853,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
+            has_focus_targets: false,
+            claims_tab: false,
         });
         let described = rect(&laid_out(Some(p.clone())), &key()).expect("a described box");
         assert_eq!(described.height, 4, "two rows inside two borders");
@@ -796,6 +902,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
+            has_focus_targets: false,
+            claims_tab: false,
         });
         let ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");
@@ -855,6 +963,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
+            has_focus_targets: false,
+            claims_tab: false,
         });
         let mut ui = laid_out(Some(p));
         let at = ui
@@ -905,6 +1015,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
+            has_focus_targets: false,
+            claims_tab: false,
         });
         let mut ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");

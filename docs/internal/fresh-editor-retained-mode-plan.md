@@ -66,8 +66,11 @@ tree, and nothing checks that the two agree.
 
 A transitional duplicate is two implementations of which you can delete one. Here
 the tree cannot function without the runtime running first, and which of the two
-is authoritative is decided by a `covered()` gate evaluated separately on several
-code paths. This has already produced shipped bugs of one shape: the runtime's
+is authoritative was decided by a `covered()` gate evaluated separately on
+several code paths. *(`covered()` is gone as of Phase 2.4 — the gate had no
+`false` arm left once `WindowEmbed` became a `Host` leaf. The class of defect
+below is what it cost while it existed, and the plan's later references to it
+are corrected in place.)* This has already produced shipped bugs of one shape: the runtime's
 scroll offset moved, the description did not read it, and the hit-test probe did
 — putting hover and the context menu on a different row from the one drawn. Each
 was fixed by making a *reader* stand down, not by unifying the state.
@@ -207,7 +210,9 @@ reintroduces the one-frame lag already fixed once.
 ### Phase 2 — Break the `WidgetSpec` cycle
 
 This is the phase that turns a veneer into retained-mode UI. Nothing after it is
-safe until it lands, and **until it does, stop widening `covered()`.** The
+safe until it lands. *(This paragraph used to end "and until it does, stop
+widening `covered()`" — that instruction is spent: 2.4 deleted the gate, so
+there is nothing left to widen.)* The
 `WidgetSpec` API itself does not change — existing plugins must keep working
 untouched. That is a hard constraint, and it is satisfiable: the format is the
 contract, the renderer is not.

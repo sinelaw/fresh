@@ -88,6 +88,7 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
             let n = &self.ui.render[r];
             if let Some(w) = n.data.window {
                 info.scroll_window = Some(w);
+                info.band = n.data.band;
                 return info;
             }
             cur = n.parent;
@@ -110,8 +111,14 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
             let Some(n) = self.ui.render.get_mut(self.node) else {
                 return;
             };
-            let moved = n.data.window != Some(info.window);
+            // The band travels with the window because a builder reads them
+            // together, and a change to either one changes what it would
+            // build: asking an item-scrolled window for a band and then
+            // telling it the answer is two publications at the same
+            // constraints, and only this tells the reader below them apart.
+            let moved = n.data.window != Some(info.window) || n.data.band != info.band;
             n.data.window = Some(info.window);
+            n.data.band = info.band;
             n.data.content = info.content;
             n.data.scroll_max = info.max;
             n.data.translate = info.translate;

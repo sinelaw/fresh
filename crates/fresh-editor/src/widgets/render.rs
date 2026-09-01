@@ -3359,6 +3359,243 @@ pub struct RenderedTextArea {
     pub cursor_byte_in_row: Option<usize>,
 }
 
+/// What every row of a text area shares, resolved once from the whole value.
+///
+/// **A text area does not wrap.** [`render_text_area`] splits `value` on
+/// `\n` and pads or tail-truncates each line to the field width, so the row
+/// drawn for line `i` is a function of that one line plus the four facts
+/// below — none of which depend on which rows are being drawn, or on how
+/// many. That is what lets a caller which owns its own window format only
+/// the rows it shows, instead of asking for the whole document and windowing
+/// the answer it gets back.
+///
+/// The *markdown* variant is the one that wraps, and it is a different
+/// function (`kinds::text::render_markdown_text_area`) for that reason: there
+/// a row is a slice of a reflowed document rather than a line of this one.
+pub(crate) struct TextAreaGeom {
+    /// Byte range of each logical line within the value.
+    lines: Vec<(usize, usize)>,
+    /// Columns every row is padded or truncated to.
+    width: usize,
+    focused: bool,
+    /// The placeholder text, when there is one to draw. It replaces line
+    /// zero, which is the only line an empty value has.
+    placeholder: Option<String>,
+    /// The selection, decomposed onto `((line, byte_in_line), (line,
+    /// byte_in_line))`, so a row can band itself without re-scanning the
+    /// value.
+    selection: Option<((usize, usize), (usize, usize))>,
+    /// The line the caret is on, and its byte within that line — computed
+    /// whether or not there is a caret to *draw*, because the scroll clamp
+    /// needs the line either way.
+    cursor_at: (usize, usize),
+    /// Whether that caret is drawn.
+    caret: bool,
+}
+
+impl TextAreaGeom {
+    /// How many rows the document has: one per line, always. An empty value
+    /// is one empty line, which is what an empty editor shows.
+    pub(crate) fn rows(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// The line the caret sits on, whether or not it is drawn. The scroll
+    /// clamp is expressed in it.
+    pub(crate) fn cursor_line(&self) -> usize {
+        self.cursor_at.0
+    }
+}
+
+/// Resolve [`TextAreaGeom`] for one render of `value`.
+pub(crate) fn text_area_geom(
+    value: &str,
+    cursor_byte: i32,
+    selection: Option<(usize, usize)>,
+    focused: bool,
+    placeholder: Option<&str>,
+    field_width: u32,
+    panel_width: u32,
+) -> TextAreaGeom {
+    // Resolve effective field width: caller's value if set, else
+    // `panel_width` (or a small default if the panel is unsized).
+    let width: usize = if field_width > 0 {
+        field_width as usize
+    } else if panel_width != u32::MAX && panel_width > 0 {
+        panel_width as usize
+    } else {
+        40
+    };
+
+    // Split value into lines (without the `\n`), as byte ranges rather than
+    // slices so the geometry outlives the borrow — a windowing caller keeps
+    // it across the whole build and slices `value` per row. `split` always
+    // yields at least one piece, so an empty value is one empty line.
+    let mut lines: Vec<(usize, usize)> = Vec::new();
+    let mut at = 0usize;
+    for line in value.split('\n') {
+        lines.push((at, at + line.len()));
+        at += line.len() + 1;
+    }
+
+    // Cursor → (line_index, byte_in_line). When `cursor_byte` is
+    // negative (no cursor), we still compute a line for scroll
+    // bookkeeping but don't draw one.
+    let raw_cursor_byte = if cursor_byte < 0 {
+        value.len()
+    } else {
+        (cursor_byte as usize).min(value.len())
+    };
+    let cursor_at = byte_to_line_col(value, raw_cursor_byte);
+
+    // Selection decomposed onto (line_start, byte_in_line) →
+    // (line_end, byte_in_line) so each visible row can emit its own
+    // background overlay. Only meaningful when focused; we trust the
+    // caller to pass `None` for unfocused renders.
+    let selection = selection.and_then(|(a, b)| {
+        let lo = a.min(b);
+        let hi = a.max(b);
+        if hi <= lo || hi > value.len() {
+            return None;
+        }
+        Some((byte_to_line_col(value, lo), byte_to_line_col(value, hi)))
+    });
+
+    let show_placeholder = !focused && value.is_empty();
+    TextAreaGeom {
+        lines,
+        width,
+        focused,
+        placeholder: placeholder
+            .filter(|p| show_placeholder && !p.is_empty())
+            .map(str::to_string),
+        selection,
+        cursor_at,
+        caret: focused && cursor_byte >= 0,
+    }
+}
+
+/// The label row a text area puts above its editing region.
+pub(crate) fn text_area_label(label: &str) -> TextPropertyEntry {
+    let mut text = String::with_capacity(label.len() + 2);
+    text.push_str(label);
+    text.push(':');
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: Vec::new(),
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many rows have been formatted, so a test can pin a windowing caller
+    /// to formatting the rows it draws and no others. That difference is
+    /// invisible in the cells, which is how "ask for the whole document and
+    /// window the answer" survived as long as it did.
+    pub(crate) static ROWS_FORMATTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// One row of a text area's editing region: the row for logical line `line`,
+/// and the caret's byte within it when the caret is on this line.
+///
+/// A `line` past the end of the value is a blank row padded to the field
+/// width, which is what keeps the focused block rectangular.
+pub(crate) fn text_area_row(
+    value: &str,
+    g: &TextAreaGeom,
+    line: usize,
+) -> (TextPropertyEntry, Option<usize>) {
+    #[cfg(test)]
+    ROWS_FORMATTED.with(|c| c.set(c.get() + 1));
+    let mut overlays: Vec<InlineOverlay> = Vec::new();
+    let mut row_text = match g.lines.get(line) {
+        Some(&(a, b)) => pad_or_truncate_line(&value[a..b], g.width),
+        None => " ".repeat(g.width),
+    };
+
+    // Placeholder shows on the first row only — and an empty value, which is
+    // the only thing that shows one, has exactly one line.
+    if line == 0 {
+        if let Some(ph) = g.placeholder.as_deref() {
+            row_text = pad_or_truncate_line(ph, g.width);
+            overlays.push(InlineOverlay {
+                start: 0,
+                end: row_text.len(),
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
+    }
+
+    // Focused-bg covers the full row width — the editing
+    // region reads as a single block.
+    if g.focused {
+        overlays.push(InlineOverlay {
+            start: 0,
+            end: row_text.len(),
+            style: OverlayOptions {
+                bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+
+    // Selection overlay for this row, clamped to the row's text
+    // length. Rows are padded out to the field width; selection
+    // never paints into the trailing pad area.
+    if g.focused {
+        if let Some(((sl, sc), (el, ec))) = g.selection {
+            if line >= sl && line <= el {
+                let line_text_len = g.lines.get(line).map_or(0, |&(a, b)| b - a);
+                let row_start = if line == sl { sc } else { 0 };
+                let row_end = if line == el { ec } else { line_text_len };
+                let s = row_start.min(line_text_len);
+                let e = row_end.min(line_text_len);
+                if e > s {
+                    overlays.push(InlineOverlay {
+                        start: s,
+                        end: e,
+                        style: OverlayOptions {
+                            bg: Some(OverlayColorSpec::theme_key(KEY_TEXT_INPUT_SELECTION_BG)),
+                            ..Default::default()
+                        },
+                        properties: Default::default(),
+                        unit: OffsetUnit::Byte,
+                    });
+                }
+            }
+        }
+    }
+
+    // Drop the cursor on this row if it matches. The cursor's byte column on
+    // its line: if the line was truncated, the cursor may have shifted past
+    // the visible region — clamp to the last visible byte so the hardware
+    // cursor stays in the row.
+    let caret = (g.caret && line == g.cursor_at.0).then(|| g.cursor_at.1.min(row_text.len()));
+
+    let entry = TextPropertyEntry {
+        text: row_text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    };
+    (entry, caret)
+}
+
 /// Render a multi-line `TextArea`.
 ///
 /// Layout:
@@ -3385,6 +3622,12 @@ pub struct RenderedTextArea {
 /// keep the cursor's line in view by adjusting `scroll_row` when
 /// the cursor's line falls outside `[scroll_row, scroll_row +
 /// visible_rows)`.
+///
+/// **This is the windowing half only.** Everything about what a row *says*
+/// is [`text_area_geom`] and [`text_area_row`], which a caller that owns its
+/// own window calls directly — see `view::shell::widgets`' multi-line `Text`
+/// arm. Both callers therefore share one answer per row rather than two that
+/// can drift.
 #[allow(clippy::too_many_arguments)]
 pub fn render_text_area(
     value: &str,
@@ -3398,50 +3641,20 @@ pub fn render_text_area(
     prev_scroll: u32,
     panel_width: u32,
 ) -> RenderedTextArea {
-    // Resolve effective field width: caller's value if set, else
-    // `panel_width` (or a small default if the panel is unsized).
-    let target_width: usize = if field_width > 0 {
-        field_width as usize
-    } else if panel_width != u32::MAX && panel_width > 0 {
-        panel_width as usize
-    } else {
-        40
-    };
-
-    // Split value into lines (without the `\n`). Empty value still
-    // produces one (empty) line — matching how a single-line
-    // editor would treat an empty buffer.
-    let mut lines: Vec<&str> = value.split('\n').collect();
-    if lines.is_empty() {
-        lines.push("");
-    }
-
-    // Cursor → (line_index, byte_in_line). When `cursor_byte` is
-    // negative (no cursor), we still compute a line for scroll
-    // bookkeeping but don't emit a focus_cursor.
-    let raw_cursor_byte = if cursor_byte < 0 {
-        value.len()
-    } else {
-        (cursor_byte as usize).min(value.len())
-    };
-    let (cursor_line, cursor_col) = byte_to_line_col(value, raw_cursor_byte);
-
-    // Selection decomposed onto (line_start, byte_in_line) →
-    // (line_end, byte_in_line) so each visible row can emit its own
-    // background overlay. Only meaningful when focused; we trust the
-    // caller to pass `None` for unfocused renders.
-    let selection_lc: Option<((usize, usize), (usize, usize))> = selection.and_then(|(a, b)| {
-        let lo = a.min(b);
-        let hi = a.max(b);
-        if hi <= lo || hi > value.len() {
-            return None;
-        }
-        Some((byte_to_line_col(value, lo), byte_to_line_col(value, hi)))
-    });
+    let g = text_area_geom(
+        value,
+        cursor_byte,
+        selection,
+        focused,
+        placeholder,
+        field_width,
+        panel_width,
+    );
 
     // Auto-clamp scroll: keep cursor's line in [scroll_row,
     // scroll_row + visible_rows). On first render, prev_scroll == 0.
     let visible_rows_usize = visible_rows.max(1) as usize;
+    let cursor_line = g.cursor_line();
     let mut scroll_row = prev_scroll as usize;
     if cursor_line < scroll_row {
         scroll_row = cursor_line;
@@ -3449,127 +3662,27 @@ pub fn render_text_area(
         scroll_row = cursor_line + 1 - visible_rows_usize;
     }
     // Don't scroll past the last line.
-    let max_scroll = lines.len().saturating_sub(visible_rows_usize);
+    let max_scroll = g.rows().saturating_sub(visible_rows_usize);
     if scroll_row > max_scroll {
         scroll_row = max_scroll;
     }
-
-    let show_placeholder =
-        !focused && value.is_empty() && placeholder.is_some() && !placeholder.unwrap().is_empty();
 
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut cursor_buffer_row: Option<u32> = None;
     let mut cursor_byte_in_row: Option<usize> = None;
 
     if !label.is_empty() {
-        let mut text = String::with_capacity(label.len() + 2);
-        text.push_str(label);
-        text.push(':');
-        entries.push(TextPropertyEntry {
-            text,
-            properties: Default::default(),
-            style: None,
-            inline_overlays: Vec::new(),
-            segments: Vec::new(),
-            pad_to_chars: None,
-            truncate_to_chars: None,
-        });
+        entries.push(text_area_label(label));
     }
     let label_offset: u32 = entries.len() as u32;
 
     for row_in_view in 0..visible_rows_usize {
-        let line_idx = scroll_row + row_in_view;
-        let mut row_text;
-        let mut overlays: Vec<InlineOverlay> = Vec::new();
-
-        if line_idx < lines.len() {
-            row_text = pad_or_truncate_line(lines[line_idx], target_width);
-        } else {
-            row_text = " ".repeat(target_width);
-        }
-
-        // Placeholder shows on the first row only.
-        if show_placeholder && row_in_view == 0 {
-            let ph = placeholder.unwrap();
-            row_text = pad_or_truncate_line(ph, target_width);
-            overlays.push(InlineOverlay {
-                start: 0,
-                end: row_text.len(),
-                style: OverlayOptions {
-                    fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
-                    ..Default::default()
-                },
-                properties: Default::default(),
-                unit: OffsetUnit::Byte,
-            });
-        }
-
-        // Focused-bg covers the full row width — the editing
-        // region reads as a single block.
-        if focused {
-            overlays.push(InlineOverlay {
-                start: 0,
-                end: row_text.len(),
-                style: OverlayOptions {
-                    bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
-                    ..Default::default()
-                },
-                properties: Default::default(),
-                unit: OffsetUnit::Byte,
-            });
-        }
-
-        // Selection overlay for this row, clamped to the row's text
-        // length. Rows are padded out to `target_width`; selection
-        // never paints into the trailing pad area.
-        if focused {
-            if let Some(((sl, sc), (el, ec))) = selection_lc {
-                if line_idx >= sl && line_idx <= el {
-                    let line_text_len = if line_idx < lines.len() {
-                        lines[line_idx].len()
-                    } else {
-                        0
-                    };
-                    let row_start = if line_idx == sl { sc } else { 0 };
-                    let row_end = if line_idx == el { ec } else { line_text_len };
-                    let s = row_start.min(line_text_len);
-                    let e = row_end.min(line_text_len);
-                    if e > s {
-                        overlays.push(InlineOverlay {
-                            start: s,
-                            end: e,
-                            style: OverlayOptions {
-                                bg: Some(OverlayColorSpec::theme_key(KEY_TEXT_INPUT_SELECTION_BG)),
-                                ..Default::default()
-                            },
-                            properties: Default::default(),
-                            unit: OffsetUnit::Byte,
-                        });
-                    }
-                }
-            }
-        }
-
-        // Drop the cursor on this row if it matches.
-        if focused && line_idx == cursor_line && cursor_byte >= 0 {
-            // The cursor's byte column on its line. If the line was
-            // truncated, the cursor may have shifted past the
-            // visible region — clamp to the last visible byte so
-            // the hardware cursor stays in the row.
-            let col_in_line = cursor_col.min(row_text.len());
+        let (entry, caret) = text_area_row(value, &g, scroll_row + row_in_view);
+        if let Some(col_in_line) = caret {
             cursor_buffer_row = Some(label_offset + row_in_view as u32);
             cursor_byte_in_row = Some(col_in_line);
         }
-
-        entries.push(TextPropertyEntry {
-            text: row_text,
-            properties: Default::default(),
-            style: None,
-            inline_overlays: overlays,
-            segments: Vec::new(),
-            pad_to_chars: None,
-            truncate_to_chars: None,
-        });
+        entries.push(entry);
     }
 
     RenderedTextArea {

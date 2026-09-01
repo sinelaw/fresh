@@ -1,10 +1,10 @@
-//! Mapping a mouse click on a rendered text widget to a caret position.
+//! Mapping a press on a rendered text widget to a caret position.
 //!
 //! Every text input the widget runtime draws — plugin panels *and* the
 //! Settings controls, which render through the same [`render_spec`] path —
 //! emits a `focus` [`HitArea`] whose payload carries the value-layout
-//! breadcrumbs needed to turn a click into a byte offset in the field's
-//! *value*:
+//! breadcrumbs needed to turn a byte in the rendered row into a byte in the
+//! field's *value*:
 //!
 //! * `valueInnerStart` — byte where the value's `<inner>` region begins in
 //!   the rendered row (after the gutter / label / `[`).
@@ -13,20 +13,20 @@
 //!   off the left and the width of the `…`.
 //! * `valueLen` — the value's byte length, used to clamp.
 //!
-//! [`WidgetTextClickGeometry`] is a snapshot of that hit plus the row text
-//! and the screen column the row was painted at — everything required to
-//! answer "the user clicked screen column X; what value byte is that?".
-//! The mounted-panel path reaches the same data live through
-//! [`WidgetRegistry::hit_test`](super::WidgetRegistry::hit_test); surfaces
-//! that render widgets *without* mounting them (the Settings UI, today)
-//! stamp this geometry at render time and read it back on click. When
-//! Settings controls are eventually mounted as real panels, this snapshot
-//! and its stamping become redundant with the registry hit path.
+//! **What used to be here was a snapshot, and it was here because the press
+//! arrived as a column.** `WidgetTextClickGeometry` held a rendered row and
+//! the screen column it was painted at, so that "the user clicked column X"
+//! could be answered later — and the two Settings click paths built one by
+//! rendering the control a second time, on the click, at a width read back
+//! off the tree. None of that was avoidable while a column was all the press
+//! carried: turning one into a byte means knowing where every grapheme
+//! landed, which means laying the text out.
+//!
+//! `fresh_ui::Event::text_byte` reports the byte, from the shaping that drew
+//! the row. So the snapshot is gone and what is left is the arithmetic that
+//! was always the real work: undo the field's own layout.
 //!
 //! [`render_spec`]: super::render_spec
-
-use super::RenderOutput;
-use crate::primitives::display_width::grapheme_byte_at_visual_column;
 
 /// Translate a byte offset into a rendered widget row back to a byte
 /// offset into the field's *value*, undoing the field's layout: the
@@ -61,81 +61,37 @@ pub fn row_byte_to_value_byte(
     .min(value_len)
 }
 
-/// A snapshot of one rendered text field's geometry, sufficient to map a
-/// screen-column click to a value byte after the fact. Built from the
-/// widget [`RenderOutput`] the field was drawn from; see the module docs.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WidgetTextClickGeometry {
-    /// Screen column where the field's row was painted (its byte 0).
-    pub origin_col: u16,
-    /// The rendered row's text (label + `[` + visible value + `]`).
-    pub row_text: String,
-    /// `valueInnerStart` from the field's `focus` hit payload.
-    pub inner_start: usize,
-    /// `valueDropped` — bytes hidden off the left when head-truncated.
-    pub dropped: usize,
-    /// `ellipsisBytes` — width of the leading `…`, or 0 when not truncated.
-    pub ellipsis: usize,
-    /// `valueLen` — the value's byte length.
-    pub value_len: usize,
-}
-
-impl WidgetTextClickGeometry {
-    /// Build the geometry from a rendered field's [`RenderOutput`] and the
-    /// screen column its row was painted at. Returns `None` when the output
-    /// has no single-line text field (`focus` hit of kind `"text"`), e.g.
-    /// a non-text control or an unfocusable field with an empty key.
-    pub fn from_render_output(out: &RenderOutput, origin_col: u16) -> Option<Self> {
-        let hit = out
-            .hits
-            .iter()
-            .find(|h| h.widget_kind == "text" && h.event_type == "focus")?;
-        let entry = out.entries.get(hit.buffer_row as usize)?;
-        let row_text = entry.text.trim_end_matches('\n').to_string();
-        let field = |k: &str| hit.payload.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        // The `focus` hit spans the whole row (`byte_start == 0`), so the
-        // payload offsets are already row-relative; `byte_start` is folded
-        // in here for uniformity with the mounted hit path.
-        Some(Self {
-            origin_col,
-            row_text,
-            inner_start: field("valueInnerStart").saturating_sub(hit.byte_start),
-            dropped: field("valueDropped"),
-            ellipsis: field("ellipsisBytes"),
-            value_len: field("valueLen"),
-        })
-    }
-
-    /// Map a column *within the field's value cell* to a byte offset in the
-    /// value.
-    ///
-    /// **This is what a press on the cell's own node reports.** The runtime
-    /// restricted a text field's hit to its value range, so the node a
-    /// description hangs off that hit covers the cell alone and the offset
-    /// inside it starts at the cell, not at the row. `hit_byte_start` is where
-    /// the cell begins in the row, which is the only thing needed to put the
-    /// two back in the same space.
-    pub fn value_byte_in_cell(&self, hit_byte_start: usize, col_in_cell: u16) -> usize {
-        let head = &self.row_text[..hit_byte_start.min(self.row_text.len())];
-        let before = crate::primitives::display_width::str_width(head) as u16;
-        self.value_byte_at(self.origin_col + before + col_in_cell)
-    }
-
-    /// Map an absolute screen column to a byte offset in the field's value
-    /// (grapheme-boundary aligned, clamped to the value). A click left of
-    /// the value yields 0; a click past its end yields `value_len`.
-    pub fn value_byte_at(&self, screen_col: u16) -> usize {
-        let col_in_row = screen_col.saturating_sub(self.origin_col) as usize;
-        let row_byte = grapheme_byte_at_visual_column(&self.row_text, col_in_row);
-        row_byte_to_value_byte(
-            row_byte,
-            0,
-            self.inner_start,
-            self.dropped,
-            self.ellipsis,
-            self.value_len,
-        )
-    }
+/// The byte in a field's *value* under a press, from the press's own byte in
+/// the rendered row.
+///
+/// **The library reports where the press landed; this undoes the field's
+/// layout.** `fresh_ui::Event::text_byte` gives the byte inside the piece the
+/// gesture sits on, `HitArea::byte_start` says where that piece begins in the
+/// entry's row, and the `focus` hit's payload carries the breadcrumbs the
+/// renderer stamped. Nothing here re-renders anything, which is the point: the
+/// two Settings click paths used to render the whole control again and measure
+/// the row they produced, because a *column* cannot be turned into a byte
+/// without laying the text out. A byte can.
+///
+/// `None` for a hit with no layout payload — a non-text widget, or a text
+/// field an older render path produced.
+pub fn value_byte_from_hit(hit: &super::HitArea, byte_in_piece: usize) -> Option<usize> {
+    let field = |k: &str| {
+        hit.payload
+            .get(k)
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+    };
+    let inner_start = field("valueInnerStart")?;
+    let row_byte = hit.byte_start.saturating_add(byte_in_piece);
+    Some(row_byte_to_value_byte(
+        row_byte,
+        hit.byte_start,
+        inner_start.saturating_sub(hit.byte_start),
+        field("valueDropped").unwrap_or(0),
+        field("ellipsisBytes").unwrap_or(0),
+        field("valueLen").unwrap_or(0),
+    ))
 }
 
 #[cfg(test)]
@@ -163,42 +119,75 @@ mod tests {
         assert_eq!(row_byte_to_value_byte(15, 0, 10, 4, 3, 20), 6); // 2 past the tail start
     }
 
-    #[test]
-    fn value_byte_at_maps_screen_column() {
-        // Row "Name: [abcdef]" painted at screen col 4. Value "abcdef"
-        // begins at row byte 7 ("Name: [" == 7 chars, all ASCII).
-        let g = WidgetTextClickGeometry {
-            origin_col: 4,
-            row_text: "Name: [abcdef]".to_string(),
-            inner_start: 7,
-            dropped: 0,
-            ellipsis: 0,
-            value_len: 6,
-        };
-        // Screen col 4 → row col 0 (the 'N') → left of value → 0.
-        assert_eq!(g.value_byte_at(4), 0);
-        // Screen col 11 → row col 7 → value byte 0 ('a').
-        assert_eq!(g.value_byte_at(11), 0);
-        // Screen col 14 → row col 10 → value byte 3 ('d').
-        assert_eq!(g.value_byte_at(14), 3);
-        // Far right → clamps to value_len.
-        assert_eq!(g.value_byte_at(200), 6);
+    fn text_hit(
+        byte_start: usize,
+        inner_start: usize,
+        value_len: usize,
+    ) -> crate::widgets::HitArea {
+        crate::widgets::HitArea {
+            widget_key: "field".into(),
+            widget_kind: "text",
+            buffer_row: 0,
+            byte_start,
+            byte_end: byte_start + 64,
+            payload: serde_json::json!({
+                "valueInnerStart": inner_start,
+                "valueDropped": 0,
+                "ellipsisBytes": 0,
+                "valueLen": value_len,
+            }),
+            event_type: "focus",
+            owner_key: None,
+            overlay: false,
+            row_target: false,
+            context_click: false,
+        }
     }
 
+    /// The press's byte, through the field's layout, is the value's byte.
+    ///
+    /// Row `"Name: [abcdef]"`: the value begins at row byte 7, so the press's
+    /// byte inside the piece maps straight through once the label is undone.
     #[test]
-    fn value_byte_at_wide_and_grapheme() {
-        // Value "中b" (中 is 3 bytes / 2 cols) begins at row byte 1
-        // (after "["), painted at origin 0. Row "[中b]".
-        let g = WidgetTextClickGeometry {
-            origin_col: 0,
-            row_text: "[中b]".to_string(),
-            inner_start: 1,
-            dropped: 0,
-            ellipsis: 0,
-            value_len: 4, // 中(3) + b(1)
-        };
-        assert_eq!(g.value_byte_at(1), 0); // left half of 中 → its start
-        assert_eq!(g.value_byte_at(2), 0); // right half of 中 → its start
-        assert_eq!(g.value_byte_at(3), 3); // the 'b' (row col 3)
+    fn value_byte_from_hit_undoes_the_label() {
+        let hit = text_hit(0, 7, 6);
+        assert_eq!(value_byte_from_hit(&hit, 0), Some(0)); // on the 'N' → clamp
+        assert_eq!(value_byte_from_hit(&hit, 7), Some(0)); // the 'a'
+        assert_eq!(value_byte_from_hit(&hit, 10), Some(3)); // the 'd'
+        assert_eq!(value_byte_from_hit(&hit, 200), Some(6)); // past the end → clamp
+    }
+
+    /// **The case a column got wrong.** Row `"[中b]"`, value `"中b"` — `中` is
+    /// three bytes and two cells, so the byte and the column part company at
+    /// the second character. A press on the `b` is at column 3 and byte 4; if
+    /// the column were passed here it would answer 2, in the middle of `中`.
+    #[test]
+    fn value_byte_from_hit_is_bytes_not_cells() {
+        let hit = text_hit(0, 1, 4);
+        assert_eq!(value_byte_from_hit(&hit, 1), Some(0), "the start of 中");
+        assert_eq!(value_byte_from_hit(&hit, 4), Some(3), "the 'b' after it");
+        assert_ne!(
+            value_byte_from_hit(&hit, 3),
+            Some(3),
+            "byte 3 is not the 'b'; a column of 3 would have been"
+        );
+    }
+
+    /// A hit whose payload has no layout breadcrumbs is not a text field.
+    #[test]
+    fn value_byte_from_hit_is_absent_without_the_payload() {
+        let mut hit = text_hit(0, 0, 0);
+        hit.payload = serde_json::json!({});
+        assert_eq!(value_byte_from_hit(&hit, 3), None);
+    }
+
+    /// The field's own offset within a composed row is rebased away — Search
+    /// and Replace share one line, so `byte_start` is not always zero.
+    #[test]
+    fn value_byte_from_hit_rebases_a_composed_row() {
+        // The field starts 20 bytes into the row; its value 7 bytes further.
+        let hit = text_hit(20, 27, 6);
+        assert_eq!(value_byte_from_hit(&hit, 7), Some(0));
+        assert_eq!(value_byte_from_hit(&hit, 10), Some(3));
     }
 }

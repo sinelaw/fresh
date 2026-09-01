@@ -83,6 +83,9 @@ pub fn dock(
 /// `UiFact::WidgetContext` instead.
 fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     let described = interior.is_some();
+    let scoped = interior
+        .as_ref()
+        .map(|i| (i.has_focus_targets, i.claims_tab));
     let body = match interior {
         None => host(HostRegion::Dock.id()),
         Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
@@ -121,6 +124,15 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
             // bar's column.
             .w(Sizing::Cells(inner_w))
         }),
+    };
+    // The scope its keyboard layer names, and the fallback for every key its
+    // widgets decline. Only when there is something in it to focus — see
+    // `panel::Interior::has_focus_targets`.
+    let body = match scoped {
+        Some((true, claims_tab)) => {
+            super::panel::interior(super::widgets::Slot::Dock, claims_tab, body)
+        }
+        _ => body,
     };
     gesture(body)
         .on(
@@ -362,6 +374,8 @@ mod tests {
                     marker_gutter: false,
                     avail_height: None,
                     scrollbar_reveal: None,
+                    has_focus_targets: false,
+                    claims_tab: false,
                 }),
                 ..Frame::default()
             }),
@@ -516,6 +530,122 @@ mod tests {
         assert!(
             press(&mut ui, 50, 10, MouseButton::Left).is_empty(),
             "nothing to blur"
+        );
+    }
+
+    /// A described dock holding two ordinary buttons, with its keyboard layer
+    /// up — the shape the scope exists for.
+    fn described_with_buttons() -> Ui<UiMsg> {
+        use fresh_core::api::WidgetSpec;
+        let button = |label: &str, key: &str| WidgetSpec::Button {
+            label: label.into(),
+            focused: false,
+            intent: Default::default(),
+            key: Some(key.into()),
+            disabled: false,
+            focusable: true,
+            bare: false,
+            full_width: false,
+            hover_style: None,
+        };
+        let spec = WidgetSpec::Col {
+            children: vec![button("one", "one"), button("two", "two")],
+            key: None,
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: false,
+                status_bar: false,
+                dock: Some(30),
+                dock_keys: true,
+                dock_interior: Some(super::super::panel::Interior {
+                    spec: Rc::new(spec),
+                    states: Rc::new(Default::default()),
+                    focus_key: String::new(),
+                    hovered_key: None,
+                    hovered_item_key: String::new(),
+                    hovered_popup_row: String::new(),
+                    marker_gutter: false,
+                    avail_height: None,
+                    scrollbar_reveal: None,
+                    has_focus_targets: true,
+                    claims_tab: false,
+                }),
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        ui
+    }
+
+    /// **Tab in a focused dock steps along the widgets.**
+    ///
+    /// The state before this: `panel::keys_layer` is a `Modality::Focus` layer
+    /// whose only child was an autofocused key sink, and confinement is
+    /// containment — so the dock's focus scope held that one node, Tab could
+    /// not reach a widget, and `apply_autofocus` pulled a click-focused widget
+    /// back out on the next frame. Every widget was focusable and none was
+    /// reachable.
+    ///
+    /// The layer names the interior as its scope now. This asserts both halves:
+    /// the ring is the panel's widgets, and Tab moves along it rather than
+    /// being claimed by a sink.
+    #[test]
+    fn tab_in_a_focused_dock_steps_along_the_widgets() {
+        use fresh_core::api::WidgetSpec;
+        let mut ui = described_with_buttons();
+
+        let ring: Vec<String> = ui
+            .focus_scope()
+            .ordered()
+            .into_iter()
+            .filter_map(|e| ui.key_of(e))
+            .map(|k| format!("{k:?}"))
+            .collect();
+        assert_eq!(
+            ring.len(),
+            2,
+            "the ring is the panel's two buttons, not a sink: {ring:?}"
+        );
+
+        // Focus lands inside the scope, and Tab moves it to the other control
+        // rather than being swallowed.
+        let first = ui.focused().expect("the scope took focus");
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Tab,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert_ne!(ui.focused(), Some(first), "Tab moved focus");
+        assert!(
+            !got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::PanelKey(super::super::widgets::Slot::Dock))
+            )),
+            "Tab was resolved by the tree, not handed to the runtime: {:?}",
+            got.msgs
+        );
+    }
+
+    /// Every other key is still the runtime's, and by the same route.
+    ///
+    /// Nothing in a described panel attaches a key handler of its own — the
+    /// kinds' key handling is host-side — so the fallback claims the rest and
+    /// `PanelKey` reaches the router exactly as it did.
+    #[test]
+    fn a_key_the_tree_does_not_resolve_still_reaches_the_runtime() {
+        let mut ui = described_with_buttons();
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Enter,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::PanelKey(super::super::widgets::Slot::Dock))
+            )),
+            "Enter is the runtime's: {:?}",
+            got.msgs
         );
     }
 }

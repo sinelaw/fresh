@@ -111,6 +111,32 @@ pub trait LayoutCx {
     fn element(&self) -> ElementId;
 }
 
+/// What an item-scrolled viewport says about the band one item sits in.
+///
+/// **The band is a fact of layout that the builder needs before it builds.**
+/// A window in items is index-addressable because every item is the same
+/// height; the builder has to give each item exactly that height, and when the
+/// height is [`ItemHeight::Measured`](crate::desc::ItemHeight::Measured) there
+/// is no number to hand it at build time. So the viewport asks first and tells
+/// afterwards, both within one layout pass — the builder never sees a frame
+/// built against a band that turned out to be wrong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Band {
+    /// Answer with one item's worth of content: whatever height the builder
+    /// returns is taken as the band. A builder whose items differ answers with
+    /// all of them laid one on top of another, so that the tallest is what
+    /// comes back.
+    ///
+    /// The window is left where it was while this is being asked — the
+    /// question is about the items, not about which of them are on screen — and
+    /// nothing built under it is painted, hit-tested or kept: the next thing
+    /// that happens is the second ask, with the answer.
+    Measuring,
+    /// One item is this many cells tall. Rows built now must be exactly this,
+    /// or the grid the index addresses slips.
+    Cells(u16),
+}
+
 /// What a scrolling node tells the framework about its window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScrollInfo {
@@ -123,6 +149,9 @@ pub struct ScrollInfo {
     /// Whether children are moved by the offset. An index-scrolled window
     /// renders only what is inside it, so nothing is moved.
     pub translate: bool,
+    /// The band, for a window whose offset counts items. `None` for one whose
+    /// offset counts cells, where an item is not a thing.
+    pub band: Option<Band>,
 }
 
 /// What a constraint-dependent builder is told.
@@ -132,6 +161,8 @@ pub struct LayoutInfo {
     /// The window the nearest enclosing `Viewport` is showing, in its content's
     /// coordinates. `None` outside one.
     pub scroll_window: Option<Rect>,
+    /// That same viewport's band, when its offset counts items. See [`Band`].
+    pub band: Option<Band>,
 }
 
 /// How a node that sits outside its parent's flow places itself, and what it
@@ -152,6 +183,8 @@ pub struct LayerGeom {
     pub dismiss: Dismiss,
     /// See [`crate::desc::LayerProps::within`].
     pub within: Option<crate::key::Key>,
+    /// See [`crate::desc::LayerProps::scope`].
+    pub scope: Option<crate::key::Key>,
     /// See [`crate::desc::LayerProps::offset`].
     pub offset: (i16, i16),
 }
@@ -264,6 +297,18 @@ pub trait RenderObject {
         "RenderObject"
     }
 
+    /// The byte of this object's logical string under a cell of its own
+    /// rectangle, when it has one.
+    ///
+    /// Text answers; everything else is not text and says so by default. The
+    /// dispatcher asks the *target* of a pointer event, so a listener anywhere
+    /// up the chain reads `Event::text_byte` without knowing which leaf under
+    /// it holds the string — see that field for why the answer cannot be
+    /// reconstructed from a column outside the library.
+    fn text_byte_at(&self, _local: Point) -> Option<usize> {
+        None
+    }
+
     /// So the framework can push changed props into a live object rather than
     /// replacing it, which would discard its retained state.
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
@@ -353,6 +398,9 @@ pub(crate) struct RenderData {
     pub scroll: Point,
     pub content: Size,
     pub window: Option<Rect>,
+    /// Published alongside `window`, and read by the same walk: a builder that
+    /// asks which items it holds asks in the same breath how tall one is.
+    pub band: Option<Band>,
     pub scroll_max: Point,
     pub translate: bool,
 
