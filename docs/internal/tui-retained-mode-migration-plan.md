@@ -179,6 +179,47 @@ thousands.
 
 ---
 
+## 2a. The buffer model is a constraint on the architecture, not the reverse
+
+The piece tree, the wrap index and the highlight engine are the reason large
+files are editable, and the retained tree has to fit around them rather than
+the other way round. Three properties must survive stage 5 intact:
+
+1. **Edits repair, they do not invalidate.** `WrapIndex` is deliberately not
+   keyed on `buffer.version()` — `damage_bytes` leaves every row boundary
+   before the edit untouched and resynchronises within a row or two, and its
+   totals are a Fenwick tree so an edit is not O(lines). A description that
+   is rebuilt from the whole buffer on every keystroke would hand that back:
+   the cost would move from the cache into the node build, and the 500 KB
+   single-line file would re-wrap per keystroke again by another route.
+2. **Only the visible window is ever materialised.** `prepare_content`
+   already narrows to the visible buffers and `paint_leaf` to the pane's
+   rows. The pane's description must be built from the same window — one
+   `text_runs` node per *visual row on screen*, never per document line —
+   and the viewport must scroll by changing which rows are described, not by
+   describing more of them.
+3. **The buffer is never copied to be described.** Runs borrow or `Rc` the
+   text the view pipeline already produced. `Run::text` is an `Rc<str>`,
+   which is the right shape for this; what must not appear is a `String` per
+   run per frame.
+
+The practical consequence for stage 5a: the first thing to prototype is not
+the paint, it is the **build**. Today the disjoint borrow
+(`WindowBuffers::with_all_mut`) is taken at *paint* time, inside
+`HostPainter::paint_host`, which is why `Ui` lives beside the `Editor`
+rather than on it. Describing pane content moves that borrow to *build*
+time, before `Ui::frame` is called. If that restructure is going to be hard,
+it is hard on day one of 5a and should be found there — see the borrow-shape
+risk in §6.
+
+A useful invariant to assert early, and to keep asserting: **the number of
+display-list items a pane produces is a function of its on-screen rows, not
+of its document length.** A test that opens a 5 KB file and a 5 MB file in
+the same pane and asserts the same item count is cheap, and it is the one
+thing that catches every way this can go wrong.
+
+---
+
 ## 3. Target architecture
 
 ```
@@ -319,10 +360,12 @@ three sub-stages, each behind a config flag comparing the described output
 cell-for-cell against the painter's on the e2e corpus, so a divergence is a
 red test rather than a bug report.
 
-- **5a — plain content.** `paint_leaf`'s per-row `Vec<Span<'static>>`
-  becomes `Vec<Run>` and the row becomes a `text_runs` node inside the
-  pane's keyed viewport. Syntax highlighting only; no overlays, no
-  selection. The caret becomes `CursorSpec`.
+- **5a — plain content.** Prototype the *build-time* borrow first (§2a),
+  then `paint_leaf`'s per-row `Vec<Span<'static>>` becomes `Vec<Run>` and
+  the row becomes a `text_runs` node inside the pane's keyed viewport.
+  Syntax highlighting only; no overlays, no selection. The caret becomes
+  `CursorSpec`. Land the "items scale with rows, not document length"
+  assertion with it.
 - **5b — everything layered on a cell.** Selection, search highlight, the
   current-line and current-column bands, inline diff, diagnostics squiggles,
   plugin overlays. Each is a `Fill` under the runs or a themed run, and
@@ -482,3 +525,6 @@ one derivation and not two. `tests/scene_parity.rs` is the existing guard.
 - Wide characters occupy the columns layout gave them, asserted by a test in
   the library and one in the fold.
 - The frame-cost table in §Stage 0.2 is inside the budget from decision 2.
+- A pane's display-list item count is a function of its visible rows and not
+  of its document length, asserted by a test; `WrapIndex`'s damage-based
+  repair is still the only thing an edit invalidates.
