@@ -164,10 +164,8 @@ impl Recorder {
             .zip(self.snapshot.content.iter())
             .enumerate()
         {
-            if now != then {
-                if !masked || self.fold_mask[i] {
-                    self.owners[i] = Some(id);
-                }
+            if now != then && (!masked || self.fold_mask[i]) {
+                self.owners[i] = Some(id);
             }
         }
         self.snapshot.content.clone_from(&buf.content);
