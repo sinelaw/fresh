@@ -7,6 +7,8 @@
 use proptest::prelude::*;
 
 mod support;
+use fresh_ui::desc::Wrap;
+use fresh_ui::render::prim;
 use fresh_ui::Axis;
 use fresh_ui::{
     col, distribute, row, text, Input, Key, KeyCode, KeyPress, Mods, MouseButton, Node, Point,
@@ -610,5 +612,117 @@ proptest! {
             &*seen.borrow(),
             &vec![(GestureKind::Press, n), (GestureKind::Click, n)]
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The wrapped-text byte mapping
+// ---------------------------------------------------------------------------
+
+/// Text with everything a wrap has to reason about: words, runs of spaces that
+/// a break may eat, hard newlines, a word too long for any row, and characters
+/// that are neither one byte nor one cell.
+fn wrappable() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop::sample::select(vec![
+            "a",
+            "word",
+            "supercalifragilistic",
+            " ",
+            "   ",
+            "\n",
+            "名前",
+            "ß",
+        ]),
+        0..14,
+    )
+    .prop_map(|parts| parts.concat())
+}
+
+fn wrap_modes() -> impl Strategy<Value = Wrap> {
+    prop::sample::select(vec![Wrap::Word, Wrap::Hanging, Wrap::None])
+}
+
+proptest! {
+    /// **A row's text is the source it says it is.** Everything else here
+    /// rests on this: `text[indent..] == source[src]`, byte for byte, for
+    /// every row of every wrap. Nothing added is inside `src`, and nothing
+    /// inside `src` was dropped.
+    #[test]
+    fn a_row_is_the_source_it_claims(
+        text in wrappable(), w in 1u16..24, wrap in wrap_modes(),
+    ) {
+        for r in prim::rows_of(&text, w, wrap) {
+            prop_assert_eq!(&r.text[r.indent..], &text[r.src.clone()]);
+        }
+    }
+
+    /// **Byte → cell → byte is the identity for every byte a row shows.**
+    ///
+    /// This is what lets a caret be stated in bytes: state it, let the wrap
+    /// place it, and a press on the cell it was placed in names the byte
+    /// again. It has to hold at the ends as much as in the middle — the first
+    /// byte of a continuation row sits behind an indent with no source, and a
+    /// row's trailing edge is a caret position with no character under it.
+    #[test]
+    fn a_shown_byte_survives_the_round_trip(
+        text in wrappable(), w in 1u16..24, wrap in wrap_modes(),
+    ) {
+        let rows = prim::rows_of(&text, w, wrap);
+        for r in &rows {
+            let bytes = text[r.src.clone()]
+                .char_indices()
+                .map(|(i, _)| r.src.start + i)
+                .chain(std::iter::once(r.src.end));
+            for b in bytes {
+                let (row, col) = prim::cell_of(&rows, &text, b);
+                prop_assert_eq!(
+                    prim::byte_of(&rows, &text, row, col as i32), Some(b),
+                    "byte {} drew at row {} column {}", b, row, col
+                );
+            }
+        }
+    }
+
+    /// **A byte no row shows still lands somewhere, and stays there.**
+    ///
+    /// The whitespace a break ate and the `\n` between two paragraphs are in
+    /// no row's `src`, so they cannot round-trip to themselves — a run of
+    /// three dropped spaces is one cell, and one cell cannot name three
+    /// bytes. What it must not do is drift: reading such a byte's cell back
+    /// gives a byte that draws in that same cell, so a caret asked to sit on
+    /// a dropped space does not walk while nothing is typed.
+    #[test]
+    fn snapping_a_byte_onto_a_cell_is_idempotent(
+        text in wrappable(), w in 1u16..24, wrap in wrap_modes(),
+    ) {
+        let rows = prim::rows_of(&text, w, wrap);
+        let bytes = text.char_indices().map(|(i, _)| i).chain(std::iter::once(text.len()));
+        for b in bytes {
+            let at = prim::cell_of(&rows, &text, b);
+            let snapped = prim::byte_of(&rows, &text, at.0, at.1 as i32)
+                .expect("cell_of names a row that exists");
+            prop_assert_eq!(prim::cell_of(&rows, &text, snapped), at, "byte {}", b);
+        }
+    }
+
+    /// **Every cell of every row names a byte, and only cells of rows do.**
+    ///
+    /// A press can land anywhere inside the run's rectangle, including past
+    /// the end of a short row and inside an indent. None of those is an error;
+    /// each snaps to the caret position it is nearest, which is why
+    /// `Event::text_byte` is `Some` for any press on text at all.
+    #[test]
+    fn every_cell_of_a_row_names_a_byte(
+        text in wrappable(), w in 1u16..24, wrap in wrap_modes(),
+    ) {
+        let rows = prim::rows_of(&text, w, wrap);
+        for i in 0..rows.len() {
+            for col in 0..(w as i32 + 4) {
+                let b = prim::byte_of(&rows, &text, i, col);
+                prop_assert!(b.is_some_and(|b| text.is_char_boundary(b)), "row {} column {}", i, col);
+            }
+        }
+        prop_assert_eq!(prim::byte_of(&rows, &text, rows.len(), 0), None);
     }
 }

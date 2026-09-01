@@ -265,9 +265,19 @@ pub struct TextProps {
     /// Which end survives when the run is given less than it measured at.
     /// Ignored when the run wraps: wrapped text has no overflow to mark.
     pub elide: Elide,
-    /// Where the text cursor sits within this run, in columns. Set by whatever
-    /// is being edited; the library places it and the backend shows it.
-    pub cursor: Option<u16>,
+    /// Where the text cursor sits, in bytes of this run's own logical string.
+    /// Set by whatever is being edited; the library places it and the backend
+    /// shows it.
+    ///
+    /// **A byte and not a column, because a column is an answer and not a
+    /// question.** Which row and which cell a caret is drawn in is decided by
+    /// wrapping, and wrapping is the layout's — a caller stating a column has
+    /// had to wrap the text itself to know it, which is the same duplication
+    /// [`Wrap::Hanging`] exists to remove. Stated in bytes, the run's own
+    /// shaping places it: see [`cell_of`](crate::render::prim::cell_of), whose
+    /// inverse is what a press on the run reports as
+    /// [`Event::text_byte`](crate::event::Event::text_byte).
+    pub cursor: Option<usize>,
 }
 
 /// One piece of a text run, and the theme it paints in.
@@ -1537,11 +1547,14 @@ impl<M> Node<M> {
         self
     }
 
-    /// Place the text cursor at this column within the run.
-    pub fn cursor_at(mut self, col: u16) -> Self {
+    /// Place the text cursor at this byte of the run's logical string.
+    ///
+    /// The row and column it lands on are the wrap's to decide; see
+    /// [`TextProps::cursor`].
+    pub fn cursor_byte(mut self, byte: usize) -> Self {
         match &mut self.desc {
-            Desc::TextRun(p) => p.cursor = Some(col),
-            _ => panic!("cursor_at() applies to TextRun nodes only"),
+            Desc::TextRun(p) => p.cursor = Some(byte),
+            _ => panic!("cursor_byte() applies to TextRun nodes only"),
         }
         self
     }
