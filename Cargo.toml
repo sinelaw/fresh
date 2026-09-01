@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/fresh-editor",
+    "crates/fresh-editor-core",
     "crates/fresh-ui",
     "crates/fresh-gui",
     "crates/fresh-core",
@@ -16,6 +17,7 @@ members = [
 ]
 default-members = [
     "crates/fresh-editor",
+    "crates/fresh-editor-core",
     "crates/fresh-ui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
@@ -40,6 +42,7 @@ documentation = "https://docs.rs/fresh-editor"
 [workspace.dependencies]
 # Local crates
 fresh-core = { version = "0.4.10", path = "crates/fresh-core" }
+fresh-editor-core = { version = "0.4.10", path = "crates/fresh-editor-core" }
 fresh-gui = { version = "0.4.10", path = "crates/fresh-gui" }
 fresh-parser-js = { version = "0.4.10", path = "crates/fresh-parser-js" }
 fresh-languages = { version = "0.4.10", path = "crates/fresh-languages" }

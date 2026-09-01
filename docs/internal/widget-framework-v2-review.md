@@ -1,6 +1,6 @@
 # Widget Framework: Critical Review and a Proposal for v2
 
-Purpose: audit the widget framework in `fresh-core` / `crates/fresh-editor/src/widgets/`
+Purpose: audit the widget framework in `fresh-core` / `crates/fresh-editor-core/src/widgets/`
 and the UI chrome built around it; explain *structurally* why focus, event routing,
 wheel targeting, and text input have been a recurring bug source rather than a run of
 unrelated defects; compare the design against the state of the art (Dear ImGui, the
@@ -24,7 +24,7 @@ renderer to the host (`overlays`, `dropdown_popup`, `embeds`, `scroll_regions`) 
 pushing the work back onto the plugin author (`visibleRows`, hand-counted chrome rows,
 blank padding rows).
 
-Concretely, in `crates/fresh-editor/src/widgets/render.rs`:
+Concretely, in `crates/fresh-editor-core/src/widgets/render.rs`:
 
 ```
 $ grep -c "panel_height\|avail_height\|available_rows" widgets/render.rs
@@ -68,8 +68,8 @@ control library that exist only because those things are missing.
 | Layer | Where | Shape |
 |---|---|---|
 | Widget vocabulary | `fresh-core/src/api.rs` (`WidgetSpec`) | 17-variant tagged enum, `Serialize`/`TS`-derived |
-| Reconciler / renderer | `fresh-editor/src/widgets/render.rs` (10,440 lines) | spec + prev instance state → rows, hits, focus |
-| Registry | `fresh-editor/src/widgets/registry.rs` | `(plugin, panel_id)` → spec, hits, instance state |
+| Reconciler / renderer | `fresh-editor-core/src/widgets/render.rs` (10,440 lines) | spec + prev instance state → rows, hits, focus |
+| Registry | `fresh-editor-core/src/widgets/registry.rs` | `(plugin, panel_id)` → spec, hits, instance state |
 | Host runtime | `fresh-editor/src/app/widget_runtime.rs` (4,220 lines) | key/mouse dispatch, floating & dock panels |
 | Plugin front-end | `plugins/lib/widgets.ts` (1,255 lines) + generated `fresh.d.ts` | builder functions |
 | Semantic projection | `fresh-editor/src/view/scene.rs` | `Scene` view structs shared with web/GUI frontends |

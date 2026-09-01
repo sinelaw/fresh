@@ -609,3 +609,74 @@ mod tests {
         assert_eq!(state.cursor_byte(), 6);
     }
 }
+
+// The `TextSurface` trait lives in `fresh-editor-core`
+// (`primitives::text_key`) with `TextInputState` up here, so the impl has
+// to sit on this side of the crate boundary.
+use fresh_editor_core::primitives::text_key::TextSurface;
+
+impl TextSurface for TextInputState {
+    fn insert_text(&mut self, text: &str) {
+        self.insert_str(text);
+    }
+    fn backspace(&mut self) {
+        self.backspace();
+    }
+    fn delete_forward(&mut self) {
+        self.delete();
+    }
+    fn delete_word_backward(&mut self) {
+        self.delete_word_backward();
+    }
+    fn delete_word_forward(&mut self) {
+        self.delete_word_forward();
+    }
+    fn move_left(&mut self) {
+        self.move_left();
+    }
+    fn move_right(&mut self) {
+        self.move_right();
+    }
+    fn move_up(&mut self) {
+        self.move_up();
+    }
+    fn move_down(&mut self) {
+        self.move_down();
+    }
+    fn move_home(&mut self) {
+        self.move_home();
+    }
+    fn move_end(&mut self) {
+        self.move_end();
+    }
+    fn move_word_left(&mut self) {
+        self.move_word_left();
+    }
+    fn move_word_right(&mut self) {
+        self.move_word_right();
+    }
+    fn extend_left(&mut self) {
+        self.move_left_selecting();
+    }
+    fn extend_right(&mut self) {
+        self.move_right_selecting();
+    }
+    fn extend_up(&mut self) {
+        self.move_up_selecting();
+    }
+    fn extend_down(&mut self) {
+        self.move_down_selecting();
+    }
+    fn extend_home(&mut self) {
+        self.move_home_selecting();
+    }
+    fn extend_end(&mut self) {
+        self.move_end_selecting();
+    }
+    fn extend_word_left(&mut self) {
+        self.move_word_left_selecting();
+    }
+    fn extend_word_right(&mut self) {
+        self.move_word_right_selecting();
+    }
+}

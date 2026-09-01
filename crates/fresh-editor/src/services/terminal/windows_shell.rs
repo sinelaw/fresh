@@ -17,23 +17,11 @@
 //! [`detect_shell`]: super::detect_shell
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static SKIP_APP_EXECUTION_ALIAS: AtomicBool = AtomicBool::new(true);
-
-/// Set the workaround flag at editor startup.
-///
-/// `true` (the default) makes [`select_windows_shell`] skip Microsoft
-/// Store App Execution Alias stubs. Set to `false` to disable the
-/// workaround — useful for users who want to debug or who only ever have
-/// a real `pwsh.exe` on PATH.
-pub fn set_skip_app_execution_alias(skip: bool) {
-    SKIP_APP_EXECUTION_ALIAS.store(skip, Ordering::Relaxed);
-}
-
-fn skip_app_execution_alias() -> bool {
-    SKIP_APP_EXECUTION_ALIAS.load(Ordering::Relaxed)
-}
+// The flag itself lives in `fresh-editor-core::runtime_flags`, next to
+// `Config::apply_runtime_flags`, which is its only writer.
+pub use fresh_editor_core::runtime_flags::{
+    set_skip_app_execution_alias, skip_app_execution_alias,
+};
 
 /// Pick a Windows shell, preferring PowerShell for its ConPTY/ANSI support.
 ///

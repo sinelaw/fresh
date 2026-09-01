@@ -1,0 +1,9659 @@
+use crate::types::{context_keys, LspFeature, LspLanguageConfig, LspServerConfig, ProcessLimits};
+
+use fresh_i18n::t;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::ops::Deref;
+use std::path::Path;
+
+/// Newtype for theme name that generates proper JSON Schema with enum options
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ThemeName(pub String);
+
+impl Deref for ThemeName {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<String> for ThemeName {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for ThemeName {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl PartialEq<str> for ThemeName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<ThemeName> for str {
+    fn eq(&self, other: &ThemeName) -> bool {
+        self == other.0
+    }
+}
+
+impl JsonSchema for ThemeName {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("ThemeOptions")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // A validated free-form string rather than a frozen `enum`: any config
+        // form accepted by `ThemeRegistry::resolve_key` (built-in names,
+        // `builtin://`, relative paths, `file://`/http(s) URIs) must validate,
+        // including user themes that don't exist at schema-generation time.
+        //
+        // `x-enum-from: "$themes"` is a dynamic-source hint (mirroring
+        // `default_language`'s `x-enum-from: "/languages"`). The settings UI
+        // resolves the reserved `$themes` token against the live
+        // `ThemeRegistry` so the dropdown lists exactly what "Select Theme"
+        // does — built-ins plus user themes — with no hand-maintained list to
+        // drift out of sync (#2738).
+        schemars::json_schema!({
+            "description": "Available color themes",
+            "type": "string",
+            "x-enum-from": "$themes"
+        })
+    }
+}
+
+/// Newtype for locale name that generates proper JSON Schema with enum options
+/// Wraps Option<String> to allow null for auto-detection from environment
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct LocaleName(pub Option<String>);
+
+// Include the generated locale options from build.rs
+include!(concat!(env!("OUT_DIR"), "/locale_options.rs"));
+
+impl LocaleName {
+    /// Available locale options shown in the settings dropdown
+    /// null means auto-detect from environment
+    /// This is auto-generated from the locales/*.json files by build.rs
+    pub const LOCALE_OPTIONS: &'static [Option<&'static str>] = GENERATED_LOCALE_OPTIONS;
+
+    /// Get the inner value as Option<&str>
+    pub fn as_option(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl From<Option<String>> for LocaleName {
+    fn from(s: Option<String>) -> Self {
+        Self(s)
+    }
+}
+
+impl From<Option<&str>> for LocaleName {
+    fn from(s: Option<&str>) -> Self {
+        Self(s.map(|s| s.to_string()))
+    }
+}
+
+impl JsonSchema for LocaleName {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("LocaleOptions")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "UI locale (language). Use null for auto-detection from environment.",
+            "enum": Self::LOCALE_OPTIONS
+        })
+    }
+}
+
+/// Cursor style options for the terminal cursor
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorStyle {
+    /// Use the terminal's default cursor style
+    #[default]
+    Default,
+    /// Blinking block cursor (█)
+    BlinkingBlock,
+    /// Solid block cursor (█)
+    SteadyBlock,
+    /// Blinking vertical bar cursor (│)
+    BlinkingBar,
+    /// Solid vertical bar cursor (│)
+    SteadyBar,
+    /// Blinking underline cursor (_)
+    BlinkingUnderline,
+    /// Solid underline cursor (_)
+    SteadyUnderline,
+}
+
+impl CursorStyle {
+    /// All available cursor style options
+    pub const OPTIONS: &'static [&'static str] = &[
+        "default",
+        "blinking_block",
+        "steady_block",
+        "blinking_bar",
+        "steady_bar",
+        "blinking_underline",
+        "steady_underline",
+    ];
+
+    /// Human-readable descriptions for each cursor style
+    pub const DESCRIPTIONS: &'static [&'static str] = &[
+        "Terminal default",
+        "█ Blinking block",
+        "█ Solid block",
+        "│ Blinking bar",
+        "│ Solid bar",
+        "_ Blinking underline",
+        "_ Solid underline",
+    ];
+
+    /// Convert to crossterm cursor style (runtime only)
+    #[cfg(feature = "runtime")]
+    pub fn to_crossterm_style(self) -> crossterm::cursor::SetCursorStyle {
+        use crossterm::cursor::SetCursorStyle;
+        match self {
+            Self::Default => SetCursorStyle::DefaultUserShape,
+            Self::BlinkingBlock => SetCursorStyle::BlinkingBlock,
+            Self::SteadyBlock => SetCursorStyle::SteadyBlock,
+            Self::BlinkingBar => SetCursorStyle::BlinkingBar,
+            Self::SteadyBar => SetCursorStyle::SteadyBar,
+            Self::BlinkingUnderline => SetCursorStyle::BlinkingUnderScore,
+            Self::SteadyUnderline => SetCursorStyle::SteadyUnderScore,
+        }
+    }
+
+    /// Get the ANSI escape sequence for this cursor style (DECSCUSR)
+    /// Used for session mode where we can't write directly to terminal
+    pub fn to_escape_sequence(self) -> &'static [u8] {
+        match self {
+            Self::Default => b"\x1b[0 q",
+            Self::BlinkingBlock => b"\x1b[1 q",
+            Self::SteadyBlock => b"\x1b[2 q",
+            Self::BlinkingUnderline => b"\x1b[3 q",
+            Self::SteadyUnderline => b"\x1b[4 q",
+            Self::BlinkingBar => b"\x1b[5 q",
+            Self::SteadyBar => b"\x1b[6 q",
+        }
+    }
+
+    /// Parse from string (for command palette)
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(CursorStyle::Default),
+            "blinking_block" => Some(CursorStyle::BlinkingBlock),
+            "steady_block" => Some(CursorStyle::SteadyBlock),
+            "blinking_bar" => Some(CursorStyle::BlinkingBar),
+            "steady_bar" => Some(CursorStyle::SteadyBar),
+            "blinking_underline" => Some(CursorStyle::BlinkingUnderline),
+            "steady_underline" => Some(CursorStyle::SteadyUnderline),
+            _ => None,
+        }
+    }
+
+    /// Convert to string representation
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::BlinkingBlock => "blinking_block",
+            Self::SteadyBlock => "steady_block",
+            Self::BlinkingBar => "blinking_bar",
+            Self::SteadyBar => "steady_bar",
+            Self::BlinkingUnderline => "blinking_underline",
+            Self::SteadyUnderline => "steady_underline",
+        }
+    }
+}
+
+impl JsonSchema for CursorStyle {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("CursorStyle")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Terminal cursor style",
+            "type": "string",
+            "enum": Self::OPTIONS
+        })
+    }
+}
+
+/// Indentation guide rendering mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentationGuideMode {
+    /// Do not render indentation guides.
+    #[default]
+    None,
+    /// Render every indentation guide level in leading whitespace.
+    All,
+    /// Render only the innermost guide for the active cursor's indentation block.
+    Active,
+}
+
+impl IndentationGuideMode {
+    pub const OPTIONS: &'static [&'static str] = &["none", "all", "active"];
+}
+
+/// Inputs to [`resolve_indentation_guide_mode`], gathered from the global
+/// config and the buffer being rendered.
+#[derive(Debug, Clone, Copy)]
+pub struct IndentationGuideInputs {
+    /// The global `editor.indentation_guide` mode.
+    pub global: IndentationGuideMode,
+    /// Explicit per-buffer user override from "Toggle Indentation Guides
+    /// (Current Buffer)". Wins over everything below; persisted per file.
+    pub user_override: Option<bool>,
+    /// Explicit plugin override (`setIndentationGuide`). Never persisted.
+    pub plugin_override: Option<bool>,
+    /// The buffer's resolved language gate (`BufferSettings::indentation_guide`).
+    pub language_gate: bool,
+    /// Whether this is a virtual (non-file) buffer.
+    pub is_virtual_buffer: bool,
+}
+
+/// Resolve the indentation-guide mode that actually renders for a buffer.
+///
+/// THE single place the precedence chain lives, so the renderer and the
+/// per-buffer toggle command can never disagree about what is on screen:
+///
+/// 1. the per-buffer user override ("Toggle Indentation Guides (Current
+///    Buffer)") — an explicit `true` turns guides on even where the global
+///    setting is `none`, falling back to [`IndentationGuideMode::All`];
+/// 2. the plugin override (`setIndentationGuide`);
+/// 3. virtual buffers and language opt-outs (plain text) force guides off;
+/// 4. otherwise the global mode.
+pub fn resolve_indentation_guide_mode(inputs: IndentationGuideInputs) -> IndentationGuideMode {
+    match inputs.user_override {
+        Some(true) => match inputs.global {
+            IndentationGuideMode::None => IndentationGuideMode::All,
+            mode => mode,
+        },
+        Some(false) => IndentationGuideMode::None,
+        None => match inputs.plugin_override {
+            Some(true) => inputs.global,
+            Some(false) => IndentationGuideMode::None,
+            None if inputs.is_virtual_buffer => IndentationGuideMode::None,
+            None if !inputs.language_gate => IndentationGuideMode::None,
+            None => inputs.global,
+        },
+    }
+}
+
+impl JsonSchema for IndentationGuideMode {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("IndentationGuideMode")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Indentation guide rendering mode.",
+            "type": "string",
+            "enum": Self::OPTIONS,
+            "default": "none"
+        })
+    }
+}
+
+/// Newtype for keybinding map name that generates proper JSON Schema with enum options
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct KeybindingMapName(pub String);
+
+impl KeybindingMapName {
+    /// Built-in keybinding map options shown in the settings dropdown
+    pub const BUILTIN_OPTIONS: &'static [&'static str] =
+        &["default", "emacs", "vscode", "macos", "macos-gui"];
+}
+
+impl Deref for KeybindingMapName {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<String> for KeybindingMapName {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for KeybindingMapName {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl PartialEq<str> for KeybindingMapName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+/// Line ending format for new files
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineEndingOption {
+    /// Unix/Linux/macOS format (LF)
+    #[default]
+    Lf,
+    /// Windows format (CRLF)
+    Crlf,
+    /// Classic Mac format (CR) - rare
+    Cr,
+}
+
+impl LineEndingOption {
+    /// Convert to the buffer's LineEnding type
+    pub fn to_line_ending(&self) -> crate::model::buffer::LineEnding {
+        match self {
+            Self::Lf => crate::model::buffer::LineEnding::LF,
+            Self::Crlf => crate::model::buffer::LineEnding::CRLF,
+            Self::Cr => crate::model::buffer::LineEnding::CR,
+        }
+    }
+}
+
+impl JsonSchema for LineEndingOption {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("LineEndingOption")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Default line ending format for new files",
+            "type": "string",
+            "enum": ["lf", "crlf", "cr"],
+            "default": "lf"
+        })
+    }
+}
+
+/// Where the cursor may move beyond the end of a line (virtual space).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VirtualSpaceMode {
+    /// Cursor is always clamped to line content (traditional behavior)
+    #[default]
+    Off,
+    /// Only block (rectangular) selections extend past line ends
+    Block,
+    /// Cursor movement, clicks, and block selections may go past line ends
+    On,
+}
+
+impl VirtualSpaceMode {
+    /// Whether a regular cursor may sit past the end of a line
+    /// (movement, mouse clicks, rendering, typing materialization).
+    pub fn cursor_beyond_eol(self) -> bool {
+        self == Self::On
+    }
+
+    /// Whether block selections extend past line ends (true rectangles).
+    pub fn block_beyond_eol(self) -> bool {
+        matches!(self, Self::Block | Self::On)
+    }
+}
+
+impl JsonSchema for VirtualSpaceMode {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("VirtualSpaceMode")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Where the cursor may move beyond the end of a line",
+            "type": "string",
+            "enum": ["off", "block", "on"],
+            "default": "off"
+        })
+    }
+}
+
+impl PartialEq<KeybindingMapName> for str {
+    fn eq(&self, other: &KeybindingMapName) -> bool {
+        self == other.0
+    }
+}
+
+impl JsonSchema for KeybindingMapName {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("KeybindingMapOptions")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Available keybinding maps",
+            "type": "string",
+            "enum": Self::BUILTIN_OPTIONS
+        })
+    }
+}
+
+/// Main configuration structure
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Config {
+    /// Configuration version (for migration support)
+    /// Configs without this field are treated as version 0
+    #[serde(default)]
+    pub version: u32,
+
+    /// Color theme name
+    #[serde(default = "default_theme_name")]
+    pub theme: ThemeName,
+
+    /// UI locale (language) for translations
+    /// If not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)
+    #[serde(default)]
+    pub locale: LocaleName,
+
+    /// Check for new versions on startup (default: true).
+    /// When enabled, also sends basic anonymous telemetry (version, OS, terminal type).
+    #[serde(default = "default_true")]
+    pub check_for_updates: bool,
+
+    /// Offer an interactive in-editor update when a new version is detected
+    /// (default: true). When on, clicking the status-bar update indicator (or
+    /// the "Update fresh" command) prompts to update now; confirming runs the
+    /// update locally in the background and logs to the data dir. When off, the
+    /// indicator is passive (it only tells you a version is available). Has no
+    /// effect if `check_for_updates` is false or the install method can't
+    /// self-update.
+    #[serde(default = "default_true")]
+    pub self_update: bool,
+
+    /// Editor behavior settings (indentation, line numbers, wrapping, etc.)
+    #[serde(default)]
+    pub editor: EditorConfig,
+
+    /// File explorer panel settings
+    #[serde(default)]
+    pub file_explorer: FileExplorerConfig,
+
+    /// File browser settings (Open File dialog)
+    #[serde(default)]
+    pub file_browser: FileBrowserConfig,
+
+    /// Clipboard settings (which clipboard methods to use)
+    #[serde(default)]
+    pub clipboard: ClipboardConfig,
+
+    /// Terminal settings
+    #[serde(default)]
+    pub terminal: TerminalConfig,
+
+    /// Custom keybindings (overrides for the active map)
+    #[serde(default)]
+    pub keybindings: Vec<Keybinding>,
+
+    /// Named keybinding maps (user can define custom maps here)
+    /// Each map can optionally inherit from another map
+    #[serde(default)]
+    pub keybinding_maps: HashMap<String, KeymapConfig>,
+
+    /// Active keybinding map name
+    #[serde(default = "default_keybinding_map_name")]
+    #[schemars(default = "default_keybinding_map_schema")]
+    pub active_keybinding_map: KeybindingMapName,
+
+    /// Per-language configuration overrides (tab size, formatters, etc.)
+    #[serde(default)]
+    pub languages: HashMap<String, LanguageConfig>,
+
+    /// Default language for files whose type cannot be detected.
+    /// Must reference a key in the `languages` map (e.g., "bash").
+    /// Applied when no extension, filename, glob, or built-in detection matches.
+    /// The referenced language's full configuration (grammar, comment_prefix,
+    /// tab_size, etc.) is used for unrecognized files.
+    #[serde(default)]
+    #[schemars(extend("x-enum-from" = "/languages"))]
+    pub default_language: Option<String>,
+
+    /// Master switch for LSP support. When false, no language server is
+    /// started automatically for any language (per-language and universal
+    /// servers alike), without having to disable each server individually.
+    /// Servers can still be started manually, e.g. via the command palette's
+    /// "Start/Restart LSP Server".
+    #[serde(default = "default_true")]
+    pub lsp_enabled: bool,
+
+    /// LSP server configurations by language.
+    /// Each language maps to one or more server configs (multi-LSP support).
+    /// Accepts both single-object and array forms for backwards compatibility.
+    #[serde(default)]
+    pub lsp: HashMap<String, LspLanguageConfig>,
+
+    /// Universal LSP servers that apply to all languages.
+    /// These servers run alongside language-specific LSP servers defined in `lsp`.
+    /// Keyed by a unique server name (e.g. "quicklsp").
+    #[serde(default)]
+    pub universal_lsp: HashMap<String, LspLanguageConfig>,
+
+    /// Warning notification settings
+    #[serde(default)]
+    pub warnings: WarningsConfig,
+
+    /// Plugin configurations by plugin name
+    /// Plugins are auto-discovered from the plugins directory.
+    /// Use this to enable/disable specific plugins.
+    #[serde(default)]
+    #[schemars(extend("x-standalone-category" = true, "x-no-add" = true))]
+    pub plugins: HashMap<String, PluginConfig>,
+
+    /// Package manager settings for plugin/theme installation
+    #[serde(default)]
+    pub packages: PackagesConfig,
+
+    /// Environment auto-activation detectors (venv / direnv / mise / …).
+    #[serde(default)]
+    pub env: EnvConfig,
+}
+
+/// Environment-detection configuration: the single source of truth for which
+/// marker files identify which activatable environment and how to activate it.
+///
+/// Core does the detection; the env-manager plugin only *consumes* the
+/// resolved result (via `editor.detectedEnv()`) — it does not probe the
+/// filesystem itself. The same detector markers also feed the Workspace Trust
+/// prompt, so trust and activation can never disagree about what an env file
+/// is. Users may add or override detectors here.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnvConfig {
+    /// Ordered list of detectors; the first whose markers match the workspace
+    /// root wins. Defaults cover venv, direnv, mise, pipenv, and poetry.
+    #[serde(default = "default_env_detectors")]
+    pub detectors: Vec<EnvDetector>,
+}
+
+impl Default for EnvConfig {
+    fn default() -> Self {
+        Self {
+            detectors: default_env_detectors(),
+        }
+    }
+}
+
+/// Activation risk class for an environment — decides whether activating it
+/// needs a trust prompt first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnvKind {
+    /// Activation only prepends to `PATH` / sets a few vars (e.g. a Python
+    /// virtualenv). Low-risk: auto-activates silently once trusted, and a
+    /// folder whose *only* env is path-only is trusted without a prompt.
+    PathOnly,
+    /// Activation evaluates project-controlled shell (e.g. `direnv export`,
+    /// `mise env`). Runs only after the workspace is trusted.
+    Shell,
+}
+
+/// One environment detector: which marker files/dirs identify it, how risky
+/// activation is, how to activate it, and what to call it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/name"))]
+pub struct EnvDetector {
+    /// Short label shown in the status pill (e.g. ".venv", "direnv", "mise").
+    pub name: String,
+    /// Marker files or directories at the workspace root. The detector matches
+    /// if any one of them exists.
+    pub markers: Vec<String>,
+    /// Activation risk class (see [`EnvKind`]).
+    pub kind: EnvKind,
+    /// Shell snippet handed to `editor.setEnv` to activate. It runs with the
+    /// working directory set to the workspace root, so **prefer relative paths**
+    /// (e.g. `source .venv/bin/activate`). `{dir}` expands to the absolute
+    /// workspace root, but interpolating it into a shell command is a
+    /// shell-injection surface when the path is attacker-influenced
+    /// (cf. CVE-2024-9287) — avoid it unless you control the path.
+    pub snippet: String,
+    /// Optional evidence paths (relative to the workspace root); when present,
+    /// at least one must exist for the detector to match — e.g. a `.venv` must
+    /// actually contain an interpreter, not just the directory. Empty means
+    /// the markers alone are enough.
+    #[serde(default)]
+    pub require: Vec<String>,
+}
+
+/// Built-in environment detectors. The single source for the env files core
+/// knows about, shared by activation detection (`services::workspace_trust::detect_env`)
+/// and the trust-prompt marker scan
+/// (`services::workspace_trust::executable_content_markers`).
+pub fn default_env_detectors() -> Vec<EnvDetector> {
+    let venv_interp = |dir: &str| {
+        vec![
+            format!("{dir}/bin/python"),
+            format!("{dir}/bin/python3"),
+            format!("{dir}/Scripts/python.exe"),
+        ]
+    };
+    vec![
+        EnvDetector {
+            name: ".venv".into(),
+            markers: vec![".venv".into()],
+            kind: EnvKind::PathOnly,
+            // Relative path: the recipe runs with cwd = the workspace root, so
+            // there is no need to interpolate the (attacker-influenced) absolute
+            // path into a `source` command — which would be a shell-injection
+            // surface (cf. CVE-2024-9287, venv activation command injection).
+            snippet: "source .venv/bin/activate".into(),
+            require: venv_interp(".venv"),
+        },
+        EnvDetector {
+            name: "venv".into(),
+            markers: vec!["venv".into()],
+            kind: EnvKind::PathOnly,
+            snippet: "source venv/bin/activate".into(),
+            require: venv_interp("venv"),
+        },
+        EnvDetector {
+            name: "direnv".into(),
+            markers: vec![".envrc".into()],
+            kind: EnvKind::Shell,
+            snippet: "eval \"$(direnv export bash)\"".into(),
+            require: vec![],
+        },
+        EnvDetector {
+            name: "mise".into(),
+            markers: vec![
+                "mise.toml".into(),
+                ".mise.toml".into(),
+                ".tool-versions".into(),
+            ],
+            kind: EnvKind::Shell,
+            snippet: "eval \"$(mise env -s bash)\"".into(),
+            require: vec![],
+        },
+        EnvDetector {
+            name: "pipenv".into(),
+            markers: vec!["Pipfile".into()],
+            kind: EnvKind::Shell,
+            snippet: "source \"$(pipenv --venv)/bin/activate\"".into(),
+            require: vec![],
+        },
+        EnvDetector {
+            name: "poetry".into(),
+            markers: vec!["poetry.lock".into()],
+            kind: EnvKind::Shell,
+            snippet: "source \"$(poetry env info --path)/bin/activate\"".into(),
+            require: vec![],
+        },
+    ]
+}
+
+fn default_keybinding_map_name() -> KeybindingMapName {
+    // On macOS, default to the macOS keymap which has Mac-specific bindings
+    // (Ctrl+A/E for Home/End, Ctrl+Shift+Z for redo, etc.)
+    if cfg!(target_os = "macos") {
+        KeybindingMapName("macos".to_string())
+    } else {
+        KeybindingMapName("default".to_string())
+    }
+}
+
+/// Schema-stable default for `active_keybinding_map`.
+/// Runtime defaults are platform-specific; JSON Schema must not vary by OS.
+fn default_keybinding_map_schema() -> KeybindingMapName {
+    KeybindingMapName("default".to_string())
+}
+
+fn default_theme_name() -> ThemeName {
+    ThemeName("high-contrast".to_string())
+}
+
+/// Resolved whitespace indicator visibility for a buffer.
+///
+/// These are the final resolved flags after applying master toggle,
+/// global config, and per-language overrides. Used directly by the renderer.
+#[derive(Debug, Clone, Copy)]
+pub struct WhitespaceVisibility {
+    pub spaces_leading: bool,
+    pub spaces_inner: bool,
+    pub spaces_trailing: bool,
+    pub tabs_leading: bool,
+    pub tabs_inner: bool,
+    pub tabs_trailing: bool,
+    pub newlines: bool,
+    pub carriage_returns: bool,
+}
+
+impl Default for WhitespaceVisibility {
+    fn default() -> Self {
+        // Match EditorConfig defaults: tabs all on, spaces and line endings all off
+        Self {
+            spaces_leading: false,
+            spaces_inner: false,
+            spaces_trailing: false,
+            tabs_leading: true,
+            tabs_inner: true,
+            tabs_trailing: true,
+            newlines: false,
+            carriage_returns: false,
+        }
+    }
+}
+
+impl WhitespaceVisibility {
+    /// Resolve from EditorConfig flat fields (applying master toggle)
+    pub fn from_editor_config(editor: &EditorConfig) -> Self {
+        if !editor.whitespace_show {
+            return Self::hidden();
+        }
+        Self {
+            spaces_leading: editor.whitespace_spaces_leading,
+            spaces_inner: editor.whitespace_spaces_inner,
+            spaces_trailing: editor.whitespace_spaces_trailing,
+            tabs_leading: editor.whitespace_tabs_leading,
+            tabs_inner: editor.whitespace_tabs_inner,
+            tabs_trailing: editor.whitespace_tabs_trailing,
+            newlines: editor.whitespace_newlines,
+            carriage_returns: editor.whitespace_carriage_returns,
+        }
+    }
+
+    /// Apply a language-level override for tab visibility.
+    /// When the language sets `show_whitespace_tabs: false`, all tab positions are disabled.
+    pub fn with_language_tab_override(mut self, show_whitespace_tabs: bool) -> Self {
+        if !show_whitespace_tabs {
+            self.tabs_leading = false;
+            self.tabs_inner = false;
+            self.tabs_trailing = false;
+        }
+        self
+    }
+
+    /// Returns true if any space indicator is enabled
+    pub fn any_spaces(&self) -> bool {
+        self.spaces_leading || self.spaces_inner || self.spaces_trailing
+    }
+
+    /// Returns true if any tab indicator is enabled
+    pub fn any_tabs(&self) -> bool {
+        self.tabs_leading || self.tabs_inner || self.tabs_trailing
+    }
+
+    /// Returns true if any line-ending indicator (newline or CR) is enabled
+    pub fn any_line_endings(&self) -> bool {
+        self.newlines || self.carriage_returns
+    }
+
+    /// Returns true if any indicator (space, tab, or line ending) is enabled
+    pub fn any_visible(&self) -> bool {
+        self.any_spaces() || self.any_tabs() || self.any_line_endings()
+    }
+
+    /// All indicators disabled — the "hidden" state of the master toggle.
+    pub fn hidden() -> Self {
+        Self {
+            spaces_leading: false,
+            spaces_inner: false,
+            spaces_trailing: false,
+            tabs_leading: false,
+            tabs_inner: false,
+            tabs_trailing: false,
+            newlines: false,
+            carriage_returns: false,
+        }
+    }
+
+    /// The "shown" side of the master toggle, for a buffer whose configured
+    /// visibility is `configured`.
+    ///
+    /// Every space position is on, whatever the configuration says: the
+    /// command promises "whitespace dot indicators (·)", and the configured
+    /// visibility (spaces off, tabs on by default) marks nothing at all in a
+    /// space-indented file, which made the toggle look completely inert. Tab
+    /// and line-ending indicators stay as configured, so a language that
+    /// hides tab arrows (`show_whitespace_tabs: false`, e.g. Go) is still
+    /// honoured and `↵` on every line stays opt-in.
+    pub fn revealed(configured: WhitespaceVisibility) -> Self {
+        Self {
+            spaces_leading: true,
+            spaces_inner: true,
+            spaces_trailing: true,
+            ..configured
+        }
+    }
+
+    /// Toggle all whitespace indicators on/off (master switch).
+    ///
+    /// When turning off, all positions are disabled. When turning back on,
+    /// visibility becomes [`revealed`](Self::revealed) for `configured` — the
+    /// buffer's configured visibility with every space indicator forced on —
+    /// so the toggle always marks something in a buffer that has whitespace.
+    pub fn toggle_all(&mut self, configured: WhitespaceVisibility) {
+        if self.any_visible() {
+            *self = Self::hidden();
+        } else {
+            *self = Self::revealed(configured);
+        }
+    }
+}
+
+/// A status bar element that can be placed in the left or right container.
+///
+/// Elements are specified as strings in the config:
+/// - `"{filename}"` — file path with session/remote prefix, modified and read-only indicators
+/// - `"{read_only}"` — persistent `[RO]` indicator, shown only while the buffer is read-only
+/// - `"{cursor}"` — cursor position as `Ln 1, Col 1`
+/// - `"{cursor:compact}"` — cursor position as `1:1`
+/// - `"{diagnostics}"` — error/warning/info counts (e.g. `E:1 W:2`)
+/// - `"{cursor_count}"` — number of active cursors (hidden when only 1)
+/// - `"{messages}"` — editor and plugin status messages
+/// - `"{chord}"` — in-progress chord key sequence
+/// - `"{line_ending}"` — line ending format (LF, CRLF, Auto)
+/// - `"{encoding}"` — file encoding (e.g. UTF-8)
+/// - `"{language}"` — detected language name
+/// - `"{lsp}"` — LSP server status indicator
+/// - `"{warnings}"` — general warning badge
+/// - `"{update}"` — update available indicator
+/// - `"{palette}"` — command palette shortcut hint
+/// - `"{clock}"` — current time (HH:MM) with blinking colon separator
+/// - `"{remote}"` — remote authority indicator (Local / SSH / Container / Disconnected)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum StatusBarElement {
+    /// File path with session/remote prefix, modified/read-only indicators
+    Filename,
+    /// Persistent `[RO]` read-only indicator. Renders only while the active
+    /// buffer is read-only, as a steady status segment independent of the
+    /// `{filename}` element (which is omitted from the default layout).
+    ReadOnly,
+    /// Cursor position (default format: `Ln 1, Col 1`)
+    Cursor,
+    /// Cursor position (compact format: `1:1`)
+    CursorCompact,
+    /// Diagnostic counts (errors, warnings, info)
+    Diagnostics,
+    /// Active cursor count (hidden when 1)
+    CursorCount,
+    /// Status messages from editor and plugins
+    Messages,
+    /// In-progress chord key sequence
+    Chord,
+    /// Line ending indicator (LF/CRLF/Auto)
+    LineEnding,
+    /// File encoding (e.g. UTF-8)
+    Encoding,
+    /// Detected language name
+    Language,
+    /// LSP server status
+    Lsp,
+    /// General warning badge
+    Warnings,
+    /// Update available indicator
+    Update,
+    /// Restart indicator for a terminal buffer whose process has quit.
+    /// Renders only while the active buffer is such a terminal; clicking it
+    /// restarts the process (resuming the agent conversation when the
+    /// terminal carries an agent-resume spec).
+    TerminalRestart,
+    /// Command palette shortcut hint
+    Palette,
+    /// Current time (HH:MM) with blinking colon separator
+    Clock,
+    /// Remote authority indicator: shows "Local", the active SSH/Container
+    /// authority label, or a disconnected marker. Intended for placement at
+    /// the bottom-left of the status bar as a persistent remote-state entry
+    /// point.
+    RemoteIndicator,
+    /// Workspace-trust indicator: always shows the active session's trust level
+    /// ("Trusted" / "Restricted" / "Blocked"). Clickable — opens the
+    /// workspace-trust prompt. A persistent, core counterpart to the env-manager
+    /// plugin's per-buffer trust chip.
+    WorkspaceTrust,
+    /// Custom token registered by a plugin (format: "plugin_name:token_name")
+    CustomToken(String),
+}
+
+impl TryFrom<String> for StatusBarElement {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, String> {
+        // Strip surrounding braces if present: "{foo}" -> "foo"
+        let inner = s
+            .strip_prefix('{')
+            .and_then(|s| s.strip_suffix('}'))
+            .unwrap_or(&s);
+        match inner {
+            "filename" => Ok(Self::Filename),
+            "read_only" => Ok(Self::ReadOnly),
+            "cursor" => Ok(Self::Cursor),
+            "cursor:compact" => Ok(Self::CursorCompact),
+            "diagnostics" => Ok(Self::Diagnostics),
+            "cursor_count" => Ok(Self::CursorCount),
+            "messages" => Ok(Self::Messages),
+            "chord" => Ok(Self::Chord),
+            "line_ending" => Ok(Self::LineEnding),
+            "encoding" => Ok(Self::Encoding),
+            "language" => Ok(Self::Language),
+            "lsp" => Ok(Self::Lsp),
+            "warnings" => Ok(Self::Warnings),
+            "update" => Ok(Self::Update),
+            "terminal_restart" => Ok(Self::TerminalRestart),
+            "palette" => Ok(Self::Palette),
+            "clock" => Ok(Self::Clock),
+            "remote" => Ok(Self::RemoteIndicator),
+            "trust" => Ok(Self::WorkspaceTrust),
+            _ => {
+                // Check if it's a custom token (contains ':')
+                if inner.contains(':') {
+                    Ok(Self::CustomToken(inner.to_string()))
+                } else {
+                    Err(format!("Unknown status bar element: {}", s))
+                }
+            }
+        }
+    }
+}
+
+impl From<StatusBarElement> for String {
+    fn from(e: StatusBarElement) -> String {
+        match e {
+            StatusBarElement::Filename => "{filename}".to_string(),
+            StatusBarElement::ReadOnly => "{read_only}".to_string(),
+            StatusBarElement::Cursor => "{cursor}".to_string(),
+            StatusBarElement::CursorCompact => "{cursor:compact}".to_string(),
+            StatusBarElement::Diagnostics => "{diagnostics}".to_string(),
+            StatusBarElement::CursorCount => "{cursor_count}".to_string(),
+            StatusBarElement::Messages => "{messages}".to_string(),
+            StatusBarElement::Chord => "{chord}".to_string(),
+            StatusBarElement::LineEnding => "{line_ending}".to_string(),
+            StatusBarElement::Encoding => "{encoding}".to_string(),
+            StatusBarElement::Language => "{language}".to_string(),
+            StatusBarElement::Lsp => "{lsp}".to_string(),
+            StatusBarElement::Warnings => "{warnings}".to_string(),
+            StatusBarElement::Update => "{update}".to_string(),
+            StatusBarElement::TerminalRestart => "{terminal_restart}".to_string(),
+            StatusBarElement::Palette => "{palette}".to_string(),
+            StatusBarElement::Clock => "{clock}".to_string(),
+            StatusBarElement::RemoteIndicator => "{remote}".to_string(),
+            StatusBarElement::WorkspaceTrust => "{trust}".to_string(),
+            StatusBarElement::CustomToken(name) => format!("{{{}}}", name),
+        }
+    }
+}
+
+impl schemars::JsonSchema for StatusBarElement {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("StatusBarElement")
+    }
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "x-dual-list-options": [
+                {"value": "{filename}", "name": "Filename"},
+                {"value": "{read_only}", "name": "Read-Only"},
+                {"value": "{cursor}", "name": "Cursor"},
+                {"value": "{cursor:compact}", "name": "Cursor (compact)"},
+                {"value": "{diagnostics}", "name": "Diagnostics"},
+                {"value": "{cursor_count}", "name": "Cursor Count"},
+                {"value": "{messages}", "name": "Messages"},
+                {"value": "{chord}", "name": "Chord"},
+                {"value": "{line_ending}", "name": "Line Ending"},
+                {"value": "{encoding}", "name": "Encoding"},
+                {"value": "{language}", "name": "Language"},
+                {"value": "{lsp}", "name": "LSP"},
+                {"value": "{warnings}", "name": "Warnings"},
+                {"value": "{update}", "name": "Update"},
+                {"value": "{terminal_restart}", "name": "Terminal Restart"},
+                {"value": "{palette}", "name": "Palette"},
+                {"value": "{clock}", "name": "Clock"},
+                {"value": "{remote}", "name": "Remote Indicator"},
+                {"value": "{trust}", "name": "Workspace Trust"}
+            ]
+        })
+    }
+}
+
+fn default_status_bar_left() -> Vec<StatusBarElement> {
+    // `{trust}` leads: the workspace-trust state is the first thing on the
+    // bottom-left, so whether repo-controlled execution is gated is always
+    // visible (the "restricted mode is always visible" guarantee). `{remote}`
+    // follows as the next persistent, clickable control — the bottom-left is
+    // where users learn to look for both from VS Code. Both are
+    // mouse-clickable and key-bindable.
+    //
+    // The filename is intentionally omitted: the active file is already
+    // shown in the tab bar, so repeating it on the status bar is redundant.
+    vec![
+        StatusBarElement::WorkspaceTrust,
+        StatusBarElement::RemoteIndicator,
+        // Renders only while the active buffer is a terminal whose process
+        // quit, so it costs nothing the rest of the time — but when an agent
+        // dies it sits beside the other two persistent, clickable controls
+        // where users already look.
+        StatusBarElement::TerminalRestart,
+        StatusBarElement::Cursor,
+        StatusBarElement::Diagnostics,
+        StatusBarElement::CursorCount,
+        StatusBarElement::Messages,
+    ]
+}
+
+fn default_status_bar_right() -> Vec<StatusBarElement> {
+    vec![
+        // `{read_only}` leads the right cluster: it renders only while the
+        // buffer is read-only, giving the documented `[RO]` indicator a
+        // standing home even though `{filename}` (its other host) is omitted
+        // from the default layout.
+        StatusBarElement::ReadOnly,
+        StatusBarElement::LineEnding,
+        StatusBarElement::Encoding,
+        StatusBarElement::Language,
+        StatusBarElement::Lsp,
+        StatusBarElement::Warnings,
+        StatusBarElement::Update,
+        StatusBarElement::Palette,
+    ]
+}
+
+/// Status bar layout and element configuration.
+///
+/// Controls which elements appear in the status bar and how they are arranged.
+/// Elements are placed in left and right containers and can be freely reordered.
+///
+/// Example config:
+/// ```json
+/// {
+///   "status_bar": {
+///     "left": ["{filename}", "{cursor:compact}"],
+///     "right": ["{language}", "{encoding}", "{line_ending}"]
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct StatusBarConfig {
+    /// Elements shown on the left side of the status bar.
+    /// Default: ["{filename}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
+    #[serde(default = "default_status_bar_left")]
+    #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/right", "x-dynamically-extendable-status-bar-elements" = true))]
+    pub left: Vec<StatusBarElement>,
+
+    /// Elements shown on the right side of the status bar.
+    /// Default: ["{read_only}", "{line_ending}", "{encoding}", "{language}", "{lsp}", "{warnings}", "{update}", "{palette}"]
+    #[serde(default = "default_status_bar_right")]
+    #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/left", "x-dynamically-extendable-status-bar-elements" = true))]
+    pub right: Vec<StatusBarElement>,
+
+    /// Separator drawn between status bar elements on both sides, used
+    /// verbatim. Each entry already carries a one-space margin painted in its
+    /// own style, so the default bare `"|"` renders as `LF | UTF-8`. Add your
+    /// own surrounding spaces to widen the gap. An empty string disables the
+    /// separator glyph entirely, leaving just the entries' own margins.
+    #[serde(default = "default_status_bar_separator")]
+    #[schemars(extend("x-section" = "Status Bar"))]
+    pub separator: String,
+}
+
+fn default_status_bar_separator() -> String {
+    "".to_string()
+}
+
+pub fn default_indentation_guide_glyph() -> String {
+    "▏".to_string()
+}
+
+pub fn normalize_indentation_guide_glyph(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        default_indentation_guide_glyph()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn deserialize_indentation_guide_glyph<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(normalize_indentation_guide_glyph(&value))
+}
+
+impl Default for StatusBarConfig {
+    fn default() -> Self {
+        Self {
+            left: default_status_bar_left(),
+            right: default_status_bar_right(),
+            separator: default_status_bar_separator(),
+        }
+    }
+}
+
+/// Editor behavior configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EditorConfig {
+    // ===== Display =====
+    /// Enable frame-buffer animations (tab-switch slides, dashboard
+    /// bringup, plugin-driven effects). When `false`, every animation
+    /// call is a no-op: the UI is fully static and each render lands
+    /// the final frame immediately. Useful on slow terminals, over
+    /// SSH, or for users who prefer no motion.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub animations: bool,
+
+    /// Enable the cursor-jump trail animation on long cursor moves
+    /// (search jumps, go-to-definition, pane switches). Has no effect
+    /// when `animations` is `false`.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub cursor_jump_animation: bool,
+
+    /// Shade the top and bottom rows of each pane, so text meets the
+    /// edge by fading out rather than being cut off mid-line.
+    ///
+    /// The row hard against the edge is painted a third of the way up
+    /// from its background, the one inside it two thirds, and the third
+    /// row in normally. Constant, not animated — the same rows are
+    /// shaded whether the view is moving or still, so scrolling is a
+    /// plain shift of the text through a fixed gradient. The top edge
+    /// only shades when there is something above it, so the first lines
+    /// of a file are not dimmed for no reason.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub viewport_edge_fade: bool,
+
+    /// Show line numbers in the gutter (default for new buffers)
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub line_numbers: bool,
+
+    /// Show line numbers relative to cursor position
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub relative_line_numbers: bool,
+
+    /// Highlight the line containing the cursor
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub highlight_current_line: bool,
+
+    /// Highlight all occurrences of the word under the cursor
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub highlight_occurrences: bool,
+
+    /// Hide the current-line background highlight whenever a selection is
+    /// visible.  When `true` (default: `false`), the `current_line_bg` fill
+    /// is suppressed for the active split as soon as any cursor has a
+    /// non-empty selection, reducing visual clutter while text is selected.
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub hide_current_line_on_selection: bool,
+
+    /// Highlight the column containing the cursor
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub highlight_current_column: bool,
+
+    /// Wrap long lines to fit the window width (default for new views)
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub line_wrap: bool,
+
+    /// Indent wrapped continuation lines to match the leading whitespace of the original line
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub wrap_indent: bool,
+
+    /// Column at which to wrap lines when line wrapping is enabled.
+    /// If not specified (`null`), lines wrap at the viewport edge (default behavior).
+    /// A value of `0` is treated the same as `null` (no fixed wrap column).
+    /// Example: `80` wraps at column 80. The actual wrap column is clamped to the
+    /// viewport width (lines can't wrap beyond the visible area).
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub wrap_column: Option<usize>,
+
+    /// Width of the page in page view mode (in columns).
+    /// Controls the content width when page view is active, with centering margins.
+    /// Defaults to 80. Set to `null` (or `0`) to use the full viewport width.
+    #[serde(default = "default_page_width")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub page_width: Option<usize>,
+
+    /// Enable syntax highlighting for code files
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub syntax_highlighting: bool,
+
+    /// Whether the menu bar is visible by default.
+    /// The menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_menu_bar: bool,
+
+    /// Enable the wave-animation screensaver. When the editor has been
+    /// idle (no key or mouse input) for `screensaver_idle_minutes`, a
+    /// decorative wave washes over the screen until you press a key or
+    /// move the mouse.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub screensaver_enabled: bool,
+
+    /// Minutes of inactivity before the wave-animation screensaver starts
+    /// (only when `screensaver_enabled`). A value of `0` disables it.
+    /// Default: 5
+    #[serde(default = "default_screensaver_idle_minutes")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub screensaver_idle_minutes: u32,
+
+    /// Whether menu bar mnemonics (Alt+letter shortcuts) are enabled.
+    /// When enabled, pressing Alt+F opens the File menu, Alt+E opens Edit, etc.
+    /// Disabling this frees up Alt+letter keybindings for other actions.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub menu_bar_mnemonics: bool,
+
+    /// Whether the tab bar is visible by default.
+    /// The tab bar shows open files in each split pane.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_tab_bar: bool,
+
+    /// Whether the status bar is visible by default.
+    /// The status bar shows file info, cursor position, and editor status at the bottom of the screen.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_status_bar: bool,
+
+    /// Status bar layout and element configuration.
+    /// Controls which elements appear in the status bar and how they are arranged.
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Status Bar"))]
+    pub status_bar: StatusBarConfig,
+
+    /// Whether the prompt line is always visible.
+    /// The prompt line is the bottom-most line used for search, file open, and other prompts.
+    /// When `false` (the default), the prompt line auto-hides — it only appears
+    /// while a prompt is active and disappears again once the prompt closes.
+    /// When `true`, the prompt line is always reserved at the bottom of the screen.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_prompt_line: bool,
+
+    /// Whether the vertical scrollbar is visible in each split pane.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_vertical_scrollbar: bool,
+
+    /// Whether the horizontal scrollbar is visible in each split pane.
+    /// The horizontal scrollbar appears when line wrap is disabled and content extends beyond the viewport.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_horizontal_scrollbar: bool,
+
+    /// Show tilde (~) markers on lines after the end of the file.
+    /// These vim-style markers indicate lines that are not part of the file content.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_tilde: bool,
+
+    /// Use Nerd Font icons for decorative UI glyphs (e.g. the settings
+    /// category icons). Nerd Font glyphs live in the Unicode private-use
+    /// area and only render correctly when the terminal uses a patched
+    /// "Nerd Font"; on any other font they show up as `?` or empty boxes.
+    /// When disabled, standard Unicode symbols (covered by normal
+    /// terminal font fallback) are used instead.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub nerd_font_icons: bool,
+
+    /// Use the terminal's default background color instead of the theme's editor background.
+    /// When enabled, the editor background inherits from the terminal emulator,
+    /// allowing transparency or custom terminal backgrounds to show through.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub use_terminal_bg: bool,
+
+    /// Update the terminal window title (via OSC 2) to reflect the active buffer.
+    /// When enabled, Fresh sets the terminal/tab title to "<file> — Fresh" as
+    /// you switch buffers. Harmless on terminals that don't understand the
+    /// escape sequence — they silently ignore it.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub set_window_title: bool,
+
+    /// Auto-name terminal tabs after the running program (tmux-style). When
+    /// enabled, an integrated terminal's tab reflects its foreground process
+    /// (e.g. `python3`, `vim`) combined with any title the program set via
+    /// an OSC escape sequence, instead of the static `*Terminal N*` label.
+    /// Disable to keep the fixed `*Terminal N*` names.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub terminal_auto_title: bool,
+
+    /// Cursor style for the terminal cursor.
+    /// Options: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline
+    /// Default: blinking_block
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub cursor_style: CursorStyle,
+
+    /// Vertical ruler lines at specific column positions.
+    /// Draws subtle vertical lines to help with line length conventions.
+    /// Columns are 1-based *display* columns — screen cells, not characters:
+    /// a ruler at 80 marks the 80th display column, the last one text may
+    /// occupy. A tab advances to the next tab stop and a full-width character
+    /// (CJK, most emoji) takes two cells, so on lines containing either, the
+    /// ruler column is not the character count the status bar reports; for
+    /// plain ASCII text the two numbers agree.
+    /// If the column falls inside a full-width character, the guide marks that
+    /// character's first cell, so it stays visible on lines of CJK text.
+    /// Values below 1 are not valid columns and are ignored.
+    /// Example: [80, 120] draws rulers at columns 80 and 120.
+    /// Default: [] (no rulers)
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"), inner(range(min = 1)))]
+    pub rulers: Vec<usize>,
+
+    /// Vertical indentation guide rendering mode.
+    /// Guides are drawn at indentation levels derived from the active buffer's
+    /// tab size. They replace existing leading whitespace cells visually only;
+    /// buffer text, cursor positions, and mouse mappings are unchanged.
+    /// Modes:
+    /// - `none`: disable indentation guides.
+    /// - `all`: draw every indentation level in leading whitespace.
+    /// - `active`: draw only the innermost guide for the cursor's current
+    ///   indentation block.
+    ///
+    /// Default: none
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub indentation_guide: IndentationGuideMode,
+
+    /// Glyph used to draw indentation guides. The default is a left-aligned
+    /// vertical guide character. Leading/trailing whitespace is ignored, and
+    /// blank values reset to the default glyph. Use a single display-cell glyph
+    /// for stable layout.
+    /// Default: ▏
+    #[serde(
+        default = "default_indentation_guide_glyph",
+        deserialize_with = "deserialize_indentation_guide_glyph"
+    )]
+    #[schemars(extend("x-section" = "Display"))]
+    pub indentation_guide_glyph: String,
+
+    /// Color indentation guides by indent level, using the active theme's
+    /// `indent_rainbow_1` through `indent_rainbow_6` colors.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub rainbow_indentation: bool,
+
+    // ===== Whitespace =====
+    /// Master toggle for whitespace indicator visibility.
+    /// When disabled, no whitespace indicators (·, →) are shown regardless
+    /// of the per-position settings below.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_show: bool,
+
+    /// Show space indicators (·) for leading whitespace (indentation).
+    /// Leading whitespace is everything before the first non-space character on a line.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_spaces_leading: bool,
+
+    /// Show space indicators (·) for inner whitespace (between words/tokens).
+    /// Inner whitespace is spaces between the first and last non-space characters.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_spaces_inner: bool,
+
+    /// Show space indicators (·) for trailing whitespace.
+    /// Trailing whitespace is everything after the last non-space character on a line.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_spaces_trailing: bool,
+
+    /// Show tab indicators (→) for leading tabs (indentation).
+    /// Can be overridden per-language via `show_whitespace_tabs` in language config.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_tabs_leading: bool,
+
+    /// Show tab indicators (→) for inner tabs (between words/tokens).
+    /// Can be overridden per-language via `show_whitespace_tabs` in language config.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_tabs_inner: bool,
+
+    /// Show tab indicators (→) for trailing tabs.
+    /// Can be overridden per-language via `show_whitespace_tabs` in language config.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_tabs_trailing: bool,
+
+    /// Show newline indicators (↵) at the end of every line.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_newlines: bool,
+
+    /// Show carriage-return indicators (␍) for the CR half of CRLF line
+    /// endings, next to the newline position. Stray CR bytes that are not
+    /// part of the buffer's line ending always render as `<0D>` escapes.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_carriage_returns: bool,
+
+    /// Show whitespace indicators (·, →) for whitespace *inside a
+    /// selection*, even when the per-position settings above (or the
+    /// `whitespace_show` master toggle) keep them hidden elsewhere. Makes the
+    /// exact extent of a selection legible without turning indicators on for
+    /// the whole buffer.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_in_selection: bool,
+
+    // ===== Editing =====
+    /// Whether pressing Tab inserts a tab character instead of spaces.
+    /// This is the global default; individual languages can override it
+    /// via their own `use_tabs` setting.
+    /// Default: false (insert spaces)
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub use_tabs: bool,
+
+    /// Number of spaces per tab character
+    /// A value of `0` is treated as unset and falls back to the default (4).
+    #[serde(default = "default_tab_size")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub tab_size: usize,
+
+    /// Automatically indent new lines based on the previous line
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub auto_indent: bool,
+
+    /// Automatically close brackets, parentheses, and quotes when typing.
+    /// When enabled, typing an opening delimiter like `(`, `[`, `{`, `"`, `'`, or `` ` ``
+    /// will automatically insert the matching closing delimiter.
+    /// Also enables skip-over (moving past existing closing delimiters) and
+    /// pair deletion (deleting both delimiters when backspacing between them).
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub auto_close: bool,
+
+    /// Automatically surround selected text with matching pairs when typing
+    /// an opening delimiter. When enabled and text is selected, typing `(`, `[`,
+    /// `{`, `"`, `'`, or `` ` `` wraps the selection instead of replacing it.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub auto_surround: bool,
+
+    /// Allow the cursor to move beyond the end of a line (virtual space).
+    /// "off": cursor is clamped to line content. "block": only block
+    /// (rectangular) selections extend past line ends, producing true
+    /// rectangles. "on": arrow keys, clicks, and block selections may all
+    /// place the cursor past the end of a line; typing there fills the gap
+    /// with spaces.
+    /// Default: "off"
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub virtual_space: VirtualSpaceMode,
+
+    /// Minimum lines to keep visible above/below cursor when scrolling
+    #[serde(default = "default_scroll_offset")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub scroll_offset: usize,
+
+    /// Default line ending format for new files.
+    /// Files loaded from disk will use their detected line ending format.
+    /// Options: "lf" (Unix/Linux/macOS), "crlf" (Windows), "cr" (Classic Mac)
+    /// Default: "lf"
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub default_line_ending: LineEndingOption,
+
+    /// Remove trailing whitespace from lines when saving.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub trim_trailing_whitespace_on_save: bool,
+
+    /// Ensure files end with a newline when saving.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub ensure_final_newline_on_save: bool,
+
+    /// Automatically open files in read-only mode when they are not
+    /// writable on disk (filesystem permissions) or live in a
+    /// library/vendor directory (rustup toolchains, node_modules,
+    /// /usr/include, /nix/store, ...). When disabled, such files open
+    /// editable; saving may still fail unless permissions allow it.
+    /// Binary files always open read-only regardless of this setting.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub auto_read_only: bool,
+
+    // ===== Bracket Matching =====
+    /// Highlight matching bracket pairs when cursor is on a bracket.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Bracket Matching"))]
+    pub highlight_matching_brackets: bool,
+
+    /// Use rainbow colors for nested brackets based on nesting depth.
+    /// Requires highlight_matching_brackets to be enabled.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Bracket Matching"))]
+    pub rainbow_brackets: bool,
+
+    // ===== Completion =====
+    /// Automatically show the completion popup while typing.
+    /// When false (default), the popup only appears when explicitly invoked
+    /// (e.g. via Ctrl+Space). When true, it appears automatically after a
+    /// short delay while typing.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub completion_popup_auto_show: bool,
+
+    /// Enable quick suggestions (VS Code-like behavior).
+    /// When enabled, completion suggestions appear automatically while typing,
+    /// not just on trigger characters (like `.` or `::`).
+    /// Only takes effect when completion_popup_auto_show is true.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub quick_suggestions: bool,
+
+    /// Delay in milliseconds before showing completion suggestions.
+    /// Lower values (10-50ms) feel more responsive but may be distracting.
+    /// Higher values (100-500ms) reduce noise while typing.
+    /// Trigger characters (like `.`) bypass this delay.
+    /// Default: 150
+    #[serde(default = "default_quick_suggestions_delay")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub quick_suggestions_delay_ms: u64,
+
+    /// Whether trigger characters (like `.`, `::`, `->`) immediately show completions.
+    /// When true, typing a trigger character bypasses quick_suggestions_delay_ms.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub suggest_on_trigger_characters: bool,
+
+    // ===== LSP =====
+    /// Whether to enable LSP inlay hints (type hints, parameter hints, etc.)
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "LSP"))]
+    pub enable_inlay_hints: bool,
+
+    /// Whether to request full-document LSP semantic tokens.
+    /// Range requests are still used when supported.
+    /// Default: false (range-only to avoid heavy full refreshes).
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "LSP"))]
+    pub enable_semantic_tokens_full: bool,
+
+    /// Whether to show inline diagnostic text at the end of lines with errors/warnings.
+    /// When enabled, the highest-severity diagnostic message is rendered after the
+    /// source code on each affected line.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Diagnostics"))]
+    pub diagnostics_inline_text: bool,
+
+    // ===== Mouse =====
+    /// How many lines one notch of the mouse wheel scrolls.
+    ///
+    /// Applies to every surface the wheel scrolls by lines, not just
+    /// buffer text. Shift+wheel pans sideways by columns and is
+    /// unaffected. Clamped to at least 1 — a zero would make the wheel
+    /// dead. Default: 3.
+    #[serde(default = "default_mouse_wheel_scroll_lines")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub mouse_wheel_scroll_lines: usize,
+
+    /// Walk a multi-line wheel notch one line at a time instead of
+    /// jumping the view by the whole `mouse_wheel_scroll_lines` at once.
+    ///
+    /// The first line lands immediately, so the view still answers the
+    /// wheel on the same frame; the rest follow at about a line a frame.
+    /// The walk is paced by the clock, not by frames, so a terminal too
+    /// slow to show it collapses the remainder back into a single jump
+    /// rather than lagging behind the wheel. Has no effect when
+    /// `animations` is `false`, or when a notch is only one line.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub smooth_scroll: bool,
+
+    /// Whether mouse hover triggers LSP hover requests.
+    /// When enabled, hovering over code with the mouse will show documentation.
+    /// On Windows, this also controls the mouse tracking mode: when disabled,
+    /// the editor uses xterm mode 1002 (cell motion — click, drag, release only);
+    /// when enabled, it uses mode 1003 (all motion — full mouse movement tracking).
+    /// Mode 1003 generates high event volume on Windows and may cause input
+    /// corruption on some systems. On macOS and Linux this setting only controls
+    /// LSP hover; the mouse tracking mode is always full motion.
+    /// Default: true (macOS/Linux), false (Windows)
+    #[serde(default = "default_mouse_hover_enabled")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub mouse_hover_enabled: bool,
+
+    /// Delay in milliseconds before a mouse hover triggers an LSP hover request.
+    /// Lower values show hover info faster but may cause more LSP server load.
+    /// Default: 500ms
+    #[serde(default = "default_mouse_hover_delay")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub mouse_hover_delay_ms: u64,
+
+    /// Time window in milliseconds for detecting double-clicks.
+    /// Two clicks within this time are treated as a double-click (word selection).
+    /// Default: 500ms
+    #[serde(default = "default_double_click_time")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub double_click_time_ms: u64,
+
+    /// Whether to enable persistent auto-save (save to original file on disk).
+    /// When enabled, modified buffers are saved to their original file path
+    /// at a configurable interval.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub auto_save_enabled: bool,
+
+    /// Interval in seconds for persistent auto-save.
+    /// Modified buffers are saved to their original file at this interval.
+    /// Only effective when auto_save_enabled is true.
+    /// Default: 30 seconds
+    #[serde(default = "default_auto_save_interval")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub auto_save_interval_secs: u32,
+
+    /// Whether to preserve unsaved changes in all buffers (file-backed and
+    /// unnamed) across editor sessions (VS Code "hot exit" behavior).
+    /// When enabled, modified buffers are backed up on clean exit and their
+    /// unsaved changes are restored on next startup.  Unnamed (scratch)
+    /// buffers are also persisted (Sublime Text / Notepad++ behavior).
+    /// Default: true
+    #[serde(default = "default_true", alias = "persist_unnamed_buffers")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub hot_exit: bool,
+
+    /// Whether to confirm before quitting Fresh. When enabled, pressing
+    /// the quit shortcut surfaces a confirmation prompt even when no
+    /// buffers are modified. Useful for users who frequently hit
+    /// `Ctrl+Q` by mistake. Independent of the unsaved-changes prompt,
+    /// which always fires regardless of this setting.
+    /// Default: false
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub confirm_quit: bool,
+
+    /// Whether to auto-open previously opened files (session restore) when
+    /// starting Fresh in a directory.  When enabled (the default), tabs,
+    /// splits, cursor positions and the file explorer state are restored
+    /// from the last clean exit in the same working directory.  When
+    /// disabled, Fresh starts with a clean workspace.  The workspace file
+    /// on disk is still written on exit, so re-enabling this setting picks
+    /// up whatever state was saved at the most recent clean exit.  The
+    /// `--no-restore` CLI flag is a stronger override: it skips both
+    /// restoring and saving the workspace.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub restore_previous_session: bool,
+
+    /// When Fresh is launched with one or more file arguments (e.g.
+    /// `fresh src/main.rs README.md`), skip the workspace session restore
+    /// and open only the files passed on the command line. Hot-exit
+    /// content (unsaved modified files and unnamed `[No Name]` buffers
+    /// with content) is still restored so in-progress work is never lost.
+    /// Pure-directory invocations (`fresh some/dir`) and bare invocations
+    /// (`fresh` with no args) still restore the previous session normally.
+    /// Disable this option to keep the legacy behavior of always
+    /// restoring the previous session even when files are passed.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub skip_session_restore_when_files_passed: bool,
+
+    /// Files whose per-file state (cursor, scroll, folds, …) is never saved
+    /// and never restored, because something outside the editor rewrites
+    /// them: a persisted byte offset would land the cursor at an arbitrary
+    /// point in content that has since been replaced. The default covers
+    /// git's scratch files (`COMMIT_EDITMSG`, `MERGE_MSG`, `TAG_EDITMSG`,
+    /// rebase todo lists), which git regenerates for every operation.
+    ///
+    /// Entries use the same dialect as `languages.*.filenames`: a literal
+    /// entry matches the file name exactly, an entry with `*`/`?` is a glob
+    /// matched against the whole path if it names directories (`**/.git/**`)
+    /// and against the file name otherwise (`*.tmp`).
+    /// Default: `["**/.git/**"]`
+    #[serde(default = "default_ephemeral_file_patterns")]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub ephemeral_file_patterns: Vec<String>,
+
+    /// Whether to auto-create a fresh empty `[No Name]` buffer when the
+    /// last open buffer is closed. When `false`, the editor still creates
+    /// an internal placeholder buffer (it always needs at least one) but
+    /// hides it from the tab bar so the workspace looks blank. Combined
+    /// with `file_explorer.auto_open_on_last_buffer_close = false`, this
+    /// gives a fully blank workspace where nothing opens automatically.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub auto_create_empty_buffer_on_last_buffer_close: bool,
+
+    // ===== Recovery =====
+    /// Whether to enable file recovery (Emacs-style auto-save)
+    /// When enabled, buffers are periodically saved to recovery files
+    /// so they can be recovered if the editor crashes.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub recovery_enabled: bool,
+
+    /// Interval in seconds for auto-recovery-save.
+    /// Modified buffers are saved to recovery files at this interval.
+    /// Only effective when recovery_enabled is true.
+    /// Default: 2 seconds
+    #[serde(default = "default_auto_recovery_save_interval")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub auto_recovery_save_interval_secs: u32,
+
+    /// Poll interval in milliseconds for auto-reverting open buffers.
+    /// When auto-revert is enabled, file modification times are checked at this interval.
+    /// Lower values detect external changes faster but use more CPU.
+    /// Default: 2000ms (2 seconds)
+    #[serde(default = "default_auto_revert_poll_interval")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub auto_revert_poll_interval_ms: u64,
+
+    // ===== Keyboard =====
+    /// Enable keyboard enhancement: disambiguate escape codes using CSI-u sequences.
+    /// This allows unambiguous reading of Escape and modified keys.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Keyboard"))]
+    pub keyboard_disambiguate_escape_codes: bool,
+
+    /// Enable keyboard enhancement: report key event types (repeat/release).
+    /// Adds extra events when keys are autorepeated or released.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Keyboard"))]
+    pub keyboard_report_event_types: bool,
+
+    /// Enable keyboard enhancement: report alternate keycodes.
+    /// Sends alternate keycodes in addition to the base keycode.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Keyboard"))]
+    pub keyboard_report_alternate_keys: bool,
+
+    /// Enable keyboard enhancement: report all keys as escape codes.
+    /// Represents all keyboard events as CSI-u sequences.
+    /// Required for repeat/release events on plain-text keys.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Keyboard"))]
+    pub keyboard_report_all_keys_as_escape_codes: bool,
+
+    // ===== Performance =====
+    /// Undo history snapshot interval (number of edits between snapshots)
+    #[serde(default = "default_snapshot_interval")]
+    #[schemars(extend("x-section" = "Performance"))]
+    pub snapshot_interval: usize,
+
+    /// Number of bytes to look back/forward from the viewport for syntax highlighting context.
+    /// Larger values improve accuracy for multi-line constructs (strings, comments, nested blocks)
+    /// but may slow down highlighting for very large files.
+    /// Default: 10KB (10000 bytes)
+    #[serde(default = "default_highlight_context_bytes")]
+    #[schemars(extend("x-section" = "Performance"))]
+    pub highlight_context_bytes: usize,
+
+    /// File size threshold in bytes for "large file" behavior
+    /// Files larger than this will:
+    /// - Skip LSP features
+    /// - Use constant-size scrollbar thumb (1 char)
+    ///
+    /// Files smaller will count actual lines for accurate scrollbar rendering
+    #[serde(default = "default_large_file_threshold")]
+    #[schemars(extend("x-section" = "Performance"))]
+    pub large_file_threshold_bytes: u64,
+
+    /// Estimated average line length in bytes (used for large file line estimation)
+    /// This is used by LineIterator to estimate line positions in large files
+    /// without line metadata. Typical values: 80-120 bytes.
+    #[serde(default = "default_estimated_line_length")]
+    #[schemars(extend("x-section" = "Performance"))]
+    pub estimated_line_length: usize,
+
+    /// Maximum number of concurrent filesystem read requests.
+    /// Used during line-feed scanning and other bulk I/O operations.
+    /// Higher values improve throughput, especially for remote filesystems.
+    /// Default: 64
+    #[serde(default = "default_read_concurrency")]
+    #[schemars(extend("x-section" = "Performance"))]
+    pub read_concurrency: usize,
+
+    /// Poll interval in milliseconds for refreshing expanded directories in the file explorer.
+    /// Directory modification times are checked at this interval to detect new/deleted files.
+    /// Lower values detect changes faster but use more CPU.
+    /// Default: 3000ms (3 seconds)
+    #[serde(default = "default_file_tree_poll_interval")]
+    #[schemars(extend("x-section" = "Performance"))]
+    pub file_tree_poll_interval_ms: u64,
+}
+
+fn default_tab_size() -> usize {
+    4
+}
+
+/// The single source of truth for the large-file threshold: the default for
+/// the `editor.large_file_threshold_bytes` setting. Files at or above this
+/// size load lazily (chunked, no eager line index → byte-offset display) and
+/// skip LSP; smaller files load eagerly with full line tracking and viewport
+/// parsing.
+///
+/// This is the *only* threshold constant. Production code reads the resolved
+/// setting (`config.editor.large_file_threshold_bytes`), never this constant
+/// directly — it exists purely as the config default. (Tests may reference it
+/// for convenience.)
+pub const LARGE_FILE_THRESHOLD_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+
+fn default_large_file_threshold() -> u64 {
+    LARGE_FILE_THRESHOLD_BYTES
+}
+
+/// Maximum lines to scan forward when computing indent-based fold end
+/// for the fold toggle action (user-triggered, infrequent).
+pub const INDENT_FOLD_MAX_SCAN_LINES: usize = 10_000;
+
+/// Maximum lines to scan forward when checking foldability for gutter
+/// indicators or click detection (called per-viewport-line during render).
+pub const INDENT_FOLD_INDICATOR_MAX_SCAN: usize = 50;
+
+/// Maximum lines to walk backward when searching for a fold header
+/// that contains the cursor (in the fold toggle action).
+pub const INDENT_FOLD_MAX_UPWARD_SCAN: usize = 200;
+
+fn default_read_concurrency() -> usize {
+    64
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_screensaver_idle_minutes() -> u32 {
+    5
+}
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_quick_suggestions_delay() -> u64 {
+    150 // 150ms — fast enough to feel responsive, slow enough to not interrupt typing
+}
+
+fn default_scroll_offset() -> usize {
+    3
+}
+
+fn default_snapshot_interval() -> usize {
+    100
+}
+
+fn default_estimated_line_length() -> usize {
+    80
+}
+
+fn default_auto_save_interval() -> u32 {
+    30 // 30 seconds between persistent auto-saves
+}
+
+fn default_auto_recovery_save_interval() -> u32 {
+    2 // 2 seconds between recovery saves
+}
+
+/// Anything under a `.git` directory: the whole tree, so linked worktrees
+/// (`<main>/.git/worktrees/<name>/…`) are covered too. `.github/` and
+/// `.gitignore` are unaffected — the pattern requires a `.git` path
+/// *component*.
+pub fn default_ephemeral_file_patterns() -> Vec<String> {
+    vec!["**/.git/**".to_string()]
+}
+
+fn default_highlight_context_bytes() -> usize {
+    10_000 // 10KB context for accurate syntax highlighting
+}
+
+fn default_mouse_wheel_scroll_lines() -> usize {
+    3
+}
+
+fn default_mouse_hover_enabled() -> bool {
+    !cfg!(windows)
+}
+
+fn default_mouse_hover_delay() -> u64 {
+    500 // 500ms delay before showing hover info
+}
+
+fn default_double_click_time() -> u64 {
+    500 // 500ms window for detecting double-clicks
+}
+
+fn default_auto_revert_poll_interval() -> u64 {
+    2000 // 2 seconds between file mtime checks
+}
+
+fn default_file_tree_poll_interval() -> u64 {
+    3000 // 3 seconds between directory mtime checks
+}
+
+impl Default for EditorConfig {
+    fn default() -> Self {
+        Self {
+            use_tabs: false,
+            tab_size: default_tab_size(),
+            auto_indent: true,
+            auto_close: true,
+            auto_surround: true,
+            virtual_space: VirtualSpaceMode::default(),
+            animations: true,
+            cursor_jump_animation: true,
+            viewport_edge_fade: true,
+            line_numbers: true,
+            relative_line_numbers: false,
+            scroll_offset: default_scroll_offset(),
+            syntax_highlighting: true,
+            highlight_current_line: true,
+            highlight_occurrences: true,
+            hide_current_line_on_selection: false,
+            highlight_current_column: false,
+            line_wrap: true,
+            wrap_indent: true,
+            wrap_column: None,
+            page_width: default_page_width(),
+            snapshot_interval: default_snapshot_interval(),
+            large_file_threshold_bytes: default_large_file_threshold(),
+            estimated_line_length: default_estimated_line_length(),
+            enable_inlay_hints: true,
+            enable_semantic_tokens_full: false,
+            diagnostics_inline_text: false,
+            auto_save_enabled: false,
+            auto_save_interval_secs: default_auto_save_interval(),
+            hot_exit: true,
+            confirm_quit: false,
+            restore_previous_session: true,
+            skip_session_restore_when_files_passed: true,
+            ephemeral_file_patterns: default_ephemeral_file_patterns(),
+            auto_create_empty_buffer_on_last_buffer_close: true,
+            recovery_enabled: true,
+            auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
+            highlight_context_bytes: default_highlight_context_bytes(),
+            mouse_wheel_scroll_lines: default_mouse_wheel_scroll_lines(),
+            smooth_scroll: true,
+            mouse_hover_enabled: default_mouse_hover_enabled(),
+            mouse_hover_delay_ms: default_mouse_hover_delay(),
+            double_click_time_ms: default_double_click_time(),
+            auto_revert_poll_interval_ms: default_auto_revert_poll_interval(),
+            read_concurrency: default_read_concurrency(),
+            file_tree_poll_interval_ms: default_file_tree_poll_interval(),
+            default_line_ending: LineEndingOption::default(),
+            trim_trailing_whitespace_on_save: false,
+            ensure_final_newline_on_save: false,
+            auto_read_only: true,
+            highlight_matching_brackets: true,
+            rainbow_brackets: true,
+            cursor_style: CursorStyle::default(),
+            keyboard_disambiguate_escape_codes: true,
+            keyboard_report_event_types: false,
+            keyboard_report_alternate_keys: true,
+            keyboard_report_all_keys_as_escape_codes: false,
+            completion_popup_auto_show: false,
+            quick_suggestions: true,
+            quick_suggestions_delay_ms: default_quick_suggestions_delay(),
+            suggest_on_trigger_characters: true,
+            show_menu_bar: true,
+            screensaver_enabled: false,
+            screensaver_idle_minutes: default_screensaver_idle_minutes(),
+            menu_bar_mnemonics: true,
+            show_tab_bar: true,
+            show_status_bar: true,
+            status_bar: StatusBarConfig::default(),
+            show_prompt_line: false,
+            show_vertical_scrollbar: true,
+            show_horizontal_scrollbar: false,
+            show_tilde: true,
+            nerd_font_icons: false,
+            use_terminal_bg: false,
+            set_window_title: true,
+            terminal_auto_title: true,
+            rulers: Vec::new(),
+            indentation_guide: IndentationGuideMode::None,
+            indentation_guide_glyph: default_indentation_guide_glyph(),
+            rainbow_indentation: false,
+            whitespace_show: true,
+            whitespace_spaces_leading: false,
+            whitespace_spaces_inner: false,
+            whitespace_spaces_trailing: false,
+            whitespace_tabs_leading: true,
+            whitespace_tabs_inner: true,
+            whitespace_tabs_trailing: true,
+            whitespace_newlines: false,
+            whitespace_carriage_returns: false,
+            whitespace_in_selection: true,
+        }
+    }
+}
+
+/// Side placement for the file explorer panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileExplorerSide {
+    #[default]
+    Left,
+    Right,
+}
+
+/// File explorer configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FileExplorerConfig {
+    /// Whether `.gitignore` rules apply in the file explorer at all.
+    /// When disabled, ignored entries are neither hidden nor grayed out and
+    /// the "show gitignored files" toggle below has nothing left to hide.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub respect_gitignore: bool,
+
+    /// Whether to show hidden files (starting with .) by default
+    #[serde(default = "default_false")]
+    pub show_hidden: bool,
+
+    /// Whether to show gitignored files by default
+    #[serde(default = "default_false")]
+    pub show_gitignored: bool,
+
+    /// Custom patterns to ignore (in addition to .gitignore)
+    #[serde(default)]
+    pub custom_ignore_patterns: Vec<String>,
+
+    /// File explorer width. Either a percent (`"30%"`, 0–100) or an
+    /// absolute column count (`"24"`). Legacy numeric forms are still
+    /// accepted on read: a bare integer is treated as percent, and a
+    /// fractional number in `[0, 1]` is treated as a legacy percent
+    /// fraction (e.g. `0.3` → 30%).
+    #[serde(default = "default_explorer_width")]
+    pub width: ExplorerWidth,
+
+    /// Open files in a "preview" (ephemeral) tab on single-click in the
+    /// file explorer. The preview tab is replaced by the next single-click
+    /// instead of accumulating tabs. Editing the file, double-clicking
+    /// (or pressing Enter) on it in the explorer, or dragging its tab
+    /// promotes the tab to a permanent tab.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub preview_tabs: bool,
+
+    /// Which side of the screen to show the file explorer on.
+    /// Default: left
+    #[serde(default = "default_explorer_side")]
+    pub side: FileExplorerSide,
+
+    /// Automatically focus the file explorer when the last buffer is
+    /// closed. Set to `false` for a "blank workspace" workflow where
+    /// nothing opens automatically and the user explicitly invokes the
+    /// file explorer (e.g. via keybinding or command palette).
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub auto_open_on_last_buffer_close: bool,
+
+    /// When the file explorer sidebar is open, automatically expand the
+    /// tree and highlight the file that corresponds to the active buffer
+    /// whenever you switch tabs. Set to `true` to keep the explorer
+    /// selection in sync with the active tab.
+    /// Default: false
+    #[serde(default = "default_false")]
+    pub follow_active_buffer: bool,
+
+    /// Render single-child directory chains on a single line, e.g.
+    /// `src/main/java/com/example`. Only applies when each intermediate
+    /// directory in the chain is expanded and has exactly one visible
+    /// child that is itself a directory. Mirrors VSCode's
+    /// `explorer.compactFolders`.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub compact_directories: bool,
+
+    /// Symbol shown next to a collapsed (closed) directory in the file
+    /// explorer tree. A short string (single character recommended).
+    /// A trailing space is added automatically during rendering; the
+    /// renderer pads narrower indicators so collapsed/expanded rows align.
+    /// Default: ">"
+    #[serde(default = "default_tree_indicator_collapsed")]
+    pub tree_indicator_collapsed: String,
+
+    /// Symbol shown next to an expanded (open) directory in the file
+    /// explorer tree. A short string (single character recommended).
+    /// A trailing space is added automatically during rendering; the
+    /// renderer pads narrower indicators so collapsed/expanded rows align.
+    /// Default: "▼"
+    #[serde(default = "default_tree_indicator_expanded")]
+    pub tree_indicator_expanded: String,
+}
+
+/// Width configuration for the file explorer.
+///
+/// Two forms are supported:
+///
+/// - `Percent(n)` — relative to the current terminal width. `n` is a
+///   whole-percent value in `0..=100`.
+/// - `Columns(n)` — absolute character columns. `n` is clamped at
+///   render time against the live terminal width so the layout stays
+///   inside the window.
+///
+/// ## Wire formats accepted on deserialize
+///
+/// | JSON form | Parsed as |
+/// |---|---|
+/// | `30` (integer) | `Percent(30)` |
+/// | `0.3` (float in `[0, 1]`) | `Percent(30)` — legacy fraction |
+/// | `1.5`, `30.0` (float outside `[0, 1]`) | `Percent(n)` |
+/// | `"30%"`, `"30 %"` (string with `%`) | `Percent(30)` |
+/// | `"24"` (string, no `%`) | `Columns(24)` |
+///
+/// ## Wire format emitted on serialize
+///
+/// - `Percent(n)` → string `"n%"`
+/// - `Columns(n)` → string `"n"`
+///
+/// This makes `config.json` self-describing: the unit is visible on the
+/// value, and round-trip is stable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerWidth {
+    Percent(u8),
+    Columns(u16),
+}
+
+impl ExplorerWidth {
+    /// Default width when none is configured.
+    pub const DEFAULT: Self = Self::Percent(30);
+
+    /// Hard minimum for the *rendered* explorer width. Configured values
+    /// smaller than this are accepted (so a hand-edited config round-trips
+    /// cleanly) but the render path always gives the panel at least this
+    /// many columns, preventing a 0- or 1-column explorer where the border
+    /// stacks on itself and the drag-to-resize grip is unreachable.
+    pub const MIN_COLS: u16 = 5;
+
+    /// Convert to terminal columns.
+    ///
+    /// `Percent` multiplies `terminal_width` by the percent; `Columns`
+    /// returns the requested count. The result is then clamped to
+    /// `MIN_COLS..=terminal_width` so it's always renderable and always
+    /// usable. On terminals narrower than `MIN_COLS` the `terminal_width`
+    /// cap wins and we return whatever fits.
+    pub fn to_cols(self, terminal_width: u16) -> u16 {
+        let raw = match self {
+            Self::Percent(pct) => ((terminal_width as u32 * pct as u32) / 100) as u16,
+            Self::Columns(cols) => cols,
+        };
+        raw.max(Self::MIN_COLS).min(terminal_width)
+    }
+}
+
+impl Default for ExplorerWidth {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl std::fmt::Display for ExplorerWidth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Percent(n) => write!(f, "{}%", n),
+            Self::Columns(n) => write!(f, "{}", n),
+        }
+    }
+}
+
+/// Parse error for `ExplorerWidth` strings.
+#[derive(Debug)]
+pub struct ExplorerWidthParseError(String);
+
+impl std::fmt::Display for ExplorerWidthParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ExplorerWidthParseError {}
+
+impl std::str::FromStr for ExplorerWidth {
+    type Err = ExplorerWidthParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err(ExplorerWidthParseError(
+                "explorer width: empty string".into(),
+            ));
+        }
+        if let Some(rest) = s.strip_suffix('%') {
+            let n: u16 = rest.trim().parse().map_err(|_| {
+                ExplorerWidthParseError(format!("explorer width: {:?} is not a valid percent", s))
+            })?;
+            if n > 100 {
+                return Err(ExplorerWidthParseError(format!(
+                    "explorer width: {}% exceeds 100%",
+                    n
+                )));
+            }
+            Ok(Self::Percent(n as u8))
+        } else {
+            let n: u16 = s.parse().map_err(|_| {
+                ExplorerWidthParseError(format!(
+                    "explorer width: {:?} is neither a percent (e.g. \"30%\") nor a column count (e.g. \"24\")",
+                    s
+                ))
+            })?;
+            Ok(Self::Columns(n))
+        }
+    }
+}
+
+impl serde::Serialize for ExplorerWidth {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ExplorerWidth {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(d)?;
+        explorer_width::from_value(&raw)
+    }
+}
+
+impl schemars::JsonSchema for ExplorerWidth {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("ExplorerWidth")
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Declared as string (the canonical written form). Numbers are
+        // still accepted on read via the custom Deserialize impl, for
+        // back-compat with configs saved by older versions.
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": r"^(100%|[1-9]?[0-9]%|\d+)$",
+            "description": "Either a percent like \"30%\" (0–100) or an absolute column count like \"24\".",
+        })
+    }
+}
+
+fn default_explorer_width() -> ExplorerWidth {
+    ExplorerWidth::DEFAULT
+}
+
+fn default_explorer_side() -> FileExplorerSide {
+    FileExplorerSide::default()
+}
+
+fn default_tree_indicator_collapsed() -> String {
+    ">".to_string()
+}
+
+fn default_tree_indicator_expanded() -> String {
+    "▼".to_string()
+}
+
+/// Public default used by the workspace state deserializer.
+pub fn default_explorer_width_value() -> ExplorerWidth {
+    ExplorerWidth::DEFAULT
+}
+
+/// Shared parsing logic for the custom `Deserialize` impl on
+/// `ExplorerWidth` and for the `Option<ExplorerWidth>` variant used by
+/// `PartialConfig`. Accepts all documented wire formats.
+pub(crate) mod explorer_width {
+    use super::ExplorerWidth;
+    use serde::de::{self, Deserialize, Deserializer};
+    use std::str::FromStr;
+
+    /// `Option<ExplorerWidth>` deserializer for `PartialConfig`.
+    ///
+    /// `null`/absent → `None`. Anything else is parsed by
+    /// [`from_value`] and wrapped in `Some`.
+    pub fn deserialize_optional<'de, D>(d: D) -> Result<Option<ExplorerWidth>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = Option::<serde_json::Value>::deserialize(d)?;
+        match raw {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => from_value(&v).map(Some),
+        }
+    }
+
+    pub(super) fn from_value<E: de::Error>(v: &serde_json::Value) -> Result<ExplorerWidth, E> {
+        match v {
+            serde_json::Value::String(s) => ExplorerWidth::from_str(s).map_err(E::custom),
+            serde_json::Value::Number(n) => {
+                if let Some(u) = n.as_u64() {
+                    // Integer number — historical format for percent
+                    // (post-#1118, pre-columns). Keep treating it as
+                    // percent so existing configs stay correct.
+                    if u > 100 {
+                        return Err(E::custom(format!(
+                            "explorer width: {} exceeds 100 (percent). Use \"{}\" for columns.",
+                            u, u
+                        )));
+                    }
+                    Ok(ExplorerWidth::Percent(u as u8))
+                } else if let Some(f) = n.as_f64() {
+                    // Float: legacy fraction in [0, 1] OR explicit percent.
+                    let pct = if (0.0..=1.0).contains(&f) {
+                        f * 100.0
+                    } else {
+                        f
+                    };
+                    if !(0.0..=100.0).contains(&pct) {
+                        return Err(E::custom(format!(
+                            "explorer width: percent {} out of range 0..=100",
+                            pct
+                        )));
+                    }
+                    Ok(ExplorerWidth::Percent(pct.round() as u8))
+                } else {
+                    Err(E::custom("explorer width: unsupported number"))
+                }
+            }
+            _ => Err(E::custom(
+                "explorer width: expected \"30%\", \"24\" (columns), or a number",
+            )),
+        }
+    }
+}
+
+/// Clipboard configuration
+///
+/// Controls which clipboard methods are used for copy/paste operations.
+/// By default, all methods are enabled and the editor tries them in order:
+/// 1. OSC 52 escape sequences (works in modern terminals like Kitty, Alacritty, Wezterm)
+/// 2. System clipboard via X11/Wayland APIs (works in Gnome Console, XFCE Terminal, etc.)
+/// 3. Internal clipboard (always available as fallback)
+///
+/// If you experience hangs or issues (e.g., when using PuTTY or certain SSH setups),
+/// you can disable specific methods.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ClipboardConfig {
+    /// Enable OSC 52 escape sequences for clipboard access (default: true)
+    /// Disable this if your terminal doesn't support OSC 52 or if it causes hangs
+    #[serde(default = "default_true")]
+    pub use_osc52: bool,
+
+    /// Enable system clipboard access via X11/Wayland APIs (default: true)
+    /// Disable this if you don't have a display server or it causes issues
+    #[serde(default = "default_true")]
+    pub use_system_clipboard: bool,
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self {
+            use_osc52: true,
+            use_system_clipboard: true,
+        }
+    }
+}
+
+/// Terminal configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalConfig {
+    /// When viewing terminal scrollback and new output arrives,
+    /// automatically jump back to terminal mode (default: true)
+    #[serde(default = "default_true")]
+    pub jump_to_end_on_output: bool,
+
+    /// Override the shell used by the integrated terminal.
+    ///
+    /// When unset (the default), Fresh launches the shell named by the
+    /// `$SHELL` environment variable (or the platform default if `$SHELL`
+    /// is empty). Set this to run a different program — for example a
+    /// wrapper script that forces an interactive shell — without having
+    /// to change `$SHELL` for the whole process, which other features
+    /// such as `format_on_save` also depend on.
+    ///
+    /// Only affects local authorities; plugin-provided authorities
+    /// (e.g. `docker exec`) keep their own wrapper.
+    #[serde(default)]
+    pub shell: Option<TerminalShellConfig>,
+
+    /// Workaround for fresh#2077: when auto-detecting a shell on Windows,
+    /// skip Microsoft Store **App Execution Alias** stubs (zero-byte
+    /// `APPEXECLINK` reparse points under `%LOCALAPPDATA%\Microsoft\WindowsApps`).
+    /// Spawning such a stub through ConPTY has been reported to crash with
+    /// `0xc0000142` (STATUS_DLL_INIT_FAILED) on Windows 11 23H2.
+    ///
+    /// Default `true`. Set to `false` to launch whatever `pwsh.exe`
+    /// appears first on `PATH`, including the Store alias — useful if you
+    /// want the old behavior, or if you've confirmed the alias works on
+    /// your Windows build. No effect on non-Windows platforms or when
+    /// `terminal.shell` is set explicitly.
+    #[serde(default = "default_true")]
+    pub skip_app_execution_alias: bool,
+
+    /// When restoring an Orchestrator agent session that recorded an
+    /// agent-resume spec (e.g. `claude --session-id <id>` → resume with
+    /// `claude --resume <id>`), rejoin the prior conversation instead of
+    /// re-running the launch command fresh. Default `true`.
+    ///
+    /// Set to `false` to always re-run the launch command on restore (the
+    /// pre-resume behaviour) — useful if you'd rather a restart start each
+    /// agent clean. No effect on sessions without a resume spec.
+    #[serde(default = "default_true")]
+    pub resume_agents: bool,
+
+    /// Dragging on a live terminal selects text: the split drops into
+    /// read-only scrollback (Ctrl+Space resumes) with a real selection
+    /// that the drag extends and Ctrl+C copies; a bare click still only
+    /// focuses the terminal. Set to `false` to make a drag on the live
+    /// grid inert again (default: true)
+    #[serde(default = "default_true")]
+    pub mouse_drag_selects: bool,
+
+    /// When to forward mouse events to the program running inside the
+    /// terminal. `requested` (default) forwards button/drag events only
+    /// to programs that enabled mouse reporting (DECSET 1000/1002/1003),
+    /// buttonless motion only under all-motion (1003), and lets
+    /// Shift+drag bypass forwarding so text can always be selected;
+    /// wheel events additionally reach alternate-screen programs
+    /// (alternate-scroll arrow synthesis for pagers). `alt_screen` is
+    /// the legacy rule: every mouse event is forwarded to any
+    /// alternate-screen program, whether or not it asked for the mouse,
+    /// with no Shift bypass.
+    #[serde(default)]
+    pub mouse_forwarding: TerminalMouseForwarding,
+}
+
+/// Mouse-forwarding policy for programs running inside the terminal
+/// (see [`TerminalConfig::mouse_forwarding`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalMouseForwarding {
+    /// Forward only to programs that subscribed to mouse reporting;
+    /// Shift+drag bypasses so selection always stays available.
+    #[default]
+    Requested,
+    /// Legacy: forward everything to any alternate-screen program.
+    AltScreen,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            jump_to_end_on_output: true,
+            shell: None,
+            skip_app_execution_alias: true,
+            resume_agents: true,
+            mouse_drag_selects: true,
+            mouse_forwarding: TerminalMouseForwarding::default(),
+        }
+    }
+}
+
+/// Explicit shell command + args for the integrated terminal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalShellConfig {
+    /// Executable to launch (e.g. `/usr/bin/fish`, `bash`, or a wrapper
+    /// script). Resolved via `$PATH` when not absolute.
+    pub command: String,
+
+    /// Arguments passed before any user input.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Warning notification configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WarningsConfig {
+    /// Show warning/error indicators in the status bar (default: true)
+    /// When enabled, displays a colored indicator for LSP errors and other warnings
+    #[serde(default = "default_true")]
+    pub show_status_indicator: bool,
+}
+
+impl Default for WarningsConfig {
+    fn default() -> Self {
+        Self {
+            show_status_indicator: true,
+        }
+    }
+}
+
+/// Package manager configuration for plugins and themes
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PackagesConfig {
+    /// Registry sources (git repository URLs containing plugin/theme indices)
+    /// Default: ["https://github.com/sinelaw/fresh-plugins-registry"]
+    #[serde(default = "default_package_sources")]
+    pub sources: Vec<String>,
+}
+
+fn default_package_sources() -> Vec<String> {
+    vec!["https://github.com/sinelaw/fresh-plugins-registry".to_string()]
+}
+
+impl Default for PackagesConfig {
+    fn default() -> Self {
+        Self {
+            sources: default_package_sources(),
+        }
+    }
+}
+
+// Re-export PluginConfig from fresh-core for shared type usage
+pub use fresh_core::config::PluginConfig;
+
+impl Default for FileExplorerConfig {
+    fn default() -> Self {
+        Self {
+            respect_gitignore: true,
+            show_hidden: false,
+            show_gitignored: false,
+            custom_ignore_patterns: Vec::new(),
+            width: default_explorer_width(),
+            preview_tabs: true,
+            side: default_explorer_side(),
+            auto_open_on_last_buffer_close: true,
+            follow_active_buffer: false,
+            compact_directories: true,
+            tree_indicator_collapsed: default_tree_indicator_collapsed(),
+            tree_indicator_expanded: default_tree_indicator_expanded(),
+        }
+    }
+}
+
+/// File browser configuration (for Open File dialog)
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FileBrowserConfig {
+    /// Whether to show hidden files (starting with .) by default in Open File dialog
+    #[serde(default = "default_false")]
+    pub show_hidden: bool,
+}
+
+/// A single key in a sequence
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyPress {
+    /// Key name (e.g., "a", "Enter", "F1")
+    pub key: String,
+    /// Modifiers (e.g., ["ctrl"], ["ctrl", "shift"])
+    #[serde(default)]
+    pub modifiers: Vec<String>,
+}
+
+/// Keybinding definition
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/action"))]
+pub struct Keybinding {
+    /// Key name (e.g., "a", "Enter", "F1") - for single-key bindings
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
+
+    /// Modifiers (e.g., ["ctrl"], ["ctrl", "shift"]) - for single-key bindings
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modifiers: Vec<String>,
+
+    /// Key sequence for chord bindings (e.g., [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}])
+    /// If present, takes precedence over key + modifiers
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyPress>,
+
+    /// Action to perform (e.g., "insert_char", "move_left")
+    pub action: String,
+
+    /// Optional arguments for the action
+    #[serde(default)]
+    pub args: HashMap<String, serde_json::Value>,
+
+    /// Optional condition (e.g., "mode == insert")
+    #[serde(default)]
+    pub when: Option<String>,
+}
+
+/// Keymap configuration (for built-in and user-defined keymaps)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/inherits"))]
+pub struct KeymapConfig {
+    /// Optional parent keymap to inherit from
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherits: Option<String>,
+
+    /// Keybindings defined in this keymap
+    #[serde(default)]
+    pub bindings: Vec<Keybinding>,
+}
+
+/// Formatter configuration for a language
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/command"))]
+pub struct FormatterConfig {
+    /// The formatter command to run (e.g., "rustfmt", "prettier")
+    pub command: String,
+
+    /// Arguments to pass to the formatter
+    /// Use "$FILE" to include the file path
+    #[serde(default)]
+    pub args: Vec<String>,
+
+    /// Whether to pass buffer content via stdin (default: true)
+    /// Most formatters read from stdin and write to stdout
+    #[serde(default = "default_true")]
+    pub stdin: bool,
+
+    /// Timeout in milliseconds (default: 10000)
+    #[serde(default = "default_on_save_timeout")]
+    pub timeout_ms: u64,
+}
+
+/// Action to run when a file is saved (for linters, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/command"))]
+pub struct OnSaveAction {
+    /// The shell command to run
+    /// The file path is available as $FILE or as an argument
+    pub command: String,
+
+    /// Arguments to pass to the command
+    /// Use "$FILE" to include the file path
+    #[serde(default)]
+    pub args: Vec<String>,
+
+    /// Working directory for the command (defaults to project root)
+    #[serde(default)]
+    pub working_dir: Option<String>,
+
+    /// Whether to use the buffer content as stdin
+    #[serde(default)]
+    pub stdin: bool,
+
+    /// Timeout in milliseconds (default: 10000)
+    #[serde(default = "default_on_save_timeout")]
+    pub timeout_ms: u64,
+
+    /// Whether this action is enabled (default: true)
+    /// Set to false to disable an action without removing it from config
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_on_save_timeout() -> u64 {
+    10000
+}
+
+fn default_page_width() -> Option<usize> {
+    Some(80)
+}
+
+/// Language-specific configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/grammar"))]
+pub struct LanguageConfig {
+    /// File extensions for this language (e.g., ["rs"] for Rust)
+    #[serde(default)]
+    pub extensions: Vec<String>,
+
+    /// Exact filenames for this language (e.g., ["Makefile", "GNUmakefile"])
+    #[serde(default)]
+    pub filenames: Vec<String>,
+
+    /// Tree-sitter grammar name
+    #[serde(default)]
+    pub grammar: String,
+
+    /// Comment prefix
+    #[serde(default)]
+    pub comment_prefix: Option<String>,
+
+    /// Whether to auto-indent
+    #[serde(default = "default_true")]
+    pub auto_indent: bool,
+
+    /// Whether to auto-close brackets, parentheses, and quotes for this language.
+    /// If not specified (`null`), falls back to the global `editor.auto_close` setting.
+    #[serde(default)]
+    pub auto_close: Option<bool>,
+
+    /// Whether to auto-surround selected text with matching pairs for this language.
+    /// If not specified (`null`), falls back to the global `editor.auto_surround` setting.
+    #[serde(default)]
+    pub auto_surround: Option<bool>,
+
+    /// Path to a custom grammar file for this language (optional).
+    /// Loaded into the grammar registry at startup and associated with this
+    /// language's `extensions`, so files matching them highlight with it.
+    /// Only Sublime Text `.sublime-syntax` grammars are supported —
+    /// TextMate `.tmLanguage` is a different format syntect cannot load.
+    #[serde(default)]
+    pub textmate_grammar: Option<std::path::PathBuf>,
+
+    /// Whether to show whitespace tab indicators (→) for this language
+    /// Defaults to true. Set to false for languages like Go that use tabs for indentation.
+    #[serde(default = "default_true")]
+    pub show_whitespace_tabs: bool,
+
+    /// Whether to enable line wrapping for this language.
+    /// If not specified (`null`), falls back to the global `editor.line_wrap` setting.
+    /// Useful for prose-heavy languages like Markdown where wrapping is desirable
+    /// even if globally disabled.
+    #[serde(default)]
+    pub line_wrap: Option<bool>,
+
+    /// Column at which to wrap lines for this language.
+    /// If not specified (`null`), falls back to the global `editor.wrap_column` setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
+    #[serde(default)]
+    pub wrap_column: Option<usize>,
+
+    /// Whether to automatically enable page view (compose mode) for this language.
+    /// Page view provides a document-style layout with centered content,
+    /// concealed formatting markers, and intelligent word wrapping.
+    /// If not specified (`null`), page view is not auto-activated.
+    #[serde(default)]
+    pub page_view: Option<bool>,
+
+    /// Width of the page in page view mode (in columns).
+    /// Controls the content width when page view is active, with centering margins.
+    /// If not specified (`null`), falls back to the global `editor.page_width` setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
+    #[serde(default)]
+    pub page_width: Option<usize>,
+
+    /// Whether pressing Tab should insert a tab character instead of spaces.
+    /// If not specified (`null`), falls back to the global `editor.use_tabs` setting.
+    /// Set to true for languages like Go and Makefile that require tabs.
+    #[serde(default)]
+    pub use_tabs: Option<bool>,
+
+    /// Tab size (number of spaces per tab) for this language.
+    /// If not specified, falls back to the global editor.tab_size setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
+    #[serde(default)]
+    pub tab_size: Option<usize>,
+
+    /// The formatter for this language (used by format_buffer command)
+    #[serde(default)]
+    pub formatter: Option<FormatterConfig>,
+
+    /// Whether to automatically format on save (uses the formatter above)
+    #[serde(default)]
+    pub format_on_save: bool,
+
+    /// Actions to run when a file of this language is saved (linters, etc.)
+    /// Actions are run in order; if any fails (non-zero exit), subsequent actions don't run
+    /// Note: Use `formatter` + `format_on_save` for formatting, not on_save
+    #[serde(default)]
+    pub on_save: Vec<OnSaveAction>,
+
+    /// Extra characters (beyond alphanumeric and `_`) considered part of
+    /// identifiers for this language. Used by dabbrev and buffer-word
+    /// completion to correctly tokenise language-specific naming conventions.
+    ///
+    /// Examples:
+    /// - Lisp/Clojure/CSS: `"-"` (kebab-case identifiers)
+    /// - PHP/Bash: `"$"` (variable sigils)
+    /// - Ruby: `"?!"` (predicate/bang methods)
+    /// - Rust (default): `""` (standard alphanumeric + underscore)
+    #[serde(default)]
+    pub word_characters: Option<String>,
+
+    /// Indentation rules for this language. Overrides (and, for unspecified
+    /// patterns, inherits from) the built-in rules. Lets you tune auto-indent —
+    /// or add it for a language Fresh doesn't know — without a tree-sitter
+    /// grammar. See `IndentRulesConfig`.
+    #[serde(default)]
+    pub indent: Option<IndentRulesConfig>,
+
+    /// Whether to render indentation guides for this language.
+    /// If not specified (`null`), follows the global `editor.indentation_guide`
+    /// setting — except for plain text (`text`), where guides default off:
+    /// they are a source-code aid and plain-text indentation rarely nests
+    /// meaningfully. Set `false` to suppress guides for a language even when
+    /// they are enabled globally, or `true` under `[languages.text]` to bring
+    /// them back for plain text.
+    #[serde(default)]
+    pub indentation_guide: Option<bool>,
+}
+
+/// User-overridable auto-indentation rules for a language.
+///
+/// When you press Enter, Fresh looks at the line being split (the "reference
+/// line") and the text that moves down to the new line, and applies these rules
+/// to decide the new line's indent. Each field is a regular expression
+/// ([`regex` crate] syntax: no look-ahead/behind or back-references). A regex is
+/// matched against the line's **code view** — the text with comment and string
+/// spans blanked to spaces first — so a bracket or keyword inside a string or
+/// comment never triggers indentation.
+///
+/// Any field left unset inherits from the language's built-in rules, so you can
+/// override just one pattern. All patterns are optional.
+///
+/// [`regex` crate]: https://docs.rs/regex/latest/regex/#syntax
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct IndentRulesConfig {
+    /// If the reference line matches, the new line is indented one level deeper.
+    /// Example — a line ending with an opening bracket: `[\{\[\(]\s*$`.
+    /// Example — Python block headers ending in a colon: `:\s*$`.
+    #[serde(default)]
+    pub increase_indent_pattern: Option<String>,
+
+    /// If the new line's leading text matches, that line is dedented one level.
+    /// Example — a line starting with a closing bracket: `^\s*[\}\]\)]`.
+    ///
+    /// Also fires live while typing: at the keystroke where the pattern first
+    /// matches the whole line, the line is re-indented one level shallower.
+    /// Include the statement's terminator in the pattern when the language has
+    /// one (e.g. Python's `:`), like VS Code's `decreaseIndentPattern`, so an
+    /// identifier starting with a keyword never triggers a transient dedent.
+    #[serde(default)]
+    pub decrease_indent_pattern: Option<String>,
+
+    /// Like `increase_indent_pattern`, but the extra level applies to the
+    /// immediately following line only (a one-shot indent that doesn't persist).
+    /// Example — a braceless control head: `^\s*(if|for|while)\b.*\)\s*$`.
+    #[serde(default)]
+    pub indent_next_line_pattern: Option<String>,
+
+    /// If the reference line matches, the following line is dedented one level
+    /// (a one-shot dedent). Example — Python flow-exit statements:
+    /// `^\s*(return|pass|raise|break|continue)\b`.
+    #[serde(default)]
+    pub dedent_next_line_pattern: Option<String>,
+
+    /// Cancels `increase_indent_pattern` when the reference line *also* closes
+    /// the block it opened, so one-liners don't over-indent. Example — Ruby
+    /// `\bend\b` matches `def f; end` and stops it from indenting the next line.
+    #[serde(default)]
+    pub self_close_pattern: Option<String>,
+}
+
+impl IndentRulesConfig {
+    /// True when no pattern is set (so there is nothing to register).
+    pub fn is_empty(&self) -> bool {
+        self.increase_indent_pattern.is_none()
+            && self.decrease_indent_pattern.is_none()
+            && self.indent_next_line_pattern.is_none()
+            && self.dedent_next_line_pattern.is_none()
+            && self.self_close_pattern.is_none()
+    }
+}
+
+/// Re-register all `[languages.<id>.indent]` overrides into the indentation
+/// engine. Call after (re)loading config so config edits take effect and
+/// removed blocks stop applying.
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub fn reload_indent_overrides(languages: &HashMap<String, LanguageConfig>) {
+    use crate::primitives::indent_rules;
+    indent_rules::clear_user_rules();
+    for (id, lc) in languages {
+        let Some(ind) = &lc.indent else { continue };
+        if ind.is_empty() {
+            continue;
+        }
+        indent_rules::set_user_rule(
+            id,
+            ind.increase_indent_pattern.as_deref(),
+            ind.decrease_indent_pattern.as_deref(),
+            ind.indent_next_line_pattern.as_deref(),
+            ind.dedent_next_line_pattern.as_deref(),
+            ind.self_close_pattern.as_deref(),
+        );
+    }
+}
+
+/// Resolved editor configuration for a specific buffer.
+///
+/// This struct contains the effective settings for a buffer after applying
+/// language-specific overrides on top of the global editor config.
+///
+/// Use `BufferConfig::resolve()` to create one from a Config and optional language ID.
+#[derive(Debug, Clone)]
+pub struct BufferConfig {
+    /// Number of spaces per tab character
+    pub tab_size: usize,
+
+    /// Whether to insert a tab character (true) or spaces (false) when pressing Tab
+    pub use_tabs: bool,
+
+    /// Whether to auto-indent new lines
+    pub auto_indent: bool,
+
+    /// Whether to auto-close brackets, parentheses, and quotes
+    pub auto_close: bool,
+
+    /// Whether to surround selected text with matching pairs
+    pub auto_surround: bool,
+
+    /// Where the cursor may move beyond the end of a line
+    pub virtual_space: VirtualSpaceMode,
+
+    /// Whether line wrapping is enabled for this buffer
+    pub line_wrap: bool,
+
+    /// Column at which to wrap lines (None = viewport width)
+    pub wrap_column: Option<usize>,
+
+    /// Resolved whitespace indicator visibility
+    pub whitespace: WhitespaceVisibility,
+
+    /// Whether whitespace inside a selection draws its indicators even when
+    /// `whitespace` keeps them hidden. Global (`editor.whitespace_in_selection`);
+    /// no per-language override, so it rides along resolution unchanged.
+    pub whitespace_in_selection: bool,
+
+    /// Formatter command for this buffer
+    pub formatter: Option<FormatterConfig>,
+
+    /// Whether to format on save
+    pub format_on_save: bool,
+
+    /// Actions to run when saving
+    pub on_save: Vec<OnSaveAction>,
+
+    /// Path to custom TextMate grammar (if any)
+    pub textmate_grammar: Option<std::path::PathBuf>,
+
+    /// Extra word-constituent characters for this language (for completion).
+    /// Empty string means standard alphanumeric + underscore only.
+    pub word_characters: String,
+
+    /// Whether indentation guides may render for this buffer. `false`
+    /// suppresses them regardless of the global `editor.indentation_guide`
+    /// mode; `true` lets the global mode apply. An explicit per-language
+    /// `indentation_guide` setting wins; otherwise every language follows
+    /// the global mode except plain text (`text`), which defaults off —
+    /// guides are a source-code aid, and undetected/plain-text files rarely
+    /// have meaningful indentation nesting.
+    pub indentation_guide: bool,
+}
+
+impl BufferConfig {
+    /// Resolve the effective configuration for a buffer given its language.
+    ///
+    /// This merges the global editor settings with any language-specific overrides
+    /// from `Config.languages`.
+    ///
+    /// # Arguments
+    /// * `global_config` - The resolved global configuration
+    /// * `language_id` - Optional language identifier (e.g., "rust", "python")
+    pub fn resolve(global_config: &Config, language_id: Option<&str>) -> Self {
+        let editor = &global_config.editor;
+
+        // Start with global editor settings
+        let mut whitespace = WhitespaceVisibility::from_editor_config(editor);
+        let mut config = BufferConfig {
+            tab_size: editor.tab_size,
+            use_tabs: editor.use_tabs,
+            auto_indent: editor.auto_indent,
+            auto_close: editor.auto_close,
+            auto_surround: editor.auto_surround,
+            virtual_space: editor.virtual_space,
+            line_wrap: editor.line_wrap,
+            wrap_column: editor.wrap_column,
+            whitespace,
+            whitespace_in_selection: editor.whitespace_in_selection,
+            formatter: None,
+            format_on_save: false,
+            on_save: Vec::new(),
+            textmate_grammar: None,
+            word_characters: String::new(),
+            indentation_guide: language_id.is_none_or(|id| id != "text"),
+        };
+
+        // Apply language-specific overrides if available.
+        // If no language config matches and the language is "text" (undetected),
+        // try the default_language config (#1219).
+        let lang_config_ref = language_id
+            .and_then(|id| global_config.languages.get(id))
+            .or_else(|| {
+                // Apply default_language only when language is unknown ("text" or None)
+                match language_id {
+                    None | Some("text") => global_config
+                        .default_language
+                        .as_deref()
+                        .and_then(|lang| global_config.languages.get(lang)),
+                    _ => None,
+                }
+            });
+        if let Some(lang_config) = lang_config_ref {
+            // Indentation guides: language override (only if explicitly set)
+            if let Some(indentation_guide) = lang_config.indentation_guide {
+                config.indentation_guide = indentation_guide;
+            }
+
+            // Tab size: use language setting if specified, else global
+            if let Some(ts) = lang_config.tab_size {
+                config.tab_size = ts;
+            }
+
+            // Use tabs: language override (only if explicitly set)
+            if let Some(use_tabs) = lang_config.use_tabs {
+                config.use_tabs = use_tabs;
+            }
+
+            // Line wrap: language override (only if explicitly set)
+            if let Some(line_wrap) = lang_config.line_wrap {
+                config.line_wrap = line_wrap;
+            }
+
+            // Wrap column: language override (only if explicitly set)
+            if lang_config.wrap_column.is_some() {
+                config.wrap_column = lang_config.wrap_column;
+            }
+
+            // Auto indent: language override
+            config.auto_indent = lang_config.auto_indent;
+
+            // Auto close: language override (only if globally enabled)
+            if config.auto_close {
+                if let Some(lang_auto_close) = lang_config.auto_close {
+                    config.auto_close = lang_auto_close;
+                }
+            }
+
+            // Auto surround: language override (only if globally enabled)
+            if config.auto_surround {
+                if let Some(lang_auto_surround) = lang_config.auto_surround {
+                    config.auto_surround = lang_auto_surround;
+                }
+            }
+
+            // Whitespace tabs: language override can disable tab indicators
+            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
+            config.whitespace = whitespace;
+
+            // Formatter: from language config
+            config.formatter = lang_config.formatter.clone();
+
+            // Format on save: from language config
+            config.format_on_save = lang_config.format_on_save;
+
+            // On save actions: from language config
+            config.on_save = lang_config.on_save.clone();
+
+            // TextMate grammar path: from language config
+            config.textmate_grammar = lang_config.textmate_grammar.clone();
+
+            // Word characters: from language config
+            if let Some(ref wc) = lang_config.word_characters {
+                config.word_characters = wc.clone();
+            }
+        }
+
+        config
+    }
+
+    /// Get the effective indentation string for this buffer.
+    ///
+    /// Returns a tab character if `use_tabs` is true, otherwise returns
+    /// `tab_size` spaces.
+    pub fn indent_string(&self) -> String {
+        if self.use_tabs {
+            "\t".to_string()
+        } else {
+            " ".repeat(self.tab_size)
+        }
+    }
+}
+
+/// Menu bar configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct MenuConfig {
+    /// List of top-level menus in the menu bar
+    #[serde(default)]
+    pub menus: Vec<Menu>,
+}
+
+// Re-export Menu and MenuItem from fresh-core for shared type usage
+pub use fresh_core::menu::{Menu, MenuItem};
+
+/// Extension trait for Menu with editor-specific functionality
+pub trait MenuExt {
+    /// Get the identifier for matching (id if set, otherwise label).
+    /// This is used for keybinding matching and should be stable across translations.
+    fn match_id(&self) -> &str;
+
+    /// Expand all DynamicSubmenu items in this menu to regular Submenu items
+    /// This should be called before the menu is used for rendering/navigation
+    fn expand_dynamic_items(&mut self, themes_dir: &std::path::Path);
+}
+
+impl MenuExt for Menu {
+    fn match_id(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.label)
+    }
+
+    fn expand_dynamic_items(&mut self, themes_dir: &std::path::Path) {
+        self.items = self
+            .items
+            .iter()
+            .map(|item| item.expand_dynamic(themes_dir))
+            .collect();
+    }
+}
+
+/// Extension trait for MenuItem with editor-specific functionality
+pub trait MenuItemExt {
+    /// Expand a DynamicSubmenu into a regular Submenu with generated items.
+    /// Returns the original item if not a DynamicSubmenu.
+    fn expand_dynamic(&self, themes_dir: &std::path::Path) -> MenuItem;
+}
+
+impl MenuItemExt for MenuItem {
+    fn expand_dynamic(&self, themes_dir: &std::path::Path) -> MenuItem {
+        match self {
+            MenuItem::DynamicSubmenu { label, source } => {
+                let items = generate_dynamic_items(source, themes_dir);
+                MenuItem::Submenu {
+                    label: label.clone(),
+                    items,
+                }
+            }
+            other => other.clone(),
+        }
+    }
+}
+
+/// Generate menu items for a dynamic source (runtime only - requires view::theme)
+#[cfg(feature = "runtime")]
+pub fn generate_dynamic_items(source: &str, themes_dir: &std::path::Path) -> Vec<MenuItem> {
+    match source {
+        "copy_with_theme" => {
+            // Generate theme options from available themes
+            let loader = crate::theme::ThemeLoader::new(themes_dir.to_path_buf());
+            let registry = loader.load_all(&[]);
+            registry
+                .list()
+                .iter()
+                .map(|info| {
+                    let mut args = HashMap::new();
+                    args.insert("theme".to_string(), serde_json::json!(info.key));
+                    MenuItem::Action {
+                        label: info.name.clone(),
+                        action: "copy_with_theme".to_string(),
+                        args,
+                        when: Some(context_keys::HAS_SELECTION.to_string()),
+                        checkbox: None,
+                    }
+                })
+                .collect()
+        }
+        _ => vec![MenuItem::Label {
+            info: format!("Unknown source: {}", source),
+        }],
+    }
+}
+
+/// Generate menu items for a dynamic source (WASM stub - returns empty)
+#[cfg(not(feature = "runtime"))]
+pub fn generate_dynamic_items(_source: &str, _themes_dir: &std::path::Path) -> Vec<MenuItem> {
+    // Theme loading not available in WASM builds
+    vec![]
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            theme: default_theme_name(),
+            locale: LocaleName::default(),
+            check_for_updates: true,
+            self_update: true,
+            editor: EditorConfig::default(),
+            file_explorer: FileExplorerConfig::default(),
+            file_browser: FileBrowserConfig::default(),
+            clipboard: ClipboardConfig::default(),
+            terminal: TerminalConfig::default(),
+            keybindings: vec![], // User customizations only; defaults come from active_keybinding_map
+            keybinding_maps: HashMap::new(), // User-defined maps go here
+            active_keybinding_map: default_keybinding_map_name(),
+            languages: Self::default_languages(),
+            default_language: None,
+            lsp_enabled: true,
+            lsp: Self::default_lsp_config(),
+            universal_lsp: Self::default_universal_lsp_config(),
+            warnings: WarningsConfig::default(),
+            plugins: HashMap::new(),
+            packages: PackagesConfig::default(),
+            env: EnvConfig::default(),
+        }
+    }
+}
+
+impl MenuConfig {
+    /// Create a MenuConfig with translated menus using the current locale
+    pub fn translated() -> Self {
+        Self {
+            menus: Self::translated_menus(),
+        }
+    }
+
+    /// Create default menu bar configuration with translated labels.
+    ///
+    /// This is the single source of truth for the editor's menu structure.
+    /// Both the built-in TUI menu bar and the native GUI menu bar (e.g. macOS)
+    /// are built from this definition.
+    pub fn translated_menus() -> Vec<Menu> {
+        vec![
+            // File menu
+            Menu {
+                id: Some("File".to_string()),
+                label: t!("menu.file").to_string(),
+                when: None,
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.file.new_file").to_string(),
+                        action: "new".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.open_file").to_string(),
+                        action: "open".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.save").to_string(),
+                        action: "save".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_SAVE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.save_as").to_string(),
+                        action: "save_as".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_TEXT_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.save_all").to_string(),
+                        action: "save_all".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_SAVE_ALL.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.revert").to_string(),
+                        action: "revert".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_REVERT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.reload_with_encoding").to_string(),
+                        action: "reload_with_encoding".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_REVERT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.close_buffer").to_string(),
+                        action: "close".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.switch_project").to_string(),
+                        action: "switch_project".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.detach").to_string(),
+                        action: "detach".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::SESSION_MODE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.quit").to_string(),
+                        action: "quit".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // Edit menu
+            Menu {
+                id: Some("Edit".to_string()),
+                label: t!("menu.edit").to_string(),
+                when: None,
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.edit.undo").to_string(),
+                        action: "undo".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_EDIT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.redo").to_string(),
+                        action: "redo".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_EDIT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.cut").to_string(),
+                        action: "cut".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_CUT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.copy").to_string(),
+                        action: "copy".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_COPY.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::DynamicSubmenu {
+                        label: t!("menu.edit.copy_with_formatting").to_string(),
+                        source: "copy_with_theme".to_string(),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.paste").to_string(),
+                        action: "paste".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_PASTE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.select_all").to_string(),
+                        action: "select_all".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find").to_string(),
+                        action: "search".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find_in_selection").to_string(),
+                        action: "find_in_selection".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_SELECTION.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find_next").to_string(),
+                        action: "find_next".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find_previous").to_string(),
+                        action: "find_previous".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.replace").to_string(),
+                        action: "replace".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_EDIT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.query_replace").to_string(),
+                        action: "query_replace".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_EDIT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.delete_line").to_string(),
+                        action: "delete_line".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_EDIT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.format_buffer").to_string(),
+                        action: "format_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FORMATTER_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.settings").to_string(),
+                        action: "open_settings".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.keybinding_editor").to_string(),
+                        action: "open_keybinding_editor".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // View menu
+            Menu {
+                id: Some("View".to_string()),
+                label: t!("menu.view").to_string(),
+                when: None,
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.view.file_explorer").to_string(),
+                        action: "toggle_file_explorer".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::FILE_EXPLORER.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.line_numbers").to_string(),
+                        action: "toggle_line_numbers".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::LINE_NUMBERS.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.line_wrap").to_string(),
+                        action: "toggle_line_wrap".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::LINE_WRAP.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.mouse_support").to_string(),
+                        action: "toggle_mouse_capture".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::MOUSE_CAPTURE.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.vertical_scrollbar").to_string(),
+                        action: "toggle_vertical_scrollbar".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::VERTICAL_SCROLLBAR.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.horizontal_scrollbar").to_string(),
+                        action: "toggle_horizontal_scrollbar".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::HORIZONTAL_SCROLLBAR.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.set_background").to_string(),
+                        action: "set_background".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.set_background_blend").to_string(),
+                        action: "set_background_blend".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.set_page_width").to_string(),
+                        action: "set_page_width".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.select_theme").to_string(),
+                        action: "select_theme".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.select_locale").to_string(),
+                        action: "select_locale".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.settings").to_string(),
+                        action: "open_settings".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.calibrate_input").to_string(),
+                        action: "calibrate_input".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.split_horizontal").to_string(),
+                        action: "split_horizontal".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.split_vertical").to_string(),
+                        action: "split_vertical".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.close_split").to_string(),
+                        action: "close_split".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.scroll_sync").to_string(),
+                        action: "toggle_scroll_sync".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_SAME_BUFFER_SPLITS.to_string()),
+                        checkbox: Some(context_keys::SCROLL_SYNC.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.focus_next_split").to_string(),
+                        action: "next_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.focus_prev_split").to_string(),
+                        action: "prev_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.toggle_maximize_split").to_string(),
+                        action: "toggle_maximize_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Submenu {
+                        label: t!("menu.terminal").to_string(),
+                        items: vec![
+                            MenuItem::Action {
+                                label: t!("menu.terminal.open").to_string(),
+                                action: "open_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.close").to_string(),
+                                action: "close_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.restart").to_string(),
+                                action: "restart_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.send_selection").to_string(),
+                                action: "send_selection_to_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Separator { separator: true },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.toggle_keyboard_capture").to_string(),
+                                action: "toggle_keyboard_capture".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                        ],
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Submenu {
+                        label: t!("menu.view.keybinding_style").to_string(),
+                        items: vec![
+                            MenuItem::Action {
+                                label: t!("menu.view.keybinding_default").to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("default"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: Some(context_keys::KEYMAP_DEFAULT.to_string()),
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.view.keybinding_emacs").to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("emacs"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: Some(context_keys::KEYMAP_EMACS.to_string()),
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.view.keybinding_vscode").to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("vscode"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: Some(context_keys::KEYMAP_VSCODE.to_string()),
+                            },
+                            MenuItem::Action {
+                                label: "macOS GUI (⌘)".to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("macos-gui"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: Some(context_keys::KEYMAP_MACOS_GUI.to_string()),
+                            },
+                        ],
+                    },
+                ],
+            },
+            // Selection menu
+            Menu {
+                id: Some("Selection".to_string()),
+                label: t!("menu.selection").to_string(),
+                when: Some(context_keys::HAS_BUFFER.to_string()),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.selection.select_all").to_string(),
+                        action: "select_all".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.select_word").to_string(),
+                        action: "select_word".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.select_line").to_string(),
+                        action: "select_line".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.expand_selection").to_string(),
+                        action: "expand_selection".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.selection.add_cursor_above").to_string(),
+                        action: "add_cursor_above".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.add_cursor_below").to_string(),
+                        action: "add_cursor_below".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.add_cursor_next_match").to_string(),
+                        action: "add_cursor_next_match".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.add_cursors_to_line_ends").to_string(),
+                        action: "add_cursors_to_line_ends".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.remove_secondary_cursors").to_string(),
+                        action: "remove_secondary_cursors".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // Go menu
+            Menu {
+                id: Some("Go".to_string()),
+                label: t!("menu.go").to_string(),
+                when: None,
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.go.goto_line").to_string(),
+                        action: "goto_line".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.goto_definition").to_string(),
+                        action: "lsp_goto_definition".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.find_references").to_string(),
+                        action: "lsp_references".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.goto_implementation").to_string(),
+                        action: "lsp_implementation".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.go.next_buffer").to_string(),
+                        action: "next_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.prev_buffer").to_string(),
+                        action: "prev_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.go.command_palette").to_string(),
+                        action: "command_palette".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // LSP menu
+            Menu {
+                id: Some("LSP".to_string()),
+                label: t!("menu.lsp").to_string(),
+                when: None,
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.lsp.show_hover").to_string(),
+                        action: "lsp_hover".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.goto_definition").to_string(),
+                        action: "lsp_goto_definition".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.find_references").to_string(),
+                        action: "lsp_references".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.goto_implementation").to_string(),
+                        action: "lsp_implementation".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.rename_symbol").to_string(),
+                        action: "lsp_rename".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.show_completions").to_string(),
+                        action: "lsp_completion".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.show_signature").to_string(),
+                        action: "lsp_signature_help".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.code_actions").to_string(),
+                        action: "lsp_code_actions".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.toggle_inlay_hints").to_string(),
+                        action: "toggle_inlay_hints".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: Some(context_keys::INLAY_HINTS.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.toggle_mouse_hover").to_string(),
+                        action: "toggle_mouse_hover".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::MOUSE_HOVER.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.show_status").to_string(),
+                        action: "show_lsp_status".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.restart_server").to_string(),
+                        action: "lsp_restart".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.stop_server").to_string(),
+                        action: "lsp_stop".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.toggle_for_buffer").to_string(),
+                        action: "lsp_toggle_for_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                ],
+            },
+            // Explorer menu (only visible when file explorer is focused)
+            Menu {
+                id: Some("Explorer".to_string()),
+                label: t!("menu.explorer").to_string(),
+                when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.explorer.new_file").to_string(),
+                        action: "file_explorer_new_file".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.new_folder").to_string(),
+                        action: "file_explorer_new_directory".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.open").to_string(),
+                        action: "file_explorer_open".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.rename").to_string(),
+                        action: "file_explorer_rename".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.delete").to_string(),
+                        action: "file_explorer_delete".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.cut").to_string(),
+                        action: "cut".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_CUT.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.copy").to_string(),
+                        action: "copy".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_COPY.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.paste").to_string(),
+                        action: "paste".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::CAN_PASTE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.refresh").to_string(),
+                        action: "file_explorer_refresh".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.show_hidden").to_string(),
+                        action: "file_explorer_toggle_hidden".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER.to_string()),
+                        checkbox: Some(context_keys::FILE_EXPLORER_SHOW_HIDDEN.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.show_gitignored").to_string(),
+                        action: "file_explorer_toggle_gitignored".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER.to_string()),
+                        checkbox: Some(context_keys::FILE_EXPLORER_SHOW_GITIGNORED.to_string()),
+                    },
+                ],
+            },
+            // Help menu
+            Menu {
+                id: Some("Help".to_string()),
+                label: t!("menu.help").to_string(),
+                when: None,
+                items: vec![
+                    MenuItem::Label {
+                        info: format!("Fresh v{}", env!("CARGO_PKG_VERSION")),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.help.show_manual").to_string(),
+                        action: "show_help".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.help.keyboard_shortcuts").to_string(),
+                        action: "keyboard_shortcuts".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.help.event_debug").to_string(),
+                        action: "event_debug".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+        ]
+    }
+}
+
+impl Config {
+    /// The config filename used throughout the application
+    pub(crate) const FILENAME: &'static str = "config.json";
+
+    /// Normalize "0 means not set" sentinels left over from user config.
+    ///
+    /// For these numeric settings a `0` is treated as "not set" rather than a
+    /// literal zero (which would otherwise produce nonsense — e.g. a wrap
+    /// column of 0 wraps every character, a tab size of 0 divides by zero):
+    /// - At the **global** (`editor`) level, `0` falls back to the built-in
+    ///   default behavior: `wrap_column`/`page_width` become `None` (viewport
+    ///   edge / full viewport width) and `tab_size` becomes the default (4).
+    /// - At the **language** level, `0` clears the override to `None` so it
+    ///   inherits the global value, exactly as if the key were omitted.
+    ///
+    /// Called once when the layered config is resolved, so every downstream
+    /// `lang.or(global)` / `lang.unwrap_or(global)` resolver sees clean values.
+    pub(crate) fn normalize_zero_sentinels(&mut self) {
+        if self.editor.wrap_column == Some(0) {
+            self.editor.wrap_column = None;
+        }
+        if self.editor.page_width == Some(0) {
+            self.editor.page_width = None;
+        }
+        if self.editor.tab_size == 0 {
+            self.editor.tab_size = default_tab_size();
+        }
+        for lang in self.languages.values_mut() {
+            if lang.wrap_column == Some(0) {
+                lang.wrap_column = None;
+            }
+            if lang.page_width == Some(0) {
+                lang.page_width = None;
+            }
+            if lang.tab_size == Some(0) {
+                lang.tab_size = None;
+            }
+        }
+    }
+
+    /// Push config values into process-wide flags that need to be readable
+    /// from contexts which don't carry a `Config` handle (e.g. the
+    /// parameter-less `services::terminal::detect_shell`). Idempotent —
+    /// safe to call multiple times as the config is reloaded.
+    pub fn apply_runtime_flags(&self) {
+        #[cfg(windows)]
+        {
+            crate::runtime_flags::set_skip_app_execution_alias(
+                self.terminal.skip_app_execution_alias,
+            );
+        }
+    }
+
+    /// Get the local config path (in the working directory)
+    pub(crate) fn local_config_path(working_dir: &Path) -> std::path::PathBuf {
+        working_dir.join(Self::FILENAME)
+    }
+
+    /// Load configuration from a JSON file
+    ///
+    /// This deserializes the user's config file as a partial config and resolves
+    /// it with system defaults. For HashMap fields like `lsp` and `languages`,
+    /// entries from the user config are merged with the default entries.
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+        let contents = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| ConfigError::IoError(e.to_string()))?;
+
+        // Parse as JSONC (comments/trailing commas tolerated), then deserialize
+        // as PartialConfig and resolve with defaults.
+        let value = parse_config_jsonc(&contents)?;
+        let partial: crate::partial_config::PartialConfig =
+            serde_json::from_value(value).map_err(|e| ConfigError::ParseError(e.to_string()))?;
+
+        Ok(partial.resolve())
+    }
+
+    /// Load a built-in keymap from embedded JSON
+    fn load_builtin_keymap(name: &str) -> Option<KeymapConfig> {
+        let json_content = builtin_keymap_json(name)?;
+
+        match serde_json::from_str(json_content) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                eprintln!("Failed to parse builtin keymap '{}': {}", name, e);
+                None
+            }
+        }
+    }
+
+    /// Resolve a keymap with inheritance
+    /// Returns all bindings from the keymap and its parent chain
+    pub fn resolve_keymap(&self, map_name: &str) -> Vec<Keybinding> {
+        let mut visited = std::collections::HashSet::new();
+        self.resolve_keymap_recursive(map_name, &mut visited)
+    }
+
+    /// Recursive helper for resolve_keymap
+    fn resolve_keymap_recursive(
+        &self,
+        map_name: &str,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> Vec<Keybinding> {
+        // Prevent infinite loops
+        if visited.contains(map_name) {
+            eprintln!(
+                "Warning: Circular inheritance detected in keymap '{}'",
+                map_name
+            );
+            return Vec::new();
+        }
+        visited.insert(map_name.to_string());
+
+        // Try to load the keymap (user-defined or built-in)
+        let keymap = self
+            .keybinding_maps
+            .get(map_name)
+            .cloned()
+            .or_else(|| Self::load_builtin_keymap(map_name));
+
+        let Some(keymap) = keymap else {
+            return Vec::new();
+        };
+
+        // Start with parent bindings (if any)
+        let mut all_bindings = if let Some(ref parent_name) = keymap.inherits {
+            self.resolve_keymap_recursive(parent_name, visited)
+        } else {
+            Vec::new()
+        };
+
+        // Add this keymap's bindings (they override parent bindings)
+        all_bindings.extend(keymap.bindings);
+
+        all_bindings
+    }
+    /// Create default language configurations
+    fn default_languages() -> HashMap<String, LanguageConfig> {
+        let mut languages = HashMap::new();
+
+        languages.insert(
+            "rust".to_string(),
+            LanguageConfig {
+                extensions: vec!["rs".to_string()],
+                filenames: vec![],
+                grammar: "rust".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "rustfmt".to_string(),
+                    args: vec!["--edition".to_string(), "2021".to_string()],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "javascript".to_string(),
+            LanguageConfig {
+                extensions: vec!["js".to_string(), "jsx".to_string(), "mjs".to_string()],
+                filenames: vec![],
+                grammar: "javascript".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "prettier".to_string(),
+                    args: vec!["--stdin-filepath".to_string(), "$FILE".to_string()],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "typescript".to_string(),
+            LanguageConfig {
+                extensions: vec!["ts".to_string(), "tsx".to_string(), "mts".to_string()],
+                filenames: vec![],
+                grammar: "typescript".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "prettier".to_string(),
+                    args: vec!["--stdin-filepath".to_string(), "$FILE".to_string()],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                extensions: vec!["py".to_string(), "pyi".to_string()],
+                filenames: vec![],
+                grammar: "python".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "ruff".to_string(),
+                    args: vec![
+                        "format".to_string(),
+                        "--stdin-filename".to_string(),
+                        "$FILE".to_string(),
+                    ],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gdscript".to_string(),
+            LanguageConfig {
+                extensions: vec!["gd".to_string()],
+                filenames: vec![],
+                grammar: "gdscript".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "c".to_string(),
+            LanguageConfig {
+                extensions: vec!["c".to_string(), "h".to_string()],
+                filenames: vec![],
+                grammar: "c".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "clang-format".to_string(),
+                    args: vec![],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "cpp".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "cpp".to_string(),
+                    "cc".to_string(),
+                    "cxx".to_string(),
+                    "hpp".to_string(),
+                    "hh".to_string(),
+                    "hxx".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "cpp".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "clang-format".to_string(),
+                    args: vec![],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "csharp".to_string(),
+            LanguageConfig {
+                extensions: vec!["cs".to_string()],
+                filenames: vec![],
+                grammar: "C#".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "bash".to_string(),
+            LanguageConfig {
+                extensions: vec!["sh".to_string(), "bash".to_string()],
+                filenames: vec![
+                    ".bash_aliases".to_string(),
+                    ".bash_logout".to_string(),
+                    ".bash_profile".to_string(),
+                    ".bashrc".to_string(),
+                    ".env".to_string(),
+                    ".profile".to_string(),
+                    ".zlogin".to_string(),
+                    ".zlogout".to_string(),
+                    ".zprofile".to_string(),
+                    ".zshenv".to_string(),
+                    ".zshrc".to_string(),
+                    // Common shell script files without extensions
+                    "PKGBUILD".to_string(),
+                    "APKBUILD".to_string(),
+                ],
+                grammar: "bash".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "fish".to_string(),
+            LanguageConfig {
+                extensions: vec!["fish".to_string()],
+                filenames: vec![],
+                grammar: "fish".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "makefile".to_string(),
+            LanguageConfig {
+                extensions: vec!["mk".to_string()],
+                filenames: vec![
+                    "Makefile".to_string(),
+                    "makefile".to_string(),
+                    "GNUmakefile".to_string(),
+                ],
+                grammar: "Makefile".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true), // Makefiles require tabs for recipes
+                tab_size: Some(8),    // Makefiles traditionally use 8-space tabs
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "dockerfile".to_string(),
+            LanguageConfig {
+                extensions: vec!["dockerfile".to_string()],
+                filenames: vec!["Dockerfile".to_string(), "Containerfile".to_string()],
+                grammar: "dockerfile".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "json".to_string(),
+            LanguageConfig {
+                extensions: vec!["json".to_string()],
+                filenames: vec![],
+                grammar: "json".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "prettier".to_string(),
+                    args: vec!["--stdin-filepath".to_string(), "$FILE".to_string()],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // JSONC — JSON with Comments. Shares the tree-sitter-json parser (via
+        // the `jsonc` grammar alias in `fresh-languages`) but keeps a separate
+        // language id so the `vscode-json-language-server` receives the
+        // correct `languageId` and well-known JSONC filenames like
+        // `devcontainer.json` and `tsconfig.json` route here instead of to
+        // strict JSON.
+        languages.insert(
+            "jsonc".to_string(),
+            LanguageConfig {
+                extensions: vec!["jsonc".to_string()],
+                filenames: vec![
+                    "devcontainer.json".to_string(),
+                    ".devcontainer.json".to_string(),
+                    "tsconfig.json".to_string(),
+                    "tsconfig.*.json".to_string(),
+                    "jsconfig.json".to_string(),
+                    "jsconfig.*.json".to_string(),
+                    ".eslintrc.json".to_string(),
+                    ".babelrc".to_string(),
+                    ".babelrc.json".to_string(),
+                    ".swcrc".to_string(),
+                    ".jshintrc".to_string(),
+                    ".hintrc".to_string(),
+                    "settings.json".to_string(),
+                    "keybindings.json".to_string(),
+                    "tasks.json".to_string(),
+                    "launch.json".to_string(),
+                    "extensions.json".to_string(),
+                    "argv.json".to_string(),
+                    // Bun's text lockfile is JSONC (trailing commas), not
+                    // strict JSON (#2921).
+                    "bun.lock".to_string(),
+                ],
+                grammar: "jsonc".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "prettier".to_string(),
+                    args: vec!["--stdin-filepath".to_string(), "$FILE".to_string()],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "toml".to_string(),
+            LanguageConfig {
+                extensions: vec!["toml".to_string()],
+                filenames: vec!["Cargo.lock".to_string()],
+                grammar: "toml".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "yaml".to_string(),
+            LanguageConfig {
+                extensions: vec!["yml".to_string(), "yaml".to_string()],
+                filenames: vec![],
+                grammar: "yaml".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: Some(FormatterConfig {
+                    command: "prettier".to_string(),
+                    args: vec!["--stdin-filepath".to_string(), "$FILE".to_string()],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string(), "markdown".to_string()],
+                filenames: vec!["README".to_string()],
+                grammar: "markdown".to_string(),
+                comment_prefix: None,
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // Go uses tabs for indentation by convention, so hide tab indicators and use tabs
+        languages.insert(
+            "go".to_string(),
+            LanguageConfig {
+                extensions: vec!["go".to_string()],
+                filenames: vec![],
+                grammar: "go".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: false,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true), // Go convention is to use tabs
+                tab_size: Some(8),    // Go convention is 8-space tab width
+                formatter: Some(FormatterConfig {
+                    command: "gofmt".to_string(),
+                    args: vec![],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "odin".to_string(),
+            LanguageConfig {
+                extensions: vec!["odin".to_string()],
+                filenames: vec![],
+                grammar: "odin".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: false,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true),
+                tab_size: Some(8),
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "zig".to_string(),
+            LanguageConfig {
+                extensions: vec!["zig".to_string(), "zon".to_string()],
+                filenames: vec![],
+                grammar: "zig".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "c3".to_string(),
+            LanguageConfig {
+                extensions: vec!["c3".to_string(), "c3i".to_string(), "c3t".to_string()],
+                filenames: vec![],
+                grammar: "c3".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "slang".to_string(),
+            LanguageConfig {
+                extensions: vec!["slang".to_string()],
+                filenames: vec![],
+                grammar: "slang".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "glsl".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "glsl".to_string(),
+                    "glslf".to_string(),
+                    "glslv".to_string(),
+                    "vert".to_string(),
+                    "frag".to_string(),
+                    "geom".to_string(),
+                    "tesc".to_string(),
+                    "tese".to_string(),
+                    "comp".to_string(),
+                    "rgen".to_string(),
+                    "rint".to_string(),
+                    "rahit".to_string(),
+                    "rchit".to_string(),
+                    "rmiss".to_string(),
+                    "rcall".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "glsl".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "hlsl".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "hlsl".to_string(),
+                    "hlsli".to_string(),
+                    "fx".to_string(),
+                    "fxh".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "hlsl".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "wgsl".to_string(),
+            LanguageConfig {
+                extensions: vec!["wgsl".to_string()],
+                filenames: vec![],
+                grammar: "wgsl".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "metal".to_string(),
+            LanguageConfig {
+                extensions: vec!["metal".to_string()],
+                filenames: vec![],
+                grammar: "Metal".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "cuda".to_string(),
+            LanguageConfig {
+                extensions: vec!["cu".to_string(), "cuh".to_string()],
+                filenames: vec![],
+                grammar: "CUDA".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "hip".to_string(),
+            LanguageConfig {
+                extensions: vec!["hip".to_string()],
+                filenames: vec![],
+                grammar: "HIP".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "fortran".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "f".to_string(),
+                    "for".to_string(),
+                    "ftn".to_string(),
+                    "f77".to_string(),
+                    "f90".to_string(),
+                    "f95".to_string(),
+                    "f03".to_string(),
+                    "f08".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "Fortran".to_string(),
+                comment_prefix: Some("!".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "mlir".to_string(),
+            LanguageConfig {
+                extensions: vec!["mlir".to_string()],
+                filenames: vec![],
+                grammar: "MLIR".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "llvm-ir".to_string(),
+            LanguageConfig {
+                extensions: vec!["ll".to_string()],
+                filenames: vec![],
+                grammar: "LLVM IR".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "java".to_string(),
+            LanguageConfig {
+                extensions: vec!["java".to_string()],
+                filenames: vec![],
+                grammar: "java".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "latex".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "tex".to_string(),
+                    "latex".to_string(),
+                    "ltx".to_string(),
+                    "tikz".to_string(),
+                    "bbl".to_string(),
+                ],
+                filenames: vec![
+                    "*.tex.in".to_string(),
+                    "*.ltx.in".to_string(),
+                    "*.latex.in".to_string(),
+                ],
+                grammar: "LaTeX".to_string(),
+                comment_prefix: Some("%".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "tex".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "sty".to_string(),
+                    "cls".to_string(),
+                    "dtx".to_string(),
+                    "ins".to_string(),
+                    "bbx".to_string(),
+                    "cbx".to_string(),
+                    "lbx".to_string(),
+                    "pgf".to_string(),
+                    "ctx".to_string(),
+                    "mkiv".to_string(),
+                    "mkvi".to_string(),
+                    "mkxl".to_string(),
+                    "aux".to_string(),
+                    "toc".to_string(),
+                ],
+                filenames: vec![
+                    "*.sty.in".to_string(),
+                    "*.cls.in".to_string(),
+                    "*.dtx.in".to_string(),
+                    "*.ins.in".to_string(),
+                    "*.bbx.in".to_string(),
+                    "*.cbx.in".to_string(),
+                    "*.lbx.in".to_string(),
+                ],
+                grammar: "TeX".to_string(),
+                comment_prefix: Some("%".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "bibtex".to_string(),
+            LanguageConfig {
+                extensions: vec!["bib".to_string()],
+                filenames: vec!["*.bib.in".to_string()],
+                grammar: "BibTeX".to_string(),
+                comment_prefix: Some("%".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "bibtex-style".to_string(),
+            LanguageConfig {
+                extensions: vec!["bst".to_string()],
+                filenames: vec![],
+                grammar: "BibTeX Style".to_string(),
+                comment_prefix: Some("%".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "templ".to_string(),
+            LanguageConfig {
+                extensions: vec!["templ".to_string()],
+                filenames: vec![],
+                grammar: "go".to_string(), // Templ uses Go-like syntax
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "smali".to_string(),
+            LanguageConfig {
+                extensions: vec!["smali".to_string()],
+                filenames: vec![],
+                grammar: "Smali".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "po".to_string(),
+            LanguageConfig {
+                extensions: vec!["po".to_string(), "pot".to_string()],
+                filenames: vec![],
+                grammar: "Gettext PO".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "m4".to_string(),
+            LanguageConfig {
+                extensions: vec!["m4".to_string(), "ac".to_string()],
+                filenames: vec![],
+                grammar: "M4".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "pbxproj".to_string(),
+            LanguageConfig {
+                extensions: vec!["pbxproj".to_string()],
+                filenames: vec!["project.pbxproj".to_string()],
+                grammar: "Xcode Project".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // Git-related file types
+        languages.insert(
+            "git-rebase".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec!["git-rebase-todo".to_string()],
+                grammar: "Git Rebase Todo".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "git-commit".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec![
+                    "COMMIT_EDITMSG".to_string(),
+                    "MERGE_MSG".to_string(),
+                    "SQUASH_MSG".to_string(),
+                    "TAG_EDITMSG".to_string(),
+                ],
+                grammar: "Git Commit Message".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gitignore".to_string(),
+            LanguageConfig {
+                extensions: vec!["gitignore".to_string()],
+                filenames: vec![
+                    ".gitignore".to_string(),
+                    ".dockerignore".to_string(),
+                    ".npmignore".to_string(),
+                    ".hgignore".to_string(),
+                ],
+                grammar: "Gitignore".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gitconfig".to_string(),
+            LanguageConfig {
+                extensions: vec!["gitconfig".to_string()],
+                filenames: vec![".gitconfig".to_string(), ".gitmodules".to_string()],
+                grammar: "Git Config".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gitattributes".to_string(),
+            LanguageConfig {
+                extensions: vec!["gitattributes".to_string()],
+                filenames: vec![".gitattributes".to_string()],
+                grammar: "Git Attributes".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "typst".to_string(),
+            LanguageConfig {
+                extensions: vec!["typ".to_string()],
+                filenames: vec![],
+                grammar: "Typst".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // --- Languages added for LSP support ---
+        // These entries ensure detect_language() maps file extensions to language
+        // names that match the LSP config keys in default_lsp_config().
+
+        languages.insert(
+            "kotlin".to_string(),
+            LanguageConfig {
+                extensions: vec!["kt".to_string(), "kts".to_string()],
+                filenames: vec![],
+                grammar: "Kotlin".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "swift".to_string(),
+            LanguageConfig {
+                extensions: vec!["swift".to_string()],
+                filenames: vec![],
+                grammar: "Swift".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "scala".to_string(),
+            LanguageConfig {
+                extensions: vec!["scala".to_string(), "sc".to_string()],
+                filenames: vec![],
+                grammar: "Scala".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "dart".to_string(),
+            LanguageConfig {
+                extensions: vec!["dart".to_string()],
+                filenames: vec![],
+                grammar: "Dart".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "elixir".to_string(),
+            LanguageConfig {
+                extensions: vec!["ex".to_string(), "exs".to_string()],
+                filenames: vec![],
+                grammar: "Elixir".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "erlang".to_string(),
+            LanguageConfig {
+                extensions: vec!["erl".to_string(), "hrl".to_string()],
+                filenames: vec![],
+                grammar: "Erlang".to_string(),
+                comment_prefix: Some("%".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "haskell".to_string(),
+            LanguageConfig {
+                extensions: vec!["hs".to_string(), "lhs".to_string()],
+                filenames: vec![],
+                grammar: "Haskell".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "ocaml".to_string(),
+            LanguageConfig {
+                extensions: vec!["ml".to_string(), "mli".to_string()],
+                filenames: vec![],
+                grammar: "OCaml".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "clojure".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "clj".to_string(),
+                    "cljs".to_string(),
+                    "cljc".to_string(),
+                    "edn".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "Clojure".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "r".to_string(),
+            LanguageConfig {
+                extensions: vec!["r".to_string(), "R".to_string(), "rmd".to_string()],
+                filenames: vec![],
+                grammar: "R".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "julia".to_string(),
+            LanguageConfig {
+                extensions: vec!["jl".to_string()],
+                filenames: vec![],
+                grammar: "Julia".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "perl".to_string(),
+            LanguageConfig {
+                extensions: vec!["pl".to_string(), "pm".to_string(), "t".to_string()],
+                filenames: vec!["latexmkrc".to_string(), ".latexmkrc".to_string()],
+                grammar: "Perl".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "nim".to_string(),
+            LanguageConfig {
+                extensions: vec!["nim".to_string(), "nims".to_string(), "nimble".to_string()],
+                filenames: vec![],
+                grammar: "Nim".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gleam".to_string(),
+            LanguageConfig {
+                extensions: vec!["gleam".to_string()],
+                filenames: vec![],
+                grammar: "Gleam".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "racket".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "rkt".to_string(),
+                    "rktd".to_string(),
+                    "rktl".to_string(),
+                    "scrbl".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "Racket".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "fsharp".to_string(),
+            LanguageConfig {
+                extensions: vec!["fs".to_string(), "fsi".to_string(), "fsx".to_string()],
+                filenames: vec![],
+                grammar: "FSharp".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "nix".to_string(),
+            LanguageConfig {
+                extensions: vec!["nix".to_string()],
+                filenames: vec![],
+                grammar: "Nix".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "nushell".to_string(),
+            LanguageConfig {
+                extensions: vec!["nu".to_string()],
+                filenames: vec![],
+                grammar: "Nushell".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "solidity".to_string(),
+            LanguageConfig {
+                extensions: vec!["sol".to_string()],
+                filenames: vec![],
+                grammar: "Solidity".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "verilog".to_string(),
+            LanguageConfig {
+                extensions: vec!["vh".to_string(), "verilog".to_string()],
+                filenames: vec![],
+                grammar: "Verilog".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "systemverilog".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "sv".to_string(),
+                    "svh".to_string(),
+                    "svi".to_string(),
+                    "svp".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "SystemVerilog".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "vhdl".to_string(),
+            LanguageConfig {
+                extensions: vec!["vhd".to_string(), "vhdl".to_string(), "vho".to_string()],
+                filenames: vec![],
+                grammar: "VHDL".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // Assembly is split into two language entries sharing one grammar so
+        // comment toggling matches the dialect: NASM/MASM (Intel) comments
+        // are `;` while GAS (AT&T) x86 comments are `#`.
+        languages.insert(
+            "asm".to_string(),
+            LanguageConfig {
+                extensions: vec!["asm".to_string(), "nasm".to_string()],
+                filenames: vec![],
+                grammar: "Assembly".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gas".to_string(),
+            LanguageConfig {
+                // LSP extension matching is case-sensitive: list both `.s`
+                // and `.S` (GAS source that runs through the C preprocessor).
+                extensions: vec!["s".to_string(), "S".to_string()],
+                filenames: vec![],
+                grammar: "Assembly".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "ruby".to_string(),
+            LanguageConfig {
+                extensions: vec!["rb".to_string(), "rake".to_string(), "gemspec".to_string()],
+                filenames: vec![
+                    "Gemfile".to_string(),
+                    "Rakefile".to_string(),
+                    "Guardfile".to_string(),
+                ],
+                grammar: "Ruby".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "php".to_string(),
+            LanguageConfig {
+                extensions: vec!["php".to_string(), "phtml".to_string()],
+                filenames: vec![],
+                grammar: "PHP".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "lua".to_string(),
+            LanguageConfig {
+                extensions: vec!["lua".to_string()],
+                filenames: vec![],
+                grammar: "Lua".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "html".to_string(),
+            LanguageConfig {
+                extensions: vec!["html".to_string(), "htm".to_string()],
+                filenames: vec![],
+                grammar: "HTML".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "css".to_string(),
+            LanguageConfig {
+                extensions: vec!["css".to_string()],
+                filenames: vec![],
+                grammar: "CSS".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "sql".to_string(),
+            LanguageConfig {
+                extensions: vec!["sql".to_string()],
+                filenames: vec![],
+                grammar: "SQL".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "graphql".to_string(),
+            LanguageConfig {
+                extensions: vec!["graphql".to_string(), "gql".to_string()],
+                filenames: vec![],
+                grammar: "GraphQL".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "protobuf".to_string(),
+            LanguageConfig {
+                extensions: vec!["proto".to_string()],
+                filenames: vec![],
+                grammar: "Protocol Buffers".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "thrift".to_string(),
+            LanguageConfig {
+                extensions: vec!["thrift".to_string()],
+                filenames: vec![],
+                grammar: "Thrift".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "cmake".to_string(),
+            LanguageConfig {
+                extensions: vec!["cmake".to_string()],
+                filenames: vec!["CMakeLists.txt".to_string(), "*.cmake.in".to_string()],
+                grammar: "CMake".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "cmake-cache".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec!["CMakeCache.txt".to_string(), "cmakecache.txt".to_string()],
+                grammar: "CMake Cache".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "pkg-config".to_string(),
+            LanguageConfig {
+                extensions: vec!["pc".to_string()],
+                filenames: vec!["*.pc.in".to_string()],
+                grammar: "pkg-config".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "wavefront-obj".to_string(),
+            LanguageConfig {
+                extensions: vec!["obj".to_string()],
+                filenames: vec![],
+                grammar: "Wavefront OBJ".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "doxygen".to_string(),
+            LanguageConfig {
+                extensions: vec!["dox".to_string(), "doxy".to_string()],
+                filenames: vec![],
+                grammar: "Doxygen".to_string(),
+                comment_prefix: Some("///".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "doxygen-config".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec!["Doxyfile".to_string(), "Doxyfile.in".to_string()],
+                grammar: "Doxygen Config".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "windows-resource".to_string(),
+            LanguageConfig {
+                extensions: vec!["rc".to_string()],
+                filenames: vec![],
+                grammar: "Windows Resource Script".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "terraform".to_string(),
+            LanguageConfig {
+                extensions: vec!["tf".to_string(), "tfvars".to_string(), "hcl".to_string()],
+                filenames: vec![],
+                grammar: "HCL".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "vue".to_string(),
+            LanguageConfig {
+                extensions: vec!["vue".to_string()],
+                filenames: vec![],
+                grammar: "Vue".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "svelte".to_string(),
+            LanguageConfig {
+                extensions: vec!["svelte".to_string()],
+                filenames: vec![],
+                grammar: "Svelte".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "astro".to_string(),
+            LanguageConfig {
+                extensions: vec!["astro".to_string()],
+                filenames: vec![],
+                grammar: "Astro".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // --- Languages for embedded grammars (syntax highlighting only) ---
+
+        languages.insert(
+            "scss".to_string(),
+            LanguageConfig {
+                extensions: vec!["scss".to_string()],
+                filenames: vec![],
+                grammar: "SCSS".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "less".to_string(),
+            LanguageConfig {
+                extensions: vec!["less".to_string()],
+                filenames: vec![],
+                grammar: "LESS".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "powershell".to_string(),
+            LanguageConfig {
+                extensions: vec!["ps1".to_string(), "psm1".to_string(), "psd1".to_string()],
+                filenames: vec![],
+                grammar: "PowerShell".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "kdl".to_string(),
+            LanguageConfig {
+                extensions: vec!["kdl".to_string()],
+                filenames: vec![],
+                grammar: "KDL".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "starlark".to_string(),
+            LanguageConfig {
+                extensions: vec!["bzl".to_string(), "star".to_string(), "bazel".to_string()],
+                filenames: vec![
+                    "BUILD".to_string(),
+                    "BUILD.bazel".to_string(),
+                    "MODULE.bazel".to_string(),
+                    "REPO.bazel".to_string(),
+                    "WORKSPACE".to_string(),
+                    "WORKSPACE.bazel".to_string(),
+                ],
+                grammar: "Starlark".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "justfile".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec![
+                    "justfile".to_string(),
+                    "Justfile".to_string(),
+                    ".justfile".to_string(),
+                ],
+                grammar: "Justfile".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true),
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "earthfile".to_string(),
+            LanguageConfig {
+                extensions: vec!["earth".to_string()],
+                filenames: vec!["Earthfile".to_string()],
+                grammar: "Earthfile".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gomod".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec!["go.mod".to_string(), "go.sum".to_string()],
+                grammar: "Go Module".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true),
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "vlang".to_string(),
+            LanguageConfig {
+                extensions: vec!["v".to_string(), "vv".to_string()],
+                filenames: vec![],
+                grammar: "V".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "ini".to_string(),
+            LanguageConfig {
+                extensions: vec!["ini".to_string(), "cfg".to_string()],
+                filenames: vec![],
+                grammar: "INI".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "hyprlang".to_string(),
+            LanguageConfig {
+                extensions: vec!["hl".to_string()],
+                filenames: vec!["hyprland.conf".to_string()],
+                grammar: "Hyprlang".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages
+    }
+
+    /// Create default LSP configurations
+    #[cfg(feature = "runtime")]
+    fn default_lsp_config() -> HashMap<String, LspLanguageConfig> {
+        let mut lsp = HashMap::new();
+
+        // rust-analyzer (installed via rustup or package manager)
+        // Enable logging to help debug LSP issues (stored in XDG state directory)
+        let ra_log_path = crate::log_dirs::lsp_log_path("rust-analyzer")
+            .to_string_lossy()
+            .to_string();
+
+        Self::populate_lsp_config(&mut lsp, ra_log_path);
+        lsp
+    }
+
+    /// Create empty LSP configurations for WASM builds
+    #[cfg(not(feature = "runtime"))]
+    fn default_lsp_config() -> HashMap<String, LspLanguageConfig> {
+        // LSP is not available in WASM builds
+        HashMap::new()
+    }
+
+    /// Create default universal LSP configurations (servers that apply to all languages)
+    #[cfg(feature = "runtime")]
+    fn default_universal_lsp_config() -> HashMap<String, LspLanguageConfig> {
+        let mut universal = HashMap::new();
+
+        // quicklsp: our built-in universal LSP server.
+        // Provides fast cross-language hover, signature help, go-to-definition,
+        // completions, and workspace symbols with doc extraction and dependency
+        // source indexing. Designed as a lightweight complement to heavyweight
+        // language-specific servers.
+        //
+        // Disabled by default — enable via config or command palette after
+        // installing: `cargo install --path crates/quicklsp`
+        //
+        // `only_features` is left unset so quicklsp can serve every feature it
+        // advertises via its server capabilities (including go-to-definition).
+        // Users who want to scope it down can set `only_features` explicitly.
+        universal.insert(
+            "quicklsp".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "quicklsp".to_string(),
+                args: Some(vec![]),
+                enabled: false,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: Some("QuickLSP".to_string()),
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "Cargo.toml".to_string(),
+                    "package.json".to_string(),
+                    "go.mod".to_string(),
+                    "pyproject.toml".to_string(),
+                    "requirements.txt".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        universal
+    }
+
+    /// Create empty universal LSP configurations for WASM builds
+    #[cfg(not(feature = "runtime"))]
+    fn default_universal_lsp_config() -> HashMap<String, LspLanguageConfig> {
+        HashMap::new()
+    }
+
+    #[cfg(feature = "runtime")]
+    fn populate_lsp_config(lsp: &mut HashMap<String, LspLanguageConfig>, ra_log_path: String) {
+        // rust-analyzer: full mode by default (no init param restrictions, no process limits).
+        // Users can switch to reduced-memory mode via the "Rust LSP: Reduced Memory Mode"
+        // command palette command (provided by the rust-lsp plugin).
+        lsp.insert(
+            "rust".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "rust-analyzer".to_string(),
+                args: Some(vec!["--log-file".to_string(), ra_log_path]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::unlimited(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "Cargo.toml".to_string(),
+                    "rust-project.json".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // pylsp (installed via pip)
+        lsp.insert(
+            "python".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "pylsp".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "pyproject.toml".to_string(),
+                    "setup.py".to_string(),
+                    "setup.cfg".to_string(),
+                    "pyrightconfig.json".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // Godot's built-in GDScript language server listens on TCP port 6005
+        // when enabled in a running editor. Disabled by default to avoid
+        // warnings when Godot or netcat is unavailable.
+        lsp.insert(
+            "gdscript".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "nc".to_string(),
+                args: Some(vec!["127.0.0.1".to_string(), "6005".to_string()]),
+                enabled: false,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: Some("Godot GDScript".to_string()),
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["project.godot".to_string(), ".git".to_string()],
+            }]),
+        );
+
+        // typescript-language-server (installed via npm)
+        // Alternative: use "deno lsp" with initialization_options: {"enable": true}
+        lsp.insert(
+            "javascript".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "typescript-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: HashMap::from([(
+                    "jsx".to_string(),
+                    "javascriptreact".to_string(),
+                )]),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "tsconfig.json".to_string(),
+                    "jsconfig.json".to_string(),
+                    "package.json".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+        lsp.insert(
+            "typescript".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "typescript-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: HashMap::from([(
+                    "tsx".to_string(),
+                    "typescriptreact".to_string(),
+                )]),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "tsconfig.json".to_string(),
+                    "jsconfig.json".to_string(),
+                    "package.json".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // vscode-html-language-server (installed via npm install -g vscode-langservers-extracted)
+        lsp.insert(
+            "html".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "vscode-html-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // vscode-css-language-server (installed via npm install -g vscode-langservers-extracted)
+        lsp.insert(
+            "css".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "vscode-css-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // clangd (installed via package manager)
+        lsp.insert(
+            "c".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "clangd".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "compile_commands.json".to_string(),
+                    "CMakeLists.txt".to_string(),
+                    "Makefile".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+        lsp.insert(
+            "cpp".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "clangd".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "compile_commands.json".to_string(),
+                    "CMakeLists.txt".to_string(),
+                    "Makefile".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // gopls (installed via go install)
+        lsp.insert(
+            "go".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "gopls".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "go.mod".to_string(),
+                    "go.work".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // vscode-json-language-server (installed via npm install -g vscode-langservers-extracted)
+        lsp.insert(
+            "json".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "vscode-json-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // Same server handles JSONC — the vscode-json-language-server accepts
+        // the `jsonc` languageId and enables comment/trailing-comma tolerance
+        // plus schema associations for well-known files.
+        lsp.insert(
+            "jsonc".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "vscode-json-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // csharp-language-server (installed via dotnet tool install -g csharp-ls)
+        lsp.insert(
+            "csharp".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "csharp-ls".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "*.csproj".to_string(),
+                    "*.sln".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // ols - Odin Language Server (https://github.com/DanielGavin/ols)
+        // Build from source: cd ols && ./build.sh (Linux/macOS) or ./build.bat (Windows)
+        lsp.insert(
+            "odin".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "ols".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // zls - Zig Language Server (https://github.com/zigtools/zls)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "zig".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "zls".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // c3lsp - C3 Language Server (https://github.com/pherrymason/c3-lsp)
+        // Install from releases or build from source
+        lsp.insert(
+            "c3".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "c3lsp".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["project.json".to_string(), ".git".to_string()],
+            }]),
+        );
+
+        // slangd - Slang Language Server (ships with the Slang compiler,
+        // https://github.com/shader-slang/slang). Provides completion,
+        // diagnostics, hover, and navigation for Slang/HLSL shader code.
+        lsp.insert(
+            "slang".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "slangd".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // jdtls - Eclipse JDT Language Server for Java
+        // Install via package manager or download from Eclipse
+        lsp.insert(
+            "java".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "jdtls".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "pom.xml".to_string(),
+                    "build.gradle".to_string(),
+                    "build.gradle.kts".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // texlab - LaTeX Language Server (https://github.com/latex-lsp/texlab)
+        // Install via cargo install texlab or package manager
+        lsp.insert(
+            "latex".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "texlab".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // marksman - Markdown Language Server (https://github.com/artempyanykh/marksman)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "markdown".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "marksman".to_string(),
+                args: Some(vec!["server".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // templ - Templ Language Server (https://templ.guide)
+        // Install via go install github.com/a-h/templ/cmd/templ@latest
+        lsp.insert(
+            "templ".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "templ".to_string(),
+                args: Some(vec!["lsp".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // tinymist - Typst Language Server (https://github.com/Myriad-Dreamin/tinymist)
+        // Install via cargo install tinymist or download from releases
+        lsp.insert(
+            "typst".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "tinymist".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // bash-language-server (installed via npm install -g bash-language-server)
+        lsp.insert(
+            "bash".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "bash-language-server".to_string(),
+                args: Some(vec!["start".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // lua-language-server (https://github.com/LuaLS/lua-language-server)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "lua".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "lua-language-server".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    ".luarc.json".to_string(),
+                    ".luarc.jsonc".to_string(),
+                    ".luacheckrc".to_string(),
+                    ".stylua.toml".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // solargraph - Ruby Language Server (installed via gem install solargraph)
+        lsp.insert(
+            "ruby".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "solargraph".to_string(),
+                args: Some(vec!["stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "Gemfile".to_string(),
+                    ".ruby-version".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // phpactor - PHP Language Server (https://phpactor.readthedocs.io)
+        // Install via composer global require phpactor/phpactor
+        lsp.insert(
+            "php".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "phpactor".to_string(),
+                args: Some(vec!["language-server".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["composer.json".to_string(), ".git".to_string()],
+            }]),
+        );
+
+        // yaml-language-server (installed via npm install -g yaml-language-server)
+        lsp.insert(
+            "yaml".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "yaml-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // taplo - TOML Language Server (https://taplo.tamasfe.dev)
+        // Install via cargo install taplo-cli or npm install -g @taplo/cli
+        lsp.insert(
+            "toml".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "taplo".to_string(),
+                args: Some(vec!["lsp".to_string(), "stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // dart - Dart Language Server (#1252)
+        // Included with the Dart SDK
+        lsp.insert(
+            "dart".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "dart".to_string(),
+                args: Some(vec![
+                    "language-server".to_string(),
+                    "--protocol=lsp".to_string(),
+                ]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["pubspec.yaml".to_string(), ".git".to_string()],
+            }]),
+        );
+
+        // nu - Nushell Language Server (#1031)
+        // Built into the Nushell binary
+        lsp.insert(
+            "nushell".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "nu".to_string(),
+                args: Some(vec!["--lsp".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // solc - Solidity Language Server (#857)
+        // Install via npm install -g @nomicfoundation/solidity-language-server
+        lsp.insert(
+            "solidity".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "nomicfoundation-solidity-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // --- DevOps / infrastructure LSP servers ---
+
+        // terraform-ls - Terraform Language Server (https://github.com/hashicorp/terraform-ls)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "terraform".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "terraform-ls".to_string(),
+                args: Some(vec!["serve".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec![
+                    "*.tf".to_string(),
+                    ".terraform".to_string(),
+                    ".git".to_string(),
+                ],
+            }]),
+        );
+
+        // cmake-language-server (https://github.com/regen100/cmake-language-server)
+        // Install via pip: pip install cmake-language-server
+        lsp.insert(
+            "cmake".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "cmake-language-server".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["CMakeLists.txt".to_string(), ".git".to_string()],
+            }]),
+        );
+
+        // buf - Protobuf Language Server (https://buf.build)
+        // Install via package manager or curl
+        lsp.insert(
+            "protobuf".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "buf".to_string(),
+                args: Some(vec!["beta".to_string(), "lsp".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // graphql-lsp (https://github.com/graphql/graphiql/tree/main/packages/graphql-language-service-cli)
+        // Install via npm: npm install -g graphql-language-service-cli
+        lsp.insert(
+            "graphql".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "graphql-lsp".to_string(),
+                args: Some(vec![
+                    "server".to_string(),
+                    "-m".to_string(),
+                    "stream".to_string(),
+                ]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // sqls - SQL Language Server (https://github.com/sqls-server/sqls)
+        // Install via go: go install github.com/sqls-server/sqls@latest
+        lsp.insert(
+            "sql".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "sqls".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // --- Web framework LSP servers ---
+
+        // vue-language-server (installed via npm install -g @vue/language-server)
+        lsp.insert(
+            "vue".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "vue-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // svelte-language-server (installed via npm install -g svelte-language-server)
+        lsp.insert(
+            "svelte".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "svelteserver".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // astro-ls - Astro Language Server (installed via npm install -g @astrojs/language-server)
+        lsp.insert(
+            "astro".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "astro-ls".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // tailwindcss-language-server (installed via npm install -g @tailwindcss/language-server)
+        lsp.insert(
+            "tailwindcss".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "tailwindcss-language-server".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // --- Programming language LSP servers ---
+
+        // nil - Nix Language Server (https://github.com/oxalica/nil)
+        // Install via nix profile install github:oxalica/nil
+        lsp.insert(
+            "nix".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "nil".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // kotlin-language-server (https://github.com/fwcd/kotlin-language-server)
+        // Install via package manager or build from source
+        lsp.insert(
+            "kotlin".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "kotlin-language-server".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // sourcekit-lsp - Swift Language Server (included with Swift toolchain)
+        lsp.insert(
+            "swift".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "sourcekit-lsp".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // metals - Scala Language Server (https://scalameta.org/metals/)
+        // Install via coursier: cs install metals
+        lsp.insert(
+            "scala".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "metals".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // elixir-ls - Elixir Language Server (https://github.com/elixir-lsp/elixir-ls)
+        // Install via mix: mix escript.install hex elixir_ls
+        lsp.insert(
+            "elixir".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "elixir-ls".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // erlang_ls - Erlang Language Server (https://github.com/erlang-ls/erlang_ls)
+        lsp.insert(
+            "erlang".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "erlang_ls".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // haskell-language-server (https://github.com/haskell/haskell-language-server)
+        // Install via ghcup: ghcup install hls
+        lsp.insert(
+            "haskell".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "haskell-language-server-wrapper".to_string(),
+                args: Some(vec!["--lsp".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // ocamllsp - OCaml Language Server (https://github.com/ocaml/ocaml-lsp)
+        // Install via opam: opam install ocaml-lsp-server
+        lsp.insert(
+            "ocaml".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "ocamllsp".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // clojure-lsp (https://github.com/clojure-lsp/clojure-lsp)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "clojure".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "clojure-lsp".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // r-languageserver (https://github.com/REditorSupport/languageserver)
+        // Install via R: install.packages("languageserver")
+        lsp.insert(
+            "r".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "R".to_string(),
+                args: Some(vec![
+                    "--vanilla".to_string(),
+                    "-e".to_string(),
+                    "languageserver::run()".to_string(),
+                ]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // julia LanguageServer.jl (https://github.com/julia-vscode/LanguageServer.jl)
+        // Install via Julia: using Pkg; Pkg.add("LanguageServer")
+        lsp.insert(
+            "julia".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "julia".to_string(),
+                args: Some(vec![
+                    "--startup-file=no".to_string(),
+                    "--history-file=no".to_string(),
+                    "-e".to_string(),
+                    "using LanguageServer; runserver()".to_string(),
+                ]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // PerlNavigator (https://github.com/bscan/PerlNavigator)
+        // Install via npm: npm install -g perlnavigator-server
+        lsp.insert(
+            "perl".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "perlnavigator".to_string(),
+                args: Some(vec!["--stdio".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // nimlangserver - Nim Language Server (https://github.com/nim-lang/langserver)
+        // Install via nimble: nimble install nimlangserver
+        lsp.insert(
+            "nim".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "nimlangserver".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // gleam lsp - Gleam Language Server (built into the gleam binary)
+        lsp.insert(
+            "gleam".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "gleam".to_string(),
+                args: Some(vec!["lsp".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // racket-langserver - Racket Language Server
+        // Install via: raco pkg install racket-langserver
+        lsp.insert(
+            "racket".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "racket-langserver".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["info.rkt".to_string(), ".git".to_string()],
+            }]),
+        );
+
+        // fsharp - F# Language Server (https://github.com/fsharp/FsAutoComplete)
+        // Install via dotnet: dotnet tool install -g fsautocomplete
+        lsp.insert(
+            "fsharp".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "fsautocomplete".to_string(),
+                args: Some(vec!["--adaptive-lsp-server-enabled".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            }]),
+        );
+
+        // svls - SystemVerilog Language Server (https://github.com/dalance/svls)
+        // Install via cargo: cargo install svls
+        // Handles both Verilog and SystemVerilog; configured per-project via .svls.toml.
+        let svls_config = LspServerConfig {
+            command: "svls".to_string(),
+            args: Some(vec![]),
+            enabled: true,
+            auto_start: false,
+            process_limits: ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+            root_markers: vec![".svls.toml".to_string(), ".git".to_string()],
+        };
+        lsp.insert(
+            "verilog".to_string(),
+            LspLanguageConfig::Multi(vec![svls_config.clone()]),
+        );
+        lsp.insert(
+            "systemverilog".to_string(),
+            LspLanguageConfig::Multi(vec![svls_config]),
+        );
+
+        // asm-lsp - Assembly Language Server (https://github.com/bergercookie/asm-lsp)
+        // Install via cargo: cargo install asm-lsp
+        // Handles GAS/NASM/MASM across x86, x86_64, ARM and RISC-V;
+        // configured per-project via .asm-lsp.toml.
+        //
+        // Pull diagnostics are excluded: asm-lsp (≤0.10.x) advertises
+        // `diagnosticProvider` but never answers `textDocument/diagnostic`
+        // (it drops the request id and only pushes `publishDiagnostics`),
+        // so every pull request would stall for the full 30s timeout.
+        // Pushed diagnostics are unaffected by the feature filter.
+        let asm_lsp_config = LspServerConfig {
+            command: "asm-lsp".to_string(),
+            args: Some(vec![]),
+            enabled: true,
+            auto_start: false,
+            process_limits: ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: Some(vec![LspFeature::Diagnostics]),
+            root_markers: vec![".asm-lsp.toml".to_string(), ".git".to_string()],
+        };
+        lsp.insert(
+            "asm".to_string(),
+            LspLanguageConfig::Multi(vec![asm_lsp_config.clone()]),
+        );
+        lsp.insert(
+            "gas".to_string(),
+            LspLanguageConfig::Multi(vec![asm_lsp_config]),
+        );
+    }
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // Validate tab size
+        if self.editor.tab_size == 0 {
+            return Err(ConfigError::ValidationError(
+                "tab_size must be greater than 0".to_string(),
+            ));
+        }
+
+        // Validate scroll offset
+        if self.editor.scroll_offset > 100 {
+            return Err(ConfigError::ValidationError(
+                "scroll_offset must be <= 100".to_string(),
+            ));
+        }
+
+        // Validate keybindings
+        for binding in &self.keybindings {
+            if binding.key.is_empty() {
+                return Err(ConfigError::ValidationError(
+                    "keybinding key cannot be empty".to_string(),
+                ));
+            }
+            if binding.action.is_empty() {
+                return Err(ConfigError::ValidationError(
+                    "keybinding action cannot be empty".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Configuration error types
+#[derive(Debug)]
+pub enum ConfigError {
+    IoError(String),
+    ParseError(String),
+    SerializeError(String),
+    ValidationError(String),
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IoError(msg) => write!(f, "IO error: {msg}"),
+            Self::ParseError(msg) => write!(f, "Parse error: {msg}"),
+            Self::SerializeError(msg) => write!(f, "Serialize error: {msg}"),
+            Self::ValidationError(msg) => write!(f, "Validation error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+/// Parse the contents of a config file as JSONC (JSON with comments and
+/// trailing commas), returning a `serde_json::Value`.
+///
+/// Fresh's config files (`config.json`, project `.fresh/config.json`, the
+/// session file, and `--config <file>`) accept the JSONC superset so users
+/// can annotate settings or comment them out, the same way `parse_jsonc`
+/// already works for plugins. An empty or whitespace/comment-only document
+/// parses as an empty object so a file containing only comments still
+/// resolves to "no overrides" rather than failing.
+pub(crate) fn parse_config_jsonc(contents: &str) -> Result<serde_json::Value, ConfigError> {
+    let value: serde_json::Value =
+        jsonc_parser::parse_to_serde_value(contents, &Default::default())
+            .map_err(|e| ConfigError::ParseError(e.to_string()))?;
+    // Empty / comment-only input deserializes to JSON null; treat it as an
+    // empty object so callers get a mergeable "no overrides" value.
+    Ok(match value {
+        serde_json::Value::Null => serde_json::Value::Object(Default::default()),
+        other => other,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_file_explorer_width_default_is_percent_30() {
+        let cfg = FileExplorerConfig::default();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(30));
+    }
+
+    #[test]
+    fn parse_config_jsonc_tolerates_comments_and_trailing_commas() {
+        let value = parse_config_jsonc(
+            r#"{
+                // line comment
+                "editor": {
+                    "tab_size": 7, /* block comment */
+                    "line_numbers": false,
+                }
+            }"#,
+        )
+        .expect("JSONC with comments should parse");
+        assert_eq!(
+            value.pointer("/editor/tab_size"),
+            Some(&serde_json::json!(7))
+        );
+        assert_eq!(
+            value.pointer("/editor/line_numbers"),
+            Some(&serde_json::json!(false))
+        );
+    }
+
+    #[test]
+    fn parse_config_jsonc_empty_and_comment_only_is_empty_object() {
+        assert_eq!(
+            parse_config_jsonc("").unwrap(),
+            serde_json::Value::Object(Default::default())
+        );
+        assert_eq!(
+            parse_config_jsonc("// just a comment\n").unwrap(),
+            serde_json::Value::Object(Default::default())
+        );
+    }
+
+    #[test]
+    fn parse_config_jsonc_rejects_truly_invalid_input() {
+        // Comment tolerance must not turn into "accept anything" — a genuinely
+        // malformed document still errors so real mistakes surface.
+        assert!(parse_config_jsonc(r#"{ "editor": { "#).is_err());
+    }
+
+    #[test]
+    fn test_tree_indicators_defaults_preserve_current_glyphs() {
+        // Defaults must match the historically rendered symbols so the
+        // baseline file-explorer appearance is unchanged when no config
+        // override is set.
+        let cfg = FileExplorerConfig::default();
+        assert_eq!(cfg.tree_indicator_collapsed, ">");
+        assert_eq!(cfg.tree_indicator_expanded, "▼");
+    }
+
+    #[test]
+    fn test_tree_indicators_can_be_overridden_from_json() {
+        let cfg: FileExplorerConfig = serde_json::from_str(
+            r#"{"tree_indicator_collapsed": "▸", "tree_indicator_expanded": "▾"}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.tree_indicator_collapsed, "▸");
+        assert_eq!(cfg.tree_indicator_expanded, "▾");
+    }
+
+    #[test]
+    fn test_tree_indicators_partial_override_keeps_default_for_unset() {
+        let cfg: FileExplorerConfig =
+            serde_json::from_str(r#"{"tree_indicator_collapsed": "+"}"#).unwrap();
+        assert_eq!(cfg.tree_indicator_collapsed, "+");
+        // Expanded was not set; should fall back to default.
+        assert_eq!(cfg.tree_indicator_expanded, "▼");
+    }
+
+    // --- Wire format acceptance ---------------------------------------
+
+    #[test]
+    fn test_width_accepts_legacy_float_fraction() {
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": 0.3}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(30));
+    }
+
+    #[test]
+    fn test_width_accepts_bare_integer_as_percent() {
+        // Historical format from the earlier integer-percent PR.
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": 42}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(42));
+    }
+
+    #[test]
+    fn test_width_accepts_percent_string() {
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": "75%"}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(75));
+        // Tolerate whitespace around the percent.
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": "42 %"}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Percent(42));
+    }
+
+    #[test]
+    fn test_width_accepts_columns_string() {
+        let cfg: FileExplorerConfig = serde_json::from_str(r#"{"width": "24"}"#).unwrap();
+        assert_eq!(cfg.width, ExplorerWidth::Columns(24));
+    }
+
+    #[test]
+    fn test_width_rejects_percent_over_100() {
+        let err = serde_json::from_str::<FileExplorerConfig>(r#"{"width": "150%"}"#)
+            .expect_err("percent > 100 should be rejected");
+        assert!(err.to_string().contains("100"), "{err}");
+    }
+
+    #[test]
+    fn test_width_rejects_integer_over_100() {
+        // Bare integer is interpreted as percent, so >100 is an error.
+        // Users who want 150 columns should write "150".
+        let err = serde_json::from_str::<FileExplorerConfig>(r#"{"width": 150}"#)
+            .expect_err("bare integer > 100 should be rejected as percent");
+        assert!(err.to_string().contains("percent") || err.to_string().contains("100"));
+    }
+
+    #[test]
+    fn test_width_rejects_garbage_string() {
+        serde_json::from_str::<FileExplorerConfig>(r#"{"width": "big"}"#)
+            .expect_err("non-numeric string should be rejected");
+    }
+
+    // --- Write-side format --------------------------------------------
+
+    #[test]
+    fn test_width_serializes_percent_as_string_with_suffix() {
+        let cfg = FileExplorerConfig {
+            width: ExplorerWidth::Percent(30),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["width"], serde_json::json!("30%"));
+    }
+
+    #[test]
+    fn test_width_serializes_columns_as_string_without_suffix() {
+        let cfg = FileExplorerConfig {
+            width: ExplorerWidth::Columns(24),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["width"], serde_json::json!("24"));
+    }
+
+    #[test]
+    fn test_width_round_trip_both_variants() {
+        for value in [ExplorerWidth::Percent(17), ExplorerWidth::Columns(42)] {
+            let cfg = FileExplorerConfig {
+                width: value,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&cfg).unwrap();
+            let restored: FileExplorerConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored.width, value, "round trip failed for {:?}", value);
+        }
+    }
+
+    // --- to_cols -------------------------------------------------------
+
+    #[test]
+    fn test_to_cols_percent() {
+        assert_eq!(ExplorerWidth::Percent(30).to_cols(100), 30);
+        assert_eq!(ExplorerWidth::Percent(25).to_cols(120), 30);
+        // Zero-width terminal is degenerate; min-clamp can't fit, cap wins.
+        assert_eq!(ExplorerWidth::Percent(30).to_cols(0), 0);
+        assert_eq!(ExplorerWidth::Percent(100).to_cols(200), 200);
+    }
+
+    #[test]
+    fn test_to_cols_columns_clamps_to_terminal() {
+        assert_eq!(ExplorerWidth::Columns(24).to_cols(100), 24);
+        assert_eq!(ExplorerWidth::Columns(999).to_cols(80), 80);
+    }
+
+    /// `to_cols` enforces a floor of `MIN_COLS` so the panel is always
+    /// renderable, regardless of what the config/workspace asked for.
+    #[test]
+    fn test_to_cols_enforces_min_width() {
+        // Tiny or zero configured values get bumped up to MIN_COLS.
+        assert_eq!(
+            ExplorerWidth::Columns(0).to_cols(100),
+            ExplorerWidth::MIN_COLS
+        );
+        assert_eq!(
+            ExplorerWidth::Columns(1).to_cols(100),
+            ExplorerWidth::MIN_COLS
+        );
+        assert_eq!(
+            ExplorerWidth::Columns(4).to_cols(100),
+            ExplorerWidth::MIN_COLS
+        );
+        assert_eq!(
+            ExplorerWidth::Percent(0).to_cols(100),
+            ExplorerWidth::MIN_COLS
+        );
+        // 3% of 100 = 3, bumped up to MIN_COLS.
+        assert_eq!(
+            ExplorerWidth::Percent(3).to_cols(100),
+            ExplorerWidth::MIN_COLS
+        );
+        // Just above the floor: pass through.
+        assert_eq!(
+            ExplorerWidth::Columns(ExplorerWidth::MIN_COLS + 1).to_cols(100),
+            ExplorerWidth::MIN_COLS + 1
+        );
+    }
+
+    /// On very narrow terminals the `MIN_COLS` floor can't fit; the
+    /// terminal-width cap wins and we return whatever columns exist.
+    #[test]
+    fn test_to_cols_min_floor_yields_to_narrow_terminal() {
+        assert_eq!(ExplorerWidth::Columns(10).to_cols(3), 3);
+        assert_eq!(ExplorerWidth::Percent(100).to_cols(2), 2);
+        assert_eq!(ExplorerWidth::Columns(1).to_cols(0), 0);
+    }
+
+    // --- load_from_file regression ------------------------------------
+
+    #[test]
+    fn test_load_from_file_accepts_legacy_float_fraction_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"file_explorer":{"width":0.25}}"#).unwrap();
+        let cfg = Config::load_from_file(&path).expect("legacy float fraction must still load");
+        assert_eq!(cfg.file_explorer.width, ExplorerWidth::Percent(25));
+    }
+
+    #[test]
+    fn test_load_from_file_accepts_columns_string_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"file_explorer":{"width":"42"}}"#).unwrap();
+        let cfg = Config::load_from_file(&path).unwrap();
+        assert_eq!(cfg.file_explorer.width, ExplorerWidth::Columns(42));
+    }
+
+    #[test]
+    fn test_load_from_file_accepts_percent_string_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"file_explorer":{"width":"55%"}}"#).unwrap();
+        let cfg = Config::load_from_file(&path).unwrap();
+        assert_eq!(cfg.file_explorer.width, ExplorerWidth::Percent(55));
+    }
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+        assert_eq!(config.editor.tab_size, 4);
+        assert!(config.editor.line_numbers);
+        assert!(config.editor.syntax_highlighting);
+        assert!(config.languages.contains_key("gdscript"));
+        assert_eq!(config.languages["gdscript"].extensions, vec!["gd"]);
+        assert_eq!(config.languages["thrift"].extensions, vec!["thrift"]);
+        assert_eq!(config.languages["thrift"].grammar, "Thrift");
+        // keybindings is empty by design - it's for user customizations only
+        // The actual keybindings come from resolve_keymap(active_keybinding_map)
+        assert!(config.keybindings.is_empty());
+        // But the resolved keymap should have bindings
+        let resolved = config.resolve_keymap(&config.active_keybinding_map);
+        assert!(!resolved.is_empty());
+    }
+
+    #[test]
+    fn test_all_builtin_keymaps_loadable() {
+        for name in KeybindingMapName::BUILTIN_OPTIONS {
+            let keymap = Config::load_builtin_keymap(name);
+            assert!(keymap.is_some(), "Failed to load builtin keymap '{}'", name);
+        }
+    }
+
+    #[test]
+    fn test_config_validation() {
+        let mut config = Config::default();
+        assert!(config.validate().is_ok());
+
+        config.editor.tab_size = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_macos_keymap_inherits_enter_bindings() {
+        let config = Config::default();
+        let bindings = config.resolve_keymap("macos");
+
+        let enter_bindings: Vec<_> = bindings.iter().filter(|b| b.key == "Enter").collect();
+        assert!(
+            !enter_bindings.is_empty(),
+            "macos keymap should inherit Enter bindings from default, got {} Enter bindings",
+            enter_bindings.len()
+        );
+        // Should have at least insert_newline for normal mode
+        let has_insert_newline = enter_bindings.iter().any(|b| b.action == "insert_newline");
+        assert!(
+            has_insert_newline,
+            "macos keymap should have insert_newline action for Enter key"
+        );
+    }
+
+    #[test]
+    fn test_config_serialize_deserialize() {
+        // Test that Config can be serialized and deserialized correctly
+        let config = Config::default();
+
+        // Serialize to JSON
+        let json = serde_json::to_string_pretty(&config).unwrap();
+
+        // Deserialize back
+        let loaded: Config = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(config.editor.tab_size, loaded.editor.tab_size);
+        assert_eq!(config.theme, loaded.theme);
+    }
+
+    #[test]
+    fn test_indentation_guide_mode_rejects_booleans() {
+        assert!(
+            serde_json::from_str::<Config>(r#"{"editor":{"indentation_guide":false}}"#).is_err()
+        );
+        assert!(
+            serde_json::from_str::<Config>(r#"{"editor":{"indentation_guide":true}}"#).is_err()
+        );
+    }
+
+    #[test]
+    fn test_indentation_guide_mode_accepts_string_modes() {
+        for (value, expected) in [
+            ("none", IndentationGuideMode::None),
+            ("all", IndentationGuideMode::All),
+            ("active", IndentationGuideMode::Active),
+        ] {
+            let json = format!(r#"{{"editor":{{"indentation_guide":"{}"}}}}"#, value);
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            assert_eq!(cfg.editor.indentation_guide, expected);
+        }
+    }
+
+    #[test]
+    fn test_indentation_guide_glyph_defaults_and_deserializes() {
+        assert_eq!(Config::default().editor.indentation_guide_glyph, "▏");
+
+        let cfg: Config = serde_json::from_str(
+            r#"{"editor":{"indentation_guide":"all","indentation_guide_glyph":"┊"}}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.editor.indentation_guide, IndentationGuideMode::All);
+        assert_eq!(cfg.editor.indentation_guide_glyph, "┊");
+    }
+
+    #[test]
+    fn test_rainbow_indentation_defaults_off_and_deserializes() {
+        assert!(!Config::default().editor.rainbow_indentation);
+        let cfg: Config =
+            serde_json::from_str(r#"{"editor":{"rainbow_indentation":true}}"#).unwrap();
+        assert!(cfg.editor.rainbow_indentation);
+    }
+
+    #[test]
+    fn test_indentation_guide_glyph_normalizes_whitespace_and_blank_values() {
+        let cfg: Config =
+            serde_json::from_str(r#"{"editor":{"indentation_guide_glyph":"  ┊  "}}"#).unwrap();
+        assert_eq!(cfg.editor.indentation_guide_glyph, "┊");
+
+        let cfg: Config =
+            serde_json::from_str(r#"{"editor":{"indentation_guide_glyph":"   "}}"#).unwrap();
+        assert_eq!(cfg.editor.indentation_guide_glyph, "▏");
+    }
+
+    #[test]
+    fn test_language_indentation_guides_enabled_defaults() {
+        let config = Config::default();
+        // Plain text defaults off; code languages follow the global mode.
+        assert!(!BufferConfig::resolve(&config, Some("text")).indentation_guide);
+        assert!(BufferConfig::resolve(&config, Some("rust")).indentation_guide);
+        // Unknown languages (no config entry) follow the global mode too,
+        // as does a buffer with no language at all.
+        assert!(BufferConfig::resolve(&config, Some("some_unknown_lang")).indentation_guide);
+        assert!(BufferConfig::resolve(&config, None).indentation_guide);
+    }
+
+    #[test]
+    fn test_language_indentation_guides_explicit_overrides() {
+        let mut config = Config::default();
+        config.languages.insert(
+            "text".to_string(),
+            LanguageConfig {
+                indentation_guide: Some(true),
+                ..Default::default()
+            },
+        );
+        config.languages.get_mut("rust").unwrap().indentation_guide = Some(false);
+
+        assert!(BufferConfig::resolve(&config, Some("text")).indentation_guide);
+        assert!(!BufferConfig::resolve(&config, Some("rust")).indentation_guide);
+    }
+
+    #[test]
+    fn test_language_indentation_guide_deserializes() {
+        let cfg: Config = serde_json::from_str(
+            r#"{"languages":{"text":{"indentation_guide":true},"rust":{"indentation_guide":false}}}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.languages["text"].indentation_guide, Some(true));
+        assert_eq!(cfg.languages["rust"].indentation_guide, Some(false));
+        assert_eq!(Config::default().languages["rust"].indentation_guide, None);
+    }
+
+    #[test]
+    fn test_config_with_custom_keybinding() {
+        let json = r#"{
+            "editor": {
+                "tab_size": 2
+            },
+            "keybindings": [
+                {
+                    "key": "x",
+                    "modifiers": ["ctrl", "shift"],
+                    "action": "custom_action",
+                    "args": {},
+                    "when": null
+                }
+            ]
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.editor.tab_size, 2);
+        assert_eq!(config.keybindings.len(), 1);
+        assert_eq!(config.keybindings[0].key, "x");
+        assert_eq!(config.keybindings[0].modifiers.len(), 2);
+    }
+
+    #[test]
+    fn test_sparse_config_merges_with_defaults() {
+        // User config that only specifies one LSP server
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write a sparse config - only overriding rust LSP
+        let sparse_config = r#"{
+            "lsp": {
+                "rust": {
+                    "command": "custom-rust-analyzer",
+                    "args": ["--custom-arg"]
+                }
+            }
+        }"#;
+        std::fs::write(&config_path, sparse_config).unwrap();
+
+        // Load the config - should merge with defaults
+        let loaded = Config::load_from_file(&config_path).unwrap();
+
+        // User's rust override should be present
+        assert!(loaded.lsp.contains_key("rust"));
+        assert_eq!(
+            loaded.lsp["rust"].as_slice()[0].command,
+            "custom-rust-analyzer".to_string()
+        );
+
+        // Default LSP servers should also be present (merged from defaults)
+        assert!(
+            loaded.lsp.contains_key("python"),
+            "python LSP should be merged from defaults"
+        );
+        assert!(
+            loaded.lsp.contains_key("typescript"),
+            "typescript LSP should be merged from defaults"
+        );
+        assert!(
+            loaded.lsp.contains_key("javascript"),
+            "javascript LSP should be merged from defaults"
+        );
+
+        // Default language configs should also be present
+        assert!(loaded.languages.contains_key("rust"));
+        assert!(loaded.languages.contains_key("python"));
+        assert!(loaded.languages.contains_key("typescript"));
+    }
+
+    #[test]
+    fn test_empty_config_gets_all_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write an empty config
+        std::fs::write(&config_path, "{}").unwrap();
+
+        let loaded = Config::load_from_file(&config_path).unwrap();
+        let defaults = Config::default();
+
+        // Should have all default LSP servers
+        assert_eq!(loaded.lsp.len(), defaults.lsp.len());
+
+        // Should have all default languages
+        assert_eq!(loaded.languages.len(), defaults.languages.len());
+    }
+
+    #[test]
+    fn test_dynamic_submenu_expansion() {
+        // Test that DynamicSubmenu expands to Submenu with generated items
+        let temp_dir = tempfile::tempdir().unwrap();
+        let themes_dir = temp_dir.path().to_path_buf();
+
+        let dynamic = MenuItem::DynamicSubmenu {
+            label: "Test".to_string(),
+            source: "copy_with_theme".to_string(),
+        };
+
+        let expanded = dynamic.expand_dynamic(&themes_dir);
+
+        // Should expand to a Submenu
+        match expanded {
+            MenuItem::Submenu { label, items } => {
+                assert_eq!(label, "Test");
+                // Should have items for each available theme (embedded themes only, no user themes in temp dir)
+                let loader = crate::theme::ThemeLoader::embedded_only();
+                let registry = loader.load_all(&[]);
+                assert_eq!(items.len(), registry.len());
+
+                // Each item should be an Action with copy_with_theme
+                for (item, theme_info) in items.iter().zip(registry.list().iter()) {
+                    match item {
+                        MenuItem::Action {
+                            label,
+                            action,
+                            args,
+                            ..
+                        } => {
+                            assert_eq!(label, &theme_info.name);
+                            assert_eq!(action, "copy_with_theme");
+                            assert_eq!(
+                                args.get("theme").and_then(|v| v.as_str()),
+                                Some(theme_info.name.as_str())
+                            );
+                        }
+                        _ => panic!("Expected Action item"),
+                    }
+                }
+            }
+            _ => panic!("Expected Submenu after expansion"),
+        }
+    }
+
+    #[test]
+    fn test_non_dynamic_item_unchanged() {
+        // Non-DynamicSubmenu items should be unchanged by expand_dynamic
+        let temp_dir = tempfile::tempdir().unwrap();
+        let themes_dir = temp_dir.path();
+
+        let action = MenuItem::Action {
+            label: "Test".to_string(),
+            action: "test".to_string(),
+            args: HashMap::new(),
+            when: None,
+            checkbox: None,
+        };
+
+        let expanded = action.expand_dynamic(themes_dir);
+        match expanded {
+            MenuItem::Action { label, action, .. } => {
+                assert_eq!(label, "Test");
+                assert_eq!(action, "test");
+            }
+            _ => panic!("Action should remain Action after expand_dynamic"),
+        }
+    }
+
+    #[test]
+    fn test_buffer_config_uses_global_defaults() {
+        let config = Config::default();
+        let buffer_config = BufferConfig::resolve(&config, None);
+
+        assert_eq!(buffer_config.tab_size, config.editor.tab_size);
+        assert_eq!(buffer_config.auto_indent, config.editor.auto_indent);
+        assert!(!buffer_config.use_tabs); // Default is spaces
+        assert!(buffer_config.whitespace.any_tabs()); // Tabs visible by default
+        assert!(buffer_config.formatter.is_none());
+        assert!(!buffer_config.format_on_save);
+    }
+
+    #[test]
+    fn test_buffer_config_applies_language_overrides() {
+        let mut config = Config::default();
+
+        // Add a language config with custom settings
+        config.languages.insert(
+            "go".to_string(),
+            LanguageConfig {
+                extensions: vec!["go".to_string()],
+                filenames: vec![],
+                grammar: "go".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: false, // Go hides tab indicators
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true), // Go uses tabs
+                tab_size: Some(8),    // Go uses 8-space tabs
+                formatter: Some(FormatterConfig {
+                    command: "gofmt".to_string(),
+                    args: vec![],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: true,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        let buffer_config = BufferConfig::resolve(&config, Some("go"));
+
+        assert_eq!(buffer_config.tab_size, 8);
+        assert!(buffer_config.use_tabs);
+        assert!(!buffer_config.whitespace.any_tabs()); // Go disables tab indicators
+        assert!(buffer_config.format_on_save);
+        assert!(buffer_config.formatter.is_some());
+        assert_eq!(buffer_config.formatter.as_ref().unwrap().command, "gofmt");
+    }
+
+    #[test]
+    fn test_buffer_config_unknown_language_uses_global() {
+        let config = Config::default();
+        let buffer_config = BufferConfig::resolve(&config, Some("unknown_lang"));
+
+        // Should fall back to global settings
+        assert_eq!(buffer_config.tab_size, config.editor.tab_size);
+        assert!(!buffer_config.use_tabs);
+    }
+
+    #[test]
+    fn test_buffer_config_per_language_line_wrap() {
+        let mut config = Config::default();
+        config.editor.line_wrap = false;
+
+        // Add markdown with line_wrap override
+        config.languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string()],
+                line_wrap: Some(true),
+                ..Default::default()
+            },
+        );
+
+        // Markdown should override global line_wrap=false
+        let md_config = BufferConfig::resolve(&config, Some("markdown"));
+        assert!(md_config.line_wrap, "Markdown should have line_wrap=true");
+
+        // Other languages should use global default (false)
+        let other_config = BufferConfig::resolve(&config, Some("rust"));
+        assert!(
+            !other_config.line_wrap,
+            "Non-configured languages should use global line_wrap=false"
+        );
+
+        // No language should use global default
+        let no_lang_config = BufferConfig::resolve(&config, None);
+        assert!(
+            !no_lang_config.line_wrap,
+            "No language should use global line_wrap=false"
+        );
+    }
+
+    #[test]
+    fn test_buffer_config_per_language_wrap_column() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(120);
+
+        // Add markdown with wrap_column override
+        config.languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string()],
+                wrap_column: Some(80),
+                ..Default::default()
+            },
+        );
+
+        // Markdown should use its own wrap_column
+        let md_config = BufferConfig::resolve(&config, Some("markdown"));
+        assert_eq!(md_config.wrap_column, Some(80));
+
+        // Other languages should use global wrap_column
+        let other_config = BufferConfig::resolve(&config, Some("rust"));
+        assert_eq!(other_config.wrap_column, Some(120));
+
+        // No language should use global wrap_column
+        let no_lang_config = BufferConfig::resolve(&config, None);
+        assert_eq!(no_lang_config.wrap_column, Some(120));
+    }
+
+    #[test]
+    fn test_normalize_zero_sentinels_global() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(0);
+        config.editor.page_width = Some(0);
+        config.editor.tab_size = 0;
+
+        config.normalize_zero_sentinels();
+
+        // Global 0 -> default behavior.
+        assert_eq!(config.editor.wrap_column, None);
+        assert_eq!(config.editor.page_width, None);
+        assert_eq!(config.editor.tab_size, default_tab_size());
+    }
+
+    #[test]
+    fn test_normalize_zero_sentinels_language_inherits_global() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(120);
+        config.editor.page_width = Some(80);
+        config.editor.tab_size = 8;
+
+        // A language that sets everything to 0 — should clear to None so it
+        // inherits the (non-zero) global values, NOT become the default.
+        config.languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string()],
+                wrap_column: Some(0),
+                page_width: Some(0),
+                tab_size: Some(0),
+                ..Default::default()
+            },
+        );
+
+        config.normalize_zero_sentinels();
+
+        let lang = &config.languages["markdown"];
+        assert_eq!(lang.wrap_column, None);
+        assert_eq!(lang.page_width, None);
+        assert_eq!(lang.tab_size, None);
+
+        // Resolved buffer config inherits the global values.
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert_eq!(md.wrap_column, Some(120));
+        assert_eq!(md.tab_size, 8);
+    }
+
+    #[test]
+    fn test_buffer_config_indent_string() {
+        let config = Config::default();
+
+        // Spaces indent
+        let spaces_config = BufferConfig::resolve(&config, None);
+        assert_eq!(spaces_config.indent_string(), "    "); // 4 spaces
+
+        // Tabs indent - create a language that uses tabs
+        let mut config_with_tabs = Config::default();
+        config_with_tabs.languages.insert(
+            "makefile".to_string(),
+            LanguageConfig {
+                use_tabs: Some(true),
+                tab_size: Some(8),
+                ..Default::default()
+            },
+        );
+        let tabs_config = BufferConfig::resolve(&config_with_tabs, Some("makefile"));
+        assert_eq!(tabs_config.indent_string(), "\t");
+    }
+
+    #[test]
+    fn test_buffer_config_global_use_tabs_inherited() {
+        // When editor.use_tabs is true, buffers without a language-specific
+        // override should inherit the global setting.
+        let mut config = Config::default();
+        config.editor.use_tabs = true;
+
+        // Unknown language inherits global
+        let buffer_config = BufferConfig::resolve(&config, Some("unknown_lang"));
+        assert!(buffer_config.use_tabs);
+
+        // No language inherits global
+        let buffer_config = BufferConfig::resolve(&config, None);
+        assert!(buffer_config.use_tabs);
+
+        // Language with explicit use_tabs: Some(false) overrides global
+        config.languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                use_tabs: Some(false),
+                ..Default::default()
+            },
+        );
+        let buffer_config = BufferConfig::resolve(&config, Some("python"));
+        assert!(!buffer_config.use_tabs);
+
+        // Language with use_tabs: None inherits global true
+        config.languages.insert(
+            "rust".to_string(),
+            LanguageConfig {
+                use_tabs: None,
+                ..Default::default()
+            },
+        );
+        let buffer_config = BufferConfig::resolve(&config, Some("rust"));
+        assert!(buffer_config.use_tabs);
+    }
+
+    /// Verify that every LSP config key has a matching entry in default_languages().
+    /// Without this, detect_language() won't map file extensions to the language name,
+    /// causing "No LSP server configured for this file type" even though the LSP config
+    /// exists. The only exception is "tailwindcss" which attaches to CSS/HTML/JS files
+    /// rather than having its own file type.
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn test_lsp_languages_have_language_config() {
+        let config = Config::default();
+        let exceptions = ["tailwindcss"];
+        for lsp_key in config.lsp.keys() {
+            if exceptions.contains(&lsp_key.as_str()) {
+                continue;
+            }
+            assert!(
+                config.languages.contains_key(lsp_key),
+                "LSP config key '{}' has no matching entry in default_languages(). \
+                 Add a LanguageConfig with the correct file extensions so detect_language() \
+                 can map files to this language.",
+                lsp_key
+            );
+        }
+    }
+
+    /// Well-known JSONC filenames must route to the `jsonc` language so
+    /// they get JSON highlighting instead of falling through to plain
+    /// text. Regression test for #2921: `bun.lock` is JSONC (trailing
+    /// commas) but no default language claimed it.
+    #[test]
+    fn test_default_languages_map_jsonc_filenames() {
+        use crate::language_detect::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        for filename in ["bun.lock", "tsconfig.json", "devcontainer.json"] {
+            assert_eq!(
+                detect_language(Path::new(filename), &languages),
+                Some("jsonc".to_string()),
+                "expected `{filename}` to be detected as jsonc"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn test_gdscript_lsp_disabled_by_default() {
+        let config = Config::default();
+        let server = &config.lsp["gdscript"].as_slice()[0];
+        assert_eq!(server.command, "nc");
+        assert_eq!(
+            server.args,
+            Some(vec!["127.0.0.1".to_string(), "6005".to_string()])
+        );
+        assert!(!server.enabled);
+        assert_eq!(server.name.as_deref(), Some("Godot GDScript"));
+    }
+
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn test_default_config_has_quicklsp_in_universal_lsp() {
+        let config = Config::default();
+        assert!(
+            config.universal_lsp.contains_key("quicklsp"),
+            "Default config should contain quicklsp in universal_lsp"
+        );
+        let quicklsp = &config.universal_lsp["quicklsp"];
+        let server = &quicklsp.as_slice()[0];
+        assert_eq!(server.command, "quicklsp");
+        assert!(!server.enabled, "quicklsp should be disabled by default");
+        assert_eq!(server.name.as_deref(), Some("QuickLSP"));
+        // only_features must stay unset so quicklsp can serve every capability
+        // its server advertises — including go-to-definition. A restrictive
+        // whitelist here silently breaks F12 for users on a vanilla install.
+        assert!(
+            server.only_features.is_none(),
+            "quicklsp must not default to a feature whitelist"
+        );
+        assert!(server.except_features.is_none());
+    }
+
+    #[test]
+    fn test_empty_config_preserves_universal_lsp_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write an empty config
+        std::fs::write(&config_path, "{}").unwrap();
+
+        let loaded = Config::load_from_file(&config_path).unwrap();
+        let defaults = Config::default();
+
+        // Should have all default universal LSP servers
+        assert_eq!(
+            loaded.universal_lsp.len(),
+            defaults.universal_lsp.len(),
+            "Empty config should preserve all default universal_lsp entries"
+        );
+    }
+
+    #[test]
+    fn test_universal_lsp_config_merges_with_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write a config that enables quicklsp
+        let config_json = r#"{
+            "universal_lsp": {
+                "quicklsp": {
+                    "enabled": true
+                }
+            }
+        }"#;
+        std::fs::write(&config_path, config_json).unwrap();
+
+        let loaded = Config::load_from_file(&config_path).unwrap();
+
+        // quicklsp should be enabled (user override)
+        assert!(loaded.universal_lsp.contains_key("quicklsp"));
+        let server = &loaded.universal_lsp["quicklsp"].as_slice()[0];
+        assert!(server.enabled, "User override should enable quicklsp");
+        // Command should be merged from defaults
+        assert_eq!(
+            server.command, "quicklsp",
+            "Default command should be merged when not specified by user"
+        );
+    }
+
+    #[test]
+    fn test_universal_lsp_custom_server_added() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        // Write a config that adds a custom universal server
+        let config_json = r#"{
+            "universal_lsp": {
+                "my-custom-server": {
+                    "command": "my-server",
+                    "enabled": true,
+                    "auto_start": true
+                }
+            }
+        }"#;
+        std::fs::write(&config_path, config_json).unwrap();
+
+        let loaded = Config::load_from_file(&config_path).unwrap();
+
+        // Custom server should be present
+        assert!(
+            loaded.universal_lsp.contains_key("my-custom-server"),
+            "Custom universal server should be loaded"
+        );
+        let server = &loaded.universal_lsp["my-custom-server"].as_slice()[0];
+        assert_eq!(server.command, "my-server");
+        assert!(server.enabled);
+        assert!(server.auto_start);
+
+        // Default quicklsp should also still be present
+        assert!(
+            loaded.universal_lsp.contains_key("quicklsp"),
+            "Default quicklsp should be merged from defaults"
+        );
+    }
+
+    /// asm-lsp (≤0.10.x) advertises `diagnosticProvider` but never answers
+    /// `textDocument/diagnostic`, so every pull request stalls for the full
+    /// 30s timeout. The default config must exclude the diagnostics feature
+    /// (pushed diagnostics don't go through the feature filter).
+    #[test]
+    fn test_asm_lsp_defaults_exclude_pull_diagnostics() {
+        let config = Config::default();
+        for language in ["asm", "gas"] {
+            let LspLanguageConfig::Multi(servers) = &config.lsp[language] else {
+                panic!("expected Multi LSP config for {language}");
+            };
+            let server = &servers[0];
+            assert_eq!(server.command, "asm-lsp");
+            assert_eq!(
+                server.except_features,
+                Some(vec![LspFeature::Diagnostics]),
+                "{language}: asm-lsp must exclude pull diagnostics"
+            );
+        }
+    }
+}
+
+/// The JSON source of a built-in keymap, or `None` for an unknown name.
+///
+/// The keymap files ship with this crate because `Config` resolves
+/// `keymap: "emacs"` here; `fresh-editor`'s keybinding tests read them back
+/// through this function rather than re-embedding the same files.
+pub fn builtin_keymap_json(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "default" => include_str!("../keymaps/default.json"),
+        "emacs" => include_str!("../keymaps/emacs.json"),
+        "vscode" => include_str!("../keymaps/vscode.json"),
+        "macos" => include_str!("../keymaps/macos.json"),
+        "macos-gui" => include_str!("../keymaps/macos-gui.json"),
+        _ => return None,
+    })
+}

@@ -50,7 +50,9 @@
 //! ```
 
 mod storage;
-pub mod types;
+// The on-disk record types live in `fresh-editor-core`: `model::buffer::save`
+// writes them for in-place-write recovery and cannot depend on `services`.
+pub use fresh_editor_core::recovery_types as types;
 
 pub use storage::{RecoveryScope, RecoveryStorage};
 pub use types::{

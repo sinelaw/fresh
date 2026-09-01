@@ -8,8 +8,10 @@
 //! and crossterm types (pure data structures). Modules that depend on runtime-only
 //! code (app, state, config_io, input, tree-sitter) are gated behind runtime feature.
 
-// Theme module is always available (pure types + embedded JSON)
-pub mod theme;
+// Theme data + loader live in `fresh-editor-core` (config and the render
+// primitives below it both need them); re-exported here so `view::theme`
+// keeps resolving.
+pub use fresh_editor_core::theme;
 
 // WASM-compatible modules (pure rendering, no runtime deps)
 #[cfg(any(feature = "runtime", feature = "wasm"))]
@@ -17,7 +19,7 @@ pub mod activation;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod animation;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
-pub mod color_support;
+pub use fresh_editor_core::color_support;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod composite_view;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
@@ -51,7 +53,7 @@ pub mod virtual_text;
 pub mod wrap_index;
 
 /// The single wrap rule — see the module docs.
-pub mod wrap_machine;
+pub use fresh_editor_core::wrap_machine;
 
 // Settings module has internal gating (schema is WASM-compatible)
 #[cfg(any(feature = "runtime", feature = "wasm"))]
@@ -72,7 +74,7 @@ pub mod file_tree;
 #[cfg(feature = "runtime")]
 pub mod keybinding_editor;
 #[cfg(feature = "runtime")]
-pub mod markdown;
+pub use fresh_editor_core::markdown;
 #[cfg(feature = "runtime")]
 pub mod popup;
 #[cfg(feature = "runtime")]

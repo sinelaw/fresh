@@ -1,0 +1,103 @@
+[package]
+name = "fresh-editor-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Data and presentation-primitives layer of the Fresh editor"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["editor", "terminal", "tui", "text-editor"]
+categories = ["command-line-utilities", "text-editors"]
+
+[lib]
+name = "fresh_editor_core"
+path = "src/lib.rs"
+
+[features]
+# `runtime` by default so `cargo check -p fresh-editor-core` on its own is a
+# working configuration; `fresh-editor` depends on this crate with
+# `default-features = false` and forwards its own flags instead.
+default = ["runtime"]
+# Mirrors `fresh-editor`'s features of the same name so the two crates gate
+# the same code the same way; `fresh-editor` forwards its own flags here.
+runtime = [
+    "dep:crossterm",
+    "ratatui/crossterm",
+    "dep:chrono",
+    "dep:fresh-languages",
+    "dep:tokio",
+    "dep:libc",
+    "dep:nix",
+    "dep:pulldown-cmark",
+    "dep:sha2",
+    "dep:syntect",
+    "syntect/regex-onig",
+    "syntect/parsing",
+    "syntect/dump-load",
+    "syntect/dump-create",
+    "syntect/yaml-load",
+    "syntect/default-syntaxes",
+    "syntect/default-themes",
+]
+tree-sitter = ["fresh-languages/bundled-languages"]
+wasm = [
+    "dep:crossterm",
+    "dep:syntect",
+    "syntect/regex-fancy",
+    "syntect/parsing",
+    "syntect/dump-load",
+    "syntect/yaml-load",
+    "syntect/default-syntaxes",
+    "syntect/default-themes",
+]
+
+[dependencies]
+fresh-core.workspace = true
+fresh-i18n.workspace = true
+fresh-languages = { workspace = true, optional = true }
+
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+jsonc-parser.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+regex = { version = "1.12" }
+dirs = { version = "6.0" }
+unicode-width = { version = "0.2" }
+unicode-segmentation = { version = "1.12" }
+encoding_rs = "0.8"
+chardetng = "0.1"
+
+crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
+# Not optional: `widgets` is always compiled and renders through ratatui.
+ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
+tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
+libc = { version = "0.2", optional = true }
+nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+sha2 = { version = "0.10", optional = true }
+syntect = { version = "5.3", default-features = false, optional = true }
+tempfile = { version = "3.25", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+] }
+
+[dev-dependencies]
+proptest = "1.9"
+tempfile = "3.25"
+
+[build-dependencies]
+serde_json.workspace = true
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "dump-create", "yaml-load", "default-syntaxes", "regex-onig"] }
