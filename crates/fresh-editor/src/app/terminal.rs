@@ -1548,8 +1548,22 @@ impl Editor {
     /// retained rects are refreshed with one `layout_only` of the frame
     /// first (`refresh_pane_rects`), then read.
     pub(crate) fn resize_visible_terminals(&mut self) {
-        self.refresh_pane_rects();
-        self.active_window_mut().resize_visible_terminals();
+        self.resize_window_terminals(self.active_window);
+    }
+
+    /// [`Self::resize_visible_terminals`] for `window`, active or not: the
+    /// active window's panes are placed off the frame, another window's off
+    /// one offscreen layout of its own grid — the same two ways the layout
+    /// funnel places them — and then its visible PTYs are sized to them.
+    pub(crate) fn resize_window_terminals(&mut self, window: fresh_core::WindowId) {
+        if window == self.active_window {
+            self.refresh_pane_rects();
+        } else if let Some(w) = self.windows.get_mut(&window) {
+            w.layout_panes_offscreen();
+        }
+        if let Some(w) = self.windows.get_mut(&window) {
+            w.resize_visible_terminals();
+        }
     }
 
     pub fn open_terminal(&mut self) {

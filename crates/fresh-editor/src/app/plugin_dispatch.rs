@@ -4512,6 +4512,10 @@ impl Editor {
         };
         match result {
             Ok((terminal_id, buffer_id, created_split_id)) => {
+                // The spawn may have split the target's grid, and the window
+                // sized its PTYs before the new pane was placed; place the
+                // panes as the grid is now and size them again.
+                self.resize_window_terminals(target_id);
                 if is_active_target {
                     let new_active = self.active_window().active_buffer();
                     if prev_active != Some(new_active) {
