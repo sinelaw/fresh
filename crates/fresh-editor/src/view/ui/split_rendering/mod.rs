@@ -527,6 +527,7 @@ mod tests {
         let mut dummy_theme_map = Vec::new();
         let output = render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -639,6 +640,7 @@ mod tests {
         let mut dummy_theme_map = Vec::new();
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -3301,6 +3303,7 @@ mod tests {
 
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,

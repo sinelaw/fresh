@@ -24,6 +24,8 @@ use std::collections::{BTreeMap, HashSet};
 /// `render_left_margin` and the orchestration code that prepares its input.
 pub(super) struct LeftMarginContext<'a> {
     pub state: &'a EditorState,
+    /// The pane's resolved left margin; see `LineRenderInput::margin`.
+    pub margin: &'a crate::view::margin::MarginConfig,
     pub theme: &'a Theme,
     pub is_continuation: bool,
     /// Line-start byte offset for fold/diagnostic/indicator lookups (None for continuations).
@@ -55,7 +57,7 @@ pub(super) fn render_left_margin(
     line_spans: &mut Vec<Span<'static>>,
     line_view_map: &mut Vec<Option<usize>>,
 ) {
-    if !ctx.state.margins.left_config.enabled {
+    if !ctx.margin.enabled {
         return;
     }
 
@@ -128,7 +130,7 @@ pub(super) fn render_left_margin(
     let use_cursor_line_bg = is_cursor_line && ctx.highlight_current_line && ctx.is_active;
 
     if ctx.is_continuation {
-        let blank = " ".repeat(ctx.state.margins.left_config.width);
+        let blank = " ".repeat(ctx.margin.width);
         let mut style = Style::default().fg(ctx.theme.line_number_fg);
         if use_cursor_line_bg {
             style = style.bg(ctx.theme.current_line_bg);
@@ -138,7 +140,7 @@ pub(super) fn render_left_margin(
         let rendered_text = format!(
             "{:>width$}",
             ctx.gutter_num,
-            width = ctx.state.margins.left_config.width
+            width = ctx.margin.width
         );
         let mut margin_style = if is_cursor_line {
             Style::default().fg(ctx.theme.editor_fg)
@@ -158,7 +160,7 @@ pub(super) fn render_left_margin(
         let rendered_text = format!(
             "{:>width$}",
             display_num,
-            width = ctx.state.margins.left_config.width
+            width = ctx.margin.width
         );
         let mut margin_style = if is_cursor_line {
             Style::default().fg(ctx.theme.editor_fg)
@@ -176,7 +178,7 @@ pub(super) fn render_left_margin(
             ctx.estimated_lines,
             ctx.show_line_numbers,
         );
-        let (rendered_text, style_opt) = margin_content.render(ctx.state.margins.left_config.width);
+        let (rendered_text, style_opt) = margin_content.render(ctx.margin.width);
 
         let mut margin_style =
             style_opt.unwrap_or_else(|| Style::default().fg(ctx.theme.line_number_fg));
@@ -187,7 +189,7 @@ pub(super) fn render_left_margin(
         push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     }
 
-    if ctx.state.margins.left_config.show_separator {
+    if ctx.margin.show_separator {
         let mut separator_style = Style::default().fg(ctx.theme.line_number_fg);
         if use_cursor_line_bg {
             separator_style = separator_style.bg(ctx.theme.current_line_bg);
@@ -195,7 +197,7 @@ pub(super) fn render_left_margin(
         push_span_with_map(
             line_spans,
             line_view_map,
-            ctx.state.margins.left_config.separator.clone(),
+            ctx.margin.separator.clone(),
             separator_style,
             None,
         );
