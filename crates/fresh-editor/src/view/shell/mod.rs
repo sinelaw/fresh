@@ -22,6 +22,7 @@
 //! into the rectangles this same layout produced.
 
 pub mod calibration;
+pub mod content;
 pub mod context_menu;
 pub mod dock;
 pub mod entry;

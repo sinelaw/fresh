@@ -1430,6 +1430,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.dump_ui_tree",
+        desc_key: "cmd.dump_ui_tree_desc",
+        action: || Action::DumpUiTree,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.redraw_screen",
         desc_key: "cmd.redraw_screen_desc",
         action: || Action::RedrawScreen,
