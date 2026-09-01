@@ -189,6 +189,7 @@ pub(super) fn build_view_data(
     cursor_positions: &[usize],
     anchor: Option<BuildAnchor>,
 ) -> ViewData {
+    super::instrument::count_view_data_build();
     let adjusted_visible_count = fold_adjusted_visible_count(
         &state.buffer,
         &state.marker_list,

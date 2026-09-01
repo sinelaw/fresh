@@ -186,11 +186,7 @@ fn push_left_margin(
 
     // Line number (or byte offset in byte_offset_mode).
     let rendered_text = if ctx.byte_offset_mode && ctx.show_line_numbers {
-        format!(
-            "{:>width$}",
-            implicit_gutter_num,
-            width = ctx.margin.width
-        )
+        format!("{:>width$}", implicit_gutter_num, width = ctx.margin.width)
     } else {
         let estimated_lines =
             ctx.state.buffer.line_count().unwrap_or(
@@ -215,10 +211,7 @@ fn push_left_margin(
         if let Some(bg) = implicit_cursor_bg {
             sep_style = sep_style.bg(bg);
         }
-        spans.push(Span::styled(
-            ctx.margin.separator.to_string(),
-            sep_style,
-        ));
+        spans.push(Span::styled(ctx.margin.separator.to_string(), sep_style));
     }
 }
 

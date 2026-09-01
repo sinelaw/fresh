@@ -2253,6 +2253,43 @@ mod tests {
         assert_eq!(top_row(&viewport), 0);
     }
 
+    /// The same-buffer scroll sync's "show the end" is decided in row space:
+    /// the last full page, the row the wheel stops at, with no rows built.
+    #[test]
+    fn scroll_to_end_in_rows_lands_on_the_last_full_page() {
+        use crate::view::viewport::Viewport;
+
+        let text = long_line(300);
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let index = built(&mut buffer, 20);
+        let total = index.total_rows() as usize;
+
+        let mut viewport = Viewport::new(20, 10);
+        viewport.line_wrap_enabled = true;
+        let height = viewport.visible_line_count();
+        let top_row = |vp: &Viewport| {
+            let line = buffer.get_line_number(vp.top_byte());
+            index.line_first_row(line) as usize + vp.top_view_line_offset()
+        };
+
+        assert!(viewport.scroll_to_end_in_rows(&index, &buffer));
+        assert_eq!(top_row(&viewport), total.saturating_sub(height));
+        assert!(
+            !viewport.scroll_to_end_in_rows(&index, &buffer),
+            "already at the end: nothing moves"
+        );
+
+        // Where a wheel scroll to the bottom lands, exactly.
+        let mut wheel = Viewport::new(20, 10);
+        wheel.line_wrap_enabled = true;
+        wheel.scroll_visual_rows(&index, &buffer, 10_000);
+        assert_eq!(top_row(&wheel), top_row(&viewport));
+        assert_eq!(
+            (wheel.top_byte(), wheel.top_view_line_offset()),
+            (viewport.top_byte(), viewport.top_view_line_offset())
+        );
+    }
+
     /// A line with no decorations is resumable at every row — the case the whole
     /// design exists for, where the renderer never has to walk back.
     #[test]
