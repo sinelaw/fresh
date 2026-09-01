@@ -268,8 +268,7 @@ pub struct Event {
     /// Which axis `delta` moves along. `Vertical` for everything else.
     pub axis: Axis,
     /// The byte of the text under the pointer, in the *logical* string of the
-    /// text run this event's target is — `None` when the target is not text,
-    /// or when the mapping is not well defined.
+    /// text run this event's target is — `None` when the target is not text.
     ///
     /// **The library is the only thing that can answer this.** The caller
     /// supplied the string; the library decided which of it is visible and
@@ -279,11 +278,18 @@ pub struct Event {
     /// cell. Both of those exist in this workspace's editor today, the second
     /// as a live defect on any non-ASCII label or value.
     ///
-    /// `None` for wrapped text: `Wrap` may drop the whitespace it breaks at,
-    /// so a row's fragments do not concatenate back to the logical string and
-    /// there is no offset to report. A wrapped field that needs a caret wants
-    /// the window to be the library's too; until then this is honestly absent
-    /// rather than approximately wrong.
+    /// Wrapped text answers as well. A row is not a slice of the logical
+    /// string — the break ate a space, a hanging indent added some — so each
+    /// row says which bytes it *is*, and the press resolves against the row it
+    /// landed on rather than against a count of the rows above it. Whitespace
+    /// a break dropped belongs to no row, so a press past the end of a wrapped
+    /// row reports the byte just past the text that row shows, which is the
+    /// caret position at the row's end.
+    ///
+    /// This is the same mapping, read backwards, that places
+    /// [`TextProps::cursor`](crate::desc::TextProps::cursor) from a byte —
+    /// deliberately, so a press and the caret it moves cannot disagree about
+    /// where the wrap broke.
     pub text_byte: Option<usize>,
     pub key: Option<KeyPress>,
     /// Which press in a run produced this, as the host reported it: `1` for a

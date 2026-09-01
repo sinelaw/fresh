@@ -632,7 +632,11 @@ fn an_empty_scope_keeps_the_keyboard_at_its_root() {
             )
             // The scope root is focusable but skipped, exactly as a panel's
             // fallback key handler is, and nothing inside it takes focus.
-            .child(focusable(col().child(text("nothing focusable"))).key("body").skip_traversal()),
+            .child(
+                focusable(col().child(text("nothing focusable")))
+                    .key("body")
+                    .skip_traversal(),
+            ),
         FRAME,
     );
     let root = ui.find_by_key(&"body".into()).expect("the scope root");

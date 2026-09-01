@@ -159,7 +159,12 @@ impl<M: 'static> Component<M> for TextField<M> {
         // display list; the library does not draw one.
         let mut run = text(shown);
         if s.focused {
-            run = run.cursor_at(caret.min(chars.len()) as u16);
+            // `caret` counts characters; the run is told the byte, and the
+            // library decides which cell that is. The two differ the moment
+            // the value is not ASCII — a caret after `名` is one character,
+            // three bytes and two cells along.
+            let at = caret.min(chars.len());
+            run = run.cursor_byte(chars[..at].iter().map(|c| c.len_utf8()).sum());
         }
 
         let up_click = up;

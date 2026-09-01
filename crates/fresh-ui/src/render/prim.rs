@@ -94,22 +94,29 @@ fn align_offset(align: Align, extent: u16, size: u16) -> i32 {
     }
 }
 
-/// One wrapped row: what it shows, and how it lines up with the source.
+/// One wrapped row: what it shows, and which bytes of the source it is.
 ///
 /// Wrapping is not a pure slicing of the input — it drops the space it broke
-/// at and, for [`Wrap::Hanging`], puts spaces of its own at the front. A
-/// caller that has to map rows back onto the pieces they came from needs both
-/// of those numbers, so the row carries them rather than leaving the caller to
-/// guess (it used to guess: "step past one space if there is one", which is
-/// right only when exactly one was dropped).
+/// at and, for [`Wrap::Hanging`], puts spaces of its own at the front. So a
+/// row cannot be located in the source by counting the rows before it, and a
+/// caller that tries ends up guessing (this used to say "step past one space
+/// if there is one", which is right only when exactly one was dropped).
+///
+/// **The row states it instead, and the invariant is exact:**
+/// `text[indent..] == source[src]`, byte for byte. Everything wrapping added
+/// is in front of `indent`; everything wrapping dropped is in the gap between
+/// one row's `src.end` and the next row's `src.start`. That one fact is the
+/// whole mapping between a caret's byte and the cell it is drawn in — see
+/// [`cell_of`] and [`byte_of`], which are its two directions and read nothing
+/// else.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub text: String,
-    /// Leading chars of `text` that wrapping *added*, with no source behind them.
+    /// Leading chars of `text` that wrapping *added*, with no source behind
+    /// them. They are spaces, so this is equally a byte count and a column.
     pub indent: usize,
-    /// Source chars dropped before this row's first character — the whitespace
-    /// the break consumed.
-    pub skipped: usize,
+    /// The bytes of the source that `text[indent..]` is, verbatim.
+    pub src: std::ops::Range<usize>,
 }
 
 /// The chunks a line breaks into: each carries the spaces that precede it, so
@@ -153,6 +160,11 @@ pub fn wrap_text(text: &str, width: u16, mode: Wrap) -> Vec<String> {
 }
 
 /// [`wrap_text`], keeping each row's alignment with the source.
+///
+/// `src` is maintained beside the text rather than reconstructed from it: the
+/// three places a row can end — a break between chunks, a cut through an
+/// over-long chunk, the end of a paragraph — are the three places that know
+/// how much source went into the row, and each says so where it happens.
 pub fn wrap_rows(text: &str, width: u16, mode: Wrap) -> Vec<Row> {
     use unicode_width::UnicodeWidthStr;
     if width == 0 {
@@ -161,6 +173,10 @@ pub fn wrap_rows(text: &str, width: u16, mode: Wrap) -> Vec<Row> {
     let w = |s: &str| UnicodeWidthStr::width(s);
     let width = width as usize;
     let mut out: Vec<Row> = Vec::new();
+    // Where this paragraph starts in `text`. `split` hands back slices without
+    // saying where they came from, and the `\n` between two of them belongs to
+    // neither row.
+    let mut para_start = 0usize;
     for para in text.split('\n') {
         // What every row after the first starts with. Dropped when it would
         // leave the text almost nothing — a deeply indented line in a narrow
@@ -179,58 +195,106 @@ pub fn wrap_rows(text: &str, width: u16, mode: Wrap) -> Vec<Row> {
         let mut row = Row {
             text: String::new(),
             indent: 0,
-            skipped: 0,
+            src: para_start..para_start,
         };
         let mut first = true;
+        // The source byte the next chunk starts at. `chunks` partitions the
+        // paragraph exactly, so stepping by their lengths tracks it.
+        let mut at = para_start;
         for chunk in chunks(para) {
             // The line's own leading whitespace is source text and stays.
             if first {
                 row.text.push_str(chunk);
                 first = false;
+                at += chunk.len();
+                row.src.end = at;
             } else if w(&row.text) + w(chunk) <= width {
                 row.text.push_str(chunk);
+                at += chunk.len();
+                row.src.end = at;
             } else {
                 // The break eats the spaces before the chunk, and the next row
-                // opens with the hanging indent instead.
+                // opens with the hanging indent instead. The eaten spaces are
+                // in no row's `src`: they are the gap.
                 let body = chunk.trim_start_matches(' ');
-                let eaten = chunk.chars().count() - body.chars().count();
+                at += chunk.len() - body.len();
                 out.push(std::mem::replace(
                     &mut row,
                     Row {
                         text: pad.clone(),
                         indent,
-                        skipped: eaten,
+                        src: at..at,
                     },
                 ));
                 row.text.push_str(body);
+                at += body.len();
+                row.src.end = at;
             }
             // A chunk too long for a row of its own is cut, and the remainder
             // opens the next row — still behind the indent.
             while w(&row.text) > width {
                 let head: String = row.text.chars().take(width).collect();
                 let tail: String = row.text.chars().skip(width).collect();
+                // The indent is spaces, so `head` is `row.indent` added bytes
+                // followed by that many fewer bytes of source: the cut lands
+                // on a source boundary as well as a char one.
+                let cut = row.src.start + (head.len() - row.indent);
                 out.push(Row {
                     text: head,
                     indent: row.indent,
-                    skipped: row.skipped,
+                    src: row.src.start..cut,
                 });
                 row = Row {
                     text: format!("{pad}{tail}"),
                     indent,
-                    skipped: 0,
+                    src: cut..row.src.end,
                 };
             }
         }
         out.push(row);
+        para_start = at + 1;
     }
     if out.is_empty() {
         out.push(Row {
             text: String::new(),
             indent: 0,
-            skipped: 0,
+            src: 0..0,
         });
     }
     out
+}
+
+/// The rows an unwrapped string is: its lines, and nothing added or dropped
+/// except the `\n` between them.
+///
+/// Separate from [`wrap_rows`] because no width is involved, and shared with
+/// it through [`rows_of`] so that the byte mapping has one input whatever the
+/// wrap mode is.
+fn source_rows(text: &str) -> Vec<Row> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    for line in text.split('\n') {
+        out.push(Row {
+            text: line.to_string(),
+            indent: 0,
+            src: at..at + line.len(),
+        });
+        at += line.len() + 1;
+    }
+    out
+}
+
+/// The rows `text` becomes at `width` under `wrap`.
+///
+/// **One entry point on purpose.** Both directions of the byte mapping read
+/// these rows, as does the shaping that paints them; three walks that each
+/// decided for themselves where a break went could disagree, and the failure
+/// would be a caret one cell away from the character it is on.
+pub fn rows_of(text: &str, width: u16, wrap: Wrap) -> Vec<Row> {
+    match wrap {
+        Wrap::None => source_rows(text),
+        mode => wrap_rows(text, width, mode),
+    }
 }
 
 /// One painted fragment: a piece of a row, and the theme it paints in.
@@ -240,119 +304,166 @@ pub struct Frag {
     pub theme: Option<crate::render::spec::ThemeKey>,
 }
 
-/// Wrap a run's pieces as one logical string, reporting each output row as the
-/// fragments that compose it.
+/// A run's rows, shaped: what paints, and where each one came from.
 ///
-/// The pieces are concatenated, wrapped by the same [`wrap_text`] the unstyled
+/// The two halves are produced together and held together because they are
+/// two views of one wrap. `frags` concatenate to the row's text; `row.text`
+/// minus its indent is `whole[row.src]`. Nothing downstream re-derives either
+/// from the other.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Shaping {
+    /// The logical string the rows were shaped from.
+    ///
+    /// **Kept, not recomputed from the props.** `src` indexes *this* string,
+    /// and the framework replaces a live object's props without necessarily
+    /// re-shaping (see [`TextRender::stale`]) — so re-concatenating the props
+    /// would index a string the ranges were never measured against, which is
+    /// a wrong answer at best and a panic on a char boundary at worst.
+    pub whole: String,
+    pub rows: Vec<Row>,
+    /// Row `i`'s painted pieces, in order. Parallel to [`Self::rows`].
+    pub frags: Vec<Vec<Frag>>,
+}
+
+/// Wrap a run's pieces as one logical string, reporting each output row as the
+/// fragments that compose it and the source it is.
+///
+/// The pieces are concatenated, wrapped by the same [`rows_of`] the unstyled
 /// path uses — so styled and unstyled text break identically — and the result
 /// is then cut back into fragments along the original piece boundaries. A wrap
 /// point inside a piece splits it; a row crossing three pieces is three
 /// fragments.
-pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: Wrap) -> Vec<Vec<Frag>> {
+///
+/// The cutting is done by byte range rather than by stepping a char count
+/// alongside the rows: [`Row::src`] already says which bytes the row is, so
+/// intersecting it with each piece's range is the whole of it, and there is no
+/// second opinion about where the wrap broke.
+pub fn shape_runs(runs: &[crate::desc::Run], width: u16, wrap: Wrap) -> Shaping {
     let whole: String = runs.iter().map(|r| &*r.text).collect();
-    let rows: Vec<Row> = match wrap {
-        Wrap::None => whole
-            .split('\n')
-            .map(|s| Row {
-                text: s.to_string(),
-                indent: 0,
-                skipped: 0,
-            })
-            .collect(),
-        mode => wrap_rows(&whole, width, mode),
-    };
+    let rows = rows_of(&whole, width, wrap);
 
-    // Walk the pieces alongside the rows. A row is not a slice of the source —
-    // the break ate whitespace, and a hanging indent added some — so each row
-    // says how much of each, and this steps by those numbers rather than
-    // guessing at them.
-    let mut piece = 0usize;
-    let mut used = 0usize; // chars of the current piece already emitted
-    let mut out: Vec<Vec<Frag>> = Vec::with_capacity(rows.len());
+    // Each piece's byte range in `whole`, in order.
+    let mut bounds: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+    let mut at = 0usize;
+    for r in runs {
+        bounds.push((at, at + r.text.len()));
+        at += r.text.len();
+    }
 
-    // Step over source characters the wrap consumed and nothing shows.
-    let skip = |n: usize, piece: &mut usize, used: &mut usize| {
-        let mut left = n;
-        while left > 0 && *piece < runs.len() {
-            let chars = runs[*piece].text.chars().count();
-            let here = chars.saturating_sub(*used).min(left);
-            *used += here;
-            left -= here;
-            if *used >= chars {
-                *piece += 1;
-                *used = 0;
-            }
-        }
-    };
-
+    let mut frags: Vec<Vec<Frag>> = Vec::with_capacity(rows.len());
+    // Rows run forward through the source and so do the pieces, so the search
+    // for a row's first piece starts where the last row's did. Without it this
+    // would be a scan of every piece per row.
+    let mut first = 0usize;
     for row in &rows {
-        skip(row.skipped, &mut piece, &mut used);
-        let mut frags: Vec<Frag> = Vec::new();
-        let mut at = row.indent; // chars of this row already taken
-        let mut want: usize = row.text.chars().count().saturating_sub(row.indent);
-
+        while first + 1 < bounds.len() && bounds[first].1 <= row.src.start {
+            first += 1;
+        }
+        let mut out: Vec<Frag> = Vec::new();
         // The indent has no source behind it, so it takes the theme of the
-        // text it is indenting — the row it belongs to, not the one before.
+        // text it is indenting: the row it belongs to, not the one before.
         if row.indent > 0 {
-            let mut theme = None;
-            let mut p = piece;
-            while p < runs.len() {
-                if runs[p].text.chars().count() > used || p > piece {
-                    theme = runs[p].theme.clone();
-                    break;
-                }
-                p += 1;
-            }
-            let pad: String = row.text.chars().take(row.indent).collect();
-            frags.push(Frag {
-                text: Rc::from(pad.as_str()),
-                theme,
+            out.push(Frag {
+                text: Rc::from(" ".repeat(row.indent).as_str()),
+                theme: runs.get(first).and_then(|r| r.theme.clone()),
             });
         }
-
-        while want > 0 && piece < runs.len() {
-            let piece_chars: Vec<char> = runs[piece].text.chars().collect();
-            let left = piece_chars.len().saturating_sub(used);
-            if left == 0 {
-                piece += 1;
-                used = 0;
+        for (i, &(s, e)) in bounds.iter().enumerate().skip(first) {
+            if s >= row.src.end {
+                break;
+            }
+            let (lo, hi) = (s.max(row.src.start), e.min(row.src.end));
+            if lo >= hi {
                 continue;
             }
-            let take = left.min(want);
-            // Take the text from the *row*, not the piece: the row is what
-            // wrapping produced, and it is what must appear on screen.
-            let seg: String = row.text.chars().skip(at).take(take).collect();
-            if !seg.is_empty() {
-                frags.push(Frag {
-                    text: Rc::from(seg.as_str()),
-                    theme: runs[piece].theme.clone(),
-                });
-            }
-            at += take;
-            want -= take;
-            used += take;
-            if used >= piece_chars.len() {
-                piece += 1;
-                used = 0;
-            }
+            out.push(Frag {
+                text: Rc::from(&whole[lo..hi]),
+                theme: runs[i].theme.clone(),
+            });
         }
-
-        if frags.is_empty() {
-            frags.push(Frag {
+        if out.is_empty() {
+            out.push(Frag {
                 text: Rc::from(""),
                 theme: None,
             });
         }
-        out.push(frags);
+        frags.push(out);
     }
 
-    if out.is_empty() {
-        out.push(vec![Frag {
+    let mut shaping = Shaping { whole, rows, frags };
+    if shaping.rows.is_empty() {
+        shaping.rows.push(Row {
+            text: String::new(),
+            indent: 0,
+            src: 0..0,
+        });
+        shaping.frags.push(vec![Frag {
             text: Rc::from(""),
             theme: None,
         }]);
     }
-    out
+    shaping
+}
+
+/// Which cell of which row the byte at `byte` is drawn in.
+///
+/// The inverse of [`byte_of`], and the two read the same [`Row::src`] so they
+/// cannot disagree about where a break went.
+///
+/// A byte the wrap *dropped* — the whitespace a break ate, the `\n` between
+/// two paragraphs — is in no row. It answers with the end of the row before
+/// the gap, which is where a caret on it is drawn. Several dropped bytes in a
+/// row therefore share one cell, so the round trip through [`byte_of`] is the
+/// identity for the first of them and snaps the rest onto it. Every byte a row
+/// *shows* round-trips exactly, which is the property a caret stated in bytes
+/// depends on.
+pub fn cell_of(rows: &[Row], whole: &str, byte: usize) -> (usize, u16) {
+    use unicode_width::UnicodeWidthStr;
+    // The last row that starts at or before `byte`. A byte inside a row lands
+    // on that row; a byte in the gap after one lands on the row before the
+    // gap, clamped below to its end.
+    let Some(i) = rows.iter().rposition(|r| r.src.start <= byte) else {
+        return (0, 0);
+    };
+    let row = &rows[i];
+    let end = byte.clamp(row.src.start, row.src.end);
+    let col = row.indent + UnicodeWidthStr::width(&whole[row.src.start..end]);
+    (i, col.min(u16::MAX as usize) as u16)
+}
+
+/// Which byte of the logical string the cell at `(row, col)` addresses.
+///
+/// The inverse of [`cell_of`]. `None` when there is no such row.
+///
+/// Three cells do not name a byte of their own, and each snaps to the nearest
+/// one that a caret can sit on:
+///
+/// * a cell inside the hanging indent — added text, no source — gives the
+///   row's first byte;
+/// * the second cell of a wide glyph gives that glyph's byte, so a press on
+///   either half of `名` puts the caret before it;
+/// * a cell past the end of the row's text gives the byte just past that
+///   text, which is where a caret at end-of-row sits — what every text field
+///   does with a press in its trailing space.
+///
+/// Zero-width characters are stepped over rather than landed on: a combining
+/// mark has no cell, so the answer after its base character is the end of the
+/// whole cluster, which is where a caret goes.
+pub fn byte_of(rows: &[Row], whole: &str, row: usize, col: i32) -> Option<usize> {
+    use unicode_width::UnicodeWidthChar;
+    let r = rows.get(row)?;
+    if col < r.indent as i32 {
+        return Some(r.src.start);
+    }
+    let mut at = r.indent as i32;
+    for (i, c) in whole[r.src.clone()].char_indices() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0) as i32;
+        if cw > 0 && at + cw > col {
+            return Some(r.src.start + i);
+        }
+        at += cw;
+    }
+    Some(r.src.end)
 }
 
 /// Lay children out along the main axis, breaking onto a new line whenever the
@@ -878,12 +989,14 @@ fn elide_row(row: &[Frag], w: u16, mode: crate::desc::Elide) -> Vec<Frag> {
 pub struct TextRender {
     pub props: TextProps,
     /// The wrapped rows, computed at measure time and reused by paint so the
-    /// two cannot disagree. Each row is its fragments, in order.
-    rows: Vec<Vec<Frag>>,
-    /// Whether [`Self::rows`] was shaped from the props now held.
+    /// two cannot disagree — and by the byte mapping, so a caret and a press
+    /// answer against the rows that are actually on screen rather than a
+    /// second opinion about them.
+    shaped: Shaping,
+    /// Whether [`Self::shaped`] was shaped from the props now held.
     ///
     /// **A props change that does not reach a re-measure must not paint the
-    /// old text.** `rows` is a cache of `props`, and the framework replaces
+    /// old text.** `shaped` is a cache of `props`, and the framework replaces
     /// `props` in place whenever the description changes; it is the *measure*
     /// that refreshes the cache. Normally a changed run marks the element for
     /// layout and the two happen together — but a `layout_reader` rebuilds
@@ -901,7 +1014,7 @@ impl TextRender {
     pub fn new(props: TextProps) -> Self {
         TextRender {
             props,
-            rows: Vec::new(),
+            shaped: Shaping::default(),
             stale: false,
         }
     }
@@ -920,13 +1033,16 @@ impl RenderObject for TextRender {
             } else {
                 c.max_w.min(natural.max(1))
             };
-            self.rows = wrap_runs(&self.props.runs, w, self.props.wrap);
+            self.shaped = shape_runs(&self.props.runs, w, self.props.wrap);
             self.stale = false;
-            c.constrain(Size::new(w, self.rows.len().min(u16::MAX as usize) as u16))
+            c.constrain(Size::new(
+                w,
+                self.shaped.rows.len().min(u16::MAX as usize) as u16,
+            ))
         } else {
-            self.rows = wrap_runs(&self.props.runs, 0, Wrap::None);
+            self.shaped = shape_runs(&self.props.runs, 0, Wrap::None);
             self.stale = false;
-            c.constrain(Size::new(natural, self.rows.len().max(1) as u16))
+            c.constrain(Size::new(natural, self.shaped.rows.len().max(1) as u16))
         }
     }
 
@@ -937,17 +1053,18 @@ impl RenderObject for TextRender {
         // The cache is only usable while it still describes these props; see
         // [`TextRender::stale`]. Re-shaping here uses the width layout settled
         // on, which is the width the rows would have been shaped to.
-        let reshaped: Vec<Vec<Frag>>;
-        let shaped: &[Vec<Frag>] = match self.stale {
-            false => &self.rows,
+        let reshaped: Shaping;
+        let shaping: &Shaping = match self.stale {
+            false => &self.shaped,
             true => {
                 reshaped = match self.props.wrap {
-                    Wrap::None => wrap_runs(&self.props.runs, 0, Wrap::None),
-                    wrap => wrap_runs(&self.props.runs, g.rect.w, wrap),
+                    Wrap::None => shape_runs(&self.props.runs, 0, Wrap::None),
+                    wrap => shape_runs(&self.props.runs, g.rect.w, wrap),
                 };
                 &reshaped
             }
         };
+        let shaped: &[Vec<Frag>] = &shaping.frags;
         let elided: Vec<Vec<Frag>>;
         let rows: &[Vec<Frag>] =
             if self.props.wrap != Wrap::None || self.props.elide == crate::desc::Elide::None {
@@ -1001,72 +1118,60 @@ impl RenderObject for TextRender {
                 }
             }
         }
-        if let Some(col) = self.props.cursor {
-            out.set_cursor(Point::new(g.rect.x + col as i32, g.rect.y));
+        // The caret is a byte of the run's own string, and this is where the
+        // wrap put it. Placing it here rather than asking the caller for a row
+        // and a column is the point of stating it in bytes: only the shaping
+        // above knows which row a byte landed on.
+        if let Some(byte) = self.props.cursor {
+            let (row, col) = cell_of(&shaping.rows, &shaping.whole, byte);
+            let at = Point::new(g.rect.x + col as i32, g.rect.y + row as i32);
+            // A caret the window is not showing is not on screen. Wrapped text
+            // is routinely taller than the rect it is scrolled inside, and a
+            // terminal has one cursor — placing it on a clipped row would put
+            // it somewhere the text it belongs to is not drawn.
+            if g.clip.contains(at) {
+                out.set_cursor(at);
+            }
         }
     }
 
     /// Where in the logical string the cell at `local` is.
     ///
     /// **The rows this walks are the ones layout shaped and paint draws**
-    /// (`Self::rows`), so the answer is the text that is actually on screen
+    /// (`Self::shaped`), so the answer is the text that is actually on screen
     /// rather than a second opinion about it — which is the whole reason this
     /// lives here and not in the caller. See `Event::text_byte`.
     ///
-    /// Two honest absences. Wrapped text: `Wrap` may drop the whitespace it
-    /// breaks at, so the rows do not concatenate back to the logical string
-    /// and no offset is recoverable. And a click past the end of a row is the
-    /// end of that row, not `None` — a caret placed past the last grapheme is
-    /// what every text field does with a click in its trailing space.
+    /// Wrapped text answers too, and by the same mapping the caret is placed
+    /// through: [`Row::src`] says which bytes each row is, so a press resolves
+    /// against the row it actually landed on. What the wrap *dropped* — the
+    /// space a break ate — belongs to no row, and a press at the end of a row
+    /// reports the last byte the row shows, which is where the caret is drawn.
     ///
-    /// `Elide` is not a third: today it cuts at paint time from these same
-    /// rows and only ever removes a tail, so a cell that has text under it has
-    /// the text this walk finds. If elision ever moves into shaping, this has
-    /// to walk what it produced instead.
+    /// A press past the end of a row is the end of that row, not `None` — a
+    /// caret placed past the last grapheme is what every text field does with
+    /// a click in its trailing space. [`byte_of`] lists the other two cells
+    /// that snap rather than naming a byte of their own.
+    ///
+    /// **[`Elide`](crate::desc::Elide) is not accounted for, and for
+    /// `Elide::Head` that is wrong.** Elision happens at paint from the width
+    /// layout settled on, and this walk has neither — it sees the unelided
+    /// rows. `Elide::Tail` only removes a tail, so a cell that has text under
+    /// it has the text this walk finds; `Elide::Head` removes a *head*, and
+    /// every cell of such a row is then some bytes further along than this
+    /// reports. Closing it means the object remembering the width it painted
+    /// at, and mapping through the elided row. Wrapping runs never elide
+    /// (`paint` skips it for them), so the two do not compound.
     fn text_byte_at(&self, local: Point) -> Option<usize> {
-        use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-        if self.props.wrap != Wrap::None {
-            return None;
-        }
         if local.x < 0 || local.y < 0 {
             return None;
         }
-        let row = self.rows.get(local.y as usize)?;
-        // Bytes of every earlier row, which for unwrapped text is exactly the
-        // lines above this one.
-        let mut byte: usize = self
-            .rows
-            .iter()
-            .take(local.y as usize)
-            .flat_map(|r| r.iter())
-            .map(|f| f.text.len())
-            .sum();
-        let mut col: i32 = 0;
-        for frag in row {
-            let w = UnicodeWidthStr::width(&*frag.text) as i32;
-            if col + w <= local.x {
-                col += w;
-                byte += frag.text.len();
-                continue;
-            }
-            // Inside this fragment: walk it a character at a time until the
-            // column is spent. Characters rather than graphemes because this
-            // crate depends on `unicode-width` and nothing else, and because
-            // it is what the shaping above already cuts by. A combining mark
-            // measures zero, so a cluster's bytes are taken without the column
-            // advancing and the answer lands after the whole cluster — which
-            // is where a caret goes.
-            for (i, c) in frag.text.char_indices() {
-                let cw = UnicodeWidthChar::width(c).unwrap_or(0) as i32;
-                if cw > 0 && col + cw > local.x {
-                    return Some(byte + i);
-                }
-                col += cw;
-            }
-            return Some(byte + frag.text.len());
-        }
-        // Past the last fragment: the end of the row.
-        Some(byte)
+        byte_of(
+            &self.shaped.rows,
+            &self.shaped.whole,
+            local.y as usize,
+            local.x,
+        )
     }
 
     fn render_name(&self) -> &'static str {
@@ -1603,5 +1708,154 @@ impl RenderObject for ReaderRender {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod byte_mapping_tests {
+    //! The mapping between a byte of a run's logical string and the cell the
+    //! wrap drew it in.
+    //!
+    //! These are white-box: they name the rows a given text wraps to and then
+    //! read the mapping in both directions across them, because the cases that
+    //! matter are the ones where a row is *not* a slice of the source — the
+    //! space a break ate, the indent a hanging wrap added, the `\n` between
+    //! paragraphs. The round-trip property over arbitrary text lives in
+    //! `tests/properties.rs`; this is the worked example it generalises.
+
+    use super::{byte_of, cell_of, rows_of, Row, Wrap};
+
+    /// `(text, indent, src)` for each row, which is the whole of what the
+    /// mapping reads.
+    fn shape(rows: &[Row]) -> Vec<(&str, usize, std::ops::Range<usize>)> {
+        rows.iter()
+            .map(|r| (r.text.as_str(), r.indent, r.src.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn a_rows_text_is_the_source_it_says_it_is() {
+        let text = "hello world here";
+        let rows = rows_of(text, 11, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![("hello world", 0, 0..11), ("here", 0, 12..16)],
+            "byte 11 is the space the break ate, and belongs to no row"
+        );
+        for r in &rows {
+            assert_eq!(&r.text[r.indent..], &text[r.src.clone()]);
+        }
+    }
+
+    #[test]
+    fn a_hanging_indent_has_no_source_behind_it() {
+        let text = "    sep  a string put between the values";
+        let rows = rows_of(text, 20, Wrap::Hanging);
+        assert_eq!(
+            shape(&rows),
+            vec![
+                ("    sep  a string", 0, 0..17),
+                ("    put between the", 4, 18..33),
+                ("    values", 4, 34..40),
+            ],
+            "the line's own leading spaces are source; the continuations' are not"
+        );
+        for r in &rows {
+            assert_eq!(&r.text[r.indent..], &text[r.src.clone()]);
+        }
+        // The first byte a continuation row shows is drawn at column 4,
+        // because four cells of that row are indent the source never had.
+        assert_eq!(cell_of(&rows, text, 18), (1, 4));
+        // And every cell of that indent addresses it back.
+        for col in 0..=4 {
+            assert_eq!(byte_of(&rows, text, 1, col), Some(18), "column {col}");
+        }
+    }
+
+    #[test]
+    fn the_space_a_break_ate_is_drawn_at_the_end_of_the_row_before_it() {
+        let text = "hello   world";
+        let rows = rows_of(text, 5, Wrap::Word);
+        assert_eq!(shape(&rows), vec![("hello", 0, 0..5), ("world", 0, 8..13)]);
+        // Three dropped spaces, one cell: they collapse onto the row's end,
+        // which is where a caret on any of them is drawn.
+        for b in 5..=7 {
+            assert_eq!(cell_of(&rows, text, b), (0, 5), "byte {b}");
+        }
+        // Reading that cell back gives the first of them — the round trip is
+        // the identity for byte 5 and snaps 6 and 7 onto it.
+        assert_eq!(byte_of(&rows, text, 0, 5), Some(5));
+        assert_eq!(byte_of(&rows, text, 0, 40), Some(5), "far past the text");
+        // The next row starts at the first byte the wrap kept.
+        assert_eq!(cell_of(&rows, text, 8), (1, 0));
+    }
+
+    #[test]
+    fn a_newline_is_the_end_of_the_row_before_it() {
+        let text = "ab\n\ncd";
+        let rows = rows_of(text, 8, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![("ab", 0, 0..2), ("", 0, 3..3), ("cd", 0, 4..6)]
+        );
+        assert_eq!(cell_of(&rows, text, 2), (0, 2), "the first \\n");
+        assert_eq!(cell_of(&rows, text, 3), (1, 0), "the second \\n");
+        assert_eq!(byte_of(&rows, text, 1, 0), Some(3));
+        assert_eq!(
+            byte_of(&rows, text, 1, 6),
+            Some(3),
+            "an empty row is one cell"
+        );
+    }
+
+    #[test]
+    fn a_wide_glyph_is_two_cells_and_one_byte() {
+        // Four cells per row: 名前 fills one exactly.
+        let text = "名前 ab";
+        let rows = rows_of(text, 4, Wrap::Word);
+        assert_eq!(shape(&rows), vec![("名前", 0, 0..6), ("ab", 0, 7..9)]);
+        assert_eq!(cell_of(&rows, text, 0), (0, 0));
+        assert_eq!(
+            cell_of(&rows, text, 3),
+            (0, 2),
+            "前 starts at the third cell"
+        );
+        // Both halves of a glyph name the glyph.
+        assert_eq!(byte_of(&rows, text, 0, 0), Some(0));
+        assert_eq!(byte_of(&rows, text, 0, 1), Some(0));
+        assert_eq!(byte_of(&rows, text, 0, 2), Some(3));
+        assert_eq!(byte_of(&rows, text, 0, 3), Some(3));
+        assert_eq!(byte_of(&rows, text, 0, 4), Some(6), "past the row's text");
+    }
+
+    #[test]
+    fn a_word_too_long_for_a_row_is_cut_on_a_source_boundary() {
+        let text = "supercalifragilistic";
+        let rows = rows_of(text, 6, Wrap::Word);
+        assert_eq!(
+            shape(&rows),
+            vec![
+                ("superc", 0, 0..6),
+                ("alifra", 0, 6..12),
+                ("gilist", 0, 12..18),
+                ("ic", 0, 18..20),
+            ],
+            "nothing is dropped, so the rows tile the source"
+        );
+        // Byte 6 is both the end of row 0 and the start of row 1. One caret,
+        // two cells; the mapping names the leading edge, and reading it back
+        // gives the byte again.
+        assert_eq!(cell_of(&rows, text, 6), (1, 0));
+        assert_eq!(byte_of(&rows, text, 1, 0), Some(6));
+        assert_eq!(byte_of(&rows, text, 0, 6), Some(6));
+        assert_eq!(cell_of(&rows, text, 20), (3, 2), "the trailing edge");
+        assert_eq!(byte_of(&rows, text, 3, 2), Some(20));
+    }
+
+    #[test]
+    fn there_is_no_row_below_the_last_one() {
+        let rows = rows_of("ab", 8, Wrap::Word);
+        assert_eq!(byte_of(&rows, "ab", 1, 0), None);
+        assert_eq!(cell_of(&[], "", 0), (0, 0), "and none above the first");
     }
 }

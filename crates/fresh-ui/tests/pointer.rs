@@ -1126,3 +1126,48 @@ fn text_byte_is_absent_where_there_is_no_text() {
         "a box is not text and has no byte"
     );
 }
+
+/// **A press on wrapped text reports a byte too.**
+///
+/// A row of wrapped text is not a slice of the source — the break ate the
+/// space between "world" and "here" — so the byte under a press is not the
+/// column plus the bytes of the rows above it. The run says which bytes each
+/// row is, and the press resolves against the row it landed on; the caller
+/// never has to know a wrap happened.
+#[test]
+fn a_press_on_a_wrapped_run_reports_the_byte_on_the_row_it_landed_on() {
+    let seen: Rc<RefCell<Vec<Option<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(
+            gesture(text("hello world here").wrap().w(Sizing::Cells(11)))
+                .on(
+                    GestureKind::Press,
+                    Rc::new(move |e: &Event| {
+                        sink.borrow_mut().push(e.text_byte);
+                        None
+                    }),
+                )
+                .h(Sizing::Cells(2)),
+        ),
+        FRAME,
+    );
+    // Rows: "hello world" (bytes 0..11) and "here" (bytes 12..16). Byte 11 is
+    // the space the break ate and no row shows it.
+    for (at, want) in [
+        (Point::new(0, 0), 0),
+        (Point::new(6, 0), 6),
+        (Point::new(10, 0), 10),
+        (Point::new(0, 1), 12),
+        (Point::new(3, 1), 15),
+        (Point::new(4, 1), 16),
+    ] {
+        ui.dispatch(Input::press(at, MouseButton::Left, Mods::NONE));
+        assert_eq!(
+            seen.borrow().last().copied().flatten(),
+            Some(want),
+            "a press at {at:?} should be byte {want}"
+        );
+    }
+}

@@ -2,7 +2,7 @@
 
 use fresh_ui::{
     col, layer, layout_reader, row, text, viewport, Align, Anchor, Draw, Modality, Node, Place,
-    Rect, Scrim, Size, Sizing, Ui,
+    Point, Rect, Scrim, Size, Sizing, Ui,
 };
 
 const FRAME: Size = Size { w: 40, h: 6 };
@@ -923,4 +923,79 @@ fn a_box_smaller_than_its_own_frame_bounds_to_nothing() {
             );
         }
     }
+}
+
+/// **A caret is stated in bytes and placed by the wrap.**
+///
+/// Which row and which cell a caret is drawn in is an answer, not a question:
+/// it is decided by where the text broke, and only the run knows that. A
+/// caller that had to supply a column would have had to wrap the text itself
+/// to work one out — the duplication `Wrap` exists to remove — and would get
+/// it wrong the moment a break ate a space or a hanging indent added one.
+#[test]
+fn a_caret_stated_in_bytes_lands_on_the_row_the_wrap_put_it_on() {
+    let caret = |node: Node<()>| -> Option<Point> {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(node, Size::new(20, 6));
+        ui.spec().cursor.map(|c| c.pos)
+    };
+    // "hello world here" at 11 cells is "hello world" / "here", with byte 11
+    // — the space — eaten by the break.
+    let doc = |b: usize| {
+        text("hello world here")
+            .wrap()
+            .w(Sizing::Cells(11))
+            .cursor_byte(b)
+    };
+    assert_eq!(caret(doc(6)), Some(Point::new(6, 0)), "'w' of world");
+    assert_eq!(caret(doc(13)), Some(Point::new(1, 1)), "'e' of here");
+    assert_eq!(
+        caret(doc(11)),
+        Some(Point::new(11, 0)),
+        "the eaten space draws at the end of the row it was eaten from"
+    );
+    assert_eq!(
+        caret(doc(16)),
+        Some(Point::new(4, 1)),
+        "the trailing edge, past 'here'"
+    );
+
+    // A hanging indent has no source behind it, so the first byte of a
+    // continuation row is drawn *past* it.
+    let entry = "    sep  a string put between the values";
+    assert_eq!(
+        caret(
+            text(entry)
+                .wrap_hanging()
+                .w(Sizing::Cells(20))
+                .cursor_byte(18)
+        ),
+        Some(Point::new(4, 1)),
+        "'p' of put, behind the four indent cells the wrap added"
+    );
+}
+
+/// A caret on a row the window is not showing is not on screen.
+///
+/// Wrapped text is routinely taller than the rectangle it is scrolled inside,
+/// and the terminal has one cursor. Placing it on a clipped row would put it
+/// where the text it belongs to is not drawn.
+#[test]
+fn a_caret_outside_the_clip_is_not_placed() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        viewport(
+            text("one two three four five six seven eight")
+                .wrap()
+                .w(Sizing::Cells(6))
+                .cursor_byte(38),
+        )
+        .w(Sizing::Cells(6))
+        .h(Sizing::Cells(2)),
+        Size::new(20, 6),
+    );
+    assert!(
+        ui.spec().cursor.is_none(),
+        "the caret is on a row the two-row window is scrolled away from"
+    );
 }
