@@ -1483,6 +1483,7 @@ dependencies = [
  "ureq",
  "uuid",
  "vt100",
+ "vte",
  "which",
  "windows-sys 0.61.2",
  "winresource",
