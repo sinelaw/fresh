@@ -1565,6 +1565,12 @@ impl Editor {
             .filter(|id| *id != editor.active_window)
             .collect();
 
+        // Where the panes are, before anything asks: a terminal opened before
+        // the first frame is sized to its pane, and the snapshot below
+        // carries the panes' rects. One `layout_only` of the frame, the
+        // same pass the layout funnel runs.
+        editor.refresh_pane_rects();
+
         #[cfg(feature = "plugins")]
         {
             editor.update_plugin_state_snapshot();

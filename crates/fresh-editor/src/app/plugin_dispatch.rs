@@ -6656,7 +6656,10 @@ impl Window {
         // Captured before the closure borrows `self`: the panes' rects are
         // derived from the same area the renderer lays out into, so the
         // geometry a plugin reads matches the cells actually drawn.
-        let content_area = self.editor_content_area();
+        // The panes as the last layout placed them, in the tree's order. The
+        // layout funnel refreshes them before this runs on a split, a
+        // resize or a chrome toggle (`relayout` refreshes the snapshot).
+        let laid_out = self.visible_panes();
         self.buffers
             .with_all_mut(|buffers_mut, mgr, vs_map| {
                 if let Some(active_vs) = vs_map.get(&active_split_id) {
@@ -6747,8 +6750,7 @@ impl Window {
                 // instead of guessing from an iteration order that used to be
                 // a HashMap's.
                 snapshot.splits.clear();
-                let laid_out = mgr.get_visible_buffers(content_area);
-                for (leaf_id, _buf, rect) in laid_out {
+                for (leaf_id, _buf, rect) in laid_out.iter().copied() {
                     let Some(vs) = vs_map.get(&leaf_id) else {
                         continue;
                     };

@@ -1538,6 +1538,20 @@ impl Editor {
         );
     }
 
+    /// Size the active window's visible terminal PTYs to their panes — as
+    /// the grid is *now*, laid out before the window reads it.
+    ///
+    /// The editor-side counterpart of `Window::resize_visible_terminals`,
+    /// for the callers that have just changed the grid (a dock split
+    /// created, a terminal split opened, a window dived into) and cannot
+    /// wait for the frame that would place the new pane: the window's
+    /// retained rects are refreshed with one `layout_only` of the frame
+    /// first (`refresh_pane_rects`), then read.
+    pub(crate) fn resize_visible_terminals(&mut self) {
+        self.refresh_pane_rects();
+        self.active_window_mut().resize_visible_terminals();
+    }
+
     pub fn open_terminal(&mut self) {
         let Some((terminal_id, buffer_id)) = self.active_window_mut().open_terminal_in_window()
         else {
@@ -1653,7 +1667,7 @@ impl Editor {
         // is live in this new split; other splits keep their own per-split
         // mode, so closing this split later restores them correctly (#2485).
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
-        self.active_window_mut().resize_visible_terminals();
+        self.resize_visible_terminals();
 
         // A new split changes every sibling pane's size. Reflow through the
         // single layout funnel so existing terminals fit their new panes.
@@ -2033,7 +2047,7 @@ impl Editor {
             }
 
             // Ensure terminal PTY is sized correctly for current split dimensions
-            self.active_window_mut().resize_visible_terminals();
+            self.resize_visible_terminals();
 
             self.set_status_message(t!("status.terminal_mode_enabled").to_string());
         }
@@ -2278,15 +2292,15 @@ impl Window {
 
     /// Resize all this window's visible terminal PTYs to match their
     /// current split dimensions, and re-pin the scroll-back view's grid
-    /// wrap column to the same pane width. Reads the window's cached
-    /// `terminal_width` / `terminal_height` for the screen size.
+    /// wrap column to the same pane width. Reads the panes as the last
+    /// layout placed them ([`Self::visible_panes`]); an editor-side caller
+    /// that has just changed the grid goes through
+    /// `Editor::resize_visible_terminals`, which lays it out first.
     pub fn resize_visible_terminals(&mut self) {
-        let editor_area = self.editor_content_area();
-
-        let Some((mgr, _)) = self.buffers.splits() else {
+        if self.buffers.splits().is_none() {
             return;
-        };
-        let visible_buffers = mgr.get_visible_buffers(editor_area);
+        }
+        let visible_buffers = self.visible_panes();
 
         // (split, terminal buffer, pty cols, pty rows, grid cols). Collected
         // first because applying it needs `&mut self` for both the terminal
