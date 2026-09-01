@@ -31,6 +31,7 @@ use crossterm::event::{
 use crossterm::style::{Color, Print, SetBackgroundColor, SetForegroundColor};
 use crossterm::{cursor, execute, queue, terminal};
 
+use fresh_ui::glyph::glyphs_in;
 use fresh_ui::Axis;
 use fresh_ui::{
     Draw, Input, KeyCode, KeyPress, Mods, MouseButton, Point, Rect, Scrim, Size, ThemeKey,
@@ -205,9 +206,12 @@ fn translate_mouse(m: event::MouseEvent, clicks: &mut Clicks) -> Option<Input> {
 // The backend: fold a display list into coloured cells
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq)]
+/// One cell. `sym` is the grapheme cluster painted into it — empty for the
+/// continuation cell after a wide glyph, which the terminal fills itself as
+/// it draws the glyph before it (see `fresh_ui::glyph`).
+#[derive(Clone, PartialEq)]
 struct Cell {
-    ch: char,
+    sym: String,
     fg: Color,
     bg: Color,
 }
@@ -215,7 +219,7 @@ struct Cell {
 impl Default for Cell {
     fn default() -> Self {
         Cell {
-            ch: ' ',
+            sym: " ".to_string(),
             fg: Color::Reset,
             bg: Color::Reset,
         }
@@ -262,7 +266,7 @@ impl Terminal {
         }
         let r = roles(dark);
         let ground = Cell {
-            ch: ' ',
+            sym: " ".to_string(),
             fg: c(r.text),
             bg: c(r.base),
         };
@@ -347,8 +351,11 @@ impl Terminal {
                 let clip = clip.intersect(r);
                 for (i, line) in lines.iter().enumerate() {
                     let y = r.y + i as i32;
-                    for (j, ch) in line.chars().enumerate() {
-                        self.put(r.x + j as i32, y, ch, fg, bg, clip);
+                    // By display width, not by char — the library's policy
+                    // (`fresh_ui::glyph`), so a wide glyph keeps the two
+                    // cells layout measured for it.
+                    for g in glyphs_in(line, r.x, clip.x, clip.right()) {
+                        self.put_symbol(g.x, y, g.text, g.width, (fg, bg), clip);
                     }
                 }
             }
@@ -387,10 +394,26 @@ impl Terminal {
     }
 
     fn put(&mut self, x: i32, y: i32, ch: char, fg: Color, bg: Color, clip: Rect) {
+        let mut b = [0u8; 4];
+        self.put_symbol(x, y, ch.encode_utf8(&mut b), 1, (fg, bg), clip);
+    }
+
+    /// Paint one cluster at `(x, y)`, and blank the `w - 1` cells after it
+    /// that the glyph spills into, so nothing stale shows through them.
+    fn put_symbol(&mut self, x: i32, y: i32, sym: &str, w: u16, ink: (Color, Color), clip: Rect) {
+        let (fg, bg) = ink;
         if let Some(cell) = self.cell_mut(x, y, clip) {
-            cell.ch = ch;
+            cell.sym.clear();
+            cell.sym.push_str(sym);
             cell.fg = fg;
             cell.bg = bg;
+        }
+        for k in 1..w as i32 {
+            if let Some(cell) = self.cell_mut(x + k, y, clip) {
+                cell.sym.clear();
+                cell.fg = fg;
+                cell.bg = bg;
+            }
         }
     }
 
@@ -458,7 +481,8 @@ impl Terminal {
         if let Some(cell) = self.cell_mut(x, y, frame) {
             cell.fg = c(roles.shadow);
             cell.bg = c(roles.shadow_bg);
-            cell.ch = ' ';
+            cell.sym.clear();
+            cell.sym.push(' ');
         }
     }
 
@@ -472,7 +496,13 @@ impl Terminal {
         for y in 0..self.h {
             queue!(self.out, cursor::MoveTo(0, y))?;
             for x in 0..self.w {
-                let cell = self.cells[y as usize * self.w as usize + x as usize];
+                let cell = &self.cells[y as usize * self.w as usize + x as usize];
+                // A continuation cell: the wide glyph before it already moved
+                // the terminal's cursor past it, so printing anything here
+                // would push the rest of the row along.
+                if cell.sym.is_empty() {
+                    continue;
+                }
                 if cell.fg != fg {
                     fg = cell.fg;
                     queue!(self.out, SetForegroundColor(fg))?;
@@ -481,7 +511,7 @@ impl Terminal {
                     bg = cell.bg;
                     queue!(self.out, SetBackgroundColor(bg))?;
                 }
-                queue!(self.out, Print(cell.ch))?;
+                queue!(self.out, Print(&cell.sym))?;
             }
         }
         if let Some(cur) = spec.cursor.filter(|c| c.visible) {

@@ -147,6 +147,12 @@ pub enum Draw {
     /// Covers everything painted before it.
     Scrim(Scrim),
     /// Text, one entry per visual row.
+    ///
+    /// A row's columns are what [`glyph::glyphs`](crate::render::glyph::glyphs)
+    /// says they are: a backend paints each cluster it yields at the column it
+    /// names and blanks the continuation cells of a wide one. Stepping one cell
+    /// per `char` puts everything after a wide glyph two cells left of where
+    /// layout measured it.
     Lines(Vec<Rc<str>>),
     Scrollbar {
         /// How far the window has travelled, in whatever the viewport counts.
