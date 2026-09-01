@@ -135,6 +135,47 @@ Under `cargo nextest` each test still gets its own process, so isolation is
 unchanged; under plain `cargo test` they share one process, which is what
 `tests/common/global_state.rs` already exists to handle.
 
+**The data layer is its own crate.** `fresh-editor` was 409k lines in one
+compilation unit. `fresh-editor-core` holds the bottom 85k (20.8%) --
+`config`, `model`, `primitives`, `widgets`, `theme` -- and cannot name
+`app`, `view`, `services`, `input`, `workspace` or the servers. Every old
+path still resolves: `fresh::config`, `fresh::model`, `fresh::primitives`,
+`fresh::widgets`, `fresh::view::theme` and friends are `pub use`
+re-exports, so plugins and tests see no API change.
+
+Measured on the same 4-core box, `--all-targets` over the workspace:
+
+| | one crate | split |
+| --- | --- | --- |
+| edit in `app/`, `cargo build` | 26.3s / 27.6s | **21.9s / 21.5s** (-19%) |
+| edit in `app/`, `cargo check` | 14.7 / 14.6 / 15.2s | **12.2 / 12.9 / 11.9s** (-17%) |
+| edit in `model/`, `cargo build` | 26.4s | 25.5s (-3%) |
+| clean rebuild of all `fresh-*` | 137.4s | 135.4s (unchanged) |
+| `target/` | 8437 MB | **7790 MB** (-8%) |
+
+Read that table honestly: the split buys nothing on a **clean** build, and
+it never could. `core` -> `editor` -> `all_tests` is a strictly sequential
+chain, so cutting the crate in two redistributes the same frontend work
+rather than removing it. What it buys is the **edit loop**, and only for
+edits above the cut -- which is where most edits land. An edit inside the
+data layer still cascades through both crates and is unchanged.
+
+Two rules follow from the boundary:
+
+- **The dependency edge runs one way.** Nothing in `fresh-editor-core` may
+  reference `crate::app`, `crate::view`, `crate::services`, `crate::input`
+  or `crate::workspace`. If the data layer needs something from above,
+  move that thing down (it was probably in the wrong place) rather than
+  reaching up.
+- **`#[cfg(test)]` does not cross the boundary.** A helper in
+  `fresh-editor-core` gated on `cfg(test)` is invisible to tests in
+  `fresh-editor`. Make it `#[doc(hidden)] pub` (as `Buffer::from_str_test`
+  is) or gate it on `debug_assertions` when it costs something in release
+  (as `widgets::render::ROWS_FORMATTED` is). Do **not** add a
+  `test-support` feature: a feature enabled through a dev-dependency forks
+  the dependency graph between `cargo build` and `cargo test`, which is the
+  exact trap the `vte` entry in `crates/fresh-editor/Cargo.toml` documents.
+
 ## Commit Hygiene
 
 - Commit messages must describe the **motivation / goal** of each commit, not just what changed
