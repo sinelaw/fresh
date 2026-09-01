@@ -6,13 +6,18 @@
 //! - `pane_placements`: [`super::orchestration::reconcile::place_pane`] ran —
 //!   a pane's viewport, margins and wrap index were settled for a frame;
 //! - `buffer_layouts`: `compute_buffer_layout` ran — a pane was formatted;
-//! - `view_data_builds`: `build_view_data` ran — a pane's rows were built.
+//! - `view_data_builds`: `build_view_data` ran — a pane's rows were built;
+//! - `composite_builds`: a side of a composite (side-by-side diff) pane
+//!   built its rows. The composite pipeline formats each side itself
+//!   (`render_composite_buffer`), once per side per frame, outside
+//!   `compute_buffer_layout`.
 //!
-//! The invariant the retained-mode migration rests on is that these three
-//! advance in lockstep: **a visible text pane is placed once, formatted
-//! once, and has its rows built once per frame.** The test harness asserts
-//! it around every `Editor::render`; `tests/e2e/frame_once_per_pane.rs`
-//! asserts the count against the number of panes on screen.
+//! The invariant the retained-mode migration rests on is that these advance
+//! in lockstep: **a visible text pane is placed once, formatted once, and has
+//! its rows built once per frame** — `placements == layouts` and
+//! `builds == layouts + composite_builds`. The test harness asserts it around
+//! every `Editor::render`; `tests/e2e/frame_once_per_pane.rs` asserts the
+//! count against the number of panes on screen.
 //!
 //! Always compiled — three relaxed increments per pane per frame cost
 //! nothing measurable — and read only through `test_api::frame_counters`.
@@ -26,6 +31,7 @@ pub struct FrameCounters {
     pub pane_placements: u64,
     pub buffer_layouts: u64,
     pub view_data_builds: u64,
+    pub composite_builds: u64,
 }
 
 impl FrameCounters {
@@ -35,6 +41,7 @@ impl FrameCounters {
             pane_placements: self.pane_placements - earlier.pane_placements,
             buffer_layouts: self.buffer_layouts - earlier.buffer_layouts,
             view_data_builds: self.view_data_builds - earlier.view_data_builds,
+            composite_builds: self.composite_builds - earlier.composite_builds,
         }
     }
 }
@@ -44,6 +51,7 @@ thread_local! {
         pane_placements: 0,
         buffer_layouts: 0,
         view_data_builds: 0,
+        composite_builds: 0,
     }) };
 }
 
@@ -72,6 +80,14 @@ pub(crate) fn count_view_data_build() {
     COUNTERS.with(|c| {
         let mut v = c.get();
         v.view_data_builds += 1;
+        c.set(v);
+    });
+}
+
+pub(crate) fn count_composite_build() {
+    COUNTERS.with(|c| {
+        let mut v = c.get();
+        v.composite_builds += 1;
         c.set(v);
     });
 }

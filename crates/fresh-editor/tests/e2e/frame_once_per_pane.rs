@@ -31,6 +31,7 @@ fn assert_frame_panes(harness: &mut EditorTestHarness, panes: u64, what: &str) {
             pane_placements: panes,
             buffer_layouts: panes,
             view_data_builds: panes,
+            composite_builds: 0,
         },
         "{what}: expected {panes} pane(s) placed, formatted and built once each, got {cost:?}"
     );
