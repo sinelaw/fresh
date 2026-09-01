@@ -670,6 +670,7 @@ impl Editor {
             full_redraw_requested: false,
             suppress_chrome_cells: false,
             fold_provenance: Vec::new(),
+            cell_provenance: Default::default(),
             menu_layout_frame: None,
             shell_frame_status_bar: None,
             shell_hover: None,

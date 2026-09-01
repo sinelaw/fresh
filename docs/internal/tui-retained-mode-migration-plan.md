@@ -552,6 +552,91 @@ table going down. *Exit:* the baseline is recorded here. (The second
 revision had provenance as the last stage; it is the first, because it is
 how the others are measured.)
 
+**Baseline** *(recorded 2026-09-01 by `tests/cells_provenance.rs` at 120×40;
+the test fails when a fixture's legacy share rises above the figure in its
+last column, and when any painted cell has no named writer)*. A cell is
+*painted* when it is not `Cell::EMPTY` — a space with a background counts,
+a space with none does not — and it belongs to the writer that **last
+changed** it: one of the fold's two bands, a host painter the fold called
+for a `Draw::Host` item (`host:pane`, `host:body`, `host:prompt_line`,
+`host:embed`), or a legacy painter `Editor::render` brackets by name. The
+fold is credited only inside items its `ProvenanceSink` reported, so a
+`Scrim::Dim` (which reports nothing) leaves the cells it darkens with their
+painter; a legacy `apply_dimming` is a painter and takes them. A painter
+that rewrites a cell with the value already there changes nothing and is
+invisible to the diff, which is what "how much would deleting it change"
+should measure. The recorder (`app::provenance`) is a runtime opt-in: an
+empty `Option` on the editor until a test installs it, one buffer pass per
+bracket while it is (25–34 per frame here), and no cell writes in either
+state — `recording_does_not_change_the_frame` asserts the output is
+identical.
+
+| Fixture | Painted | Fold | Legacy | Legacy share | Gate | Legacy writers (cells) |
+|---|---:|---:|---:|---:|---:|---|
+| `empty` | 4680 | 240 | 4440 | 94.9 % | 94.9 | `host:pane` 4440 |
+| `highlighted_file` (`tests/fixtures/large.rs`) | 4680 | 240 | 4440 | 94.9 % | 94.9 | `host:pane` 4388, `shade_scroll_edges` 52 |
+| `four_splits` | 4680 | 240 | 4440 | 94.9 % | 94.9 | `host:pane` 4326, `host:body` 114 |
+| `explorer` | 4680 | 1572 | 3108 | 66.4 % | 66.5 | `host:pane` 3108 |
+| `dock` (orchestrator) | 3590 | 408 | 3182 | 88.6 % | 88.7 | `host:pane` 3182 |
+| `command_palette` | 4800 | 1680 | 3120 | 65.0 % | 65.0 | `host:pane` 3000, `host:prompt_line` 120 |
+| `file_browser` (Open File) | 4800 | 120 | 4680 | 97.5 % | 97.5 | `FileBrowserRenderer::render` 2400, `host:pane` 2160, `host:prompt_line` 120 |
+| `overlay_prompt` (Live Grep) | 4800 | 0 | 4800 | 100.0 % | 100.0 | `render_overlay_prompt` 3887, `apply_dimming(overlay_prompt)` 912, `host:pane` 1 |
+| `settings` | 4800 | 2832 | 1968 | 41.0 % | 41.0 | `render_settings` 1056, `apply_dimming(settings)` 912 |
+| `terminal` (`sh -c printf …`) | 376 | 240 | 136 | 36.2 % | 36.2 | `host:pane` 120, `render_terminal_splits` 16 |
+
+*Fold* is `fold:background` + `fold:overlay`. The 120 unpainted cells of a
+4680 frame are the empty prompt row; the terminal fixture's 4424 are that
+row plus its grid's empty cells, which the terminal painter writes as bare
+spaces.
+
+**What the numbers say.**
+
+- **The pane painter is the migration.** `host:pane` — the split grid's
+  tab strip, gutter, text rows and scrollbar, painted through
+  `BodyPainter::pane` — owns 88–95 % of a frame with no sidebar or popup,
+  is the largest legacy writer in seven of the ten fixtures and the only
+  one in three (`empty`, `explorer`, `dock`). Every other painter together
+  is under 3 % of such a frame. Blocker A is the number.
+- **The chrome that has migrated is exactly what the fold reports:** the
+  menu bar and status bar rows (240 cells), the explorer column (1332), the
+  described dock column (168, in a column that is mostly unpainted), the
+  palette popup (1560) and the settings interior (2832).
+- **Three painters still own whole surfaces:** `render_overlay_prompt`
+  (the Live Grep card, 3887 cells plus its own 912-cell dimming pass — it
+  repaints every cell of the frame, so the fold's menu and status rows are
+  credited to it), `FileBrowserRenderer::render` (2400) and
+  `render_settings` (1056: the box, its border and the divider column,
+  under a described interior) with its 912-cell `apply_dimming`. Each is a
+  stage in §4 (7, 6 and 11).
+- **Painters that ran and changed nothing** in every fixture:
+  `render_split_widget_panel_scrollbars`, `render_hover_highlights`,
+  `render_software_cursor_and_capture`, `animations.apply_all`,
+  `convert_buffer_colors` (the harness is TrueColor), and
+  `render_floating_widget_panel(dock)`, which for a described dock is a
+  geometry pass — the divider is `dock::grip_ink`'s, in the background
+  band. `host:card` ran three times in the overlay-prompt fixture and
+  painted nothing, as its arm says. Not exercised by any fixture:
+  `render_tab_drop_zone`, the dormant/preparing shell pages, a floating
+  plugin panel, an embed, and `apply_dimming(dock)`.
+
+**Against the list in §1.3.** Every painter it names still runs, with two
+corrections and four omissions. `rerender_widget_panel` is not a painter:
+it takes no frame or buffer and cannot write a cell (it re-renders a
+plugin panel's own state). `render_floating_widget_panel` paints nothing
+for the dock any more; what it still paints is the centred floating panel
+and its dimming. Missing from the list but writing cells: the host
+painters inside the fold (`host:pane`, `host:body` for the separators,
+`host:prompt_line` for the prompt row — the largest writers of all), the
+three `apply_dimming` passes (settings, overlay prompt, dock), and
+`shade_scroll_edges` (the fade on a pane's first and last rows).
+`animations.apply_all` and `convert_buffer_colors` run after every frame
+and can restyle any cell; they are bracketed and allowlisted, and wrote
+nothing here. The independent review's §1.2 table also files
+`publish_popup_carets`, `publish_status_bar`, `render_prompt_popups`,
+`cache_buffer_popup_areas` and `cache_top_global_popup_area` as legacy:
+they write no cells (the gate would report them as unattributed), and
+`render_prompt_popups` only dispatches to the two painters above.
+
 **0.1 Display-width-correct painting** (§2.1). All three backends advance by
 display width and the ratatui fold blanks continuation cells; grapheme
 policy written down (a combining mark consumes no column). Conformance test

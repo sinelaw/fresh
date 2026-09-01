@@ -216,6 +216,10 @@ impl Editor {
     pub fn render(&mut self, frame: &mut Frame) {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
+        // The provenance gate's recorder, when a test installed one: every
+        // painter below is bracketed so the cells it wrote are its own. A
+        // no-op otherwise. See `app::provenance`.
+        self.cell_provenance.start_frame(frame.buffer_mut());
 
         {
             let _s = tracing::info_span!("pre_layout_drain").entered();
@@ -894,17 +898,24 @@ impl Editor {
             .as_ref()
             .map(|s| s.chrome.clone())
             .unwrap_or_default();
+        // Lent for the fold, because the painter below borrows the editor.
+        let cells = self.cell_provenance.detach();
+        cells.begin_band(
+            crate::view::shell::fold::Band::Background,
+            frame.buffer_mut(),
+        );
         let mut body = crate::app::shell_host::BodyPainter::new(self, body_state, pane_chrome);
         let mut provenance = FoldProvenance { runs: Vec::new() };
         let pending_hardware_cursor = crate::view::shell::fold::fold_band(
             ui.spec(),
             frame.buffer_mut(),
             &palette,
-            &mut body,
+            &mut cells.host(&mut body),
             crate::view::shell::fold::Band::Background,
             paints,
-            Some(&mut provenance),
+            Some(&mut cells.sink(&mut provenance)),
         );
+        cells.end_band(frame.buffer_mut());
         let crate::app::shell_host::BodyOutput {
             split_areas,
             pane_rects,
@@ -913,6 +924,7 @@ impl Editor {
             horizontal_scrollbar_areas,
         } = body.finish();
         self.shell_ui = Some(ui);
+        self.cell_provenance.attach(cells);
         // Held until the overlay band has added its own, so the two are
         // applied together after every described item in the frame has been
         // seen. Applying the background band here would be overwritten by
@@ -950,7 +962,10 @@ impl Editor {
         // meets the edge of its pane by fading out rather than being cut
         // off mid-line. Runs here, after the content pass, because it
         // reads the rows that pass just painted.
+        self.cell_provenance.begin(frame.buffer_mut());
         self.shade_scroll_edges(frame.buffer_mut(), &pane_rects);
+        self.cell_provenance
+            .end("shade_scroll_edges", frame.buffer_mut());
 
         // A dormant remote session's shell shows a placeholder page instead
         // of an (empty, uneditable) buffer: nothing can be shown or edited
@@ -959,12 +974,18 @@ impl Editor {
         // content area after the split renderer so it composes with the
         // chrome (menu, dock, status bar) without forking the render flow.
         if self.dormant_remote.contains_key(&self.active_window) {
+            self.cell_provenance.begin(frame.buffer_mut());
             self.render_dormant_shell_page(frame, editor_content_area);
+            self.cell_provenance
+                .end("render_dormant_shell_page", frame.buffer_mut());
         } else if self.preparing_windows.contains_key(&self.active_window) {
             // Same treatment for a workspace whose worktree/agent is still
             // being built: it is a real window, it just has nothing to show
             // yet, so it says so instead of pretending to be an empty editor.
+            self.cell_provenance.begin(frame.buffer_mut());
             self.render_preparing_shell_page(frame, editor_content_area);
+            self.cell_provenance
+                .end("render_preparing_shell_page", frame.buffer_mut());
         }
 
         // Detect viewport changes and fire hooks
@@ -1133,8 +1154,11 @@ impl Editor {
 
         // Render terminal content on top of split content for terminal buffers.
         // Active-window path: cursor blinks normally when terminal_mode is on.
+        self.cell_provenance.begin(frame.buffer_mut());
         self.active_window()
             .render_terminal_splits(frame.buffer_mut(), &pane_rects, true);
+        self.cell_provenance
+            .end("render_terminal_splits", frame.buffer_mut());
 
         self.active_layout_mut().split_areas = split_areas;
         self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
@@ -1175,7 +1199,10 @@ impl Editor {
         // Widget panels mounted into splits render through the ordinary
         // buffer pipeline, which knows nothing about widget geometry —
         // paint their overflowing lists' scrollbars on top.
+        self.cell_provenance.begin(frame.buffer_mut());
         self.render_split_widget_panel_scrollbars(frame);
+        self.cell_provenance
+            .end("render_split_widget_panel_scrollbars", frame.buffer_mut());
 
         // Promote any deferred virtual-buffer animations whose Rect is now
         // known. Done here (after split_areas is recomputed, before
@@ -1198,7 +1225,10 @@ impl Editor {
         self.active_layout_mut().last_editor_content_area = Some(editor_content_area);
 
         // Render hover highlights for separators and scrollbars
+        self.cell_provenance.begin(frame.buffer_mut());
         self.render_hover_highlights(frame);
+        self.cell_provenance
+            .end("render_hover_highlights", frame.buffer_mut());
 
         // Initialize popup/suggestion layout state (rendered after status bar below)
         self.active_chrome_mut().suggestions_area = None;
@@ -1325,7 +1355,10 @@ impl Editor {
         // `render_panels_and_modals`, after the band, where it always did.
         if let Some(dock) = dock_area {
             if self.dock.is_some() {
+                self.cell_provenance.begin(frame.buffer_mut());
                 self.render_floating_widget_panel(frame, dock, super::PanelSlot::Dock);
+                self.cell_provenance
+                    .end("render_floating_widget_panel(dock)", frame.buffer_mut());
             }
         }
 
@@ -1338,6 +1371,8 @@ impl Editor {
             let mut provenance = FoldProvenance {
                 runs: std::mem::take(&mut self.fold_provenance),
             };
+            let cells = self.cell_provenance.detach();
+            cells.begin_band(crate::view::shell::fold::Band::Overlay, frame.buffer_mut());
             let fold_caret = crate::view::shell::fold::fold_band(
                 ui.spec(),
                 frame.buffer_mut(),
@@ -1345,11 +1380,13 @@ impl Editor {
                 // Not `SkipHosts`: a plugin panel is a `Layer`, so a
                 // `WindowEmbed` inside one is resolved in *this* band. See
                 // `shell_host::EmbedHosts`.
-                &mut crate::app::shell_host::EmbedHosts(self),
+                &mut cells.host(&mut crate::app::shell_host::EmbedHosts(self)),
                 crate::view::shell::fold::Band::Overlay,
                 crate::view::shell::fold::Paints::All,
-                Some(&mut provenance),
+                Some(&mut cells.sink(&mut provenance)),
             );
+            cells.end_band(frame.buffer_mut());
+            self.cell_provenance.attach(cells);
             // **F.6: one recorder for every described surface.** Applied after
             // both bands, so the overlay's items land on top of the
             // background's — the paint order the inspector wants. What this
@@ -1400,13 +1437,19 @@ impl Editor {
         let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
         if let Some(ref drag_state) = drag_state_clone {
             if drag_state.is_dragging() {
+                self.cell_provenance.begin(frame.buffer_mut());
                 self.render_tab_drop_zone(frame, drag_state);
+                self.cell_provenance
+                    .end("render_tab_drop_zone", frame.buffer_mut());
             }
         }
 
         // Software mouse cursor (GPM) and keyboard-capture dimming — both
         // read already-painted cells, so they run after the main draw.
+        self.cell_provenance.begin(frame.buffer_mut());
         self.render_software_cursor_and_capture(frame, size);
+        self.cell_provenance
+            .end("render_software_cursor_and_capture", frame.buffer_mut());
 
         // Commit the active-split hardware cursor (deferred since
         // `render_content`) unless a popup has been drawn over that cell.
@@ -1471,9 +1514,12 @@ impl Editor {
 
         // Frame-buffer animations run after the main draw so they mutate the
         // final paint.
+        self.cell_provenance.begin(frame.buffer_mut());
         self.active_window_mut()
             .animations
             .apply_all(frame.buffer_mut());
+        self.cell_provenance
+            .end("animations.apply_all", frame.buffer_mut());
 
         // Keep the post-apply paint so the next frame's effects can push
         // it out of view. Cloned because ratatui resets the current
@@ -1489,10 +1535,14 @@ impl Editor {
         // Dead last, so the layers painted above — dock, full-screen modals,
         // animations — go through the fallback too instead of emitting
         // truecolor SGR on a terminal that cannot render it.
+        self.cell_provenance.begin(frame.buffer_mut());
         crate::view::color_support::convert_buffer_colors(
             frame.buffer_mut(),
             self.color_capability,
         );
+        self.cell_provenance
+            .end("convert_buffer_colors", frame.buffer_mut());
+        self.cell_provenance.finish(frame.buffer_mut());
     }
 
     /// The Confirm-each option's live value when it is shown (replace
@@ -1957,7 +2007,10 @@ impl Editor {
         if self.settings_state.as_ref().is_some_and(|s| s.visible) && !self.suppress_chrome_cells {
             if let Some(dock) = dock_area {
                 if self.dock.is_some() {
+                    self.cell_provenance.begin(frame.buffer_mut());
                     crate::view::dimming::apply_dimming(frame, dock);
+                    self.cell_provenance
+                        .end("apply_dimming(dock)", frame.buffer_mut());
                 }
             }
         }
@@ -1994,7 +2047,10 @@ impl Editor {
             if !fullscreen && !is_anchored {
                 if let Some(dock) = dock_area {
                     if self.dock.is_some() {
+                        self.cell_provenance.begin(frame.buffer_mut());
                         crate::view::dimming::apply_dimming(frame, dock);
+                        self.cell_provenance
+                            .end("apply_dimming(dock)", frame.buffer_mut());
                     }
                 }
             }
@@ -2012,7 +2068,10 @@ impl Editor {
             } else {
                 chrome_area
             };
+            self.cell_provenance.begin(frame.buffer_mut());
             self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
+            self.cell_provenance
+                .end("render_floating_widget_panel(floating)", frame.buffer_mut());
         }
 
         // The workspace-trust prompt is a layer in the shell's tree; see
@@ -4830,7 +4889,10 @@ impl Editor {
             // click), so leaving it at full brightness read as if it were
             // still live beside a dialog that had already swallowed its
             // input.
+            self.cell_provenance.begin(frame.buffer_mut());
             crate::view::dimming::apply_dimming(frame, area);
+            self.cell_provenance
+                .end("apply_dimming(settings)", frame.buffer_mut());
         }
         if let Some(ref mut settings_state) = self.settings_state {
             if !draw_settings {
@@ -4871,6 +4933,7 @@ impl Editor {
             let open = self.settings_state.as_ref().is_some_and(|s| s.visible);
             if open {
                 let theme = self.theme.read().unwrap().clone();
+                self.cell_provenance.begin(frame.buffer_mut());
                 if let Some(ref settings_state) = self.settings_state {
                     crate::view::settings::render_settings(
                         frame,
@@ -4881,6 +4944,8 @@ impl Editor {
                         &theme,
                     );
                 }
+                self.cell_provenance
+                    .end("render_settings", frame.buffer_mut());
             }
         }
 
@@ -5375,7 +5440,10 @@ impl Editor {
         // Centre it in the chrome area (right of a left dock) so it never
         // overlaps the dock column.
         if prompt.overlay {
+            self.cell_provenance.begin(frame.buffer_mut());
             self.render_overlay_prompt(frame, chrome);
+            self.cell_provenance
+                .end("render_overlay_prompt", frame.buffer_mut());
             return;
         }
 
@@ -5408,6 +5476,7 @@ impl Editor {
             // its cell drawing (layout, spans and the list viewport are still
             // computed, and the projection reads them).
             let fb_draw = !self.suppress_chrome_cells;
+            self.cell_provenance.begin(frame.buffer_mut());
             let __win = self.active_window_mut();
             let Some(file_open_state) = &mut __win.file_open_state else {
                 return;
@@ -5421,6 +5490,8 @@ impl Editor {
                 Some(&kb_clone),
                 fb_draw,
             );
+            self.cell_provenance
+                .end("FileBrowserRenderer::render", frame.buffer_mut());
             return;
         }
 
@@ -6210,7 +6281,14 @@ impl Editor {
         // darkening pass the Settings modal uses (`view::dimming`)
         // — Modifier::DIM alone is barely visible on most terminals.
         if draw {
+            // Bracketed apart from the card so the gate can tell a dimmed
+            // cell from one the card drew; `render_overlay_prompt` itself is
+            // bracketed by the caller.
+            self.cell_provenance.begin(frame.buffer_mut());
             crate::view::dimming::apply_dimming_excluding(frame, frame.area(), Some(overlay_rect));
+            self.cell_provenance
+                .end("apply_dimming(overlay_prompt)", frame.buffer_mut());
+            self.cell_provenance.begin(frame.buffer_mut());
         }
 
         // Clear and frame. Plugin-owned prompts can publish their

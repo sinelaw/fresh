@@ -71,6 +71,7 @@ mod popup_dialogs;
 mod popup_overlay_actions;
 mod prompt_actions;
 mod prompt_lifecycle;
+pub mod provenance;
 mod recovery_actions;
 mod regex_replace;
 pub(crate) mod render;
@@ -1135,6 +1136,10 @@ pub struct Editor {
     /// together — in paint order, which is what the inspector wants. Frame
     /// -scoped: taken and refilled every frame, never read between them.
     pub(crate) fold_provenance: Vec<crate::app::types::ThemeRun>,
+    /// Which writer each painted cell of the last frame came from — the
+    /// provenance gate's recorder. Empty unless a test installed one; see
+    /// `app::provenance`.
+    cell_provenance: provenance::Slot,
     /// THE menu walk for the frame being rendered: rectangles, the shell's
     /// description, and the theme-key provenance, all from one pass.
     ///
