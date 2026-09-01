@@ -204,19 +204,123 @@ the other way round. Three properties must survive stage 5 intact:
    run per frame.
 
 The practical consequence for stage 5a: the first thing to prototype is not
-the paint, it is the **build**. Today the disjoint borrow
-(`WindowBuffers::with_all_mut`) is taken at *paint* time, inside
-`HostPainter::paint_host`, which is why `Ui` lives beside the `Editor`
-rather than on it. Describing pane content moves that borrow to *build*
-time, before `Ui::frame` is called. If that restructure is going to be hard,
-it is hard on day one of 5a and should be found there — see the borrow-shape
-risk in §6.
+the paint, it is the **build**. The obstacle is not the borrow — `shell_frame`
+already takes `&mut Editor` and runs before `Ui::frame`, so
+`WindowBuffers::with_all_mut` is available at build time. It is narrower and
+worse than that, and it is Blocker A in §2b: a pane's height is a layout
+*output*, and every builder the library offers below layout
+(`layout_reader`'s closure, `HostSpec::Leaf`'s factory) is `'static` and
+cannot reach the `Editor` at all.
 
 A useful invariant to assert early, and to keep asserting: **the number of
 display-list items a pane produces is a function of its on-screen rows, not
 of its document length.** A test that opens a 5 KB file and a 5 MB file in
 the same pane and asserts the same item count is cheap, and it is the one
 thing that catches every way this can go wrong.
+
+---
+
+## 2b. Blockers, ranked by the legacy code each one releases
+
+The stages in §4 say what to build. This says what is *in the way*, because
+the priority is retiring legacy paths and almost none of them are waiting on
+effort — they are waiting on one of five blockers. Each blocker below names
+the code it holds hostage and the work that lifts it.
+
+### Blocker A — pane content cannot be described
+
+**Holds:** `view/ui/split_rendering`'s paint half (~16,000 lines),
+`BodyPainter::{body, pane}`, `paint_leaf`, most of `handle_mouse_impl`'s
+post-dispatch tail, and every pane-shaped field of `ChromeLayout`.
+
+**Why.** The description is a layout *input*; a pane's height is a layout
+*output*. `paint_leaf` escapes this by running after layout with the
+rectangle in hand. A description cannot. And the two seams the library
+offers below layout are both `'static` and so cannot reach the `Editor`:
+`layout_reader`'s builder (`impl Fn(LayoutInfo) -> Node<M> + 'static`, and
+it "may run more than once per frame"), and `HostSpec::Leaf`'s factory
+(`Rc<dyn Fn() -> Box<dyn HostLeaf>>`).
+
+The mechanism to build on exists: a viewport publishes its window through
+`ScrollInfo`, and `ItemHeight::Cells` is documented as "the million-item
+case", with `ask_band`'s comment describing "a builder that keeps its window
+filled". So windowed building below layout is a pattern the library already
+has. What is missing is a way for that builder to reach host state.
+
+**Lifts it:**
+
+1. Choose the seam — a custom `HostLeaf` render object that emits runs from
+   its own `paint`, a windowed `layout_reader` over an `Rc` row source, or a
+   new host-build callback in `fresh-ui` symmetric with `Draw::Host`.
+2. Prototype it on one read-only pane, and assert that a row is materialised
+   only when the viewport's window contains it.
+3. Give the pane's row supply an `Rc`-reachable form, since whichever seam
+   wins, the builder is `'static`.
+
+Note the tension with §2a: whatever shape this takes must not force rows
+outside the window to be wrapped or highlighted, or the buffer model's
+incremental repair is paid for twice.
+
+### Blocker B — text in the tree is mispainted, and its cost is unknown
+
+**Holds:** every stage that puts a glyph in a node, which is all of them.
+
+**Lifts it:** §2.1's display-width fix; the frame-cost bench from stage 0.2;
+`shared_rc`/`memo` from stage 0.3; and a decision on how a cell's layered
+styling is expressed (a `Fill` under the runs versus a richer `Run`) and
+whether `ThemeKey` stays a string once it is paid per run per frame rather
+than per chrome label.
+
+### Blocker C — the formatter and the painter are the same function
+
+**Holds:** `widgets/render.rs`'s paint and hit halves (~18,000 lines) and
+the paint halves of `view/ui/{tabs, status_bar}` (~4,600).
+
+**Why.** `render_spec_with_options` decides *what a row says* and *where it
+lands and what it paints into* in one pass, returning rows, boxes and hit
+areas together. The first is domain knowledge the tree needs to keep
+calling; the second is what the tree replaces. They cannot be separated by
+deleting call sites, only by cutting the function.
+
+**Lifts it:** split `render_spec_with_options` into a formatter returning
+rows and a painter consuming them; make the same cut in `view/ui/tabs.rs`
+and `view/ui/status_bar.rs`, keeping `calculate_tab_widths`,
+`split_control_reserve` and the row formatters.
+
+### Blocker D — painters must run between the two fold bands
+
+**Holds:** the band collapse, and with it `Band`, `Paints`, `SkipHosts`,
+`view/settings/render.rs`'s box paint and `view::dimming`'s passes.
+
+**Why.** The settings box paints its own `Clear`, ground and border not
+because it is undescribed — `view::shell::settings` describes the dialog —
+but because it must land *under* a painter that runs between the bands. The
+floating panel's dimming is a painter pass for the same reason: a `Scrim`
+declared in the tree would be overpainted by the dock, and the frame would
+read half-dimmed. Both are ordering problems wearing a painter's clothes.
+
+**Lifts it:** move `render_terminal_splits` into the fold as a `paint_host`
+arm; move the dock's content into the overlay band so its dimming can become
+`Scrim::Dim`.
+
+### Blocker E — `ChromeLayout`'s readers are not all input routing
+
+**Holds:** emptying `ChromeLayout`, even after the surfaces above it migrate.
+
+**Why.** `record_suggestions_geometry`'s own header lists them: the web
+`Scene`, which draws from rects; `cursor_obscured_by_overlay`, which asks
+whether the terminal caret is under a box; and the column widths the next
+frame's description is measured against. None is a click walk, so none is
+retired by describing a surface.
+
+**Lifts it:** feed the web `Scene` from `LayoutSpec`; answer
+`cursor_obscured_by_overlay` from the tree's layers.
+
+### Order
+
+A is the critical path and 1→2→3 is serial. B runs alongside it, and its
+last item cannot be decided until the bench produces numbers. C, D and E are
+independent of A, of B, and of each other.
 
 ---
 
@@ -497,14 +601,15 @@ one derivation and not two. `tests/scene_parity.rs` is the existing guard.
   so the test compares the tree against a reference it also owns. It cannot
   catch both sides being wrong together. Do not treat it as proof of a
   stage's correctness; the e2e corpus is the real net.
-- *The borrow shape.* `fold`'s `HostPainter` takes `&mut self` on the host
-  because painting a split needs `WindowBuffers::with_all_mut`, which is why
-  `Ui` lives beside the `Editor` rather than on it. Stage 5 moves the pane's
-  content *into* the description, which means the description build now
-  needs that same disjoint borrow — at build time rather than paint time.
-  This is the one place where the migration could turn out to need a
-  restructure rather than a translation, and it should be prototyped early
-  in 5a rather than discovered in 5b.
+- *The layout/build cycle.* An earlier draft of this plan called this "the
+  borrow shape" and said the disjoint borrow has to move from paint time to
+  build time. That was wrong, and wrong in a way that understated the
+  problem: `shell_frame` already holds `&mut Editor`, so the borrow is
+  there. What is not there is the pane's *height*, which is a layout output,
+  while the description is a layout input — and the two builders the library
+  offers below layout are both `'static`. See Blocker A in §2b. This is the
+  one place where the migration may need a library change rather than a
+  translation, and it is the first thing stage 5a prototypes.
 - *Plugin-visible behaviour.* `lines_changed` hooks run between the current
   two bands and add overlays that paint has to see. Collapsing the bands in
   stage 7 changes when they run relative to paint; the ordering has to be
