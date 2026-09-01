@@ -1690,13 +1690,15 @@ pub(crate) struct FloatingWidgetState {
     /// not panel rows: `update_widget_hover` probes the runtime's entries and
     /// never sees them, so this is reported by the tree instead.
     pub hovered_popup_row: String,
-    /// The open `Dropdown`'s option list, surfaced by the widget renderer
-    /// for a screen-level floating pop-over (drawn by
-    /// `render_floating_widget_panel` at the trigger's screen row, clipped
-    /// to the terminal so it extends past the panel/modal frame). `None`
-    /// when no keyed Dropdown in this panel is open. Refreshed on every
-    /// render alongside `entries`.
-    pub popup: Option<crate::widgets::PanelPopup>,
+    // The open `Dropdown`'s rendered option list was here — rows, an anchor
+    // and per-row click payloads, refreshed on every render beside `entries`.
+    // The described pop-over is built by `view::shell::widgets`'s `Dropdown`
+    // arm from `dropdown::popup_of`, and the painter that drew this one is
+    // deleted, so the rows and the anchor had no reader left. The one thing
+    // still asked of it was *which* dropdown is open, for
+    // `UiFact::WidgetPopupDismiss`, and that is identity rather than
+    // geometry: `dropdown::open_key` walks the spec for it.
+    //
     // The pop-over's screen rectangles were here — one per option row plus
     // the box's own — so a click that escaped the modal's border could still
     // be routed to `dropdown_select`. The described pop-over is a `layer()`
@@ -2255,7 +2257,6 @@ mod tests {
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
-            popup: None,
         }
     }
 

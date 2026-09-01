@@ -1232,9 +1232,58 @@ had no test at any layer.
 
 ## 7. Merge posture for the current branch
 
-The branch is a large net improvement and should land — but not as-is. Phase 1 is
-the gate: F.6 is a shipped feature dead over most of the chrome, 1.1 is a live
-state-corruption class, 1.2 closes the blind spot that let three bugs ship, and
-1.4 is free. Phase 2 is the difference between a retained layout engine and
-retained-mode UI, and the more surfaces adopt the adapter before it lands, the
-more expensive it becomes.
+**Superseded — this said "should land, but not as-is", and the gate it named is
+now met.** Phase 1 is done, and Phase 2 is done through the collector's
+retirement: for a described panel the immediate-mode renderer no longer runs,
+`resolve_panel` answers what it used to answer, and the window comes from
+whichever layer laid the widget out. The full CI suite passes on every platform.
+
+Kept as a record of what the gate *was*, because it was the right gate: F.6 was
+a shipped feature dead over most of the chrome; 1.1 was a live state-corruption
+class; 1.2 closed the blind spot that let three bugs ship. The Phase 2 argument
+— that it is the difference between a retained layout engine and retained-mode
+UI, and gets more expensive the more surfaces adopt the adapter first — is why
+it was not deferred past the merge.
+
+### What is true at the merge point
+
+- **Green**, except the web UI suite, which is red on purpose: the web's
+  plugin-panel projection is deleted (§6d) and its absence is one recorded
+  failure. The ~20 sections behind it run and pass. A green suite over a deleted
+  feature would be worse.
+- **Four defect classes are documented from the code**, not from theory: who
+  decides a key was taken (§6f), where a panel's focus actually is (§6g), a
+  window and the bar beside it in different units (§6i), and the design that
+  corrected this document's own account of its blocker (§6h).
+- **The plugin-facing `WidgetSpec` API is unchanged.** Every existing plugin
+  keeps working; the whole migration is a backend swap.
+
+### What the next branch owes, in the order it should be done
+
+1. **Rebuild the web's plugin panels from the display list.** This is the one
+   knowingly-red thing, and it is deliberate: it was dropped to be brought back
+   properly rather than ported twice. Everything the replacement must satisfy is
+   still standing in `web-ui/test/drive.mjs`, guarded rather than deleted.
+2. **The markdown text-area's reflow** — the last `render_collected` call inside
+   a description build, and the reason a panel holding a document view still
+   keeps the collector.
+3. **The anchored floating panel's `content_cols`** — the one measurement that
+   cannot yet be `Sizing::Auto`, and the other reason the collector survives.
+4. **`WidgetInstanceState::Text::scroll`**, which leaves with the text-area
+   renderer rather than with the collector, and
+   `handle_widget_text_selection_drag`, which computes in the wrong coordinate
+   space for a described pane panel and works only while the description's row
+   order matches the projection's.
+
+### The thing worth carrying forward that is not a task
+
+Three of this document's claims were wrong, all three mine, and all three wrong
+in the same direction: right about *what* was coupled, wrong about *how far* the
+coupling reached, always overstating it. §6e's blocker was one field of one
+variant. §6h's "wherever a `Col` has other children" was two plugin surfaces.
+§6d's "those tests fail" was a whole suite going dark.
+
+Overstating a coupling is not harmless caution — it hides the cheap fix behind
+an imagined expensive one, and it makes the dangerous step look like every other
+step. The correction each time came from reading the code or the log, never from
+re-reading this document. Treat it as a map, not as evidence.

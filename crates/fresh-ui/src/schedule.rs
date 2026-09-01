@@ -916,11 +916,37 @@ impl<M: 'static> Ui<M> {
     ///
     /// Same standing as [`Ui::rect_of`]: an outside caller reading what the
     /// last layout decided, from the tree that decided it.
+    ///
+    /// This searches the whole frame, so it is right only where the key is
+    /// unique frame-wide; [`Ui::item_window_in`] scopes the search to one
+    /// subtree, and also reports the window's height in cells.
     pub fn item_window(&self, key: &crate::key::Key) -> Option<Rect> {
-        let el = self.find_by_key(key)?;
+        let root = self.root?;
+        Some(self.item_window_in(root, key)?.0)
+    }
+
+    /// [`Ui::item_window`] searched inside one subtree, with the window's own
+    /// height **in cells** beside it.
+    ///
+    /// Two answers because they are two units and neither derives the other
+    /// without the band. `Rect::h` is items; the `u16` is how many cells those
+    /// items occupy, which is the viewport's own laid-out height. A caller
+    /// that needs both — a widget whose selection steps items while its scroll
+    /// offset counts rows — would otherwise have to multiply by a band it
+    /// cannot see, and §6i of the retained-mode plan is the record of what
+    /// guessing that number costs.
+    ///
+    /// The root is the scope, for the reason [`Ui::find_by_key_in`] states: a
+    /// key is unique only where its owner says it is, and two panels in one
+    /// frame can each key a list `"items"`. `item_window` is this from the
+    /// tree's root, which is right only when the caller knows the key is
+    /// unique frame-wide.
+    pub fn item_window_in(&self, root: ElementId, key: &crate::key::Key) -> Option<(Rect, u16)> {
+        let el = self.find_by_key_in(root, key)?;
         let r = self.viewport_at_or_under(el)?;
         let n = self.render.get(r)?;
-        n.data.band.is_some().then_some(n.data.window).flatten()
+        let window = n.data.band.is_some().then_some(n.data.window).flatten()?;
+        Some((window, n.data.rect.h))
     }
 
     /// The nearest scrolling render node at or under `el`, breadth-first, so

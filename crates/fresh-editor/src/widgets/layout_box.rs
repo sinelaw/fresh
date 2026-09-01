@@ -223,47 +223,13 @@ pub fn focus_ring(boxes: &[LayoutBox]) -> Vec<String> {
         .collect()
 }
 
-/// Is `idx` inside the subtree rooted at `root` (inclusive)?
-fn is_descendant(boxes: &[LayoutBox], mut idx: usize, root: usize) -> bool {
-    loop {
-        if idx == root {
-            return true;
-        }
-        match boxes[idx].parent {
-            Some(p) => idx = p,
-            None => return false,
-        }
-    }
-}
-
-/// The Tab ring visible from `current_key`'s position: focusable keys
-/// in document order, scoped to the nearest `focus_trap` ancestor of
-/// the currently-focused box. With no enclosing trap (or no current
-/// focus) the ring is the whole tree's — today's behaviour. A modal
-/// or `Component` subtree that sets `focus_trap` contains Tab cycling
-/// without any hand-interleaved ring code at the call sites.
-pub fn focus_ring_scoped(boxes: &[LayoutBox], current_key: &str) -> Vec<String> {
-    let cur = boxes
-        .iter()
-        .position(|b| b.focusable && b.key.as_deref() == Some(current_key));
-    let trap = cur.and_then(|i| {
-        let path = ancestor_path(boxes, i);
-        // Nearest enclosing trap, excluding the focused box itself.
-        path.iter()
-            .rev()
-            .skip(1)
-            .copied()
-            .find(|&a| boxes[a].focus_trap)
-    });
-    match trap {
-        None => focus_ring(boxes),
-        Some(t) => document_order(boxes)
-            .into_iter()
-            .filter(|&i| boxes[i].focusable && is_descendant(boxes, i, t))
-            .filter_map(|i| boxes[i].key.clone())
-            .collect(),
-    }
-}
+// `focus_ring_scoped` was here — the Tab ring scoped to the nearest
+// `focus_trap` ancestor of the focused box. It recovered two facts from the
+// rectangles a paint left behind, `focusable` and `focus_trap`, and both are
+// `box_meta`'s and so functions of the spec. Its one caller
+// (`Editor::handle_widget_focus_advance`) now walks the spec through
+// `render::focus_ring_scoped_in_spec`, which a panel the tree describes — and
+// which therefore has no boxes at all — can also answer.
 
 #[cfg(test)]
 mod tests {
@@ -344,20 +310,5 @@ mod tests {
     fn focus_ring_is_focusables_in_document_order() {
         let boxes = sample();
         assert_eq!(focus_ring(&boxes), vec!["b", "la", "lb"]);
-    }
-    #[test]
-    fn focus_ring_scoped_respects_traps() {
-        let mut boxes = sample();
-        // Make the row a focus trap: cycling from a list inside it
-        // stays among the lists; cycling from the button outside sees
-        // the whole ring.
-        boxes[3].focus_trap = true;
-        assert_eq!(focus_ring_scoped(&boxes, "la"), vec!["la", "lb"]);
-        assert_eq!(focus_ring_scoped(&boxes, "b"), vec!["b", "la", "lb"]);
-        // No trap anywhere → whole ring regardless of position.
-        boxes[3].focus_trap = false;
-        assert_eq!(focus_ring_scoped(&boxes, "la"), vec!["b", "la", "lb"]);
-        // Unknown / empty focus → whole ring (auto-focus case).
-        assert_eq!(focus_ring_scoped(&boxes, ""), vec!["b", "la", "lb"]);
     }
 }

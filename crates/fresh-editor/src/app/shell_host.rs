@@ -1639,9 +1639,21 @@ impl Editor {
                             Slot::Dock => crate::app::PanelSlot::Dock,
                             _ => crate::app::PanelSlot::Floating,
                         };
+                        // **Asked of the spec and the state, not of a field
+                        // the last render left.** The dismissal needs one
+                        // string — which dropdown is up — and
+                        // `dropdown::open_key` answers it through the same
+                        // `resolve` the description painted the list from, so
+                        // the two cannot name different widgets.
                         let open = self.panel(panel).and_then(|p| {
-                            let key = p.popup.as_ref()?.widget_key.clone();
-                            (!key.is_empty()).then(|| (p.panel_key.clone(), key))
+                            let panel_key = p.panel_key.clone();
+                            let st = self.widget_registry.get(&panel_key)?;
+                            let key = crate::widgets::kinds::dropdown::open_key(
+                                &st.spec,
+                                &st.instance_states,
+                                &st.focus_key,
+                            )?;
+                            (!key.is_empty()).then_some((panel_key, key))
                         });
                         if let Some((panel_key, widget_key)) = open {
                             let ev = crate::widgets::WidgetEvent {

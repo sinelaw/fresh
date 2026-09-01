@@ -41,6 +41,7 @@ impl WidgetImpl for DualList {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        _viewport: super::Viewport,
         key: &str,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {

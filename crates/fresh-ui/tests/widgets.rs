@@ -1280,6 +1280,68 @@ fn a_keyed_card_lists_window_is_reported_in_items() {
     );
 }
 
+/// **Two lists, one key, two windows — and the scope is what tells them
+/// apart.**
+///
+/// `find_by_key_in`'s own doc says a key is unique only where its owner says
+/// it is, and a frame that puts two panels side by side is exactly the case:
+/// each names its list `"items"`, and a frame-wide lookup answers with
+/// whichever comes first in tree order for both. `item_window_in` scopes the
+/// search, and reports the window's height in cells beside its height in
+/// items, because for a caller whose offset counts rows the band is the only
+/// thing that converts one to the other.
+#[test]
+fn a_scoped_item_window_answers_for_its_own_subtree() {
+    let card = |i: usize| -> Node<Msg> {
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("title {i}")))
+            .child(fresh_ui::text(format!("body {i}")))
+            .child(fresh_ui::text("more"))
+    };
+    let list = move |n: usize, h: u16| -> Node<Msg> {
+        List::windowed(n, fresh_ui::Key::from, card)
+            .row_height(RowHeight::UniformMeasured)
+            .node()
+            .key("items")
+            .h(Sizing::Cells(h))
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        col()
+            .child(col().key("left").child(list(20, 12)))
+            .child(col().key("right").child(list(20, 6))),
+        Size::new(24, 18),
+    );
+
+    let key = fresh_ui::Key::from("items");
+    let left = ui.find_by_key(&fresh_ui::Key::from("left")).expect("left");
+    let right = ui
+        .find_by_key(&fresh_ui::Key::from("right"))
+        .expect("right");
+    assert_eq!(
+        ui.item_window_in(left, &key).map(|(w, cells)| (w.h, cells)),
+        Some((4, 12)),
+        "four three-row cards in twelve rows"
+    );
+    assert_eq!(
+        ui.item_window_in(right, &key)
+            .map(|(w, cells)| (w.h, cells)),
+        Some((2, 6)),
+        "two in six — the same key, a different window"
+    );
+    // The unscoped read cannot tell them apart, which is the whole point.
+    assert_eq!(ui.item_window(&key).map(|w| w.h), Some(4));
+    // A subtree that does not contain the key answers nothing rather than
+    // reaching outside itself.
+    assert_eq!(
+        ui.item_window_in(
+            ui.find_by_key(&fresh_ui::Key::from("left")).expect("left"),
+            &fresh_ui::Key::from("nobody")
+        ),
+        None
+    );
+}
+
 /// A key that names nothing, and one that names something that does not scroll
 /// in items, are both "no item window" rather than a number in the wrong unit.
 #[test]

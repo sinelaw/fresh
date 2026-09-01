@@ -25,6 +25,7 @@ impl WidgetImpl for Text {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        _viewport: super::Viewport,
         key: &str,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
@@ -197,6 +198,7 @@ impl WidgetImpl for Text {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        _viewport: super::Viewport,
         delta: i32,
     ) -> bool {
         let WidgetSpec::Text {

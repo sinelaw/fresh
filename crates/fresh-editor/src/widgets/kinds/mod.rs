@@ -116,6 +116,87 @@ pub(crate) struct PointerFx {
     pub place_caret: bool,
 }
 
+/// **The window a key or a wheel notch is acting inside.**
+///
+/// Delivered to [`WidgetImpl::on_key`] and [`WidgetImpl::on_wheel`] rather
+/// than looked up by them, because *which* window a widget has is the host's
+/// question, not the kind's: a described panel's comes from the tree that laid
+/// it out, a painted one's from its last paint, and neither is something a
+/// kind can see from a spec and an instance map.
+///
+/// **Two numbers because there genuinely are two.** A selection moves in
+/// items — `select_move` adds its delta to the index and clamps against the
+/// item count — while a `Tree`'s scroll offset counts *rows*, so it can clip
+/// a bordered card at the viewport edge. Handing one where the other was
+/// wanted is §6i's defect class, and it is the reason the division from rows
+/// to items happens once, in the resolver that answers this, instead of at
+/// every seam that pages.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Viewport {
+    /// How many items the window shows — the unit a selection and a
+    /// `List`'s offset move in.
+    pub items: u32,
+    /// How many terminal rows the window is — the unit a `Tree`'s offset
+    /// moves in.
+    pub rows: u32,
+}
+
+impl Viewport {
+    /// The window the *spec* asks for, for a widget nothing has laid out yet.
+    ///
+    /// The last resort of [`crate::app::Editor::widget_viewport`]: no tree
+    /// node and no paint, which is the frame between a panel's mount and its
+    /// first layout. An explicit `visible_rows` is honoured exactly — it wins
+    /// unconditionally in both collectors and is never superseded by a height
+    /// budget — and an auto-sized widget, which carries no number at all,
+    /// lands on the legacy default.
+    ///
+    /// **The division to items is the spec's own arithmetic, not `rows`
+    /// repeated.** A `Tree` states how tall one node is (`item_height`, plus
+    /// two border rows for a card), so a row budget converts; saying
+    /// `items == rows` for a tree of four-row cards is §6i's conflation, and
+    /// it would page the dock's card view four times too far on the first key
+    /// after a mount. A `List`'s card band is *measured*, not declared, so
+    /// there is nothing here to divide by and one item stays one row until a
+    /// layout says otherwise — which is what the retired
+    /// `effective_visible_rows` did with an absent `item_height`.
+    pub(crate) fn from_spec(spec: &WidgetSpec) -> Viewport {
+        let rows = match spec {
+            WidgetSpec::List { visible_rows, .. } | WidgetSpec::Tree { visible_rows, .. } => {
+                *visible_rows
+            }
+            _ => None,
+        }
+        .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+        .max(1);
+        Viewport {
+            rows,
+            items: (rows / spec_item_rows(spec)).max(1),
+        }
+    }
+}
+
+/// Rows one item of `spec` occupies, as the spec itself states it.
+///
+/// Mirrors `render_widget_tree`'s normalisation: bordered-card layout engages
+/// only for multi-row items, and a card adds its two border rows.
+fn spec_item_rows(spec: &WidgetSpec) -> u32 {
+    match spec {
+        WidgetSpec::Tree {
+            item_height,
+            card_borders,
+            ..
+        } => {
+            let h = (*item_height).max(1);
+            match *card_borders && h > 1 {
+                true => h + 2,
+                false => h,
+            }
+        }
+        _ => 1,
+    }
+}
+
 /// How panel-level Up/Down treats a kind that is the panel's
 /// scrollable picker target — see [`WidgetImpl::picker_nav`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,12 +270,14 @@ pub(crate) trait WidgetImpl: Sync {
     ///
     /// Mutate `panel` for state changes; queue plugin notifications
     /// on `fx` — the dispatcher rerenders and fires them after the
-    /// handler returns.
+    /// handler returns. `viewport` is the window the key acts inside
+    /// (paging), handed down rather than looked up — see [`Viewport`].
     fn on_key(
         &self,
         _spec: &WidgetSpec,
         _widget_key: &str,
         _panel: &mut crate::widgets::WidgetPanelState,
+        _viewport: Viewport,
         _key: &str,
         _fx: &mut KeyFx,
     ) -> KeyDisposition {
@@ -295,11 +378,14 @@ pub(crate) trait WidgetImpl: Sync {
     /// widget already at its bound returns false so the event keeps
     /// bubbling (scroll chaining), ultimately falling through to the
     /// enclosing buffer scroll. The default is "not scrollable".
+    /// `viewport` is the window the notch moves — the bound is
+    /// computed against it, never against the spec.
     fn on_wheel(
         &self,
         _spec: &WidgetSpec,
         _widget_key: &str,
         _panel: &mut crate::widgets::WidgetPanelState,
+        _viewport: Viewport,
         _delta: i32,
     ) -> bool {
         false

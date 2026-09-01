@@ -7,7 +7,7 @@ use fresh_core::text_property::TextPropertyEntry;
 use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::{HitArea, PaintedWindow, WidgetInstanceState};
 use crate::widgets::render::{
     apply_hover_band, ensure_trailing_newline, mark_list_card_selected, render_tree_row,
     tree_max_scroll, tree_node_is_card, tree_node_rows, CollectedOutput, RenderContext,
@@ -22,10 +22,10 @@ impl WidgetImpl for Tree {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        viewport: super::Viewport,
         delta: i32,
     ) -> bool {
         let WidgetSpec::Tree {
-            visible_rows,
             item_height,
             card_borders,
             checkable,
@@ -39,28 +39,20 @@ impl WidgetImpl for Tree {
         if nodes.is_empty() {
             return false;
         }
-        let visible_rows = panel.effective_visible_rows(widget_key, *visible_rows);
         let item_height = (*item_height).max(1);
-        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
-            Some(WidgetInstanceState::Tree {
-                selected_index,
-                scroll_offset,
-                expanded_keys,
-                ..
-            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
-            _ => (-1, 0, std::collections::HashSet::<String>::new()),
-        };
+        let expanded = resolve(spec, widget_key, &panel.instance_states).expanded;
         let visible_indices = collect_visible_tree_indices(nodes, item_keys, &expanded);
         if visible_indices.is_empty() {
             return false;
         }
-        // Scroll offset and clamp are in *row* units (line-level
-        // scrolling — a bordered card can be partially clipped at the
-        // viewport edges). Compute per-node heights and the clamp with
-        // the renderer's own helpers so the wheel can't disagree with
-        // what will actually be painted. Mirror the renderer's
-        // normalization: bordered-card layout only engages for
-        // multi-row items.
+        // **A Tree's offset counts rows, not nodes** — line-level
+        // scrolling, so a bordered card can be partially clipped at the
+        // viewport edges — which is why the bound is computed against
+        // `viewport.rows` and not the item window beside it. Compute
+        // per-node heights and the clamp with the renderer's own helpers
+        // so the wheel can't disagree with what will actually be
+        // painted. Mirror the renderer's normalization: bordered-card
+        // layout only engages for multi-row items.
         let card_borders = *card_borders && item_height > 1;
         let heights: Vec<u32> = visible_indices
             .iter()
@@ -73,7 +65,8 @@ impl WidgetImpl for Tree {
                 )
             })
             .collect();
-        let max_scroll = crate::widgets::render::tree_max_scroll(&heights, visible_rows);
+        let max_scroll = crate::widgets::render::tree_max_scroll(&heights, viewport.rows);
+        let cur_scroll = panel.painted.get(widget_key).map(|w| w.offset).unwrap_or(0);
         let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
         if new_scroll == cur_scroll {
             return false;
@@ -82,16 +75,10 @@ impl WidgetImpl for Tree {
         // (and may scroll out of view). `user_scrolled` tells the
         // renderer not to snap the offset back to the selection, and it
         // survives a plugin `SetSelectedIndex` that re-pins the same
-        // selection.
-        panel.instance_states.insert(
-            widget_key.to_string(),
-            WidgetInstanceState::Tree {
-                scroll_offset: new_scroll,
-                selected_index: cur_sel,
-                expanded_keys: expanded,
-                user_scrolled: true,
-            },
-        );
+        // selection. The offset is the painter's window; the latch is
+        // the tree's own fold.
+        panel.window_mut(widget_key, viewport).offset = new_scroll;
+        panel.latch_user_scrolled(widget_key);
         true
     }
 
@@ -151,35 +138,33 @@ impl WidgetImpl for Tree {
             panel.set_selected_index(key, -1);
             return;
         }
-        let cur_sel = match panel.instance_states.get(key) {
-            Some(crate::widgets::WidgetInstanceState::Tree { selected_index, .. }) => {
-                *selected_index
-            }
-            _ => -1,
+        // Through the one resolver: an untouched tree records no state
+        // at all now, and the spec's `selected_index` is its seed — so
+        // reading the map raw would land focus on the first row of a
+        // tree whose plugin had already said which row was selected.
+        let cur_sel = match crate::widgets::find_widget_by_key(&panel.spec, key) {
+            Some(spec) => resolve(spec, key, &panel.instance_states).selected,
+            None => -1,
         };
         if cur_sel >= 0 {
             return;
         }
         // First visible (un-collapsed) node, honoring the host's
-        // instance-state expansion set (falling back to the spec's
-        // initial `expanded_keys`). Computed in a scope so the spec
-        // borrow ends before the selection write.
+        // expansion set through the same resolver — which falls back to
+        // the spec's `expanded_keys` seed, so this is one statement of
+        // that rule rather than a second. Computed in a scope so the
+        // spec borrow ends before the selection write.
         let first = {
-            let Some(WidgetSpec::Tree {
-                nodes,
-                item_keys,
-                expanded_keys,
-                ..
-            }) = crate::widgets::find_widget_by_key(&panel.spec, key)
+            let Some(node_spec) = crate::widgets::find_widget_by_key(&panel.spec, key) else {
+                return;
+            };
+            let WidgetSpec::Tree {
+                nodes, item_keys, ..
+            } = node_spec
             else {
                 return;
             };
-            let expanded = match panel.instance_states.get(key) {
-                Some(crate::widgets::WidgetInstanceState::Tree { expanded_keys, .. }) => {
-                    expanded_keys.clone()
-                }
-                _ => expanded_keys.iter().cloned().collect(),
-            };
+            let expanded = resolve(node_spec, key, &panel.instance_states).expanded;
             collect_visible_tree_indices(nodes, item_keys, &expanded)
                 .first()
                 .map(|&i| i as i32)
@@ -200,6 +185,7 @@ impl WidgetImpl for Tree {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        viewport: super::Viewport,
         key: &str,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
@@ -209,29 +195,14 @@ impl WidgetImpl for Tree {
                 select_move(spec, widget_key, panel, delta, fx);
             }
             "PageUp" | "PageDown" => {
-                let WidgetSpec::Tree {
-                    visible_rows,
-                    item_height,
-                    card_borders,
-                    ..
-                } = spec
-                else {
-                    return super::KeyDisposition::Pass;
-                };
-                // A Tree paces in *nodes*, so a multi-row card tree
-                // divides the row budget by its fixed item height
-                // first. Bordered cards take two extra rows each;
-                // dividing by the card height is a conservative page
-                // estimate (never overshoots). The row window comes
-                // from the panel's last render (`effective_rows`).
-                let per_node = if *card_borders && *item_height > 1 {
-                    *item_height + 2
-                } else {
-                    (*item_height).max(1)
-                };
-                let nodes_per_page =
-                    panel.effective_visible_rows(widget_key, *visible_rows) / per_node;
-                let page = nodes_per_page.saturating_sub(1).max(1) as i32;
+                // A Tree paces in *nodes*, and the window arrives in
+                // them: `viewport.items` is the row budget already
+                // divided by the rows one node occupies (bordered cards
+                // take two extra each, so that division is a
+                // conservative page estimate and never overshoots). The
+                // division is the resolver's — this seam only pages.
+                // One node of overlap so the user keeps a visual anchor.
+                let page = viewport.items.saturating_sub(1).max(1) as i32;
                 let delta = if key == "PageUp" { -page } else { page };
                 select_move(spec, widget_key, panel, delta, fx);
             }
@@ -270,7 +241,7 @@ impl WidgetImpl for Tree {
     /// `toggle` and right-click `context` hits pass through.
     fn on_pointer(
         &self,
-        _spec: &WidgetSpec,
+        spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         event_type: &str,
@@ -285,26 +256,11 @@ impl WidgetImpl for Tree {
                     // central handler did.
                     return super::PointerDisposition::Consumed;
                 };
-                let (cur_scroll, cur_sel, mut expanded, cur_user_scrolled) =
-                    match panel.instance_states.get(widget_key) {
-                        Some(WidgetInstanceState::Tree {
-                            scroll_offset,
-                            selected_index,
-                            expanded_keys,
-                            user_scrolled,
-                        }) => (
-                            *scroll_offset,
-                            *selected_index,
-                            expanded_keys.clone(),
-                            *user_scrolled,
-                        ),
-                        _ => (
-                            0u32,
-                            -1i32,
-                            std::collections::HashSet::<String>::new(),
-                            false,
-                        ),
-                    };
+                let Resolved {
+                    selected: cur_sel,
+                    mut expanded,
+                    user_scrolled: cur_user_scrolled,
+                } = resolve(spec, widget_key, &panel.instance_states);
                 let now_expanded = if expanded.contains(item_key) {
                     expanded.remove(item_key);
                     false
@@ -315,7 +271,6 @@ impl WidgetImpl for Tree {
                 panel.instance_states.insert(
                     widget_key.to_string(),
                     WidgetInstanceState::Tree {
-                        scroll_offset: cur_scroll,
                         selected_index: cur_sel,
                         expanded_keys: expanded,
                         // A disclosure click doesn't move the selection —
@@ -381,6 +336,79 @@ impl WidgetImpl for Tree {
     }
 }
 
+/// A `Tree`'s state, once the spec and the instance map have been
+/// reconciled. As with [`crate::widgets::kinds::list::Resolved`], the
+/// window is absent: that is the painter's, and lives in
+/// [`crate::widgets::PaintedWindow`].
+pub(crate) struct Resolved {
+    /// The selected node's ABSOLUTE index into `nodes`, or `-1`.
+    ///
+    /// **Not clamped to what is visible** — that clamp needs the
+    /// visible-flat walk and belongs with the one that does it
+    /// (`render_widget_tree`'s `clamp_to_visible`, which then also has
+    /// to find the selection's position for scroll math). Every handler
+    /// read this value raw before, and still does; what changed is only
+    /// where the seed comes from.
+    pub selected: i32,
+    /// The expanded-key set: the stored one once anything has expanded
+    /// or collapsed a node, the spec's seed until then.
+    pub expanded: HashSet<String>,
+    /// Whether the user has taken the window off the selection by mouse.
+    pub user_scrolled: bool,
+}
+
+/// **Where a `Tree`'s selection and expansion actually come from.**
+///
+/// Instance state is authoritative once a handler has decided; the spec's
+/// `selected_index` / `expanded_keys` are seeds until then. That used to be
+/// true only of the first frame, because the render walk wrote a resolved
+/// entry back on every one — so every handler could read the map raw and
+/// get a seeded answer. The walk no longer decides, so an untouched tree has
+/// no entry at all and the seeding has to happen where every reader is: at
+/// the read. Without this, a wheel notch or a focus arrival on a tree whose
+/// plugin had already named a selected row would silently discard it.
+pub(crate) fn resolve(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    prev: &HashMap<String, WidgetInstanceState>,
+) -> Resolved {
+    let (spec_selected, spec_expanded) = match spec {
+        WidgetSpec::Tree {
+            selected_index,
+            expanded_keys,
+            ..
+        } => (*selected_index, expanded_keys.as_slice()),
+        _ => (-1, &[] as &[String]),
+    };
+    resolve_seeded(spec_selected, spec_expanded, widget_key, prev)
+}
+
+/// [`resolve`] against the seeds directly, for the collector — which is
+/// handed a `Tree`'s fields unpacked rather than the spec node itself.
+pub(crate) fn resolve_seeded(
+    spec_selected: i32,
+    spec_expanded: &[String],
+    widget_key: &str,
+    prev: &HashMap<String, WidgetInstanceState>,
+) -> Resolved {
+    match prev.get(widget_key).filter(|_| !widget_key.is_empty()) {
+        Some(WidgetInstanceState::Tree {
+            selected_index,
+            expanded_keys,
+            user_scrolled,
+        }) => Resolved {
+            selected: *selected_index,
+            expanded: expanded_keys.clone(),
+            user_scrolled: *user_scrolled,
+        },
+        _ => Resolved {
+            selected: spec_selected,
+            expanded: spec_expanded.iter().cloned().collect(),
+            user_scrolled: false,
+        },
+    }
+}
+
 /// Move the host-owned selection by `delta` along the visible-flat
 /// order (descendants of collapsed nodes are skipped — selection is
 /// the *absolute* `nodes` index, so we walk the visible order to
@@ -395,10 +423,7 @@ pub(crate) fn select_move(
     fx: &mut super::KeyFx,
 ) {
     let WidgetSpec::Tree {
-        selected_index,
-        nodes,
-        item_keys,
-        ..
+        nodes, item_keys, ..
     } = spec
     else {
         return;
@@ -406,15 +431,11 @@ pub(crate) fn select_move(
     if nodes.is_empty() {
         return;
     }
-    let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
-        Some(WidgetInstanceState::Tree {
-            selected_index,
-            scroll_offset,
-            expanded_keys,
-            ..
-        }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
-        _ => (*selected_index, 0u32, HashSet::new()),
-    };
+    let Resolved {
+        selected: cur_sel,
+        expanded,
+        ..
+    } = resolve(spec, widget_key, &panel.instance_states);
     let visible_indices = collect_visible_tree_indices(nodes, item_keys, &expanded);
     if visible_indices.is_empty() {
         return;
@@ -438,7 +459,6 @@ pub(crate) fn select_move(
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::Tree {
-            scroll_offset: cur_scroll,
             selected_index: new_abs as i32,
             expanded_keys: expanded,
             // Keyboard nav is a deliberate selection move —
@@ -470,10 +490,7 @@ pub(crate) fn lateral(
     fx: &mut super::KeyFx,
 ) {
     let WidgetSpec::Tree {
-        selected_index,
-        nodes,
-        item_keys,
-        ..
+        nodes, item_keys, ..
     } = spec
     else {
         return;
@@ -481,21 +498,11 @@ pub(crate) fn lateral(
     if nodes.is_empty() {
         return;
     }
-    let (cur_sel, cur_scroll, mut expanded, cur_user_scrolled) =
-        match panel.instance_states.get(widget_key) {
-            Some(WidgetInstanceState::Tree {
-                selected_index,
-                scroll_offset,
-                expanded_keys,
-                user_scrolled,
-            }) => (
-                *selected_index,
-                *scroll_offset,
-                expanded_keys.clone(),
-                *user_scrolled,
-            ),
-            _ => (*selected_index, 0u32, HashSet::new(), false),
-        };
+    let Resolved {
+        selected: cur_sel,
+        mut expanded,
+        user_scrolled: cur_user_scrolled,
+    } = resolve(spec, widget_key, &panel.instance_states);
     if cur_sel < 0 {
         return;
     }
@@ -527,7 +534,6 @@ pub(crate) fn lateral(
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::Tree {
-            scroll_offset: cur_scroll,
             selected_index: new_sel,
             expanded_keys: expanded,
             // Jumping to the parent is a deliberate selection
@@ -565,18 +571,10 @@ pub(crate) fn activate_event(
     widget_key: &str,
     panel: &crate::widgets::WidgetPanelState,
 ) -> Option<(String, serde_json::Value)> {
-    let WidgetSpec::Tree {
-        selected_index,
-        item_keys,
-        ..
-    } = spec
-    else {
+    let WidgetSpec::Tree { item_keys, .. } = spec else {
         return None;
     };
-    let sel = match panel.instance_states.get(widget_key) {
-        Some(WidgetInstanceState::Tree { selected_index, .. }) => *selected_index,
-        _ => *selected_index,
-    };
+    let sel = resolve(spec, widget_key, &panel.instance_states).selected;
     if sel < 0 {
         return None;
     }
@@ -595,7 +593,6 @@ fn toggle_if_checkable_event(
     panel: &crate::widgets::WidgetPanelState,
 ) -> Option<(String, serde_json::Value)> {
     let WidgetSpec::Tree {
-        selected_index,
         nodes,
         item_keys,
         checkable,
@@ -607,10 +604,7 @@ fn toggle_if_checkable_event(
     if !checkable {
         return None;
     }
-    let sel = match panel.instance_states.get(widget_key) {
-        Some(WidgetInstanceState::Tree { selected_index, .. }) => *selected_index,
-        _ => *selected_index,
-    };
+    let sel = resolve(spec, widget_key, &panel.instance_states).selected;
     if sel < 0 {
         return None;
     }
@@ -654,11 +648,6 @@ fn render_widget_tree(
             fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK
         }
     };
-    if let Some(k) = tree_key {
-        if !k.is_empty() {
-            out.effective_rows.insert(k.to_string(), visible_rows);
-        }
-    }
     // Fixed rows per node. `1` is the classic single-line tree; a
     // larger value renders every node as a card of this many rows.
     // Windowing/scroll stay in *node* units so single-line trees (the
@@ -667,27 +656,17 @@ fn render_widget_tree(
     // non-card nodes a single row — see `tree_node_rows`.
     let item_height = item_height.max(1);
     let card_borders = card_borders && item_height > 1;
-    // Look up host-owned instance state (scroll, selection,
-    // expanded set). Spec values are initial-only.
-    let prev_state = tree_key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k));
-    let (prev_scroll, prev_sel, prev_expanded, user_scrolled) = match prev_state {
-        Some(WidgetInstanceState::Tree {
-            scroll_offset,
-            selected_index,
-            expanded_keys,
-            user_scrolled,
-        }) => (
-            *scroll_offset,
-            *selected_index,
-            expanded_keys.clone(),
-            *user_scrolled,
-        ),
-        _ => {
-            // First render: seed expanded_keys from spec.
-            let seeded: HashSet<String> = expanded_keys.iter().cloned().collect();
-            (0, selected_index, seeded, false)
-        }
-    };
+    // The selection and the expanded set are the tree's own, through
+    // the one resolver every reader uses; the spec is their seed until
+    // a handler decides otherwise.
+    let Resolved {
+        selected: prev_sel,
+        expanded: prev_expanded,
+        user_scrolled,
+    } = resolve_seeded(selected_index, expanded_keys, tree_key.unwrap_or(""), prev);
+    // The offset is the *last paint's*, not the tree's: the scroll fold
+    // reads back its own previous value and republishes it below.
+    let prev_scroll = ctx.painted(tree_key).map(|w| w.offset).unwrap_or(0);
 
     // Compute the visible (un-collapsed) flat slice of the
     // full `nodes` list. A node at depth d is visible iff
@@ -805,15 +784,32 @@ fn render_widget_tree(
         scroll = max_scroll;
     }
 
-    // Persist instance state.
+    // **The walk carries this widget's state; it does not decide it.**
+    // Same contract as `collect_list` and `collect_dropdown`: the
+    // clamped selection is a derivation [`resolve`] reapplies on every
+    // read, the offset is the paint's window and leaves below under
+    // that name, and an untouched tree contributes no entry at all —
+    // while a stored one has to survive, because `update_side_effects`
+    // replaces the whole map.
     if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
-        next_state.insert(
+        if let Some(stored) = prev.get(k) {
+            next_state.insert(k.to_string(), stored.clone());
+        }
+        // The window this paint used. `items` is the node budget the
+        // pager moves in — the row budget divided by the rows one node
+        // occupies, which for bordered cards of unequal height is the
+        // conservative estimate paging has always used.
+        let per_node = if card_borders {
+            item_height + 2
+        } else {
+            item_height
+        };
+        out.painted.insert(
             k.to_string(),
-            WidgetInstanceState::Tree {
-                scroll_offset: scroll,
-                selected_index: effective_sel_abs,
-                expanded_keys: prev_expanded.clone(),
-                user_scrolled,
+            PaintedWindow {
+                rows: visible_rows,
+                items: visible_rows / per_node.max(1),
+                offset: scroll,
             },
         );
     }

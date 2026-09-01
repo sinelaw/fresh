@@ -7,7 +7,7 @@ use fresh_core::text_property::TextPropertyEntry;
 use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::{HitArea, PaintedWindow, WidgetInstanceState};
 use crate::widgets::render::{
     apply_hover_band, blank_list_row, ensure_trailing_newline, mark_list_card_selected,
     mark_list_row_selected, render_collected, CollectedOutput, RenderContext,
@@ -21,59 +21,34 @@ impl WidgetImpl for List {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        viewport: super::Viewport,
         delta: i32,
     ) -> bool {
-        let WidgetSpec::List {
-            visible_rows,
-            items,
-            item_specs,
-            ..
-        } = spec
-        else {
-            return false;
-        };
-        let total = if item_specs.is_empty() {
-            items.len()
-        } else {
-            item_specs.len()
-        } as u32;
+        let total = total_items(spec);
         if total == 0 {
             return false;
         }
-        let visible_rows = panel.effective_visible_rows(widget_key, *visible_rows);
-        let (cur_sel, cur_scroll, item_height) = match panel.instance_states.get(widget_key) {
-            Some(WidgetInstanceState::List {
-                selected_index,
-                scroll_offset,
-                item_height,
-                ..
-            }) => (*selected_index, *scroll_offset, (*item_height).max(1)),
-            _ => (-1, 0, 1),
-        };
-        // Convert the row-denominated viewport into a per-item window so
-        // the bound is right for card lists (item_height > 1), and so a
-        // list that already shows everything (max_scroll == 0, e.g. the
-        // Git Log which sets visible_rows == commit count and scrolls via
-        // its enclosing pane) reports "can't scroll" and lets the wheel
+        // The window arrives in items already — a `List`'s offset counts
+        // items, so the row-to-item division that used to happen here is
+        // the resolver's, once, for every seam that needs it. A list that
+        // already shows everything (max_scroll == 0, e.g. the Git Log,
+        // which sets visible_rows == commit count and scrolls via its
+        // enclosing pane) still reports "can't scroll" and lets the wheel
         // bubble to that pane rather than swallowing it.
-        let visible_items = (visible_rows.max(1) / item_height).max(1);
+        let visible_items = viewport.items.max(1);
         let max_scroll = total.saturating_sub(visible_items);
+        let cur_scroll = panel.painted.get(widget_key).map(|w| w.offset).unwrap_or(0);
         let new_scroll = (cur_scroll as i64 + delta as i64).clamp(0, max_scroll as i64) as u32;
         if new_scroll == cur_scroll {
             return false;
         }
         // Wheel scrolls the *view* only — the selection stays put (and
         // may leave the visible window); `user_scrolled` tells the
-        // renderer not to snap the offset back to it.
-        panel.instance_states.insert(
-            widget_key.to_string(),
-            WidgetInstanceState::List {
-                scroll_offset: new_scroll,
-                selected_index: cur_sel,
-                item_height,
-                user_scrolled: true,
-            },
-        );
+        // renderer not to snap the offset back to it. The offset is the
+        // painter's window and the latch is the widget's own fold, so
+        // the notch writes one of each.
+        panel.window_mut(widget_key, viewport).offset = new_scroll;
+        panel.latch_user_scrolled(widget_key);
         true
     }
 
@@ -125,6 +100,7 @@ impl WidgetImpl for List {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        viewport: super::Viewport,
         key: &str,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
@@ -134,30 +110,18 @@ impl WidgetImpl for List {
                 select_move(spec, widget_key, panel, delta, fx);
             }
             "PageUp" | "PageDown" => {
-                let WidgetSpec::List { visible_rows, .. } = spec else {
-                    return super::KeyDisposition::Pass;
-                };
-                // The row window comes from the panel's last render
-                // (`effective_rows`) — an auto-sized list's spec
-                // carries no number, and even an explicit one can be
-                // superseded only there.
-                //
-                // **And a window is in rows while a page is in items.**
+                // **A page is a window of items, and it arrives as one.**
                 // `select_move`'s delta counts items — it adds it to the
                 // selection and clamps against the item *count* — so a row
                 // count handed over undivided pages `item_height` times too
                 // far: a list of three-row cards in a twelve-row window
-                // jumped eleven cards when four were on screen. `on_wheel`
-                // has always converted, and says why; this seam never did.
-                // For the classic path `item_height` is 1 and the arithmetic
-                // is unchanged.
-                let item_height = match panel.instance_states.get(widget_key) {
-                    Some(WidgetInstanceState::List { item_height, .. }) => (*item_height).max(1),
-                    _ => 1,
-                };
-                let page = (panel.effective_visible_rows(widget_key, *visible_rows) / item_height)
-                    .saturating_sub(1)
-                    .max(1) as i32;
+                // jumped eleven cards when four were on screen. The window
+                // now reaches this seam already in items, so there is no
+                // conversion here to get wrong (and none duplicated from
+                // `on_wheel`, which had the only correct copy).
+                //
+                // One item of overlap so the user keeps a visual anchor.
+                let page = viewport.items.saturating_sub(1).max(1) as i32;
                 let delta = if key == "PageUp" { -page } else { page };
                 select_move(spec, widget_key, panel, delta, fx);
             }
@@ -179,7 +143,7 @@ impl WidgetImpl for List {
     /// hits pass through untouched.
     fn on_pointer(
         &self,
-        _spec: &WidgetSpec,
+        spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         event_type: &str,
@@ -188,20 +152,14 @@ impl WidgetImpl for List {
     ) -> super::PointerDisposition {
         if event_type == "select" {
             if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
-                let (prev_scroll, prev_item_height) = match panel.instance_states.get(widget_key) {
-                    Some(WidgetInstanceState::List {
-                        scroll_offset,
-                        item_height,
-                        ..
-                    }) => (*scroll_offset, *item_height),
-                    _ => (0, 1),
-                };
+                // Through the same clamp every other reader uses: the
+                // payload names a row this render drew, but the render
+                // that drew it is not the one this click lands on, and
+                // nothing sanitises a stored index any more.
                 panel.instance_states.insert(
                     widget_key.to_string(),
                     WidgetInstanceState::List {
-                        scroll_offset: prev_scroll,
-                        selected_index: idx as i32,
-                        item_height: prev_item_height,
+                        selected_index: clamp_selection(idx as i32, total_items(spec)),
                         user_scrolled: false,
                     },
                 );
@@ -245,6 +203,97 @@ impl WidgetImpl for List {
     }
 }
 
+/// A `List`'s state, once the spec and the instance map have been
+/// reconciled. The window is deliberately absent: that is the painter's,
+/// and [`crate::widgets::PaintedWindow`] is where it lives.
+pub(crate) struct Resolved {
+    /// The selection clamped into the current dataset, or `-1` for none
+    /// (an empty list, or a list nobody has selected in).
+    pub selected: i32,
+    /// Whether the user has taken the window off the selection by mouse.
+    pub user_scrolled: bool,
+}
+
+/// **Where a `List`'s selection actually comes from.**
+///
+/// Instance state is authoritative once a handler has decided one; the
+/// spec's `selected_index` is a seed until then. The stored value is
+/// clamped into the *current* dataset on every read, because a dataset can
+/// shrink underneath a standing selection and nothing writes the clamp
+/// down: `collect_list` used to, which made the render walk an authority on
+/// state that `select_move` and the pointer path also write, and made every
+/// other reader depend on a paint having happened first.
+///
+/// Pulled out of the collector because the collector is not the only caller
+/// that needs the answer — the key path, the pointer path, the picker-Enter
+/// path and the *description* all do, and a second copy of the clamp is a
+/// second place for it to drift. Pure in what it is handed, which is what
+/// lets a description call it (`view::shell::widgets`'s `List` arms). The
+/// shape [`crate::widgets::kinds::dropdown::resolve`] already has.
+pub(crate) fn resolve(
+    total: u32,
+    spec_selected: i32,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+) -> Resolved {
+    let (stored, user_scrolled) = match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
+        Some(WidgetInstanceState::List {
+            selected_index,
+            user_scrolled,
+        }) => (*selected_index, *user_scrolled),
+        _ => (spec_selected, false),
+    };
+    Resolved {
+        selected: clamp_selection(stored, total),
+        user_scrolled,
+    }
+}
+
+/// [`resolve`] against a whole `List` spec — the form every handler wants,
+/// since a handler holds the spec node and the panel rather than the
+/// collector's unpacked fields.
+pub(crate) fn resolve_in(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    prev: &HashMap<String, WidgetInstanceState>,
+) -> Resolved {
+    let spec_selected = match spec {
+        WidgetSpec::List { selected_index, .. } => *selected_index,
+        _ => -1,
+    };
+    resolve(total_items(spec), spec_selected, Some(widget_key), prev)
+}
+
+/// **The clamp itself, so that there is one of it.** A selection either
+/// names an item that exists or it is `-1`; an empty list has no selection
+/// at all. [`resolve`] applies it to a stored index and `List::on_pointer`
+/// to a clicked one — the only two ways an index enters.
+pub(crate) fn clamp_selection(sel: i32, total: u32) -> i32 {
+    if sel < 0 || total == 0 {
+        -1
+    } else {
+        sel.min(total as i32 - 1)
+    }
+}
+
+/// How many items a `List` has. Cards override the plain `items` rows —
+/// see `WidgetSpec::List::item_specs` — and every count in this module is
+/// in items, never rows.
+pub(crate) fn total_items(spec: &WidgetSpec) -> u32 {
+    match spec {
+        WidgetSpec::List {
+            items, item_specs, ..
+        } => {
+            if item_specs.is_empty() {
+                items.len() as u32
+            } else {
+                item_specs.len() as u32
+            }
+        }
+        _ => 0,
+    }
+}
+
 /// Move the host-owned selection by `delta` (clamped to the item
 /// range), re-arming scroll-follows-selection, and queue `select` —
 /// but only when the index actually moved: a clamped move at the
@@ -259,44 +308,21 @@ pub(crate) fn select_move(
     delta: i32,
     fx: &mut super::KeyFx,
 ) {
-    let WidgetSpec::List {
-        selected_index,
-        items,
-        item_specs,
-        item_keys,
-        ..
-    } = spec
-    else {
+    let WidgetSpec::List { item_keys, .. } = spec else {
         return;
     };
-    // Item count is in *items* (cards override the plain `items`
-    // rows; see `WidgetSpec::List::item_specs`).
-    let total = if item_specs.is_empty() {
-        items.len()
-    } else {
-        item_specs.len()
-    } as i32;
+    let total = total_items(spec);
     if total == 0 {
         return;
     }
-    let (cur_sel, cur_scroll, cur_item_height) = match panel.instance_states.get(widget_key) {
-        Some(WidgetInstanceState::List {
-            selected_index,
-            scroll_offset,
-            item_height,
-            ..
-        }) => (*selected_index, *scroll_offset, *item_height),
-        _ => (*selected_index, 0, 1),
-    };
+    let cur_sel = resolve_in(spec, widget_key, &panel.instance_states).selected;
     let raw = if cur_sel < 0 { 0 } else { cur_sel + delta };
-    let new_sel = raw.clamp(0, total - 1);
+    let new_sel = raw.clamp(0, total as i32 - 1);
     let new_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
     panel.instance_states.insert(
         widget_key.to_string(),
         WidgetInstanceState::List {
-            scroll_offset: cur_scroll,
             selected_index: new_sel,
-            item_height: cur_item_height,
             // Keyboard nav re-arms scroll-follows-selection so the
             // renderer brings the new selection back into view.
             user_scrolled: false,
@@ -317,39 +343,21 @@ pub(crate) fn activate_event(
     widget_key: &str,
     panel: &crate::widgets::WidgetPanelState,
 ) -> Option<(String, serde_json::Value)> {
-    let WidgetSpec::List {
-        selected_index,
-        item_keys,
-        items,
-        item_specs,
-        ..
-    } = spec
-    else {
+    let WidgetSpec::List { item_keys, .. } = spec else {
         return None;
     };
-    let sel = match panel.instance_states.get(widget_key) {
-        Some(WidgetInstanceState::List { selected_index, .. }) => *selected_index,
-        _ => *selected_index,
-    };
+    // **Clamped at the read, because nothing sanitises the write.**
+    // `select_move` clamps its own result, so the stored index is in range
+    // for as long as the selection moved it — but a dataset that *shrank*
+    // underneath a standing selection was only brought back into range by
+    // the collector's per-frame write-back, and that write-back is gone.
+    // Reading it raw fires `activate` with an out-of-range `index` and an
+    // empty `key`. [`resolve`] is where that clamp lives now, for every
+    // reader alike.
+    let sel = resolve_in(spec, widget_key, &panel.instance_states).selected;
     if sel < 0 {
         return None;
     }
-    // **Clamped here, at the read, because the write that used to sanitise
-    // it is on its way out.** `select_move` clamps its own result, so the
-    // stored index is in range for as long as the selection moved it — but a
-    // dataset that *shrank* underneath a standing selection was only brought
-    // back into range by the collector's per-frame write-back. Reading it raw
-    // fired `activate` with an out-of-range `index` and an empty `key`, and
-    // would have started doing so the moment that write-back went away.
-    let total = if item_specs.is_empty() {
-        items.len()
-    } else {
-        item_specs.len()
-    } as i32;
-    if total == 0 {
-        return None;
-    }
-    let sel = sel.min(total - 1);
     let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
     Some(("activate".into(), json!({ "index": sel, "key": item_key, })))
 }
@@ -392,8 +400,6 @@ struct ListLayout {
     item_height: u32,
     /// Pre-rendered card blocks (empty for the classic path).
     rendered_cards: Vec<Vec<TextPropertyEntry>>,
-    /// Whether the host last scrolled by mouse (suppresses follow).
-    user_scrolled: bool,
 }
 
 /// Resolve the prior host-owned scroll/selection state, (re-)render
@@ -419,31 +425,16 @@ fn plan_list_layout(
     // Available height, in terminal rows.
     let avail_rows = visible_rows.max(1);
 
-    // Look up host-owned scroll + selected index from prev state
-    // (becomes authoritative after first render). The spec's
-    // `selected_index` is initial-only on first mount.
-    let (prev_scroll, prev_sel, user_scrolled) = list_key
-        .and_then(|k| prev.get(k))
-        .and_then(|s| match s {
-            WidgetInstanceState::List {
-                scroll_offset,
-                selected_index,
-                user_scrolled,
-                ..
-            } => Some((*scroll_offset, *selected_index, *user_scrolled)),
-            _ => None,
-        })
-        .unwrap_or((0, selected_index, false));
-    // Clamp the previous selection to the current dataset size —
-    // items may have shrunk between renders. Out-of-range selections
-    // collapse to the last item, or -1 if the list is now empty.
-    let effective_sel = if prev_sel < 0 || total == 0 {
-        -1
-    } else if (prev_sel as u32) >= total {
-        (total - 1) as i32
-    } else {
-        prev_sel
-    };
+    // The selection and the user-scroll latch are the widget's, and
+    // come through the one resolver every reader uses — clamped to the
+    // current dataset, which may have shrunk since the last paint.
+    let Resolved {
+        selected: effective_sel,
+        user_scrolled,
+    } = resolve(total, selected_index, list_key, prev);
+    // The offset is the *last paint's*, not the widget's: the scroll
+    // fold reads back its own previous value and republishes it below.
+    let prev_scroll = ctx.painted(list_key).map(|w| w.offset).unwrap_or(0);
 
     // Pre-render the card blocks (if any) so we know the uniform card
     // height; the visible-item count and all the scroll math derive
@@ -499,7 +490,6 @@ fn plan_list_layout(
         visible_items,
         item_height,
         rendered_cards,
-        user_scrolled,
     }
 }
 
@@ -553,7 +543,6 @@ fn collect_list(
         visible_items,
         item_height,
         rendered_cards,
-        user_scrolled,
     } = plan_list_layout(
         items.len(),
         item_specs,
@@ -565,18 +554,26 @@ fn collect_list(
         panel_width,
     );
 
-    // Persist scroll + selection for the next render.
-    // Lists without a `key` lose state across updates.
-    if let Some(k) = list_key {
-        next_state.insert(
-            k.to_string(),
-            WidgetInstanceState::List {
-                scroll_offset: scroll,
-                selected_index: effective_sel,
-                item_height,
-                user_scrolled,
-            },
-        );
+    // **The walk carries this widget's state; it does not decide it.**
+    //
+    // It used to write the *resolved* triple back — the clamped index, the
+    // measured card height and the folded offset — which made the render
+    // walk an authority on state that `select_move`, the pointer path and
+    // the wheel also write, and made every other reader depend on a paint
+    // having happened first. Two of those three were never storage at all:
+    // they are the paint's window, and they leave below under that name.
+    // The third, the index, is clamped by [`resolve`] on every read, so a
+    // reader gets the same answer whether or not the walk wrote it down.
+    //
+    // What the pass-through still buys is collection — `update_side_effects`
+    // replaces the whole map, so a widget the spec no longer contains loses
+    // its state, and one this walk did not mention would lose it too. An
+    // absent entry stays absent: the spec is the seed until a handler makes
+    // a decision. Same contract as `collect_dropdown`.
+    if let Some(k) = list_key.filter(|k| !k.is_empty()) {
+        if let Some(stored) = prev.get(k) {
+            next_state.insert(k.to_string(), stored.clone());
+        }
     }
 
     let start = scroll as usize;
@@ -708,17 +705,28 @@ fn collect_list(
         });
     }
 
-    let mut effective_rows = HashMap::new();
+    // The window this paint used, published under the name it deserves:
+    // the row budget, how many items that showed, where the window sat,
+    // and the measured card band. Every one of them is a derivation over
+    // geometry or a fold the painter owns — see `PaintedWindow`.
+    let mut painted = HashMap::new();
     if let Some(k) = list_key {
         if !k.is_empty() {
-            effective_rows.insert(k.to_string(), visible_rows);
+            painted.insert(
+                k.to_string(),
+                PaintedWindow {
+                    rows: visible_rows,
+                    items: visible_items,
+                    offset: scroll,
+                },
+            );
         }
     }
     CollectedOutput {
         entries,
         hits,
         wants_fill,
-        effective_rows,
+        painted,
         focus_cursor: None,
         embeds: Vec::new(),
         overlays: Vec::new(),

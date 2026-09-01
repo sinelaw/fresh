@@ -213,7 +213,7 @@ fn collect_row(
     let mut popups: Vec<PanelPopup> = Vec::new();
     let mut boxes: Vec<LayoutBox> = Vec::new();
     let mut wants_fill = false;
-    let mut effective_rows: HashMap<String, u32> = HashMap::new();
+    let mut painted: HashMap<String, crate::widgets::PaintedWindow> = HashMap::new();
 
     // Two-pass layout for Row:
     //  1. Walk children, render each. Track flex spacers
@@ -250,9 +250,9 @@ fn collect_row(
         let mut child_out = render_collected(child, prev, next_state, ctx, child_panel_width);
         // A Row is a horizontal packer — it has no leftover vertical
         // space to grant, so fill requests pass through to an
-        // enclosing Col; effective windows merge straight up.
+        // enclosing Col; painted windows merge straight up.
         wants_fill |= child_out.wants_fill;
-        effective_rows.extend(std::mem::take(&mut child_out.effective_rows));
+        painted.extend(std::mem::take(&mut child_out.painted));
         // Rows can host overlays in principle (e.g. a
         // tooltip on a button); forward them up without
         // a row-offset adjustment — Row pieces all sit
@@ -344,7 +344,7 @@ fn collect_row(
         self_scroll: None,
         popups,
         wants_fill,
-        effective_rows,
+        painted,
         boxes,
     }
 }
@@ -544,7 +544,7 @@ fn collect_col(
     let popups: Vec<PanelPopup> = Vec::new();
     let boxes: Vec<LayoutBox> = Vec::new();
     let wants_fill = false;
-    let effective_rows: HashMap<String, u32> = HashMap::new();
+    let painted: HashMap<String, crate::widgets::PaintedWindow> = HashMap::new();
 
     // Pass 1 — render every child with NO height budget, so an
     // auto-sized List/Tree in a subtree reports `wants_fill` instead
@@ -649,7 +649,7 @@ fn collect_col(
         self_scroll: None,
         popups,
         wants_fill,
-        effective_rows,
+        painted,
         boxes,
     };
     for (child, child_out) in children.iter().zip(child_outs) {
@@ -689,7 +689,7 @@ fn collect_labeled_section(
     };
     let mut child_out = render_collected(child, prev, next_state, section_ctx, inner_width);
     let wants_fill = child_out.wants_fill;
-    let effective_rows = std::mem::take(&mut child_out.effective_rows);
+    let painted = std::mem::take(&mut child_out.painted);
     // ONE translation for every geometry channel: +1 row (the top
     // border this section emits — the child authored anchors relative
     // to its own row 0, so the Text completion-popup overlay's anchor 1
@@ -760,7 +760,7 @@ fn collect_labeled_section(
         self_scroll: None,
         popups,
         wants_fill,
-        effective_rows,
+        painted,
         boxes,
     }
 }
@@ -816,7 +816,7 @@ pub(super) fn collect_overlay(
         // stays on the legacy fallback (bubbling it would let a popup
         // consume the column's leftover height).
         wants_fill: false,
-        effective_rows: child_out.effective_rows,
+        painted: child_out.painted,
     }
 }
 
@@ -1345,7 +1345,7 @@ mod fill_tests {
                 ..Default::default()
             },
         );
-        assert_eq!(out.effective_rows.get("l"), Some(&12));
+        assert_eq!(out.painted.get("l").map(|w| w.rows), Some(12));
         assert_eq!(out.entries.len(), 12);
     }
 
@@ -1358,8 +1358,8 @@ mod fill_tests {
             RenderOptions::default(),
         );
         assert_eq!(
-            out.effective_rows.get("l"),
-            Some(&fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+            out.painted.get("l").map(|w| w.rows),
+            Some(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
         );
     }
 
@@ -1382,7 +1382,7 @@ mod fill_tests {
                 ..Default::default()
             },
         );
-        assert_eq!(out.effective_rows.get("l"), Some(&10));
+        assert_eq!(out.painted.get("l").map(|w| w.rows), Some(10));
         assert_eq!(out.entries.len(), 12);
     }
 
@@ -1401,7 +1401,7 @@ mod fill_tests {
                 ..Default::default()
             },
         );
-        assert_eq!(out.effective_rows.get("l"), Some(&4));
+        assert_eq!(out.painted.get("l").map(|w| w.rows), Some(4));
         assert_eq!(out.entries.len(), 4);
     }
 
@@ -1421,7 +1421,7 @@ mod fill_tests {
             },
         );
         let legacy = fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK;
-        assert_eq!(out.effective_rows.get("a"), Some(&legacy));
-        assert_eq!(out.effective_rows.get("b"), Some(&legacy));
+        assert_eq!(out.painted.get("a").map(|w| w.rows), Some(legacy));
+        assert_eq!(out.painted.get("b").map(|w| w.rows), Some(legacy));
     }
 }
