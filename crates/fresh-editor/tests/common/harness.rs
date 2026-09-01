@@ -1787,7 +1787,7 @@ impl EditorTestHarness {
     /// Get text at specific cell position
     pub fn get_cell(&self, x: u16, y: u16) -> Option<String> {
         let buffer = self.buffer();
-        let pos = buffer.index_of(x, y);
+        let pos = Self::cell_index(buffer, x, y)?;
         buffer
             .content
             .get(pos)
@@ -1797,8 +1797,31 @@ impl EditorTestHarness {
     /// Get the style (color, modifiers) of a specific cell
     pub fn get_cell_style(&self, x: u16, y: u16) -> Option<ratatui::style::Style> {
         let buffer = self.buffer();
-        let pos = buffer.index_of(x, y);
+        let pos = Self::cell_index(buffer, x, y)?;
         buffer.content.get(pos).map(|cell| cell.style())
+    }
+
+    /// The buffer offset of a cell, or `None` when the cell is off screen.
+    ///
+    /// **`Buffer::index_of` panics off the area**, so the two accessors above
+    /// could not answer `None` for a cell outside the screen even though their
+    /// signatures promise to: they reached the `content.get(pos)` that would
+    /// have said so only for coordinates that were already in range. A test
+    /// walking outward from a border it found on screen — "the cells just past
+    /// the panel's right edge" — therefore aborted with a ratatui panic
+    /// instead of reading the one cell that was actually there
+    /// (`code_tour_dock::test_selection_highlight_stays_inside_the_panel`).
+    ///
+    /// Off-screen is a real answer here, not an error: a cell the terminal
+    /// does not have cannot carry a style, and `is_scrollbar_thumb_at` and its
+    /// siblings already read that `None` as "no".
+    fn cell_index(buffer: &ratatui::buffer::Buffer, x: u16, y: u16) -> Option<usize> {
+        let area = buffer.area;
+        let inside = x >= area.x
+            && y >= area.y
+            && x < area.x.saturating_add(area.width)
+            && y < area.y.saturating_add(area.height);
+        inside.then(|| buffer.index_of(x, y))
     }
 
     /// Check if a cell at the given position is a scrollbar thumb.

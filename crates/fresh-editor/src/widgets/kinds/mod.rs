@@ -306,6 +306,33 @@ pub(crate) trait WidgetImpl: Sync {
     }
 }
 
+/// The key under which this node can take focus, if it can take focus at all.
+///
+/// **The admission rule for every focus ring, stated once.** A kind answers
+/// "am I focusable" and "what is my key" in its own [`WidgetImpl::box_meta`];
+/// a focusable with no key is not addressable, so it is not on any ring.
+/// Restating that anywhere else is another copy of a rule that has already
+/// been copied enough (`BoxMeta::focusable`'s own doc records the last time two
+/// copies had to be kept in step).
+///
+/// The empty-key filter is defence in depth, not a correction: every kind that
+/// can be focusable already declines an empty key inside its own `box_meta`,
+/// so the two agree today. It is here so that "on a ring" and "has a name a
+/// ring can move to" stay the same statement whatever a kind does next.
+///
+/// Three callers, and the point is that they cannot disagree:
+/// `view::shell::widgets::on_the_ring`, which puts the node on the tree's
+/// ring; `view::shell::widgets::any_on_the_ring`, which answers whether a
+/// panel has a ring before the tree exists; and `Editor::deliver_widget_hit`'s
+/// click-to-focus, which asks whether the pressed widget is one focus can rest
+/// on. The third used to ask `WidgetPanelState::tabbable` — the collector's
+/// ring recorded at whatever render ran last — which is the same rule computed
+/// somewhere else and then allowed to go stale.
+pub(crate) fn focusable_key(spec: &WidgetSpec) -> Option<String> {
+    let meta = behavior(spec).box_meta(spec);
+    meta.key.filter(|k| !k.is_empty() && meta.focusable)
+}
+
 /// The one kind-dispatch — the single surviving `match` on a
 /// `WidgetSpec`'s kind. Total: every kind has an impl.
 pub(crate) fn behavior(spec: &WidgetSpec) -> &'static dyn WidgetImpl {

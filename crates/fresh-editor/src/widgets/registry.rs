@@ -345,21 +345,25 @@ pub struct WidgetPanelState {
     /// Hit-test scans linearly — the small N (one per interactive widget per
     /// panel) doesn't justify a spatial index.
     ///
-    /// Two readers, and they read different halves:
+    /// **One reader, and it reads the geometry.**
+    /// [`Self::hit_test_row_aware`](WidgetRegistry::hit_test_row_aware), for
+    /// the one surface whose rows are real buffer lines — a pane-mounted panel
+    /// that rides the buffer's scroll (`app::click_handlers`). That is not a
+    /// duplicate layout: it is the buffer's own `(row, byte)` space, the one
+    /// `mouse_click` delivers to plugins.
     ///
-    /// * [`Self::hit_test_row_aware`](WidgetRegistry::hit_test_row_aware)
-    ///   reads the geometry, for the one surface whose rows are real buffer
-    ///   lines — a pane-mounted panel that rides the buffer's scroll
-    ///   (`app::click_handlers`).
-    /// * `view::scene::widgets_view` and the two `deliver_widget_hit_*`
-    ///   entry points read only [`HitArea::event`]: the web lays the spec out
-    ///   itself and sends back an index plus the identity, so what crosses to
-    ///   it is the identity half and an ordering.
+    /// The *identity* half had a second set of readers until the web's plugin
+    /// panels were deleted — `view::scene::widgets_view` shipped it and the
+    /// two `deliver_widget_hit_*` entry points resolved a click back through
+    /// it. Those are gone, so for a **described** panel nothing reads this at
+    /// all: its widgets are nodes and answer their own presses from the
+    /// rectangles layout gave them, carrying the same value as
+    /// `hits[i].event` stated where the widget is rather than looked up by a
+    /// row and a byte.
     ///
-    /// Nothing else reads this. A described surface's widgets are nodes and
-    /// answer their own presses from the rectangles layout gave them; the
-    /// event they carry is the same value as `hits[i].event`, stated where the
-    /// widget is rather than looked up by a row and a byte.
+    /// So this field is now the text projection's alone, and the panels that
+    /// have no text projection still fill it — see
+    /// `Editor::rerender_widget_panel`, which is where that stops.
     pub hits: Vec<HitArea>,
     /// Widget instance state by widget `key`. Survives re-renders —
     /// see `WidgetInstanceState` for what's stored.

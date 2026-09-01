@@ -3128,10 +3128,14 @@ fn dock_list_scrollbar_flashes_on_keyboard_nav_and_expires() {
             .expect("dock right-edge divider should be present on the toolbar row")
     };
     // The dock's bar is an overlay — it floats over the last column of the
-    // list rather than carving a gutter out of it — and the list is as wide
-    // as the panel wraps, which is two columns short of the divider: one for
-    // the divider, one for the slack column the runtime wraps against.
-    let sb_col = wall_col.saturating_sub(2);
+    // list rather than carving a gutter out of it — and the list is laid out
+    // one column short of the divider. It was two: the runtime's
+    // `floating_panel_inner_width` took the divider and a column of slack it
+    // wrapped against, leaving the bar inboard of the wall with an empty
+    // column beside it. The described column takes only the painter's own
+    // divider — `view::shell::dock::DIVIDER_COLS`, which argues the number —
+    // so the bar is against the wall now.
+    let sb_col = wall_col.saturating_sub(1);
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
     };

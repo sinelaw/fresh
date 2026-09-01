@@ -357,9 +357,9 @@ impl Terminal {
                 content,
                 window,
             } => {
-                let _ = window;
                 let track = r.h.max(1);
-                let (top, len) = Draw::scrollbar_thumb(*offset, *content, track);
+                let (top, len) =
+                    Draw::scrollbar_thumb(*offset, *content, u32::from(*window), track);
                 for i in 0..track {
                     let ch = if i >= top && i < top + len {
                         '█'

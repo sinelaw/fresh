@@ -851,11 +851,95 @@ impl<M: 'static> Ui<M> {
     }
 
     /// A viewport's scroll offset and the size of the content behind it.
+    ///
+    /// Both are in the unit that viewport's offset counts, which only
+    /// [`Ui::band`] says. See [`Ui::window`].
     pub fn scroll(&self, id: ElementId) -> (Point, Size) {
         self.render_for(id)
             .and_then(|r| self.render.get(r))
             .map(|n| (n.data.scroll, n.data.content))
             .unwrap_or_default()
+    }
+
+    /// A viewport's window, **in the unit its offset counts**. `None` for an
+    /// element that is not scrolling anything.
+    ///
+    /// The unit is not the rectangle's. A cell-scrolling window's offset is a
+    /// row and its window is its own height, so `window.h == rect_of(id).h`;
+    /// an item-scrolling one's offset is an index and `window.h` is *how many
+    /// items* fit, which is that height divided by the band — four, not
+    /// twelve, for three-row cards in a twelve-row box. [`Ui::band`] is what
+    /// tells them apart: `Some(_)` means items, `None` means cells. Reading
+    /// the height for both put a list of three-row cards eleven items down
+    /// inside a "fifteen-row" window, and drew a thumb that filled its own
+    /// track.
+    ///
+    /// The horizontal axis is cells either way: an item-scrolled window counts
+    /// items down and cells across.
+    pub fn window(&self, id: ElementId) -> Option<Rect> {
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .and_then(|n| n.data.window)
+    }
+
+    /// The band a viewport's items sit in, when its offset counts items.
+    /// `None` where it counts cells — there an item is not a thing.
+    ///
+    /// This is the unit tag for [`Ui::window`] and [`Ui::scroll`], and for
+    /// [`Band::Cells`](crate::render::object::Band::Cells) it is also the
+    /// number that converts between them: one item is that many cells tall.
+    pub fn band(&self, id: ElementId) -> Option<crate::render::object::Band> {
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .and_then(|n| n.data.band)
+    }
+
+    /// How many items a keyed widget is showing, and which — the window of the
+    /// nearest item-scrolling viewport at or under the element carrying `key`,
+    /// **in items**: `window.y` is the first item on screen and `window.h` is
+    /// how many of them fit. (Across, it is still cells: an item-scrolled
+    /// window scrolls only down.)
+    ///
+    /// **The descend is the contract, not an implementation detail.** A key
+    /// belongs to whoever wrote it, and what they wrote it on is a widget: a
+    /// [`List`](crate::widgets::List) keyed by its owner carries that key on
+    /// the component element, while the viewport that owns the window is one
+    /// or two elements inside it — under the focus wrapper, when the list
+    /// takes focus. So this searches at and under the key rather than only at
+    /// it, nearest first, and the first window found is the answer.
+    ///
+    /// `None` where the key names nothing, where nothing under it scrolls, or
+    /// where what scrolls counts *cells* — a text area has no items, and
+    /// answering with its height in rows would be the units conflated again,
+    /// under a name that promises they are not. [`Ui::window`] is the way to
+    /// ask that one.
+    ///
+    /// Same standing as [`Ui::rect_of`]: an outside caller reading what the
+    /// last layout decided, from the tree that decided it.
+    pub fn item_window(&self, key: &crate::key::Key) -> Option<Rect> {
+        let el = self.find_by_key(key)?;
+        let r = self.viewport_at_or_under(el)?;
+        let n = self.render.get(r)?;
+        n.data.band.is_some().then_some(n.data.window).flatten()
+    }
+
+    /// The nearest scrolling render node at or under `el`, breadth-first, so
+    /// that a viewport nested inside one of the key's own rows never wins over
+    /// the widget's own.
+    fn viewport_at_or_under(&self, el: ElementId) -> Option<crate::render::object::RenderId> {
+        let mut queue = std::collections::VecDeque::from([el]);
+        while let Some(e) = queue.pop_front() {
+            let Some(node) = self.arena.get(e) else {
+                continue;
+            };
+            if let Some(r) = node.render {
+                if self.render.get(r).is_some_and(|n| n.data.window.is_some()) {
+                    return Some(r);
+                }
+            }
+            queue.extend(node.children.iter().copied());
+        }
+        None
     }
 
     /// Move a viewport's window. Framework-owned state: it survives rebuilds

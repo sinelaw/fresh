@@ -209,8 +209,12 @@ impl WidgetImpl for Text {
         };
         // An open completion popup scrolls first — the wheel reached
         // this widget because the pointer sat on the popup's own box
-        // (or the field's). Scrolling counts as stepping into the
-        // popup: Enter then accepts the highlighted row.
+        // (or the field's). Which of those two the arena resolved, on
+        // a painted panel; which of those two the *tree* named, on a
+        // described one, where the notch arrives through
+        // `UiFact::WidgetWheel` rather than through a row and a column.
+        // Scrolling counts as stepping into the popup: Enter then
+        // accepts the highlighted row.
         if let Some(WidgetInstanceState::Text {
             completions,
             completion_scroll_offset,

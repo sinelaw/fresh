@@ -85,7 +85,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     let described = interior.is_some();
     let scoped = interior
         .as_ref()
-        .map(|i| (i.has_focus_targets, i.claims_tab));
+        .map(|i| (i.has_focus_targets(), i.claims_tab));
     let body = match interior {
         None => host(HostRegion::Dock.id()),
         Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
@@ -113,6 +113,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                     avail_height: i.avail_height,
                     scrollbar_reveal: i.scrollbar_reveal,
                     surface: super::widgets::panel_surface(),
+                    markdown: i.markdown.as_ref().map(|m| m.ctx()),
                 },
             )
             // **One width, laid and wrapped, and it now reaches the
@@ -374,8 +375,8 @@ mod tests {
                     marker_gutter: false,
                     avail_height: None,
                     scrollbar_reveal: None,
-                    has_focus_targets: false,
                     claims_tab: false,
+                    markdown: None,
                 }),
                 ..Frame::default()
             }),
@@ -568,8 +569,8 @@ mod tests {
                     marker_gutter: false,
                     avail_height: None,
                     scrollbar_reveal: None,
-                    has_focus_targets: true,
                     claims_tab: false,
+                    markdown: None,
                 }),
                 ..Frame::default()
             }),

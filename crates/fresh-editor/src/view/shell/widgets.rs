@@ -189,6 +189,20 @@ pub struct Ctx<'a> {
     /// no "already": every run carries both halves, so the surface has to be
     /// said rather than inherited. This is where it is said.
     pub surface: Ink,
+    /// The live theme and grammars a `markdown: true` `Text` renders through.
+    ///
+    /// **Host resources, and the only ones a described widget still needs.**
+    /// The markdown document view is the one arm that calls the collector
+    /// (see the `WidgetSpec::Text` markdown arm below), and the collector
+    /// takes this pair to style headings and highlight fences. Handed `None`
+    /// it does not fail — it renders the *source* as plain wrapped lines,
+    /// which is the deliberate fallback for unit tests and plugin-less hosts
+    /// — so omitting it here is silent, and it was: every described panel
+    /// showed its markdown with the `##` and `**` still in it.
+    ///
+    /// `None` where there is genuinely no theme to render through: the unit
+    /// tests, and `Ctx::plain`.
+    pub markdown: Option<crate::widgets::MarkdownCtx<'a>>,
 }
 
 /// The empty instance-state map, for a spec with no host state behind it.
@@ -219,6 +233,7 @@ impl Ctx<'static> {
             avail_height: None,
             scrollbar_reveal: None,
             surface: panel_surface(),
+            markdown: None,
         }
     }
 }
@@ -440,6 +455,39 @@ fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::Overla
     }
 }
 
+/// The selection a controlled `List` or `Tree` actually has.
+///
+/// **The spec's `selected_index` is a seed, not the live value**, and the
+/// described arms were reading it as though it were live.
+/// `WidgetInstanceState::List` says so in as many words — it "becomes
+/// authoritative after first render … so the host can mutate it via
+/// `WidgetCommand::SelectMove` without racing the plugin's spec round-trip" —
+/// and the collector obeys it ("Spec values are initial-only",
+/// `kinds::tree::render_widget_tree`).
+///
+/// Reading the spec makes the stale copy the input, and the host's own
+/// mutations then paint nothing: Search & Replace moves its match cursor with
+/// `SetSelectedIndex`, which writes the instance state and never touches the
+/// spec, so `Ctrl+Alt+→` moved the match and the highlight stayed on the row
+/// it started on.
+///
+/// The same is true of a `Tree`'s `expanded_keys` and of both kinds' scroll
+/// offset. Those are read from the spec here still, and they agree today
+/// because the plugins that drive them re-send the spec; the mutation route
+/// this closes had no such second writer.
+fn live_selection(cx: &Ctx<'_>, key: &Option<String>, seed: i32) -> i32 {
+    use crate::widgets::WidgetInstanceState as St;
+    let Some(k) = key.as_deref().filter(|k| !k.is_empty()) else {
+        return seed;
+    };
+    match cx.states.get(k) {
+        Some(St::List { selected_index, .. }) | Some(St::Tree { selected_index, .. }) => {
+            *selected_index
+        }
+        _ => seed,
+    }
+}
+
 fn row_surface(st: fresh_ui::widgets::RowState, plain: &Ink) -> Ink {
     use fresh_ui::widgets::RowState;
     match st {
@@ -479,9 +527,53 @@ fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMs
 /// ring holding only buttons would let Tab cycle buttons and step over the
 /// fields between them, which is worse than a ring the tree does not own: the
 /// unit of this change is a panel, not a widget kind.
+/// Whether describing `spec` would put anything on the tree's ring.
+///
+/// **A build input, and the only one that has to be answered before the build.**
+/// `panel::keys_layer` names the interior as its focus scope only when there is
+/// something in it to focus; a scope with nothing in it makes `apply_autofocus`
+/// drop focus, and with focus nowhere the containment questions report no
+/// keyboard layer and the panel's keys leak to the buffer behind it
+/// (`panel::Interior::has_focus_targets`).
+///
+/// So this is the one question about the tree that cannot be put to the tree,
+/// and the answer has to be the *same rule* the tree will apply — which is why
+/// it walks the spec through [`crate::widgets::kinds::focusable_key`] rather
+/// than reading a list somebody else collected. It replaces the read of
+/// `WidgetPanelState::tabbable`, which was the runtime's `collect_tabbable`
+/// output recorded at whatever render ran last — the same rule computed
+/// somewhere else and then allowed to go stale against the spec it describes.
+///
+/// **What it does not see, stated rather than implied.** The walk is
+/// `spec.children()`, which yields the container kinds' children only — a
+/// card list's `item_specs` are not children, and a closed `Popup`'s child
+/// is. So a panel whose only focusable lives inside a card, or inside a
+/// pop-over that is shut, is answered wrongly in one direction each: `false`
+/// for the card (the panel keeps its sink, which is what it had before any of
+/// this), `true` for the shut pop-over (the scope is declared and
+/// `apply_autofocus` finds nowhere to land). Both are exactly what
+/// `collect_tabbable` answered, because it walks the same accessor — this
+/// changes the *authority*, not the reach. Closing the second one means
+/// asking the built tree instead, and the answer is needed before the tree
+/// exists.
+pub fn any_on_the_ring(spec: &WidgetSpec) -> bool {
+    crate::widgets::kinds::focusable_key(spec).is_some() || spec.children().any(any_on_the_ring)
+}
+
+/// The key the tree's focusable wrapper for plugin widget `k` carries.
+///
+/// Written on one side and read on the other, so it is named once:
+/// [`on_the_ring`] puts it on the wrapper it builds, and
+/// `Editor::focus_panel_widget_in_tree` looks that wrapper up by it to move
+/// the tree's focus to where the host has just decided the panel's focus is.
+/// Two copies of the format string would be two answers to "which element is
+/// this widget", which is the shape the focus mirror exists to remove.
+pub fn widget_focus_key(k: &str) -> fresh_ui::Key {
+    fresh_ui::Key::Str(format!("widget_focus:{k}").into())
+}
+
 fn on_the_ring(spec: &WidgetSpec, cx: &Ctx<'_>, n: Node<UiMsg>) -> Node<UiMsg> {
-    let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
-    let Some(k) = meta.key.filter(|k| !k.is_empty() && meta.focusable) else {
+    let Some(k) = crate::widgets::kinds::focusable_key(spec) else {
         return n;
     };
     let (slot, widget) = (cx.slot, k.clone());
@@ -494,22 +586,56 @@ fn on_the_ring(spec: &WidgetSpec, cx: &Ctx<'_>, n: Node<UiMsg>) -> Node<UiMsg> {
     // wrapper reported all thirty, because `Auto` measured the content the
     // viewport exists to window.
     let (w, h) = (n.w, n.h);
-    fresh_ui::focusable(n)
-        .w(w)
-        .h(h)
-        .key(fresh_ui::Key::Str(format!("widget_focus:{k}").into()))
-        .on_focus_change(move |e: &fresh_ui::Event| {
-            match e.kind == fresh_ui::GestureKind::FocusGained {
-                // A loss is not reported: focus is never nowhere while a panel
-                // is up, so a loss paired with the matching gain would race,
-                // and the gain is the one that names the new holder.
-                false => None,
-                true => Some(UiMsg::Ui(super::msg::UiFact::WidgetFocus {
-                    slot,
-                    widget: widget.clone(),
-                })),
-            }
-        })
+    let n = fresh_ui::focusable(n).w(w).h(h).key(widget_focus_key(&k));
+    // **Where the tree's focus lands when it enters this panel, and it is the
+    // widget the panel already says has it.**
+    //
+    // `apply_autofocus` picks the scope's first focusable when nothing is
+    // marked, and the registry's focus key is what the description paints the
+    // focus marker from — so an unmarked scope put the tree's focus on the
+    // panel's *first* control while the user was looking at the marker on
+    // another. The next Tab then started from a widget they had already left:
+    // the New-Workspace form opened on its Project Path field and Shift+Tab
+    // wrapped to Cancel, because the tree was on the Launch-in dropdown.
+    //
+    // Marking it here rather than seeding the tree from the registry is what
+    // makes the *landing* a property of the description: focus entering the
+    // panel goes where the panel already says it is. A focus move made while
+    // the panel is already focused is the other moment, and no description can
+    // express it — `apply_autofocus` leaves focus alone once it is inside the
+    // scope — so that one is an imperative write,
+    // `Editor::focus_panel_widget_in_tree`.
+    let n = match cx.is_focused(Some(&k)) {
+        true => n.autofocus(),
+        false => n,
+    };
+    // **A pane-mounted panel is off the tree's ring, because it has no ring
+    // here.** Its keys arrive by the buffer's route, its Tab is its plugin's
+    // `defineMode` binding, and `Editor::advance_panel_focus_in_tree` declines
+    // it for exactly that reason — the box arena is its ring. Left traversable,
+    // the two disagreed in the worst possible direction: the tree resolved Tab
+    // to `move_focus` and *claimed* it, so the plugin's own Tab handler never
+    // ran at all and Search & Replace could not move off its search field.
+    //
+    // `skip_traversal` and not "no wrapper": the node is still where a focus
+    // gain would be reported from, and dropping it would change the panel's
+    // node shape for no gain.
+    let n = match cx.slot {
+        Slot::Pane(_) => n.skip_traversal(),
+        _ => n,
+    };
+    n.on_focus_change(move |e: &fresh_ui::Event| {
+        match e.kind == fresh_ui::GestureKind::FocusGained {
+            // A loss is not reported: focus is never nowhere while a panel
+            // is up, so a loss paired with the matching gain would race,
+            // and the gain is the one that names the new holder.
+            false => None,
+            true => Some(UiMsg::Ui(super::msg::UiFact::WidgetFocus {
+                slot,
+                widget: widget.clone(),
+            })),
+        }
+    })
 }
 
 fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMsg> {
@@ -1035,7 +1161,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let keys = Rc::new(item_keys.clone());
             let list_key = key.clone().unwrap_or_default();
             let slot = cx.slot;
-            let sel = *selected_index;
+            let sel = live_selection(cx, key, *selected_index);
             let hit_keys = keys.clone();
             let list = fresh_ui::List::windowed_stateful(
                 n,
@@ -1205,7 +1331,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         } if !item_specs.is_empty() => {
             use std::rc::Rc;
             let card_width = width.saturating_sub(1).max(1);
-            let sel = *selected_index;
+            let sel = live_selection(cx, key, *selected_index);
             // The bold half of the marker. Said on the surface every arm
             // already reads, so it reaches the whole card without a second
             // rule per kind — `ink_of` merges an overlay's attributes over
@@ -1351,6 +1477,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             item_height,
             card_borders,
         } if *card_borders => {
+            let sel_abs = live_selection(cx, key, *selected_index);
             let expanded: std::collections::HashSet<String> =
                 expanded_keys.iter().cloned().collect();
             let visible = crate::widgets::collect_visible_tree_indices(nodes, item_keys, &expanded);
@@ -1375,7 +1502,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     width as u32,
                     *indent_cols,
                 );
-                let is_selected = abs as i32 == *selected_index;
+                let is_selected = abs as i32 == sel_abs;
                 if is_selected {
                     selected = Some(i);
                 }
@@ -1528,7 +1655,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let tree_key = key.clone().unwrap_or_default();
             let (slot, checkable, indent) = (cx.slot, *checkable, *indent_cols);
             let surface = cx.surface.clone();
-            let sel_abs = *selected_index;
+            let sel_abs = live_selection(cx, key, *selected_index);
             let n = visible.len();
 
             let row_at = {
@@ -1891,7 +2018,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     hover_key: cx.hovered_key.as_deref().unwrap_or(""),
                     hover_item_key: &cx.hovered_item_key,
                     hover_popup_row: "",
-                    markdown: None,
+                    markdown: cx.markdown,
                     marker_gutter: cx.marker_gutter,
                     avail_height: cx.avail_height,
                 },
@@ -2271,8 +2398,16 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         .child(entry_row(e, &cx.surface))
                 })
                 .collect();
+            // **Both halves take the wheel, because the runtime's rule was
+            // "the popup's own box, or the field's".** `Text::on_wheel` reads
+            // the notch as a statement about the candidate list wherever on
+            // the widget it lands, and the field is the part of the widget
+            // that is easiest to be over while reading the list under it.
+            // Wrapped separately rather than around the `stack`: the box is a
+            // layer's child and is hit on a path of its own.
+            let wheel_key = key.unwrap_or_default();
             fresh_ui::stack().children([
-                field,
+                wheel_to_widget(field, cx.slot, wheel_key),
                 fresh_ui::layer()
                     .anchor(fresh_ui::Anchor::Parent)
                     .place(fresh_ui::Place::Over)
@@ -2280,7 +2415,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     // the section's bottom border is.
                     .offset(-(site.escape as i16), 1)
                     .fit(fresh_ui::Fit::CLAMP)
-                    .child(float_route(col().children(box_rows), cx.slot)),
+                    .child(float_route(
+                        wheel_to_widget(col().children(box_rows), cx.slot, wheel_key),
+                        cx.slot,
+                    )),
             ])
         }
         // **The dual list stops going through the collector** — the third of
@@ -2693,6 +2831,11 @@ impl fresh_ui::Component<UiMsg> for Scrolled {
 /// stops scrolling the moment a float covers it. Every float in a panel owes
 /// this, which is why it is one function: the same statement `shell::settings`
 /// makes about its own box, for the same reason.
+///
+/// A float that has something better to say about the wheel says it *inside*
+/// this and stops there — [`wheel_to_widget`] on the candidate list, whose
+/// notch belongs to a window the runtime holds. This is the default, not the
+/// only answer.
 fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
     let route = move |e: &fresh_ui::Event| -> Option<UiMsg> {
         e.stop();
@@ -2730,6 +2873,43 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
         n = n.on(kind, std::rc::Rc::new(route));
     }
     n
+}
+
+/// Send a wheel over this node to the named widget's own `on_wheel`.
+///
+/// **The tree names the widget; the runtime moves the window.** For a
+/// described panel the box arena is in the wrong coordinate space and stands
+/// down (`handle_widget_panel_wheel_at` says so at length), and for every
+/// scrolling surface but one that costs nothing, because the surface is a
+/// `viewport` and the library scrolls it. The one it does cost is a `Text`'s
+/// completion list, whose window lives in `WidgetInstanceState::Text` — so the
+/// half the tree can do is say *which* widget was under the pointer, which is
+/// exactly what the arena was consulted for. See [`UiFact::WidgetWheel`].
+fn wheel_to_widget(n: Node<UiMsg>, slot: Slot, widget_key: &str) -> Node<UiMsg> {
+    // An unkeyed widget has no instance state, so it has no window to move and
+    // nothing to name — and claiming the notch anyway would swallow it on the
+    // way to whatever *can* scroll. Unreachable for the one caller (candidates
+    // arrive in instance state, which only a keyed widget has), and stated
+    // rather than assumed because the next caller may not have that guarantee.
+    if widget_key.is_empty() {
+        return n;
+    }
+    let key = widget_key.to_string();
+    fresh_ui::gesture(n).on(
+        fresh_ui::GestureKind::Wheel,
+        std::rc::Rc::new(move |e: &fresh_ui::Event| {
+            // Claimed here rather than passed on: the notch was aimed at this
+            // list, and a float that let it through would scroll whatever the
+            // list is covering. `float_route` says the same thing one node
+            // out, and stopping here is what keeps it from saying it twice.
+            e.stop();
+            Some(UiMsg::Ui(super::msg::UiFact::WidgetWheel {
+                slot,
+                widget: key.clone(),
+                delta: e.delta,
+            }))
+        }),
+    )
 }
 
 /// An open dropdown's option list, as a layer hanging off its trigger's row.
@@ -3392,6 +3572,10 @@ mod tests {
             avail_height: None,
             scrollbar_reveal: None,
             surface: panel_surface(),
+            // No theme here: the collector's markdown arm answers a missing
+            // context by rendering the source as plain wrapped lines, which is
+            // what these tests compare against. See `Ctx::markdown`.
+            markdown: None,
         }
     }
 
@@ -6317,6 +6501,78 @@ mod tests {
         assert_eq!(layer_rows(&ui), want);
     }
 
+    /// **A wheel over the candidate list moves the list.**
+    ///
+    /// It is the one window in a described panel the tree does not own:
+    /// `completion_scroll` is runtime state, written by the plugin's
+    /// `SetCompletions` and read back by `completion_popup` to slice the rows,
+    /// and scrolling it also sets `completion_navigated`, which is what makes
+    /// Enter accept the highlighted row. So the notch cannot be answered by a
+    /// viewport — and it was not answered at all: the float claimed it, handed
+    /// it to the modal, and `handle_widget_panel_wheel_at` declined a
+    /// described panel outright, so the list under the pointer sat still. What
+    /// the tree can say is *which widget* the notch landed on, and this is it
+    /// saying so — from the box, and from the field the box hangs off, which
+    /// are the two places `Text::on_wheel` has always accepted one from.
+    #[test]
+    fn a_wheel_over_the_candidate_list_names_the_field_it_scrolls() {
+        let states = field_states(
+            "he",
+            &["hello", "help", "hedge", "heap", "heat", "heal", "heard"],
+            0,
+            false,
+            0,
+        );
+        let spec = sectioned_field();
+        let ctx = Ctx {
+            focus_key: "field".into(),
+            states: Box::leak(Box::new(states)),
+            ..cx()
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &ctx), Size::new(WIDTH, 24));
+        let notch = |ui: &mut Ui<UiMsg>, at: fresh_ui::Point| {
+            facts(ui.dispatch(fresh_ui::Input::Wheel {
+                pos: at,
+                delta: 3,
+                axis: fresh_ui::Axis::Vertical,
+                mods: fresh_ui::Mods::NONE,
+            }))
+        };
+        let named = |got: &[UiFact]| {
+            got.iter().any(|f| {
+                matches!(
+                    f,
+                    UiFact::WidgetWheel { widget, delta, .. } if widget == "field" && *delta == 3
+                )
+            })
+        };
+        // The box: its top-left is the separator row, so aim one row into it.
+        let box_rect = ui
+            .spec()
+            .layers()
+            .iter()
+            .map(|i| i.rect)
+            .min_by_key(|r| (r.y, r.x))
+            .expect("a completion box");
+        let on_box = notch(
+            &mut ui,
+            fresh_ui::Point::new(box_rect.x + 2, box_rect.y + 1),
+        );
+        assert!(
+            named(&on_box),
+            "a notch on the box names the field: {on_box:?}"
+        );
+
+        // And the input row above it — row 1 of the section, inside its
+        // border.
+        let on_field = notch(&mut ui, fresh_ui::Point::new(2, 1));
+        assert!(
+            named(&on_field),
+            "a notch on the field names it too: {on_field:?}"
+        );
+    }
+
     /// **The list is one float, and it drops under the field wherever the
     /// field is.**
     ///
@@ -6442,6 +6698,101 @@ mod tests {
                 .find_by_key(&fresh_ui::Key::Str("widget_focus:".into()))
                 .is_none()),
             "a decorative widget stays off the ring"
+        );
+    }
+
+    /// **`any_on_the_ring` and the collector's ring answer the same question**,
+    /// for every shape the two could plausibly split on.
+    ///
+    /// This is the parity assertion that makes the swap safe.
+    /// `panel::Interior::has_focus_targets` used to be
+    /// `!WidgetPanelState::tabbable.is_empty()` — the collector's
+    /// `collect_tabbable`, recorded at whatever render ran last. It is now this
+    /// walk, which is the *tree's* own admission rule
+    /// (`kinds::focusable_key`) applied to the spec in hand. The two are pinned
+    /// against each other here while the collector still exists, because the
+    /// consequence of a silent disagreement is not cosmetic: `false` when the
+    /// tree has focusables means `keys_layer` keeps its sink instead of naming
+    /// a scope, and `true` when it has none means `apply_autofocus` drops focus
+    /// and the panel's keys leak to the buffer behind it.
+    ///
+    /// The one deliberate divergence is the last case: an empty key is a key
+    /// the collector's ring admits and the tree's cannot address.
+    #[test]
+    fn the_derived_ring_and_the_collectors_agree_on_whether_there_is_one() {
+        let raw = WidgetSpec::Raw {
+            entries: vec![fresh_core::text_property::TextPropertyEntry::text("x")],
+            key: None,
+        };
+        let btn = |key: Option<&str>, disabled: bool, focusable: bool| WidgetSpec::Button {
+            label: "b".into(),
+            focused: false,
+            intent: Default::default(),
+            key: key.map(Into::into),
+            disabled,
+            focusable,
+            bare: false,
+            full_width: false,
+            hover_style: None,
+        };
+        let col = |children: Vec<WidgetSpec>| WidgetSpec::Col {
+            children,
+            key: None,
+        };
+        let cases: Vec<(&str, WidgetSpec)> = vec![
+            ("nothing at all", raw.clone()),
+            ("a bare button", btn(Some("b"), false, true)),
+            ("a button with no key", btn(None, false, true)),
+            ("a disabled button", btn(Some("b"), true, true)),
+            ("a button that opted out", btn(Some("b"), false, false)),
+            (
+                "one focusable buried under decoration",
+                col(vec![
+                    raw.clone(),
+                    col(vec![raw.clone(), btn(Some("deep"), false, true)]),
+                ]),
+            ),
+            (
+                "nothing focusable, several levels of it",
+                col(vec![
+                    raw.clone(),
+                    col(vec![raw.clone(), btn(None, false, true)]),
+                ]),
+            ),
+        ];
+        for (what, spec) in cases {
+            let collected =
+                crate::widgets::render_spec(&spec, &Default::default(), "", WIDTH as u32);
+            assert_eq!(
+                any_on_the_ring(&spec),
+                !collected.tabbable.is_empty(),
+                "{what}: the derived answer and the collector's ring disagree"
+            );
+        }
+
+        // **Staleness is the whole of the difference, so it is the thing to
+        // pin.** The two rules agree above on every shape; what the swap buys
+        // is that the answer is taken from *this* spec rather than from the
+        // ring some earlier render recorded. Here the recorded ring is empty
+        // and the spec has a button in it — the shape a panel is in between a
+        // spec update and the re-render that would refresh the ring.
+        let spec = std::rc::Rc::new(btn(Some("ok"), false, true));
+        let interior = super::super::panel::Interior {
+            spec: spec.clone(),
+            states: Default::default(),
+            focus_key: String::new(),
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+            claims_tab: false,
+            markdown: None,
+        };
+        assert!(
+            interior.has_focus_targets(),
+            "the interior answers from the spec it is about to describe"
         );
     }
 

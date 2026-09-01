@@ -891,6 +891,9 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             avail_height: None,
             scrollbar_reveal: None,
             surface: surface.clone(),
+            // As in `entry.rs`: a settings control is never a markdown
+            // document. See `Ctx::markdown`.
+            markdown: None,
         };
         // **The band is a row, not a run.** `Ctx::surface` gives the
         // control's own glyphs their ground, which stops where the text does;

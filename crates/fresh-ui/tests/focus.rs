@@ -785,3 +785,48 @@ fn a_key_the_ring_cannot_serve_is_handed_back_only_by_a_focus_layer() {
         "a keyboard layer swallows it, and the host never hears it"
     );
 }
+
+/// **A `layout_reader` relinks its own subtree; it does not decide its focus
+/// parent's whole child list.**
+///
+/// A reader's nearest focus ancestor is almost never its own node — it is
+/// whatever focusable encloses it — and that focusable's children include the
+/// widgets beside the reader and every *other* reader under it. Replacing
+/// that list with one reader's contribution made the last reader to rebuild
+/// the only one in the scope, so a scope holding two readers ended the frame
+/// with whatever the second one contributed: nothing, here, and traversal had
+/// nowhere to go while two focusables sat in the tree pointing at it.
+///
+/// The editor's plugin panels are exactly this shape — a described interior
+/// wrapping a reader, with more readers inside the description for the
+/// windowed lists — which is how a picker full of buttons answered Tab by
+/// doing nothing at all.
+#[test]
+fn a_second_reader_does_not_empty_its_focus_parents_ring() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        focusable(col().children([
+            fresh_ui::layout_reader(|_: fresh_ui::LayoutInfo| {
+                col().children([field("one"), field("two")])
+            }),
+            // Nothing focusable, and it relinks after the one above.
+            fresh_ui::layout_reader(|_: fresh_ui::LayoutInfo| text("tail")),
+        ]))
+        .key("scope")
+        .skip_traversal(),
+        FRAME,
+    );
+
+    let one = ui
+        .find_by_key(&fresh_ui::Key::Str("one".into()))
+        .expect("the first reader's subtree is in the tree");
+    let two = ui
+        .find_by_key(&fresh_ui::Key::Str("two".into()))
+        .expect("and so is the rest of it");
+
+    let tab = Input::Key(KeyPress::new(KeyCode::Tab));
+    ui.dispatch(tab);
+    assert_eq!(ui.focused(), Some(one), "the scope's ring is not empty");
+    ui.dispatch(tab);
+    assert_eq!(ui.focused(), Some(two), "and Tab walks all of it");
+}

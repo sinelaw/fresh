@@ -1614,8 +1614,9 @@ pub(crate) struct FloatingWidgetState {
     /// Inner rect (frame interior) of the last draw.
     ///
     /// Written by layout — `render_floating_widget_panel` reads the body
-    /// node's rectangle — and read by the wheel routing, the anchored popup's
-    /// dismissal gate and the web projection.
+    /// node's rectangle — and read by the wheel routing and the anchored
+    /// popup's dismissal gate. The web's plugin-panel projection was the third
+    /// reader and is deleted.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
     /// Whether the pointer is over the dock's column.
     ///

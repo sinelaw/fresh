@@ -1315,26 +1315,14 @@ fn agent_dropdown_opens_as_floating_popover() {
          at once); before={closed_before}, open={open_count}. Screen:\n{open_screen}",
     );
 
-    // Web-scene parity: the projection the web frontend renders from (the
-    // `/state` route → `widgets_view`) must report the dropdown as OPEN, so
-    // the web floats its own native option pop-over from the same state.
-    {
-        let surfaces = harness.editor().widgets_view();
-        let modal = surfaces
-            .iter()
-            .find(|s| s.kind == "floatingModal")
-            .expect("the New-Workspace form must appear as a floatingModal in the web scene");
-        let inst = modal
-            .instances
-            .get("agent_dropdown")
-            .expect("the web scene must carry the agent_dropdown instance state");
-        assert_eq!(
-            inst.dropdown_open,
-            Some(true),
-            "the web scene must report the agent dropdown as open (so the web \
-             frontend renders the floating option list)",
-        );
-    }
+    // **Web-scene parity, removed with the web's plugin-panel path.** This
+    // asserted that `widgets_view` reported `agent_dropdown` as open, so the
+    // web frontend could float its own native option list from the same state.
+    // That projection is deleted deliberately (see the plan's "the web's
+    // plugin panels, and what bringing them back takes"); the TUI assertion
+    // above still covers the behaviour this test is named for. Restore this
+    // block when the web renders plugin panels from the display list, and note
+    // what it wanted: open/closed, and the committed selection index.
 
     // Esc closes the pop-over, back to the single-value trigger.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -1367,32 +1355,11 @@ fn agent_dropdown_opens_as_floating_popover() {
         "clicking the `claude` option must select it as the Agent value. Screen:\n{after_click}",
     );
 
-    // Web-scene parity again: after the click the projection must show the
-    // pop-over closed and the newly-selected index committed — the same
-    // state the web `/state` route would report so selection round-trips.
-    {
-        let surfaces = harness.editor().widgets_view();
-        let modal = surfaces
-            .iter()
-            .find(|s| s.kind == "floatingModal")
-            .expect("form surface in web scene after selection");
-        let inst = modal
-            .instances
-            .get("agent_dropdown")
-            .expect("agent_dropdown instance in web scene after selection");
-        assert_eq!(
-            inst.dropdown_open,
-            Some(false),
-            "picking an option must close the pop-over in the web scene too",
-        );
-        // `claude` is index 1 in the prioritised preset order (terminal, claude,
-        // codex, …), so a successful click committed that selection.
-        assert_eq!(
-            inst.selected_index,
-            Some(1),
-            "the clicked `claude` option must be the committed selection in the web scene",
-        );
-    }
+    // **Web-scene parity, removed with the web's plugin-panel path** — the
+    // partner of the block above. It asserted the pop-over closed *and* that
+    // `selected_index` committed to 1 (`claude`, index 1 in the prioritised
+    // preset order), so selection round-tripped through the projection. The
+    // two screen assertions above cover the same behaviour for the TUI.
 }
 
 /// Clicking the *closed* `Agent: [<value> ▼]` trigger opens the option

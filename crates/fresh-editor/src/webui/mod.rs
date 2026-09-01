@@ -1051,45 +1051,21 @@ fn apply_paste(editor: &mut Editor, v: &Value) {
 /// Native plugin-widget interaction. For the overlay prompt toolbar, a
 /// Toggle/Button click forwards the widget `key`; the editor flips the toggle
 /// in-spec and fires the plugin's `widget_event` — the exact path a TUI
-/// toolbar click takes. Floating/dock widgets deliver the clicked hit by
-/// index, running the same path as a TUI cell click.
+/// toolbar click takes.
+///
+/// **The `"panel"` surface is gone with the web's plugin panels.** It resolved
+/// a click against the recorded hit list the scene shipped — by identity, with
+/// the index as a tiebreaker — and placed a caret from a byte the browser had
+/// measured. Both read `WidgetPanelState::hits`, which existed for a described
+/// panel only to be sent here. A request naming it now falls through the
+/// wildcard and does nothing, which is what it should do while there is no
+/// panel on the page to have clicked. See
+/// `docs/internal/fresh-editor-retained-mode-plan.md`.
 fn apply_widget(editor: &mut Editor, v: &Value) {
     match v.get("surface").and_then(|s| s.as_str()) {
         Some("toolbar") => {
             if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
                 editor.toggle_overlay_toolbar_widget(key);
-            }
-        }
-        Some("panel") => {
-            let plugin = v.get("plugin").and_then(|p| p.as_str()).unwrap_or("");
-            let panel_id = v.get("panelId").and_then(|p| p.as_u64()).unwrap_or(0);
-            // Caret placement from a native text input: the browser
-            // positioned its caret on click and reports the byte offset;
-            // the host TextEdit (source of truth) follows. Not a widget
-            // *event* — no plugin hook fires, exactly like a TUI click
-            // that only moves the caret.
-            if let Some(byte) = v.get("textCursor").and_then(|b| b.as_u64()) {
-                let widget_key = v.get("widgetKey").and_then(|k| k.as_str()).unwrap_or("");
-                editor.set_widget_text_cursor(plugin, panel_id, widget_key, byte as usize);
-                return;
-            }
-            let hit_index = v
-                .get("hitIndex")
-                .and_then(|i| i.as_u64())
-                .map(|i| i as usize);
-            // Preferred shape: the hit's IDENTITY (widgetKey + eventType +
-            // payload) with the raw index as tiebreaker — robust against the
-            // hits list being regenerated (or windowed to the TUI viewport)
-            // between the pushed frame and the click. The bare-index shape
-            // stays for compat (curl, older clients).
-            if let Some(event_type) = v.get("eventType").and_then(|e| e.as_str()) {
-                let widget_key = v.get("widgetKey").and_then(|k| k.as_str()).unwrap_or("");
-                let payload = v.get("payload").cloned().unwrap_or_else(|| json!({}));
-                editor.deliver_widget_hit_semantic(
-                    plugin, panel_id, widget_key, event_type, &payload, hit_index,
-                );
-            } else if let Some(idx) = hit_index {
-                editor.deliver_widget_hit_by_index(plugin, panel_id, idx);
             }
         }
         _ => {}
@@ -2032,9 +2008,6 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         }
     }
     let trust_dialog = serde_json::to_value(editor.trust_dialog_view()).unwrap_or(Value::Null);
-    // Plugin-mounted floating / dock widget panels (e.g. the orchestrator dock),
-    // rendered natively from their WidgetSpec.
-    let widgets = serde_json::to_value(editor.widgets_view()).unwrap_or(Value::Null);
     // Active right-click / new-tab context menu, rendered natively.
     let context_menu = serde_json::to_value(editor.context_menu_view()).unwrap_or(Value::Null);
     // Auxiliary modals (keybinding editor / event-debug / theme-info popup).
@@ -2085,7 +2058,6 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "popups": popups,
         "palette": palette,
         "trustDialog": trust_dialog,
-        "widgets": widgets,
         "contextMenu": context_menu,
         "auxModal": aux_modal,
         "keybindingEditor": keybinding_editor,

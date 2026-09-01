@@ -689,6 +689,30 @@ pub enum UiFact {
         item: String,
         entered: bool,
     },
+    /// A wheel notch over a described widget whose window the *runtime* owns.
+    ///
+    /// **The one window in a described panel that is not the tree's.** Every
+    /// other scrolling surface a panel puts on screen is a `viewport`, so its
+    /// offset is the element's and a notch is answered by the library's own
+    /// scroll chain with nothing to say here — which is why
+    /// `handle_widget_panel_wheel_at` declines a described panel outright, and
+    /// why it is right to. A `Text`'s completion list is the exception: its
+    /// rows arrive already windowed (`tx::completion_popup` slices them from
+    /// `completion_scroll`), scrolling it also *steps into* it — the flag that
+    /// makes Enter accept the highlighted row — and both halves are state the
+    /// runtime holds and the plugin's `SetCompletions` writes. There is no
+    /// frame boundary that could settle that as a description.
+    ///
+    /// So the tree does the half it can: it hit-tested the float and **names
+    /// the widget the notch landed on**. `delta` is in lines, the editor's own
+    /// wheel step, and the host hands both to the kind's `on_wheel` — the same
+    /// entry point the box arena used to reach through a row and a column that
+    /// a described panel does not have.
+    WidgetWheel {
+        slot: super::widgets::Slot,
+        widget: String,
+        delta: i32,
+    },
     /// **Focus moved onto a plugin widget, and the runtime is being told.**
     ///
     /// A panel's focused widget is one string in the widget registry, resolved
@@ -702,8 +726,8 @@ pub enum UiFact {
     /// for focus, traversal moves it — and this fact demotes the registry's
     /// string to a *mirror*: written only from here, read by everything that
     /// already reads it (the plugin's `focus` event, the kinds' key handlers,
-    /// the web projection). One authority, which is the same move Phase 2.1
-    /// made for the scroll folds.
+    /// `router::WidgetPanelView::focus_key`). One authority, which is the same
+    /// move Phase 2.1 made for the scroll folds.
     ///
     /// Only a *gain* is reported. Focus is never nowhere while a panel is up —
     /// it moves from one control to the next — so a loss paired with a gain

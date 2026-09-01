@@ -5527,7 +5527,17 @@ impl Editor {
                 // spec. The renderer reads it on the next paint and
                 // re-clamps to the first tabbable if the key isn't a
                 // current tabbable, so an unknown key is a safe no-op.
-                self.widget_registry.set_focus_key(panel_key, widget_key);
+                //
+                // **And the tree is told, because for a described panel the
+                // registry is the mirror and the tree is the ring.** Writing
+                // only the registry left the plugin's focus and the tree's
+                // focus on different widgets, and the next Tab moved from the
+                // tree's. No `focus` event: the plugin asked for this one, and
+                // `set_panel_focus_and_notify` exists for the moves it did not
+                // ask for.
+                self.widget_registry
+                    .set_focus_key(panel_key, widget_key.clone());
+                self.focus_panel_widget_in_tree(panel_key, &widget_key);
             }
         }
 

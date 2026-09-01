@@ -7782,6 +7782,87 @@ pub(crate) mod tests {
         assert!(behavior(&spec).on_wheel(&spec, "l", &mut panel, -1));
     }
 
+    /// **A page is a window of items, and the window is measured in rows.**
+    ///
+    /// `select_move` adds its delta to the selection and clamps against the
+    /// item count, so the delta counts *items*. `effective_visible_rows`
+    /// answers in rows. Handing one to the other undivided pages
+    /// `item_height` times too far — here, eleven cards when four are on
+    /// screen — which on the orchestrator's card lists jumped a PageDown
+    /// clean past the end every time. `on_wheel` has always done this
+    /// division; this seam did not.
+    #[test]
+    fn page_down_on_a_card_list_moves_a_window_of_cards_not_rows() {
+        use crate::widgets::kinds::behavior;
+        // Each card is a bordered box round one body row ⇒ 3 rows tall.
+        let card = |body: &str| WidgetSpec::LabeledSection {
+            label: String::new(),
+            child: Box::new(WidgetSpec::Raw {
+                entries: vec![TextPropertyEntry::text(body)],
+                key: None,
+            }),
+            width_pct: None,
+            key: None,
+        };
+        // 8 cards, a 12-row window ⇒ 4 cards visible, so a page is 3.
+        let spec = WidgetSpec::List {
+            items: vec![],
+            item_specs: (0..8).map(|i| card(&format!("card{i}"))).collect(),
+            item_keys: (0..8).map(|i| format!("k{i}")).collect(),
+            selected_index: 0,
+            visible_rows: Some(12),
+            focusable: true,
+            key: Some("cards".into()),
+        };
+        let mut panel = wheel_panel(&spec);
+        assert!(
+            matches!(
+                panel.instance_states.get("cards"),
+                Some(WidgetInstanceState::List { item_height: 3, .. })
+            ),
+            "the fixture really is a 3-row card list"
+        );
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        behavior(&spec).on_key(&spec, "cards", &mut panel, "PageDown", &mut fx);
+        let sel = match panel.instance_states.get("cards") {
+            Some(WidgetInstanceState::List { selected_index, .. }) => *selected_index,
+            _ => panic!("the list kept its state"),
+        };
+        assert_eq!(
+            sel, 3,
+            "one window of cards (4 visible, one card of overlap), not one row per card"
+        );
+    }
+
+    /// **Enter clamps the selection it fires with.**
+    ///
+    /// The collector's per-frame write-back used to sanitise a stored index
+    /// that its dataset had outgrown, so `activate_event` could read it raw.
+    /// That write is a derivation and is going away (§6h), and without a
+    /// clamp at the read this fires an out-of-range `index` with an empty
+    /// `key` — a plugin's "open the thing I selected" with nothing named.
+    #[test]
+    fn activate_clamps_a_selection_the_dataset_outgrew() {
+        // Six items when the selection was made…
+        let spec = boxed_list("l", 6, 3);
+        let mut panel = wheel_panel(&spec);
+        panel.instance_states.insert(
+            "l".into(),
+            WidgetInstanceState::List {
+                selected_index: 5,
+                scroll_offset: 0,
+                item_height: 1,
+                user_scrolled: false,
+            },
+        );
+        // …and two by the time Enter arrives.
+        let shrunk = boxed_list("l", 2, 3);
+        let ev = crate::widgets::kinds::list::activate_event(&shrunk, "l", &panel)
+            .expect("a non-empty list still activates");
+        assert_eq!(ev.1["index"], 1, "clamped to the last item that exists");
+        assert_eq!(ev.1["key"], "l1", "and it names that item, not nothing");
+    }
+
     #[test]
     fn fitting_list_on_wheel_never_consumes() {
         use crate::widgets::kinds::behavior;
