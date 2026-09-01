@@ -17,6 +17,7 @@ mod char_style;
 mod folding;
 pub(crate) use folding::fold_skip_set;
 mod gutter;
+pub mod instrument;
 pub(crate) mod layout;
 mod orchestration;
 
@@ -26,8 +27,8 @@ mod orchestration;
 // rectangle is the one layout gave it.
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
 pub(crate) use orchestration::{
-    paint_leaf, paint_separators, prepare_content, record_scrollbar_theme_runs, ContentPass,
-    FrameFacts, PaneAreas, Stores,
+    paint_leaf, paint_separators, prepare_content, reconcile_panes, record_scrollbar_theme_runs,
+    ContentPass, FrameFacts, PaneAreas, Stores,
 };
 mod post_pass;
 pub(crate) mod scrollbar;
@@ -292,7 +293,21 @@ impl SplitRenderer {
         // - pending_hardware_cursor: the preview must not move the
         //   terminal's hardware cursor away from the prompt input.
         let mut sink: Option<(u16, u16)> = None;
-        orchestration::render_buffer_in_split(
+        // The leaf is outside the split tree, so the frame's pre-paint
+        // reconcile never saw it: place it here, immediately before its
+        // text pass. Only the formatter's half — this pane never ran the
+        // byte-oriented sync, and does not now.
+        orchestration::reconcile::place_pane(
+            state,
+            viewport,
+            cursors,
+            folds,
+            &view_mode,
+            compose_width,
+            show_line_numbers,
+            area,
+        );
+        let text = orchestration::render_buffer_in_split(
             buf,
             state,
             cursors,
@@ -318,7 +333,11 @@ impl SplitRenderer {
             cell_theme_map,
             screen_width,
             &mut sink,
-        )
+        );
+        // No horizontal scrollbar here; store the column the rows were
+        // drawn with.
+        orchestration::reconcile::settle_pane(state, viewport, text.left_column, false);
+        text.view_line_mappings
     }
 
     /// Public wrapper for building base tokens - used by render.rs for the
@@ -527,6 +546,7 @@ mod tests {
         let mut dummy_theme_map = Vec::new();
         let output = render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -639,6 +659,7 @@ mod tests {
         let mut dummy_theme_map = Vec::new();
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -3301,6 +3322,7 @@ mod tests {
 
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,

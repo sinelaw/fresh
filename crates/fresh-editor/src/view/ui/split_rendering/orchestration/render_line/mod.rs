@@ -50,6 +50,10 @@ pub(crate) struct LastLineEnd {
 
 pub(crate) struct LineRenderInput<'a> {
     pub state: &'a EditorState,
+    /// The left margin this pane draws, resolved for *this* pane's line-number
+    /// setting (`MarginManager::resolved_left_config`) — not read off
+    /// `state.margins`, which is per buffer and may hold another split's.
+    pub margin: &'a crate::view::margin::MarginConfig,
     pub theme: &'a Theme,
     /// Display lines from the view pipeline (each line has its own mappings, styles, etc.)
     pub view_lines: &'a [ViewLine],
@@ -472,6 +476,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
     let LineRenderInput {
         state,
+        margin,
         theme,
         view_lines,
         view_anchor,
@@ -732,6 +737,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         render_left_margin(
             &LeftMarginContext {
                 state,
+                margin,
                 theme,
                 is_continuation,
                 line_start_byte,
@@ -1124,6 +1130,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         last_line_end.as_ref(),
         &PostRowContext {
             state,
+            margin,
             theme,
             render_area,
             gutter_width,

@@ -30,12 +30,12 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use crate::app::Editor;
-use crate::model::event::LeafId;
+use crate::model::event::{BufferId, LeafId};
 use crate::view::shell::geometry::PaneRects;
 use crate::view::shell::splits::PaneChrome;
 use crate::view::ui::split_rendering::{
-    paint_leaf, paint_separators, prepare_content, record_scrollbar_theme_runs, ContentPass,
-    FrameFacts, Stores,
+    paint_leaf, paint_separators, prepare_content, reconcile_panes, record_scrollbar_theme_runs,
+    ContentPass, FrameFacts, Stores,
 };
 use crate::view::ui::{EditorRenderConfig, RenderStyle};
 
@@ -164,6 +164,19 @@ pub struct BodyPainter<'a> {
     /// only a parity test said the two agreed. Now there is one answer, and
     /// [`Self::pane`] asserts the fold's rect is it.
     rects: PaneRects,
+    /// The grid as [`reconcile_body`] prepared it for this frame, taken by
+    /// [`Self::body`] so the panes are prepared once per frame — preparing
+    /// them again would resize a buffer group's inner panels back to their
+    /// panel rects after the reconcile sized them to their content rects,
+    /// and the text pass would wrap at a width nobody placed for.
+    prepared: Option<PreparedGrid>,
+}
+
+/// What [`reconcile_body`] prepared: the frame's panes, in paint order, and
+/// the split manager's leaves the separators are drawn between.
+pub struct PreparedGrid {
+    base_visible: Vec<(LeafId, BufferId, Rect)>,
+    pass: ContentPass,
 }
 
 impl<'a> BodyPainter<'a> {
@@ -172,23 +185,9 @@ impl<'a> BodyPainter<'a> {
         state: BodyState,
         pane_chrome: std::collections::HashMap<LeafId, PaneChrome>,
         rects: PaneRects,
+        prepared: Option<PreparedGrid>,
     ) -> Self {
-        let scrollback = editor
-            .windows
-            .get(&editor.active_window)
-            .and_then(|win| {
-                win.buffers.splits().map(|(_, vs_map)| {
-                    vs_map
-                        .iter()
-                        .filter(|(leaf, svs)| {
-                            win.split_terminal_scrollback(**leaf, svs.active_buffer)
-                        })
-                        .map(|(leaf, _)| *leaf)
-                        .collect()
-                })
-            })
-            .unwrap_or_default();
-        let described_panes = editor.described_panes();
+        let (scrollback, described_panes) = frame_pane_sets(editor);
         Self {
             editor,
             state,
@@ -199,6 +198,7 @@ impl<'a> BodyPainter<'a> {
             scrollback,
             described_panes,
             rects,
+            prepared,
         }
     }
 
@@ -238,6 +238,9 @@ impl<'a> BodyPainter<'a> {
         // The pass keeps its own copy: a `ContentPass` is what the preview
         // path builds for a grid with no painter, so it owns its rects.
         let rects = self.rects.clone();
+        // The reconcile prepared the grid for this frame; prepare it again
+        // only when nothing did (a caller that folds without reconciling).
+        let prepared = self.prepared.take();
         self.pass = with_grid(
             self.editor,
             state,
@@ -246,17 +249,20 @@ impl<'a> BodyPainter<'a> {
             &self.scrollback,
             &self.described_panes,
             |facts, stores, mgr, window_chrome| {
-                // The panes at the boxes the tree placed them in — not a
-                // second layout of the grid into `area`.
-                let base_visible = rects.visible(&mgr.visible_leaves());
-                let pass = prepare_content(
-                    rects,
-                    &base_visible,
-                    mgr,
-                    stores.split_view_states.as_deref_mut(),
-                    facts.grouped_subtrees,
-                    window_chrome,
-                );
+                let PreparedGrid { base_visible, pass } = prepared.unwrap_or_else(|| {
+                    // The panes at the boxes the tree placed them in — not a
+                    // second layout of the grid into `area`.
+                    let base_visible = rects.visible(&mgr.visible_leaves());
+                    let pass = prepare_content(
+                        rects,
+                        &base_visible,
+                        mgr,
+                        stores.split_view_states.as_deref_mut(),
+                        facts.grouped_subtrees,
+                        window_chrome,
+                    );
+                    PreparedGrid { base_visible, pass }
+                });
                 paint_separators(buf, area, mgr, &base_visible, facts, stores);
                 pass
             },
@@ -305,6 +311,69 @@ impl<'a> BodyPainter<'a> {
             },
         );
     }
+}
+
+/// The two per-frame sets every pane's paint reads: the splits showing a
+/// terminal in read-only scrollback, and the panes the tree describes instead
+/// of painting. Gathered once per frame — a `paint_host` call is per pane.
+fn frame_pane_sets(editor: &Editor) -> (HashSet<LeafId>, HashSet<LeafId>) {
+    let scrollback = editor
+        .windows
+        .get(&editor.active_window)
+        .and_then(|win| {
+            win.buffers.splits().map(|(_, vs_map)| {
+                vs_map
+                    .iter()
+                    .filter(|(leaf, svs)| win.split_terminal_scrollback(**leaf, svs.active_buffer))
+                    .map(|(leaf, _)| *leaf)
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    (scrollback, editor.described_panes())
+}
+
+/// Reconcile every text pane of the frame about to be painted — see
+/// `orchestration::reconcile`.
+///
+/// **Before the frame's paint, at the frame's rectangles.** `rects` is where
+/// the tree just laid out put every pane, and each pane is settled at the
+/// content rect the painter will format it into. `render` calls this once
+/// the tree is laid out and before the `lines_changed` hooks, so everything
+/// after it in the frame reads a settled viewport.
+///
+/// Returns the prepared grid for [`BodyPainter::new`], so the fold paints
+/// the panes this reconciled rather than preparing them a second time.
+pub fn reconcile_body(
+    editor: &mut Editor,
+    state: BodyState,
+    rects: &PaneRects,
+    screen_width: u16,
+    pane_chrome: &std::collections::HashMap<LeafId, PaneChrome>,
+) -> Option<PreparedGrid> {
+    let (scrollback, described_panes) = frame_pane_sets(editor);
+    let rects = rects.clone();
+    with_grid(
+        editor,
+        state,
+        screen_width,
+        pane_chrome,
+        &scrollback,
+        &described_panes,
+        |facts, stores, mgr, window_chrome| {
+            let base_visible = rects.visible(&mgr.visible_leaves());
+            let pass = prepare_content(
+                rects,
+                &base_visible,
+                mgr,
+                stores.split_view_states.as_deref_mut(),
+                facts.grouped_subtrees,
+                window_chrome,
+            );
+            reconcile_panes(&pass, facts, stores);
+            PreparedGrid { base_visible, pass }
+        },
+    )
 }
 
 /// Assemble the grid's borrows off the editor and hand them to `f`.

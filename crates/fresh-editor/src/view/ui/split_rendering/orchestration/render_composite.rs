@@ -245,6 +245,9 @@ fn build_pane_render_data(
         let content_width = pane_width.saturating_sub(gutter_width);
         let lines_needed = last_line - first_line + 10;
         let empty_folds = FoldManager::new();
+        // A composite side is formatted here, not by `compute_buffer_layout`;
+        // counted so the once-per-pane invariant can tell the two apart.
+        super::super::instrument::count_composite_build();
         let view_data = build_view_data(
             source_state,
             &viewport,

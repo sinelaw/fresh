@@ -1577,9 +1577,24 @@ impl EditorTestHarness {
 
     /// Force a render cycle and capture output
     pub fn render(&mut self) -> anyhow::Result<()> {
+        let before = fresh::test_api::frame_counters();
         self.terminal.draw(|frame| {
             self.editor.render(frame);
         })?;
+        // A visible text pane is placed once, formatted once, and has its
+        // rows built once per frame — the invariant the retained-mode
+        // migration rests on (`split_rendering::instrument`). Asserted on
+        // every frame the corpus renders.
+        let frame = fresh::test_api::frame_counters().since(before);
+        assert_eq!(
+            frame.view_data_builds,
+            frame.buffer_layouts + frame.composite_builds,
+            "a frame built a pane's rows more than once: {frame:?}"
+        );
+        assert_eq!(
+            frame.buffer_layouts, frame.pane_placements,
+            "a frame formatted a pane it did not place, or placed one it did not format: {frame:?}"
+        );
         Ok(())
     }
 

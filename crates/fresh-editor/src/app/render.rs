@@ -424,6 +424,36 @@ impl Editor {
         use crate::view::shell::frame::HostRegion;
         let status_bar_area = region(HostRegion::StatusBar);
         let editor_content_area = region(HostRegion::Body);
+
+        // The chrome each pane has, resolved with the shell's description of
+        // the same grid — read by the reconcile below and by the body's
+        // painter further down, so both lay the panes out the same way.
+        let pane_chrome = shell
+            .splits
+            .as_ref()
+            .map(|s| s.chrome.clone())
+            .unwrap_or_default();
+
+        // **Every text pane is reconciled here, before anything reads it.**
+        // The viewport's size, the byte and row placement of the cursor, the
+        // buffer's margins and its wrap index used to be brought up to date
+        // *inside* the paint, pane by pane, which is what made the formatter
+        // write the model and build its rows up to three times. Now the tree
+        // is laid out and `pane_rects` says where every pane is, so each pane
+        // is settled once at the content rect it will be painted at — the
+        // `lines_changed` hooks below offer the lines the frame will draw,
+        // and the fold's text pass is a read. The `BodyState` here is the
+        // painter's hover and caret state, which the reconcile does not read.
+        let prepared_grid = {
+            let _s = tracing::info_span!("reconcile_panes").entered();
+            crate::app::shell_host::reconcile_body(
+                self,
+                crate::app::shell_host::BodyState::default(),
+                &pane_rects,
+                size.width,
+                &pane_chrome,
+            )
+        };
         // Where the sidebar wants the hardware caret (its selected row) when it
         // owns the keyboard.
         //
@@ -903,13 +933,13 @@ impl Editor {
         // editor for the painter to find. One producer, one consumer, one
         // frame — a field for that is a value that could not be threaded, and
         // it is the same map the description above already carries.
-        let pane_chrome = shell
-            .splits
-            .as_ref()
-            .map(|s| s.chrome.clone())
-            .unwrap_or_default();
-        let mut body =
-            crate::app::shell_host::BodyPainter::new(self, body_state, pane_chrome, pane_rects);
+        let mut body = crate::app::shell_host::BodyPainter::new(
+            self,
+            body_state,
+            pane_chrome,
+            pane_rects,
+            prepared_grid,
+        );
         let mut provenance = FoldProvenance { runs: Vec::new() };
         let pending_hardware_cursor = crate::view::shell::fold::fold_band(
             ui.spec(),

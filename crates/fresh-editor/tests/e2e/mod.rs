@@ -57,6 +57,7 @@ pub mod flash;
 #[cfg(feature = "plugins")]
 pub mod floating_modal_frame_chrome;
 pub mod folding;
+pub mod frame_once_per_pane;
 pub mod glob_language_detection;
 #[cfg(feature = "gui")]
 pub mod gui;
