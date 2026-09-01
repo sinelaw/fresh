@@ -4142,7 +4142,11 @@ pub(crate) mod tests {
         assert_eq!(text.len(), 31);
         assert!(text.starts_with("[ ] A"));
         assert!(text.ends_with("[ B ]\n"));
-        let button_hit = out.hits.iter().find(|h| h.widget_kind == "button").unwrap();
+        let button_hit = out
+            .hits
+            .iter()
+            .find(|h| h.event.widget_kind == "button")
+            .unwrap();
         assert_eq!(button_hit.byte_start, 25);
         assert_eq!(button_hit.byte_end, 30);
     }
@@ -4270,13 +4274,13 @@ pub(crate) mod tests {
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 1);
         let h = &hits[0];
-        assert_eq!(h.widget_key, "case");
-        assert_eq!(h.widget_kind, "toggle");
-        assert_eq!(h.event_type, "toggle");
+        assert_eq!(h.event.widget_key, "case");
+        assert_eq!(h.event.widget_kind, "toggle");
+        assert_eq!(h.event.event_type, "toggle");
         assert_eq!(h.buffer_row, 0);
         assert_eq!(h.byte_start, 0);
         assert_eq!(h.byte_end, "[ ] Case".len());
-        assert_eq!(h.payload, json!({"checked": true}));
+        assert_eq!(h.event.payload, json!({"checked": true}));
     }
 
     #[test]
@@ -4295,11 +4299,11 @@ pub(crate) mod tests {
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 1);
         let h = &hits[0];
-        assert_eq!(h.widget_key, "replace");
-        assert_eq!(h.widget_kind, "button");
-        assert_eq!(h.event_type, "activate");
+        assert_eq!(h.event.widget_key, "replace");
+        assert_eq!(h.event.widget_kind, "button");
+        assert_eq!(h.event.event_type, "activate");
         assert_eq!(h.byte_end, "[ Replace All ]".len());
-        assert_eq!(h.payload, json!({}));
+        assert_eq!(h.event.payload, json!({}));
     }
 
     #[test]
@@ -4336,7 +4340,7 @@ pub(crate) mod tests {
         assert_eq!(
             out.hits
                 .iter()
-                .filter(|h| h.widget_kind == "button")
+                .filter(|h| h.event.widget_kind == "button")
                 .count(),
             1,
             "disabled button should not emit a hit area"
@@ -4495,13 +4499,13 @@ pub(crate) mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text, "[v] A  [ ] B\n");
         assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].widget_key, "a");
+        assert_eq!(hits[0].event.widget_key, "a");
         assert_eq!(hits[0].buffer_row, 0);
         assert_eq!(hits[0].byte_start, 0);
         assert_eq!(hits[0].byte_end, 5); // "[v] A".len()
                                          // Second toggle shifts past first toggle ("[v] A".len() = 5)
                                          // + spacer ("  ".len() = 2) = 7.
-        assert_eq!(hits[1].widget_key, "b");
+        assert_eq!(hits[1].event.widget_key, "b");
         assert_eq!(hits[1].buffer_row, 0);
         assert_eq!(hits[1].byte_start, 7);
         assert_eq!(hits[1].byte_end, 12);
@@ -4791,12 +4795,12 @@ pub(crate) mod tests {
         assert_eq!(hits.len(), 3);
         for (i, h) in hits.iter().enumerate() {
             assert_eq!(h.buffer_row, i as u32);
-            assert_eq!(h.widget_kind, "list");
-            assert_eq!(h.event_type, "select");
-            assert_eq!(h.payload["index"], i);
+            assert_eq!(h.event.widget_kind, "list");
+            assert_eq!(h.event.event_type, "select");
+            assert_eq!(h.event.payload["index"], i);
         }
-        assert_eq!(hits[0].widget_key, "a");
-        assert_eq!(hits[2].widget_key, "c");
+        assert_eq!(hits[0].event.widget_key, "a");
+        assert_eq!(hits[2].event.widget_key, "c");
     }
 
     #[test]
@@ -4833,10 +4837,10 @@ pub(crate) mod tests {
         assert_eq!(hits.len(), 6, "3 rows per card * 2 cards");
         assert!(hits[0..3]
             .iter()
-            .all(|h| h.payload["index"] == 0 && h.widget_key == "a"));
+            .all(|h| h.event.payload["index"] == 0 && h.event.widget_key == "a"));
         assert!(hits[3..6]
             .iter()
-            .all(|h| h.payload["index"] == 1 && h.widget_key == "b"));
+            .all(|h| h.event.payload["index"] == 1 && h.event.widget_key == "b"));
         // The selected card (index 1, rows 3..6) is marked by a heavy
         // box border + bold — NOT a background band (which read garish
         // over a multi-row card). The unselected card (rows 0..3) keeps
@@ -5015,8 +5019,8 @@ pub(crate) mod tests {
             key: None,
         };
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits[0].payload["index"], 0);
-        assert_eq!(hits[0].payload["key"], "match:42");
+        assert_eq!(hits[0].event.payload["index"], 0);
+        assert_eq!(hits[0].event.payload["key"], "match:42");
     }
 
     #[test]
@@ -5029,8 +5033,8 @@ pub(crate) mod tests {
         let spec = make_list(-1, 10, 2, Some("mylist"));
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].payload["list_key"], "mylist");
-        assert_eq!(hits[1].payload["list_key"], "mylist");
+        assert_eq!(hits[0].event.payload["list_key"], "mylist");
+        assert_eq!(hits[1].event.payload["list_key"], "mylist");
     }
 
     #[test]
@@ -5039,7 +5043,7 @@ pub(crate) mod tests {
         // handler must be able to tell (null) and skip the sync.
         let spec = make_list(-1, 10, 1, None);
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert!(hits[0].payload["list_key"].is_null());
+        assert!(hits[0].event.payload["list_key"].is_null());
     }
 
     #[test]
@@ -5055,8 +5059,8 @@ pub(crate) mod tests {
             key: None,
         };
         let (_, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits[0].widget_key, "only");
-        assert_eq!(hits[1].widget_key, "");
+        assert_eq!(hits[0].event.widget_key, "only");
+        assert_eq!(hits[1].event.widget_key, "");
     }
 
     pub(crate) fn make_list(
@@ -5087,8 +5091,8 @@ pub(crate) mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(hits.len(), 3);
         // First three items, absolute indices 0..2.
-        assert_eq!(hits[0].payload["index"], 0);
-        assert_eq!(hits[2].payload["index"], 2);
+        assert_eq!(hits[0].event.payload["index"], 0);
+        assert_eq!(hits[2].event.payload["index"], 2);
     }
 
     #[test]
@@ -5101,8 +5105,8 @@ pub(crate) mod tests {
         let (_entries, hits, state) = render_no_focus(&spec, &HashMap::new());
         // Visible window is items 3..6 → hits index 3, 4, 5.
         assert_eq!(hits.len(), 3);
-        assert_eq!(hits[0].payload["index"], 3);
-        assert_eq!(hits[2].payload["index"], 5);
+        assert_eq!(hits[0].event.payload["index"], 3);
+        assert_eq!(hits[2].event.payload["index"], 5);
         let scroll = match state.get("L").unwrap() {
             WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
             _ => unreachable!(),
@@ -5130,7 +5134,7 @@ pub(crate) mod tests {
         // Spec's selected_index doesn't matter (instance state wins).
         let spec = make_list(99, 3, 10, Some("L"));
         let (_entries, hits, state) = render_no_focus(&spec, &prev);
-        assert_eq!(hits[0].payload["index"], 1);
+        assert_eq!(hits[0].event.payload["index"], 1);
         let scroll = match state.get("L").unwrap() {
             WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
             _ => unreachable!(),
@@ -5154,7 +5158,7 @@ pub(crate) mod tests {
         );
         let spec = make_list(99, 3, 10, Some("L"));
         let (_entries, hits, state) = render_no_focus(&spec, &prev);
-        assert_eq!(hits[0].payload["index"], 4);
+        assert_eq!(hits[0].event.payload["index"], 4);
         let scroll = match state.get("L").unwrap() {
             WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
             _ => unreachable!(),
@@ -6010,10 +6014,10 @@ pub(crate) mod tests {
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 3);
         // First hit: disclosure on the internal node.
-        assert_eq!(hits[0].event_type, "expand");
-        assert_eq!(hits[0].widget_kind, "tree");
-        assert_eq!(hits[1].event_type, "select");
-        assert_eq!(hits[2].event_type, "select");
+        assert_eq!(hits[0].event.event_type, "expand");
+        assert_eq!(hits[0].event.widget_kind, "tree");
+        assert_eq!(hits[1].event.event_type, "select");
+        assert_eq!(hits[2].event.event_type, "select");
     }
 
     #[test]
@@ -6027,9 +6031,9 @@ pub(crate) mod tests {
             Some("matchTree"),
         );
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits[0].widget_key, "matchTree");
-        assert_eq!(hits[0].payload["key"], "only-key");
-        assert_eq!(hits[0].payload["index"], 0);
+        assert_eq!(hits[0].event.widget_key, "matchTree");
+        assert_eq!(hits[0].event.payload["key"], "only-key");
+        assert_eq!(hits[0].event.payload["index"], 0);
     }
 
     #[test]
@@ -6755,7 +6759,7 @@ pub(crate) mod tests {
         }
         // Every row is a caret target.
         assert_eq!(out.hits.len(), 3);
-        assert!(out.hits.iter().all(|h| h.event_type == "focus"));
+        assert!(out.hits.iter().all(|h| h.event.event_type == "focus"));
     }
 
     #[test]
@@ -7017,9 +7021,12 @@ pub(crate) mod tests {
     fn number_emits_value_cell_hit_area() {
         let spec = make_number(2.0, Some("size"));
         let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let cells: Vec<_> = hits.iter().filter(|h| h.widget_kind == "number").collect();
+        let cells: Vec<_> = hits
+            .iter()
+            .filter(|h| h.event.widget_kind == "number")
+            .collect();
         assert_eq!(cells.len(), 1, "one value-cell hit");
-        assert_eq!(cells[0].event_type, "number_value");
+        assert_eq!(cells[0].event.event_type, "number_value");
     }
 
     #[test]
@@ -7151,13 +7158,15 @@ pub(crate) mod tests {
         let toggles = out
             .hits
             .iter()
-            .filter(|h| h.event_type == "dropdown_toggle")
+            .filter(|h| h.event.event_type == "dropdown_toggle")
             .count();
         assert_eq!(toggles, 1, "the trigger button stays a toggle hit");
         // Options no longer render inline — they surface on the floating
         // pop-over instead, so the panel has NO `dropdown_select` hits.
         assert!(
-            !out.hits.iter().any(|h| h.event_type == "dropdown_select"),
+            !out.hits
+                .iter()
+                .any(|h| h.event.event_type == "dropdown_select"),
             "open dropdown must not emit inline option hits"
         );
         let dp = out
@@ -7278,7 +7287,9 @@ pub(crate) mod tests {
             "open dropdown keeps only the trigger row (no inline options)"
         );
         assert!(
-            !out.hits.iter().any(|h| h.event_type == "dropdown_select"),
+            !out.hits
+                .iter()
+                .any(|h| h.event.event_type == "dropdown_select"),
             "options moved to the pop-over — no inline select hits"
         );
         let dp = out.popup.expect("open dropdown surfaces a popup");
@@ -7510,7 +7521,7 @@ pub(crate) mod tests {
         let (out, hits, _state) = render_no_focus(&spec, &HashMap::new());
         let h = hits
             .iter()
-            .find(|h| h.payload["column"] == "available")
+            .find(|h| h.event.payload["column"] == "available")
             .expect("available cell hit");
         let row = &out[h.buffer_row as usize].text;
         let cell = &row[h.byte_start..h.byte_end];
@@ -7550,12 +7561,16 @@ pub(crate) mod tests {
         let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
         let cells: Vec<_> = hits
             .iter()
-            .filter(|h| h.widget_kind == "dual_list")
+            .filter(|h| h.event.widget_kind == "dual_list")
             .collect();
         // One available cell (a) + one included cell (b).
         assert_eq!(cells.len(), 2);
-        assert!(cells.iter().any(|h| h.payload["column"] == "available"));
-        assert!(cells.iter().any(|h| h.payload["column"] == "included"));
+        assert!(cells
+            .iter()
+            .any(|h| h.event.payload["column"] == "available"));
+        assert!(cells
+            .iter()
+            .any(|h| h.event.payload["column"] == "included"));
     }
 
     #[test]

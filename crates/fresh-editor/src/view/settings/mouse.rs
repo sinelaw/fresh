@@ -403,7 +403,7 @@ impl Editor {
     /// now, by the row that has it.
     pub(crate) fn settings_entry_widget_hit(
         &mut self,
-        hit: &crate::widgets::HitArea,
+        hit: &crate::widgets::WidgetEvent,
         byte: Option<usize>,
         at: Option<u16>,
         clicks: u8,

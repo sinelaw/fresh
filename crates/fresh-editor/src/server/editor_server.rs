@@ -1793,11 +1793,6 @@ mod wave_dismiss_tests {
             placement: crate::app::PanelPlacement::Centered,
             focused: true,
             entries: Vec::new(),
-            overlays: Vec::new(),
-            boxes: Vec::new(),
-            scrollbar_tracks: Vec::new(),
-            scrollbar_mouse: Default::default(),
-            scrollbar_drag_key: None,
             last_inner_rect: None,
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
@@ -1809,8 +1804,6 @@ mod wave_dismiss_tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             popup: None,
-            popup_hits: Vec::new(),
-            popup_rect: None,
         });
 
         let consumed = server

@@ -137,17 +137,19 @@ impl WidgetImpl for Button {
         if !disabled {
             let byte_end = entry.text.len();
             out.hits.push(HitArea {
-                row_target: false,
-                context_click: false,
                 overlay: false,
-                widget_key: key.unwrap_or("").to_string(),
-                widget_kind: "button",
                 buffer_row: 0,
                 byte_start: 0,
                 byte_end,
-                payload: json!({}),
-                event_type: "activate",
-                owner_key: None,
+                event: crate::widgets::WidgetEvent {
+                    row_target: false,
+                    context_click: false,
+                    widget_key: key.unwrap_or("").to_string(),
+                    widget_kind: "button",
+                    payload: json!({}),
+                    event_type: "activate",
+                    owner_key: None,
+                },
             });
         }
         ensure_trailing_newline(&mut entry);

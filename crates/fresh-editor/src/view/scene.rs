@@ -1247,12 +1247,20 @@ impl Editor {
                 .hits
                 .iter()
                 .enumerate()
+                // **The identity half, and there is nothing else to send.**
+                // `WidgetHitView` has never carried geometry: the web lays the
+                // spec out itself and sends back an index plus the identity,
+                // which `deliver_widget_hit_by_index` and
+                // `deliver_widget_hit_semantic` resolve. So this projection is
+                // exactly `HitArea::event`, and the row/byte range beside it in
+                // the recorded list is the text projection's, for the buffer
+                // rows only that projection has.
                 .map(|(index, h)| WidgetHitView {
                     index,
-                    widget_key: h.widget_key.clone(),
-                    widget_kind: h.widget_kind.to_string(),
-                    event_type: h.event_type.to_string(),
-                    payload: h.payload.clone(),
+                    widget_key: h.event.widget_key.clone(),
+                    widget_kind: h.event.widget_kind.to_string(),
+                    event_type: h.event.event_type.to_string(),
+                    payload: h.event.payload.clone(),
                 })
                 .collect();
             out.push(WidgetSurfaceView {

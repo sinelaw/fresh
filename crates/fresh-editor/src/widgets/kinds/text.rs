@@ -737,17 +737,19 @@ fn render_markdown_text_area(
         // past the text so clicks on the row's padding land at line-end.
         if let Some(k) = key.filter(|k| !k.is_empty()) {
             out.hits.push(HitArea {
-                row_target: true,
-                context_click: false,
                 overlay: false,
-                widget_key: k.to_string(),
-                widget_kind: "text",
                 buffer_row: vis,
                 byte_start: 0,
                 byte_end: entry.text.len() + width,
-                payload: json!({ "mdLine": idx }),
-                event_type: "focus",
-                owner_key: None,
+                event: crate::widgets::WidgetEvent {
+                    row_target: true,
+                    context_click: false,
+                    widget_key: k.to_string(),
+                    widget_kind: "text",
+                    payload: json!({ "mdLine": idx }),
+                    event_type: "focus",
+                    owner_key: None,
+                },
             });
         }
         ensure_trailing_newline(&mut entry);
@@ -889,17 +891,19 @@ fn render_widget_text(
             // (see the single-line branch / #2234 item 1).
             if let Some(k) = key.filter(|k| !k.is_empty()) {
                 out.hits.push(HitArea {
-                    row_target: false,
-                    context_click: false,
                     overlay: false,
-                    widget_key: k.to_string(),
-                    widget_kind: "text",
                     buffer_row: row_idx as u32,
                     byte_start: 0,
                     byte_end: e.text.len(),
-                    payload: json!({}),
-                    event_type: "focus",
-                    owner_key: None,
+                    event: crate::widgets::WidgetEvent {
+                        row_target: false,
+                        context_click: false,
+                        widget_key: k.to_string(),
+                        widget_kind: "text",
+                        payload: json!({}),
+                        event_type: "focus",
+                        owner_key: None,
+                    },
                 });
             }
             // Modal surfaces paint the caret as a REVERSED cell in the
@@ -1272,9 +1276,11 @@ pub(crate) fn single_line(
     }
     // A click anywhere on the input line focuses the field so a mouse user
     // can type. Text widgets previously emitted no hit area, so clicks fell
-    // through and the field stayed unfocused (#2234 item 1). Focusing is
-    // driven by the tabbable path in `handle_floating_widget_click`; the
-    // `focus` event keeps the plugin's focus mirror in step.
+    // through and the field stayed unfocused (#2234 item 1). What focuses the
+    // field is `deliver_widget_hit`, which every frontend's press goes
+    // through — the described row's node, the web's index, the text
+    // projection's byte scan; the `focus` event keeps the plugin's focus
+    // mirror in step.
     //
     // The payload carries the value-layout breadcrumbs the click
     // handler needs to reposition the cursor to the clicked column
@@ -1286,22 +1292,24 @@ pub(crate) fn single_line(
     // An *unkeyed* field emits none: with nothing to name, the hit could not
     // say which widget was focused.
     let hit = key.filter(|k| !k.is_empty()).map(|k| HitArea {
-        row_target: false,
-        context_click: false,
         overlay: false,
-        widget_key: k.to_string(),
-        widget_kind: "text",
         buffer_row: 0,
         byte_start: 0,
         byte_end: entry.text.len(),
-        payload: json!({
-            "valueInnerStart": marker_bytes + rendered.inner_byte_start,
-            "valueDropped": rendered.value_dropped_bytes,
-            "ellipsisBytes": rendered.ellipsis_bytes,
-            "valueLen": rendered.value_len,
-        }),
-        event_type: "focus",
-        owner_key: None,
+        event: crate::widgets::WidgetEvent {
+            row_target: false,
+            context_click: false,
+            widget_key: k.to_string(),
+            widget_kind: "text",
+            payload: json!({
+                "valueInnerStart": marker_bytes + rendered.inner_byte_start,
+                "valueDropped": rendered.value_dropped_bytes,
+                "ellipsisBytes": rendered.ellipsis_bytes,
+                "valueLen": rendered.value_len,
+            }),
+            event_type: "focus",
+            owner_key: None,
+        },
     });
     ensure_trailing_newline(&mut entry);
     SingleLine {

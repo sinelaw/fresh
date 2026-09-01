@@ -6,10 +6,11 @@
 //! into [`TextPropertyEntry`]s, and (in later phases) routes events
 //! back through the hook system.
 //!
-//! v1 supports the `Row` / `Col` / `HintBar` / `Raw` widget kinds.
-//! Additional kinds (`Toggle`, `Button`, `TextInput`, `List`, `Tree`,
-//! `Layer`, `Transient`, `Table`) plug into the `render` dispatch
-//! without changing the IPC shape.
+//! Every `WidgetSpec` variant is implemented; [`kinds::behavior`] is the
+//! one total `match` on a spec kind and the dispatch every projection goes
+//! through. (This paragraph used to say "v1 supports Row / Col / HintBar /
+//! Raw" and list the rest as future work — all of them landed, and the same
+//! stale list is at the head of [`render`].)
 //!
 //! See `docs/internal/plugin-widget-library-design.md` for the full
 //! design.
@@ -29,7 +30,7 @@ pub use actions::{
 pub use kinds::collect_visible_tree_indices;
 pub use layout_box::LayoutBox;
 pub use registry::{
-    HitArea, PanelId, PanelKey, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
+    HitArea, PanelId, PanelKey, WidgetEvent, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
 };
 pub use render::{
     apply_hover_band, clamp_number, dual_available_values, dual_label, dual_sanitize_included,

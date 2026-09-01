@@ -180,17 +180,19 @@ fn collect_number(
     // A click on the value cell begins in-place editing host-side
     // (see `deliver_widget_hit`'s `number_value` special case).
     out.hits.push(HitArea {
-        row_target: false,
-        context_click: false,
         overlay: false,
-        widget_key: key.unwrap_or("").to_string(),
-        widget_kind: "number",
         buffer_row: 0,
         byte_start: value_range.0,
         byte_end: value_range.1,
-        payload: json!({}),
-        event_type: "number_value",
-        owner_key: None,
+        event: crate::widgets::WidgetEvent {
+            row_target: false,
+            context_click: false,
+            widget_key: key.unwrap_or("").to_string(),
+            widget_kind: "number",
+            payload: json!({}),
+            event_type: "number_value",
+            owner_key: None,
+        },
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);

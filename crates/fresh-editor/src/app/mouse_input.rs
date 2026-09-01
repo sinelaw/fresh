@@ -256,7 +256,6 @@ impl Editor {
                 // Blanket sweep: every remaining drag flag drops here,
                 // so no grab can outlive its release even if its
                 // finalizer above was skipped.
-                self.release_widget_scrollbar();
                 self.release_split_widget_scrollbar();
                 self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
@@ -957,14 +956,17 @@ impl Editor {
             PointerGrab::WidgetText => {
                 self.handle_widget_text_selection_drag(col, row);
             }
-            // Floating-panel list scrollbar drag — the modal panel
-            // owns the input channel while it's up.
+            // A scrollbar drag on a buffer-mounted widget panel (the
+            // review-diff sidebar, Search & Replace), whose tracks live on the
+            // editor rather than on a panel struct.
+            //
+            // The dock's and the centered modal's bars were on this arm too.
+            // They are the tree's now — a described panel's list is a viewport
+            // and `hit.rs` captures the pointer for its own thumb — and the
+            // painter that recorded their tracks went with the interior it
+            // painted, so nothing could arm the grab for them any more.
             PointerGrab::WidgetScrollbar => {
-                let _ = self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
-                    || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row)
-                    // Buffer-mounted panels (review-diff sidebar, Search &
-                    // Replace) keep their tracks on the editor.
-                    || self.try_split_widget_scrollbar_drag(row);
+                let _ = self.try_split_widget_scrollbar_drag(row);
             }
             // The split separator's and the file explorer's width drags were
             // here, and so were both of a pane's scrollbars. All four are

@@ -918,20 +918,22 @@ fn render_widget_tree(
             out.entries.push(extra);
             if extra_byte_end > 0 {
                 out.hits.push(HitArea {
-                    row_target: true,
-                    context_click: true,
                     overlay: false,
-                    widget_key: tree_spec_key.clone(),
-                    widget_kind: "tree",
                     buffer_row: (out.entries.len() - 1) as u32,
                     byte_start: 0,
                     byte_end: extra_byte_end,
-                    payload: json!({
-                        "index": abs_idx as i64,
-                        "key": item_key.clone(),
-                    }),
-                    event_type: "select",
-                    owner_key: None,
+                    event: crate::widgets::WidgetEvent {
+                        row_target: true,
+                        context_click: true,
+                        widget_key: tree_spec_key.clone(),
+                        widget_kind: "tree",
+                        payload: json!({
+                            "index": abs_idx as i64,
+                            "key": item_key.clone(),
+                        }),
+                        event_type: "select",
+                        owner_key: None,
+                    },
                 });
             }
         }
@@ -942,21 +944,23 @@ fn render_widget_tree(
         // expansion changes.
         if let Some(disc_range) = rendered.disclosure_range {
             out.hits.push(HitArea {
-                row_target: false,
-                context_click: false,
                 overlay: false,
-                widget_key: tree_spec_key.clone(),
-                widget_kind: "tree",
                 buffer_row: hit_row,
                 byte_start: disc_range.0,
                 byte_end: disc_range.1,
-                payload: json!({
-                    "index": abs_idx as i64,
-                    "key": item_key.clone(),
-                    "expanded": !is_expanded,
-                }),
-                event_type: "expand",
-                owner_key: None,
+                event: crate::widgets::WidgetEvent {
+                    row_target: false,
+                    context_click: false,
+                    widget_key: tree_spec_key.clone(),
+                    widget_kind: "tree",
+                    payload: json!({
+                        "index": abs_idx as i64,
+                        "key": item_key.clone(),
+                        "expanded": !is_expanded,
+                    }),
+                    event_type: "expand",
+                    owner_key: None,
+                },
             });
         }
         // Checkbox hit (when the parent Tree is checkable
@@ -968,21 +972,23 @@ fn render_widget_tree(
         if let Some(cb_range) = rendered.checkbox_range {
             let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
             out.hits.push(HitArea {
-                row_target: false,
-                context_click: false,
                 overlay: false,
-                widget_key: tree_spec_key.clone(),
-                widget_kind: "tree",
                 buffer_row: hit_row,
                 byte_start: cb_range.0,
                 byte_end: cb_range.1,
-                payload: json!({
-                    "index": abs_idx as i64,
-                    "key": item_key.clone(),
-                    "checked": new_checked,
-                }),
-                event_type: "toggle",
-                owner_key: None,
+                event: crate::widgets::WidgetEvent {
+                    row_target: false,
+                    context_click: false,
+                    widget_key: tree_spec_key.clone(),
+                    widget_kind: "tree",
+                    payload: json!({
+                        "index": abs_idx as i64,
+                        "key": item_key.clone(),
+                        "checked": new_checked,
+                    }),
+                    event_type: "toggle",
+                    owner_key: None,
+                },
             });
         }
         // Row body hit — fires `select`. Spans whatever's
@@ -995,20 +1001,22 @@ fn render_widget_tree(
         };
         if body_start < row_byte_end {
             out.hits.push(HitArea {
-                row_target: true,
-                context_click: true,
                 overlay: false,
-                widget_key: tree_spec_key.clone(),
-                widget_kind: "tree",
                 buffer_row: hit_row,
                 byte_start: body_start,
                 byte_end: row_byte_end,
-                payload: json!({
-                    "index": abs_idx as i64,
-                    "key": item_key.clone(),
-                }),
-                event_type: "select",
-                owner_key: None,
+                event: crate::widgets::WidgetEvent {
+                    row_target: true,
+                    context_click: true,
+                    widget_key: tree_spec_key.clone(),
+                    widget_kind: "tree",
+                    payload: json!({
+                        "index": abs_idx as i64,
+                        "key": item_key.clone(),
+                    }),
+                    event_type: "select",
+                    owner_key: None,
+                },
             });
         }
 

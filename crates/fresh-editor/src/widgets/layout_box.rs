@@ -168,10 +168,12 @@ pub fn ancestor_path(boxes: &[LayoutBox], idx: usize) -> Vec<usize> {
 /// paints over an earlier one). Returns the ancestor chain root→target,
 /// or an empty Vec on a miss.
 ///
-/// `screen_space` boxes never match here — the dropdown pop-over is
-/// hit-tested against its paint-recorded screen rect by the caller
-/// *before* panel-space dispatch, mirroring today's ordering in
-/// `handle_floating_widget_click`.
+/// `screen_space` boxes never match here — a dropdown pop-over floats past
+/// the panel's own rectangle, so it is not addressable in panel space. The
+/// floating panel's click path used to resolve one against a paint-recorded
+/// screen rect before reaching this; that path is deleted (S7) and the
+/// remaining caller is the wheel routing over a *buffer-mounted* panel, where
+/// the pop-over is the tree's `layer()` and the hit path resolves it.
 pub fn hit_path(boxes: &[LayoutBox], row: u32, col: u32) -> Vec<usize> {
     let mut best: Option<(u8, usize, usize)> = None; // (z, depth, idx)
     for (idx, b) in boxes.iter().enumerate() {

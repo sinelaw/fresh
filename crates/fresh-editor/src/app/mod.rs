@@ -1226,7 +1226,15 @@ pub struct Editor {
     ///
     /// Reset at the top of every dispatch rather than cleared by its reader,
     /// so a stale `true` cannot survive into the next keystroke.
-    pub(crate) shell_interior_took_key: bool,
+    /// The interior's own verdict on the key, when an interior ran.
+    ///
+    /// **`None` is not `false`.** `None` means no `Modality::Focus` interior
+    /// answered this key at all, so the tree's `claimed` stands; `Some(b)` is
+    /// the interior's answer and *replaces* it. Folding these with `||` let the
+    /// tree's claim win whenever it said `true`, so a surface that declines a
+    /// key could never hand it back — which is what stopped Escape closing a
+    /// plugin's floating panel.
+    pub(crate) shell_interior_took_key: Option<bool>,
 
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
@@ -1565,9 +1573,14 @@ pub(crate) struct FloatingWidgetState {
     /// `FloatingPanelControl{op:"focus"|"blur"}` so the editor
     /// underneath stays keyboard-usable while the dock is visible.
     pub focused: bool,
-    /// Most-recently rendered entries. Refreshed on every spec /
-    /// command / mutate; painted into the overlay rect at draw
-    /// time.
+    /// The text projection's rows for this panel, refreshed on every spec /
+    /// command / mutate.
+    ///
+    /// **Text, not paint.** They were painted into the overlay rect at draw
+    /// time and hit-tested against; both readers are gone. What is left reads
+    /// them as strings: the anchored popup's width
+    /// (`view::shell::panel::Panel::anchored_width`, which is 2.3's one named
+    /// exception) and the row count a `Host` interior's box is sized by.
     pub entries: Vec<fresh_core::text_property::TextPropertyEntry>,
     // **`focus_cursor` and `embeds` are gone from here; both were
     // write-only.**
@@ -1583,30 +1596,26 @@ pub(crate) struct FloatingWidgetState {
     // contract a plugin reads through `cursor_moved` — so what went is the
     // storage on this struct, not the value.
     /// Rows produced by `WidgetSpec::Overlay` children. Painted
-    /// AFTER `entries` and `embeds`, on top of whatever's at
-    /// each `buffer_row`. Used for dropdown completions /
-    /// transient popups that should appear next to a focused
-    /// widget without reflowing the rest of the panel when
-    /// they show or hide.
-    pub overlays: Vec<crate::widgets::OverlayRow>,
-    /// Scrollable `List` widgets that overflowed, with the geometry
-    /// the draw pass uses to paint a scrollbar. Refreshed on every
-    /// render alongside `entries`/`embeds`.
-    /// The panel's layout-box tree from its most recent render — the
-    /// paint pass reads scrollable boxes (rect + scroll payload) from
-    /// it to draw overlay scrollbars.
-    pub boxes: Vec<crate::widgets::LayoutBox>,
-    /// Screen-space scrollbar tracks computed at the last draw — used
-    /// by the mouse hit-test to start/continue a scrollbar drag. One
-    /// per overflowing list.
-    pub scrollbar_tracks: Vec<WidgetScrollbarTrack>,
-    /// Shared press/drag/release state for the panel's list
-    /// scrollbars (the canonical `ScrollbarMouse`).
-    pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
-    /// `list_key` of the scrollbar currently being drag-scrolled.
-    pub scrollbar_drag_key: Option<String>,
-    /// Inner rect (frame interior) of the last draw — used by the
-    /// click hit-test to map terminal coords back to buffer coords.
+    // **The overlay rows, the box arena and the scrollbar state are gone from
+    // here, and they went with the last thing that read them (S7).** The rows
+    // and the arena were the panel's *second* layout — where each row's text
+    // ended up and which box covered which cell — kept so a screen cell could
+    // be turned back into a widget. The tree answers that now: a described
+    // panel's widgets are nodes with their own rectangles, and the probe that
+    // scanned these was unreachable on every path (its chain is in
+    // `view::shell::msg::UiFact::DockFocus`). The scrollbar tracks and the
+    // press/drag state went the same way one step earlier: the interior
+    // painter that recorded a track was deleted in 2.4, so nothing could arm
+    // a drag, and a described list's bar is its viewport's.
+    //
+    // `entries` stays because it is still read as *text*, and one measurement
+    // of it survives: an anchored popup's width (`view::shell::panel::
+    // Panel::anchored_width`).
+    /// Inner rect (frame interior) of the last draw.
+    ///
+    /// Written by layout — `render_floating_widget_panel` reads the body
+    /// node's rectangle — and read by the wheel routing, the anchored popup's
+    /// dismissal gate and the web projection.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
     /// Whether the pointer is over the dock's column.
     ///
@@ -1687,26 +1696,13 @@ pub(crate) struct FloatingWidgetState {
     /// when no keyed Dropdown in this panel is open. Refreshed on every
     /// render alongside `entries`.
     pub popup: Option<crate::widgets::PanelPopup>,
-    /// Screen-space hit rectangles for the open dropdown pop-over's option
-    /// rows, recomputed on every draw (like `last_inner_rect`). Each maps
-    /// a terminal rect to the absolute option index; the mouse hit-test
-    /// checks these BEFORE the panel-inner gate so a click on an option
-    /// below the modal border still selects it. Empty when no pop-over is
-    /// drawn.
-    pub popup_hits: Vec<PanelPopupOptionHit>,
-    /// Full screen rect of the drawn dropdown pop-over box (border
-    /// included), so a click anywhere inside it is consumed rather than
-    /// dismissing the modal. `None` when no pop-over is drawn.
-    pub popup_rect: Option<ratatui::layout::Rect>,
-}
-
-/// One option row of the open dropdown pop-over, captured at draw time as
-/// a screen rect → absolute option index, so the mouse hit-test can route
-/// a click on the (panel-escaping) pop-over back to `dropdown_select`.
-#[derive(Debug, Clone)]
-pub(crate) struct PanelPopupOptionHit {
-    pub rect: ratatui::layout::Rect,
-    pub index: usize,
+    // The pop-over's screen rectangles were here — one per option row plus
+    // the box's own — so a click that escaped the modal's border could still
+    // be routed to `dropdown_select`. The described pop-over is a `layer()`
+    // whose rows answer their own presses, the hit path already resolves it
+    // top-down, and the painter that recorded these rectangles is deleted, so
+    // both were empty on every path (S7). The key above survives them: it is
+    // identity, not geometry.
 }
 
 /// How long the dock's overlay scrollbar stays visible after a keyboard
@@ -2248,11 +2244,6 @@ mod tests {
             placement,
             focused,
             entries: Vec::new(),
-            overlays: Vec::new(),
-            boxes: Vec::new(),
-            scrollbar_tracks: Vec::new(),
-            scrollbar_mouse: Default::default(),
-            scrollbar_drag_key: None,
             last_inner_rect: None,
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
@@ -2264,8 +2255,6 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             popup: None,
-            popup_hits: Vec::new(),
-            popup_rect: None,
         }
     }
 

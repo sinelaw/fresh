@@ -224,17 +224,19 @@ fn collect_dropdown(
     // A click on the `[value ▼]` button toggles the option list open
     // (see `deliver_widget_hit`'s `dropdown_toggle` special case).
     out.hits.push(HitArea {
-        row_target: false,
-        context_click: false,
         overlay: false,
-        widget_key: widget_key.clone(),
-        widget_kind: "dropdown",
         buffer_row: 0,
         byte_start: button_range.0,
         byte_end: button_range.1,
-        payload: json!({}),
-        event_type: "dropdown_toggle",
-        owner_key: None,
+        event: crate::widgets::WidgetEvent {
+            row_target: false,
+            context_click: false,
+            widget_key: widget_key.clone(),
+            widget_kind: "dropdown",
+            payload: json!({}),
+            event_type: "dropdown_toggle",
+            owner_key: None,
+        },
     });
     // Open: surface the option list as a floating pop-over anchored to
     // the trigger's row (row 0 within this sub-render; Col/Row/Section
