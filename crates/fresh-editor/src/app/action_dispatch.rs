@@ -898,6 +898,9 @@ impl Editor {
             Action::DumpConfig => {
                 self.dump_config();
             }
+            Action::DumpUiTree => {
+                self.dump_ui_tree();
+            }
             Action::RedrawScreen => {
                 self.request_full_redraw();
             }

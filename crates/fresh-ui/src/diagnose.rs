@@ -3,6 +3,10 @@
 //! The retained tree exists partly so that it can be looked at. One dump
 //! answers the three questions a failing test asks: what is mounted, how many
 //! times has it built, and what marked it.
+//!
+//! [`Ui::dump`] writes that for a human to read; [`Ui::dump_json`] writes the
+//! same facts for a program to read, so tools that want the laid-out rects do
+//! not have to re-parse indented text.
 
 use std::fmt::Write;
 
@@ -46,13 +50,27 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    /// One line per element: indentation is depth, then type, key, id, build
-    /// count, state and the last dirty cause.
+    /// One line per element: indentation is depth, then type, key, id, the
+    /// laid-out rect, a `TextRun`'s text, build count, state and the last
+    /// dirty cause.
     pub fn dump(&self) -> String {
         let mut out = String::new();
         if let Some(r) = self.root {
             self.dump_into(r, 0, &mut out);
         }
+        out
+    }
+
+    /// The same tree as [`dump`](Self::dump), as JSON: one object per
+    /// element, nested through `children`. Every field but `id`, `type`,
+    /// `rect` and `children` is omitted when it has nothing to say.
+    pub fn dump_json(&self) -> String {
+        let mut out = String::new();
+        match self.root {
+            Some(r) => self.json_into(r, 0, &mut out),
+            None => out.push_str("null"),
+        }
+        out.push('\n');
         out
     }
 
@@ -82,12 +100,20 @@ impl<M: 'static> Ui<M> {
     }
 
     fn dump_into(&self, id: ElementId, indent: usize, out: &mut String) {
+        let r = self.rect_of(id);
         let mut line = format!(
-            "{:indent$}{} {id:?}",
+            "{:indent$}{} {id:?} @({},{} {}x{})",
             "",
             self.label(id),
+            r.x,
+            r.y,
+            r.w,
+            r.h,
             indent = indent * 2
         );
+        if let Some(t) = self.text_of(id) {
+            let _ = write!(line, " {t:?}");
+        }
 
         if let Some(el) = self.arena.get(id) {
             if el.state.is_some() {
@@ -120,4 +146,105 @@ impl<M: 'static> Ui<M> {
             self.dump_into(c, indent + 1, out);
         }
     }
+
+    fn json_into(&self, id: ElementId, depth: usize, out: &mut String) {
+        let pad = "  ".repeat(depth + 1);
+        let field = |out: &mut String, name: &str, value: &str| {
+            let _ = write!(out, ",\n{pad}\"{name}\": {value}");
+        };
+
+        let _ = write!(out, "{{\n{pad}\"id\": \"{id:?}\"");
+        field(out, "type", &quote(self.name_of(id).unwrap_or("<gone>")));
+        if let Some(k) = self.key_of(id) {
+            // `Key` prints itself with a leading `#`; that sigil is the text
+            // dump's punctuation, not part of the key.
+            let k = k.to_string();
+            field(out, "key", &quote(k.strip_prefix('#').unwrap_or(&k)));
+        }
+        let r = self.rect_of(id);
+        field(
+            out,
+            "rect",
+            &format!(
+                "{{\"x\": {}, \"y\": {}, \"w\": {}, \"h\": {}}}",
+                r.x, r.y, r.w, r.h
+            ),
+        );
+        if let Some(t) = self.text_of(id) {
+            field(out, "text", &quote(&t));
+        }
+
+        if let Some(el) = self.arena.get(id) {
+            if el.state.is_some() {
+                field(out, "state", &quote(el.state_name));
+                if let Some(d) = component_of(&el.desc)
+                    .and_then(|c| el.state.as_ref().and_then(|s| c.describe_state_any(&**s)))
+                {
+                    field(out, "state_detail", &quote(&d));
+                }
+            }
+            if el.builds > 0 {
+                field(out, "builds", &el.builds.to_string());
+            }
+            if !el.behaviors.is_empty() {
+                let names: Vec<_> = el
+                    .behaviors
+                    .iter()
+                    .map(|b| quote(b.behavior_name()))
+                    .collect();
+                field(out, "behaviors", &format!("[{}]", names.join(", ")));
+            }
+            if !el.dependents.is_empty() {
+                let ids: Vec<_> = el
+                    .dependents
+                    .iter()
+                    .map(|d| quote(&format!("{d:?}")))
+                    .collect();
+                field(out, "dependents", &format!("[{}]", ids.join(", ")));
+            }
+            if el.needs_build {
+                field(out, "dirty", "true");
+            }
+            if let Some(c) = el.last_dirty {
+                field(out, "cause", &quote(&c.to_string()));
+            }
+        }
+
+        let kids = self.children(id);
+        if kids.is_empty() {
+            let _ = write!(out, ",\n{pad}\"children\": []");
+        } else {
+            let _ = write!(out, ",\n{pad}\"children\": [\n{pad}  ");
+            for (i, c) in kids.iter().enumerate() {
+                if i > 0 {
+                    let _ = write!(out, ",\n{pad}  ");
+                }
+                self.json_into(*c, depth + 2, out);
+            }
+            let _ = write!(out, "\n{pad}]");
+        }
+        let _ = write!(out, "\n{}}}", "  ".repeat(depth));
+    }
+}
+
+/// A JSON string literal. Hand-rolled because `fresh-ui` depends on
+/// `unicode-width` and nothing else, and a dump is not worth a serde tree.
+fn quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
