@@ -2974,7 +2974,10 @@ impl Editor {
         callback_id: JsCallbackId,
         is_registration: bool,
     ) {
-        let Some(runtime) = self.tokio_runtime.clone() else {
+        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
+        // rides into the spawned task, and an owning reference dropped there at
+        // shutdown would panic the worker.
+        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
             self.plugin_manager
                 .read()
                 .unwrap()
@@ -2991,7 +2994,7 @@ impl Editor {
         super::plugin_offloop::load_diff_baseline(
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                runtime,
+                handle,
                 sender,
             },
             super::plugin_offloop::BaselineLoadRequest {
@@ -3291,7 +3294,10 @@ impl Editor {
             clean_buffers.insert(path, *bid);
         }
 
-        let Some(runtime) = self.tokio_runtime.clone() else {
+        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
+        // rides into the spawned task, and an owning reference dropped there at
+        // shutdown would panic the worker.
+        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
             self.plugin_manager
                 .read()
                 .unwrap()
@@ -3324,7 +3330,7 @@ impl Editor {
         super::plugin_offloop::grep_project(
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                runtime,
+                handle,
                 sender,
             },
             super::plugin_offloop::GrepProjectRequest {
