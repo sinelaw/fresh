@@ -21,7 +21,7 @@
 //! changing the public function signature.
 
 use crate::widgets::layout_box::LayoutBox;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::{HitArea, PaintedWindow, WidgetInstanceState};
 use fresh_core::api::{
     ButtonKind, DualListOption, HintEntry, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
 };
@@ -233,12 +233,13 @@ pub struct RenderOutput {
     /// the panel), so the list extends past the panel/modal frame. Only
     /// one can be open at a time (the focused widget). See [`PanelPopup`].
     pub popup: Option<PanelPopup>,
-    /// Effective rows each keyed `List`/`Tree` actually windowed to
-    /// this render — spec value, or the auto-size height budget, or
-    /// the legacy fallback. Stored on the panel so key/mouse handlers
-    /// compute scroll bounds against what was really painted (an
-    /// auto-sized widget's spec carries no number at all).
-    pub effective_rows: HashMap<String, u32>,
+    /// The window each keyed `List`/`Tree` was painted into this
+    /// render: rows, items, offset and the measured item band. Stored
+    /// on the panel so key/mouse handlers act against what was really
+    /// painted (an auto-sized widget's spec carries no number at all),
+    /// and so the scroll fold has its own previous value to read back.
+    /// See [`PaintedWindow`].
+    pub painted: HashMap<String, PaintedWindow>,
     /// The panel's layout-box tree (root-last arena; see
     /// [`crate::widgets::layout_box`]). One box per widget with its
     /// panel-relative rectangle, stacking level, and dispatch flags —
@@ -334,11 +335,11 @@ pub(crate) struct CollectedOutput {
     /// child with the leftover budget; unresolved it bubbles to the
     /// caller (harmless — the widget used the legacy fallback rows).
     pub(crate) wants_fill: bool,
-    /// Effective rows each keyed `List`/`Tree` actually windowed to
-    /// this render (spec value, height budget, or legacy fallback).
-    /// The renderer writes it; host key/mouse handlers read it for
-    /// scroll bounds — same contract as instance-state `item_height`.
-    pub(crate) effective_rows: HashMap<String, u32>,
+    /// The window each keyed `List`/`Tree` was painted into by this
+    /// subtree — see [`PaintedWindow`]. The paint-output channel the
+    /// three window fields left `WidgetInstanceState` for; containers
+    /// merge it upward like every other keyed side channel.
+    pub(crate) painted: HashMap<String, PaintedWindow>,
     /// The layout-box arena for this subtree (root-last; see
     /// [`crate::widgets::layout_box`]). Containers shift child box
     /// rectangles alongside the other column-addressed side channels
@@ -405,8 +406,7 @@ impl CollectedOutput {
         promote_overlay: bool,
     ) {
         self.wants_fill |= child.wants_fill;
-        self.effective_rows
-            .extend(std::mem::take(&mut child.effective_rows));
+        self.painted.extend(std::mem::take(&mut child.painted));
         let base = self.boxes.len();
         for mut b in child.boxes {
             b.parent = b.parent.map(|pi| pi + base);
@@ -543,9 +543,26 @@ pub struct RenderContext<'a> {
     /// `collect_col`'s fill pass). `None` = no budget: auto widgets
     /// fall back to the legacy default and report `wants_fill`.
     pub avail_height: Option<u32>,
+    /// The windows the PREVIOUS paint of this panel left behind, by
+    /// widget key. A scroll offset is a fold over its own previous
+    /// value, so the painter has to read back what it last published —
+    /// this is that channel's input half, the mirror of
+    /// [`CollectedOutput::painted`]. `None` (a stateless render: the
+    /// Settings dialog, a toolbar, most tests) starts every window at
+    /// the top, exactly as an absent instance-state offset used to.
+    pub prev_painted: Option<&'a HashMap<String, PaintedWindow>>,
 }
 
 impl RenderContext<'_> {
+    /// The window the keyed widget was painted into last time, if it
+    /// was. Empty and absent keys have none — an unkeyed list cannot
+    /// carry a scroll offset across renders, which is what "lists
+    /// without a `key` lose state across updates" has always meant.
+    pub(crate) fn painted(&self, key: Option<&str>) -> Option<PaintedWindow> {
+        let k = key.filter(|k| !k.is_empty())?;
+        self.prev_painted?.get(k).copied()
+    }
+
     /// Whether `key` names the focused widget. Empty keys never match.
     pub(crate) fn is_focused(&self, key: Option<&str>) -> bool {
         matches!(key, Some(k) if !k.is_empty() && k == self.focus_key)
@@ -597,6 +614,10 @@ pub struct RenderOptions<'a> {
     /// height in rows, when the host knows it. `None` keeps auto-sized
     /// `List`/`Tree` widgets on the legacy fallback.
     pub avail_height: Option<u32>,
+    /// See [`RenderContext::prev_painted`] — the windows this panel's
+    /// previous render published. A host that keeps a panel mounted
+    /// MUST thread it, or every repaint starts its lists at the top.
+    pub prev_painted: Option<&'a HashMap<String, PaintedWindow>>,
 }
 
 /// Render a spec to a [`RenderOutput`] under explicit [`RenderOptions`].
@@ -636,21 +657,24 @@ pub fn render_spec_with_options(
         markdown: opts.markdown,
         marker_gutter: opts.marker_gutter,
         avail_height: opts.avail_height,
+        prev_painted: opts.prev_painted,
     };
     let mut next_state = HashMap::new();
     let collected = render_collected(spec, prev, &mut next_state, ctx, panel_width);
-    // The box tree is the focus authority: publish the ring derived
-    // from it (focusable boxes in document order). The spec-walk ring
-    // computed above exists because focus must resolve *before*
-    // collection (widgets style by focus); both rings now ask the same
-    // `box_meta` impls, so they cannot diverge on rules — this assert
-    // guards arena construction (container merge order) until the
-    // pre-pass ring is retired with the constraint-layout phase.
+    // The box tree is the focus authority for a *painted* panel: publish the
+    // ring derived from it (focusable boxes in document order).
+    //
+    // The assertion that used to sit here — that this equals the spec walk's
+    // `tabbable` — is gone, and the reason is that the spec walk is no longer
+    // a second computation of the same list. Both rings ask the same
+    // `box_meta` impls; the walk is now the *only* one a described panel has
+    // (`resolve_panel`), and the arena's is what a painted panel's boxes carry
+    // for the hit-tested paths that also read them. An assert between two
+    // expressions of one rule reports arena-construction bugs — which is what
+    // it was for — but it does so in a debug build only, and every surface
+    // that would trip it now has a test of its own for the ring it actually
+    // uses.
     let derived_tabbable = crate::widgets::layout_box::focus_ring(&collected.boxes);
-    debug_assert_eq!(
-        derived_tabbable, tabbable,
-        "box-tree focus ring diverged from collect_tabbable"
-    );
     RenderOutput {
         entries: collected.entries,
         hits: collected.hits,
@@ -663,9 +687,135 @@ pub fn render_spec_with_options(
         // At most one Dropdown is open at a time (the focused one); take
         // the first if the spec somehow produced several.
         popup: collected.popups.into_iter().next(),
-        effective_rows: collected.effective_rows,
+        painted: collected.painted,
         boxes: collected.boxes,
     }
+}
+
+/// **What a panel's spec resolves to, with nothing rendered.**
+///
+/// The three outputs of [`render_spec_with_options`] that a *described* panel
+/// still consumes, and every one of them is a walk of the spec against the
+/// previous instance-state map — no geometry, no width, no rows. §6h of the
+/// retained-mode plan is the argument that these three and only these three
+/// were ever live for such a panel; this is that argument made into a
+/// function, so the panel that has no text projection can stop producing one.
+pub struct ResolvedPanel {
+    /// The instance state the next frame reads: the stored entry for every
+    /// keyed node the spec still contains, and nothing else.
+    pub instance_states: HashMap<String, WidgetInstanceState>,
+    /// The focused widget key, clamped onto a key that exists in this spec.
+    pub focus_key: String,
+    /// Tabbable widget keys in declaration order.
+    pub tabbable: Vec<String>,
+}
+
+/// Resolve a panel's spec against its previous state — pure, and width-free.
+///
+/// **The whole of it was already in the renderer, spread across a pre-pass
+/// and one line in every stateful kind.** `collect_tabbable` and the focus
+/// clamp run *before* collection (widgets style by focus), so they never
+/// needed a rendered row; and what each kind's collector does with the state
+/// map is `prev.get(k)` into `next_state`, because `update_side_effects`
+/// replaces the whole map and a widget the walk did not mention would lose
+/// its state. Neither is a rendering decision, and both are here now.
+///
+/// **The carry is a carry, not a seed.** Every stateful kind resolves its
+/// spec against its stored state on each read (`list::resolve`,
+/// `tree::resolve`, `dropdown::resolve`, `text::resolve`), so an absent entry
+/// is the spec's own value and storing one would only make this walk a second
+/// authority. The one kind whose collector did seed — `Text`, which wrote a
+/// `TextEdit` built from the spec on first render — has `text::ensure_text_state`
+/// for the first *handler* that needs one, which is the only reader that
+/// cannot re-derive it.
+pub fn resolve_panel(
+    spec: &WidgetSpec,
+    prev: &HashMap<String, WidgetInstanceState>,
+    prev_focus_key: &str,
+    auto_focus_first: bool,
+) -> ResolvedPanel {
+    let mut tabbable = Vec::new();
+    collect_tabbable(spec, &mut tabbable);
+    let focus_key = if !prev_focus_key.is_empty() && tabbable.iter().any(|k| k == prev_focus_key) {
+        prev_focus_key.to_string()
+    } else if auto_focus_first {
+        tabbable.first().cloned().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let mut instance_states = HashMap::new();
+    carry_instance_states(spec, prev, &mut instance_states);
+    ResolvedPanel {
+        instance_states,
+        focus_key,
+        tabbable,
+    }
+}
+
+/// Carry `prev[k]` across for every keyed node in `spec`.
+///
+/// Keyed, not focusable-and-keyed: a `List` that declined the ring
+/// (`focusable: false`) still owns a selection, and `box_meta` names the key
+/// for both. A node whose key has no stored entry contributes nothing, which
+/// is what makes this the collection step and not a seeding one.
+fn carry_instance_states(
+    spec: &WidgetSpec,
+    prev: &HashMap<String, WidgetInstanceState>,
+    out: &mut HashMap<String, WidgetInstanceState>,
+) {
+    if let Some(k) = super::kinds::behavior(spec).box_meta(spec).key {
+        if let Some(stored) = prev.get(&k) {
+            out.insert(k, stored.clone());
+        }
+    }
+    for c in spec.children() {
+        carry_instance_states(c, prev, out);
+    }
+}
+
+/// The Tab ring visible from `current_key`, walked over the **spec**.
+///
+/// It replaced `layout_box::focus_ring_scoped`, which read the same two facts
+/// — focusable, and the nearest enclosing `focus_trap` — off the boxes a paint
+/// left behind. A described panel has no boxes, and it does not need any: both
+/// facts are `box_meta`'s, and `box_meta` is a function of the spec, so a walk
+/// of the spec answers for the painted panel too.
+///
+/// With no enclosing trap (or no current focus) the ring is the whole spec's,
+/// exactly as the arena's is the whole tree's.
+pub fn focus_ring_scoped_in_spec(spec: &WidgetSpec, current_key: &str) -> Vec<String> {
+    let scope = trap_around(spec, current_key, None).unwrap_or(spec);
+    let mut out = Vec::new();
+    collect_tabbable(scope, &mut out);
+    out
+}
+
+/// The nearest `focus_trap` ancestor of the node keyed `current_key`,
+/// excluding that node itself — `None` when the key names nothing, or when
+/// nothing above it traps.
+fn trap_around<'a>(
+    node: &'a WidgetSpec,
+    current_key: &str,
+    nearest: Option<&'a WidgetSpec>,
+) -> Option<&'a WidgetSpec> {
+    let meta = super::kinds::behavior(node).box_meta(node);
+    if meta.focusable && meta.key.as_deref() == Some(current_key) {
+        return nearest;
+    }
+    let inner = match meta.focus_trap {
+        true => Some(node),
+        false => nearest,
+    };
+    // A `find_map` would stop at the first child that answers `None`, which
+    // every child that does not contain the key does. The loop distinguishes
+    // "found it, no trap above" from "not here" the only way the return type
+    // allows: by asking whether the subtree contains the key at all.
+    for c in node.children() {
+        if super::find_widget_by_key(c, current_key).is_some() {
+            return trap_around(c, current_key, inner);
+        }
+    }
+    None
 }
 
 /// Render a spec with the default options: keyboard focus only, no
@@ -3803,6 +3953,51 @@ pub(crate) mod tests {
         (out.entries, out.hits, out.instance_states)
     }
 
+    /// [`render_no_focus`]'s whole output, for the assertions that are
+    /// about the paint's window rather than its rows.
+    fn render_no_focus_out(
+        spec: &WidgetSpec,
+        prev: &HashMap<String, WidgetInstanceState>,
+    ) -> RenderOutput {
+        render_spec(spec, prev, "", u32::MAX)
+    }
+
+    /// Render carrying a previous paint's windows in — the input half of
+    /// the channel a scroll offset folds over. `render_spec` alone is a
+    /// *stateless* render (nothing carried), so a test about where the
+    /// window ends up has to say where it started.
+    fn render_with_window(
+        spec: &WidgetSpec,
+        prev: &HashMap<String, WidgetInstanceState>,
+        prev_painted: &HashMap<String, PaintedWindow>,
+    ) -> RenderOutput {
+        render_spec_with_options(
+            spec,
+            prev,
+            u32::MAX,
+            RenderOptions {
+                auto_focus_first: true,
+                prev_painted: Some(prev_painted),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// A previous paint that left a keyed list windowed at `offset`, one
+    /// row per item.
+    fn window_at(key: &str, rows: u32, offset: u32) -> HashMap<String, PaintedWindow> {
+        let mut m = HashMap::new();
+        m.insert(
+            key.to_string(),
+            PaintedWindow {
+                rows,
+                items: rows,
+                offset,
+            },
+        );
+        m
+    }
+
     #[test]
     fn form_toggle_chip_stays_visible_on_narrow_panel() {
         // A page-wide label_width larger than the narrow panel must not
@@ -5102,16 +5297,12 @@ pub(crate) mod tests {
         // *first* render (empty prev), the spec's selected_index
         // seeds instance state.
         let spec = make_list(5, 3, 10, Some("L"));
-        let (_entries, hits, state) = render_no_focus(&spec, &HashMap::new());
+        let out = render_no_focus_out(&spec, &HashMap::new());
         // Visible window is items 3..6 → hits index 3, 4, 5.
-        assert_eq!(hits.len(), 3);
-        assert_eq!(hits[0].event.payload["index"], 3);
-        assert_eq!(hits[2].event.payload["index"], 5);
-        let scroll = match state.get("L").unwrap() {
-            WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
-            _ => unreachable!(),
-        };
-        assert_eq!(scroll, 3);
+        assert_eq!(out.hits.len(), 3);
+        assert_eq!(out.hits[0].event.payload["index"], 3);
+        assert_eq!(out.hits[2].event.payload["index"], 5);
+        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(3));
     }
 
     #[test]
@@ -5125,21 +5316,15 @@ pub(crate) mod tests {
         prev.insert(
             "L".into(),
             WidgetInstanceState::List {
-                scroll_offset: 5,
                 selected_index: 1,
-                item_height: 1,
                 user_scrolled: false,
             },
         );
         // Spec's selected_index doesn't matter (instance state wins).
         let spec = make_list(99, 3, 10, Some("L"));
-        let (_entries, hits, state) = render_no_focus(&spec, &prev);
-        assert_eq!(hits[0].event.payload["index"], 1);
-        let scroll = match state.get("L").unwrap() {
-            WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
-            _ => unreachable!(),
-        };
-        assert_eq!(scroll, 1);
+        let out = render_with_window(&spec, &prev, &window_at("L", 3, 5));
+        assert_eq!(out.hits[0].event.payload["index"], 1);
+        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(1));
     }
 
     #[test]
@@ -5150,20 +5335,14 @@ pub(crate) mod tests {
         prev.insert(
             "L".into(),
             WidgetInstanceState::List {
-                scroll_offset: 4,
                 selected_index: 5,
-                item_height: 1,
                 user_scrolled: false,
             },
         );
         let spec = make_list(99, 3, 10, Some("L"));
-        let (_entries, hits, state) = render_no_focus(&spec, &prev);
-        assert_eq!(hits[0].event.payload["index"], 4);
-        let scroll = match state.get("L").unwrap() {
-            WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
-            _ => unreachable!(),
-        };
-        assert_eq!(scroll, 4);
+        let out = render_with_window(&spec, &prev, &window_at("L", 3, 4));
+        assert_eq!(out.hits[0].event.payload["index"], 4);
+        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(4));
     }
 
     #[test]
@@ -5174,37 +5353,27 @@ pub(crate) mod tests {
         prev.insert(
             "L".into(),
             WidgetInstanceState::List {
-                scroll_offset: 8,
                 selected_index: -1,
-                item_height: 1,
                 user_scrolled: false,
             },
         );
         let spec = make_list(-1, 3, 5, Some("L"));
-        let (entries, _hits, state) = render_no_focus(&spec, &prev);
-        assert_eq!(entries.len(), 3);
-        let scroll = match state.get("L").unwrap() {
-            WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
-            _ => unreachable!(),
-        };
+        let out = render_with_window(&spec, &prev, &window_at("L", 3, 8));
+        assert_eq!(out.entries.len(), 3);
         // total=5, visible=3 → max=2.
-        assert_eq!(scroll, 2);
+        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(2));
     }
 
     #[test]
     fn list_does_not_scroll_when_total_smaller_than_visible() {
         let spec = make_list(-1, 10, 3, Some("L"));
-        let (entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let out = render_no_focus_out(&spec, &HashMap::new());
         // 3 items + 7 blank padding rows to fill `visible_rows=10`.
         // The labeledSection wrapping a List keeps the height it
         // advertises so a sibling pane (orchestrator picker's
         // preview) can match.
-        assert_eq!(entries.len(), 10);
-        let scroll = match state.get("L").unwrap() {
-            WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
-            _ => unreachable!(),
-        };
-        assert_eq!(scroll, 0);
+        assert_eq!(out.entries.len(), 10);
+        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(0));
     }
 
     #[test]
@@ -6036,8 +6205,19 @@ pub(crate) mod tests {
         assert_eq!(hits[0].event.payload["index"], 0);
     }
 
+    /// **A spec's `expanded_keys` is a seed, honoured on every render
+    /// that has nothing else to go on — and not written down.**
+    ///
+    /// This used to assert the write-back: the walk stamped the resolved
+    /// expansion set into instance state, which made the render an
+    /// authority on state the expand click also writes, and made "the
+    /// spec is the seed" true of exactly one frame. `kinds::tree::resolve`
+    /// applies the seed on every read instead, so the observable — a.0
+    /// visible under an expanded a — is unchanged while the map stays
+    /// empty. The Tree sibling of
+    /// [`a_render_clamps_the_selection_without_recording_it`].
     #[test]
-    fn tree_persists_expanded_keys_in_instance_state() {
+    fn a_tree_render_seeds_expansion_from_the_spec_without_recording_it() {
         let spec = make_tree(
             vec![tnode("a", 0, true), tnode("a.0", 1, false)],
             vec!["a", "a.0"],
@@ -6046,12 +6226,72 @@ pub(crate) mod tests {
             vec!["a"],
             Some("T"),
         );
-        let (_, _, state) = render_no_focus(&spec, &HashMap::new());
-        match state.get("T").unwrap() {
-            WidgetInstanceState::Tree { expanded_keys, .. } => {
-                assert!(expanded_keys.contains("a"));
+        let (entries, _, state) = render_no_focus(&spec, &HashMap::new());
+        assert_eq!(
+            entries.len(),
+            2,
+            "a is expanded, so a.0 renders under it: {:?}",
+            texts(&entries)
+        );
+        assert!(entries[1].text.contains("a.0"), "{:?}", texts(&entries));
+        assert!(
+            state.get("T").is_none(),
+            "and nothing is written down: {:?}",
+            state.get("T")
+        );
+    }
+
+    /// **What the walk still does for a Tree's state is carry it.**
+    ///
+    /// `update_side_effects` replaces the whole map, so an entry the walk
+    /// does not mention is dropped — which is how a widget the new spec
+    /// no longer contains loses its state. A stored entry therefore has
+    /// to survive a render that decides nothing, verbatim: the stored
+    /// expansion overrides the spec's seed, and the stored selection is
+    /// NOT rewritten to the visible-clamped one the paint used.
+    #[test]
+    fn a_tree_render_carries_stored_expansion_through_unchanged() {
+        let mut prev = HashMap::new();
+        prev.insert(
+            "T".into(),
+            WidgetInstanceState::Tree {
+                // Out of range for this spec: the paint clamps it, the
+                // map must not be rewritten.
+                selected_index: 9,
+                expanded_keys: ["b".to_string()].into_iter().collect(),
+                user_scrolled: true,
+            },
+        );
+        let spec = make_tree(
+            vec![
+                tnode("a", 0, true),
+                tnode("a.0", 1, false),
+                tnode("b", 0, true),
+                tnode("b.0", 1, false),
+            ],
+            vec!["a", "a.0", "b", "b.0"],
+            -1,
+            10,
+            vec!["a"], // the seed, overridden by the stored set
+            Some("T"),
+        );
+        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        assert!(
+            entries[1].text.contains("b"),
+            "b, not a.0 — the stored expansion wins: {:?}",
+            texts(&entries)
+        );
+        match state.get("T") {
+            Some(WidgetInstanceState::Tree {
+                selected_index,
+                expanded_keys,
+                user_scrolled,
+            }) => {
+                assert_eq!(*selected_index, 9, "the stored index, unsanitised");
+                assert!(expanded_keys.contains("b"));
+                assert!(*user_scrolled, "and the latch verbatim");
             }
-            _ => unreachable!(),
+            other => panic!("expected the stored entry to survive, got {other:?}"),
         }
     }
 
@@ -6063,7 +6303,6 @@ pub(crate) mod tests {
         prev.insert(
             "T".into(),
             WidgetInstanceState::Tree {
-                scroll_offset: 0,
                 selected_index: -1,
                 expanded_keys: ["b".to_string()].iter().cloned().collect(),
                 user_scrolled: false,
@@ -6120,13 +6359,23 @@ pub(crate) mod tests {
             vec![], // a not expanded
             Some("T"),
         );
-        let (_entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
-        match state.get("T").unwrap() {
-            WidgetInstanceState::Tree { selected_index, .. } => {
-                assert_eq!(*selected_index, 0);
-            }
-            _ => unreachable!(),
-        }
+        // Asserted on the *painted* row, not on a write-back: the clamp
+        // is a derivation the paint applies, and the walk no longer
+        // records what it derived.
+        let (entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let style = entries[0]
+            .style
+            .as_ref()
+            .expect("the fallback node paints as selected");
+        assert_eq!(
+            style.bg.as_ref().and_then(|c| c.as_theme_key()),
+            Some(KEY_FOCUSED_BG)
+        );
+        assert!(
+            state.get("T").is_none(),
+            "and the clamp is not written down: {:?}",
+            state.get("T")
+        );
     }
 
     #[test]
@@ -6149,13 +6398,10 @@ pub(crate) mod tests {
             vec![],
             Some("T"),
         );
-        let (entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let out = render_no_focus_out(&spec, &HashMap::new());
         // Visible window: items 2..5 → 3 rows.
-        assert_eq!(entries.len(), 3);
-        match state.get("T").unwrap() {
-            WidgetInstanceState::Tree { scroll_offset, .. } => assert_eq!(*scroll_offset, 2),
-            _ => unreachable!(),
-        }
+        assert_eq!(out.entries.len(), 3);
+        assert_eq!(out.painted.get("T").map(|w| w.offset), Some(2));
     }
 
     /// A mouse-scrolled tree (`user_scrolled`) keeps its offset even
@@ -6170,12 +6416,13 @@ pub(crate) mod tests {
         prev.insert(
             "T".to_string(),
             WidgetInstanceState::Tree {
-                scroll_offset: 3,
                 selected_index: 0,
                 expanded_keys: HashSet::new(),
                 user_scrolled: true,
             },
         );
+        // The wheel left the window three rows down.
+        let prev_painted = window_at("T", 2, 3);
         let spec = make_tree(
             vec![
                 tnode("n0", 0, false),
@@ -6191,24 +6438,23 @@ pub(crate) mod tests {
             vec![],
             Some("T"),
         );
-        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        let out = render_with_window(&spec, &prev, &prev_painted);
         // Window stays at the user's offset (n3, n4) — not snapped back
         // to the selected n0.
         assert!(
-            entries[0].text.contains("n3"),
+            out.entries[0].text.contains("n3"),
             "window must start at the user's scroll offset, got: {:?}",
-            entries.iter().map(|e| e.text.trim()).collect::<Vec<_>>()
+            out.entries
+                .iter()
+                .map(|e| e.text.trim())
+                .collect::<Vec<_>>()
         );
-        match state.get("T").unwrap() {
-            WidgetInstanceState::Tree {
-                scroll_offset,
-                user_scrolled,
-                ..
-            } => {
-                assert_eq!(*scroll_offset, 3);
+        assert_eq!(out.painted.get("T").map(|w| w.offset), Some(3));
+        match out.instance_states.get("T") {
+            Some(WidgetInstanceState::Tree { user_scrolled, .. }) => {
                 assert!(*user_scrolled, "the flag must persist across renders");
             }
-            _ => unreachable!(),
+            other => panic!("the stored latch must survive, got {other:?}"),
         }
     }
 
@@ -6231,9 +6477,6 @@ pub(crate) mod tests {
         prev.insert(
             "T".to_string(),
             WidgetInstanceState::Tree {
-                // Row 2 of card A: its border + name rows are clipped
-                // off; the window (6 rows) ends inside card B.
-                scroll_offset: 2,
                 selected_index: -1,
                 expanded_keys: HashSet::new(),
                 user_scrolled: true,
@@ -6254,7 +6497,20 @@ pub(crate) mod tests {
         // A finite panel width: bordered cards draw `─` runs across the
         // full width, so the `u32::MAX` no-flex width `render_no_focus`
         // uses would try to build a 4-billion-char border string.
-        let out = render_spec(&spec, &prev, "", 40);
+        //
+        // Row 2 of card A: its border + name rows are clipped off; the
+        // window (6 rows) ends inside card B. That offset is the last
+        // paint's, carried in.
+        let out = render_spec_with_options(
+            &spec,
+            &prev,
+            40,
+            RenderOptions {
+                auto_focus_first: true,
+                prev_painted: Some(&window_at("T", 6, 2)),
+                ..Default::default()
+            },
+        );
         let (entries, hits) = (out.entries, out.hits);
         // Window = rows 2..8 of [A0 A1 A2 A3 A4 B0 B1 B2 B3 B4]:
         // A's l2 content row first, B's l2 row last; 6 rows exactly.
@@ -6292,7 +6548,6 @@ pub(crate) mod tests {
         prev.insert(
             "T".to_string(),
             WidgetInstanceState::Tree {
-                scroll_offset: 3,
                 selected_index: 0,
                 expanded_keys: HashSet::new(),
                 user_scrolled: false,
@@ -6313,16 +6568,17 @@ pub(crate) mod tests {
             vec![],
             Some("T"),
         );
-        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        // The last paint left the window three rows down.
+        let out = render_with_window(&spec, &prev, &window_at("T", 2, 3));
         assert!(
-            entries[0].text.contains("n0"),
+            out.entries[0].text.contains("n0"),
             "window must follow the selection when user_scrolled is clear, got: {:?}",
-            entries.iter().map(|e| e.text.trim()).collect::<Vec<_>>()
+            out.entries
+                .iter()
+                .map(|e| e.text.trim())
+                .collect::<Vec<_>>()
         );
-        match state.get("T").unwrap() {
-            WidgetInstanceState::Tree { scroll_offset, .. } => assert_eq!(*scroll_offset, 0),
-            _ => unreachable!(),
-        }
+        assert_eq!(out.painted.get("T").map(|w| w.offset), Some(0));
     }
 
     #[test]
@@ -7248,6 +7504,73 @@ pub(crate) mod tests {
         }
     }
 
+    /// **Rendering clamps a list's selection too; it does not write the
+    /// clamp down.** The `List` sibling of
+    /// [`a_render_clamps_the_selection_without_recording_it`], and the
+    /// reason `kinds::list::resolve` exists: every reader applies the
+    /// clamp, because a dataset can shrink underneath a standing
+    /// selection and no write sanitises it any more.
+    #[test]
+    fn a_list_render_clamps_the_selection_without_recording_it() {
+        // Three items, and a spec that names the tenth.
+        let spec = make_list(9, 3, 3, Some("L"));
+        let (entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        assert!(
+            entries[0].style.is_none() && entries[1].style.is_none(),
+            "only one row is selected"
+        );
+        let style = entries[2]
+            .style
+            .as_ref()
+            .expect("the last item that exists paints as selected");
+        assert_eq!(
+            style.bg.as_ref().and_then(|c| c.as_theme_key()),
+            Some(KEY_FOCUSED_BG)
+        );
+        assert!(
+            state.get("L").is_none(),
+            "and nothing is written down: {:?}",
+            state.get("L")
+        );
+    }
+
+    /// **What the walk still does for a List's state is carry it.**
+    ///
+    /// `update_side_effects` replaces the whole map, so an entry the walk
+    /// does not mention is dropped. A stored entry has to survive a
+    /// render that decides nothing, verbatim — including a selection the
+    /// dataset has outgrown, which the paint clamps and the map keeps
+    /// raw, and the mouse-scroll latch, which only a selection move
+    /// clears.
+    #[test]
+    fn a_list_render_carries_a_stored_selection_through_unchanged() {
+        let mut prev = HashMap::new();
+        prev.insert(
+            "L".into(),
+            WidgetInstanceState::List {
+                selected_index: 9,
+                user_scrolled: true,
+            },
+        );
+        let spec = make_list(0, 3, 3, Some("L"));
+        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        assert!(
+            entries[2].style.is_some(),
+            "the paint clamps to the last item: {:?}",
+            texts(&entries)
+        );
+        match state.get("L") {
+            Some(WidgetInstanceState::List {
+                selected_index,
+                user_scrolled,
+            }) => {
+                assert_eq!(*selected_index, 9, "the stored index, unsanitised");
+                assert!(*user_scrolled, "and the latch verbatim");
+            }
+            other => panic!("expected the stored entry to survive, got {other:?}"),
+        }
+    }
+
     #[test]
     fn dropdown_instance_state_overrides_spec() {
         let spec = make_dropdown(&["a", "b", "c"], 0, Some("d"));
@@ -7311,6 +7634,139 @@ pub(crate) mod tests {
         };
         assert!(!has_bg(0) && has_bg(1) && !has_bg(2));
         assert_eq!(dp.anchor_row, 0);
+    }
+
+    /// **Which dropdown is open, asked of the spec instead of read off the
+    /// last render.**
+    ///
+    /// `FloatingWidgetState::popup` carried the rendered option list so that
+    /// `UiFact::WidgetPopupDismiss` could recover one string from it. The rows
+    /// had no described reader — the tree builds its own pop-over — so the
+    /// field is gone and this is the string, walked out of the spec through
+    /// the same `resolve` the description paints from: same focus gate, same
+    /// clamp, same stateless fallback to the spec's own `open`.
+    #[test]
+    fn the_open_dropdown_is_named_by_a_spec_walk() {
+        use crate::widgets::kinds::dropdown::open_key;
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                make_dropdown(&["a", "b"], 0, Some("first")),
+                make_dropdown(&["x", "y"], 0, Some("second")),
+            ],
+        };
+        let mut states = HashMap::new();
+        states.insert(
+            "second".to_string(),
+            WidgetInstanceState::Dropdown {
+                selected_index: 0,
+                open: true,
+            },
+        );
+        assert_eq!(
+            open_key(&spec, &states, "second").as_deref(),
+            Some("second"),
+            "the open, focused one"
+        );
+        // The focus gate is the whole difference between "the user can see a
+        // list" and "a flag nobody cleared": a blur closes it, and this has to
+        // agree with what the description drew.
+        assert_eq!(
+            open_key(&spec, &states, "first"),
+            None,
+            "blurred while open — the list is not up, so nothing to dismiss"
+        );
+        assert_eq!(open_key(&spec, &HashMap::new(), "second"), None);
+        // Same answer the collector's `popups.into_iter().next()` gave, for
+        // the same spec and state.
+        let out = render_spec(&spec, &states, "second", u32::MAX);
+        assert_eq!(
+            out.popup.map(|p| p.widget_key).as_deref(),
+            open_key(&spec, &states, "second").as_deref(),
+        );
+    }
+
+    /// **`resolve_panel` is the collector's three surviving outputs, and
+    /// agrees with it on all three.**
+    ///
+    /// Not a re-derivation: the focus clamp and the tabbable walk are lifted
+    /// verbatim out of `render_spec_with_options`, and the state carry is the
+    /// one line every stateful kind's collector runs. What this pins is that
+    /// nothing else in the walk was contributing to them — that a panel which
+    /// renders no rows keeps exactly the state, focus and ring it had.
+    #[test]
+    fn resolve_panel_answers_what_the_collector_answered() {
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                WidgetSpec::Button {
+                    label: "B".into(),
+                    focused: false,
+                    intent: ButtonKind::Normal,
+                    key: Some("btn".into()),
+                    disabled: false,
+                    focusable: true,
+                    bare: false,
+                    full_width: false,
+                    hover_style: None,
+                },
+                make_dropdown(&["a", "b"], 0, Some("dd")),
+                WidgetSpec::List {
+                    items: (0..8)
+                        .map(|i| TextPropertyEntry::text(format!("row {i}")))
+                        .collect(),
+                    item_specs: Vec::new(),
+                    item_keys: (0..8).map(|i| format!("k{i}")).collect(),
+                    selected_index: 0,
+                    visible_rows: Some(4),
+                    // Off the ring, and still keyed: the carry is about keys,
+                    // not about focusability.
+                    focusable: false,
+                    key: Some("lst".into()),
+                },
+            ],
+        };
+        let mut prev = HashMap::new();
+        prev.insert(
+            "lst".to_string(),
+            WidgetInstanceState::List {
+                selected_index: 5,
+                user_scrolled: true,
+            },
+        );
+        prev.insert(
+            "gone".to_string(),
+            WidgetInstanceState::List {
+                selected_index: 1,
+                user_scrolled: false,
+            },
+        );
+        let rendered = render_spec(&spec, &prev, "dd", 40);
+        let resolved = resolve_panel(&spec, &prev, "dd", true);
+        assert_eq!(resolved.focus_key, rendered.focus_key);
+        assert_eq!(resolved.tabbable, rendered.tabbable);
+        assert_eq!(resolved.tabbable, vec!["btn", "dd"]);
+        assert_eq!(
+            resolved.instance_states.get("lst").map(|s| match s {
+                WidgetInstanceState::List { selected_index, .. } => *selected_index,
+                _ => -1,
+            }),
+            Some(5),
+            "a keyed widget's stored state survives a frame that rendered nothing"
+        );
+        assert!(
+            !resolved.instance_states.contains_key("gone"),
+            "and a key the spec no longer contains is dropped, as the walk \
+             has always dropped it"
+        );
+        assert!(
+            !resolved.instance_states.contains_key("btn"),
+            "a widget with nothing stored contributes nothing: the carry is \
+             not a seed"
+        );
+        // The focus clamp: a key that is not in the ring falls to the first.
+        assert_eq!(resolve_panel(&spec, &prev, "nosuch", true).focus_key, "btn");
+        assert_eq!(resolve_panel(&spec, &prev, "nosuch", false).focus_key, "");
     }
 
     #[test]
@@ -7747,6 +8203,9 @@ pub(crate) mod tests {
     // WidgetImpl::on_wheel (phase 4 dispatch)
     // -------------------------------------------------------------
 
+    /// A panel as one paint of `spec` left it, plus the window that
+    /// paint published — which is what a key or wheel handler is then
+    /// driven against.
     fn wheel_panel(spec: &WidgetSpec) -> crate::widgets::WidgetPanelState {
         let out = render_spec(spec, &HashMap::new(), "", 40);
         crate::widgets::WidgetPanelState {
@@ -7756,9 +8215,27 @@ pub(crate) mod tests {
             instance_states: out.instance_states,
             focus_key: out.focus_key,
             tabbable: out.tabbable,
-            effective_rows: out.effective_rows,
+            painted: out.painted,
             boxes: out.boxes,
         }
+    }
+
+    /// The window the host would deliver for `key` on that panel — the
+    /// same read `Editor::widget_viewport` makes, without an Editor.
+    fn viewport_of(
+        panel: &crate::widgets::WidgetPanelState,
+        key: &str,
+    ) -> crate::widgets::kinds::Viewport {
+        panel.painted_viewport(key).unwrap_or_else(|| {
+            crate::widgets::find_widget_by_key(&panel.spec, key)
+                .map(crate::widgets::kinds::Viewport::from_spec)
+                .unwrap_or_default()
+        })
+    }
+
+    /// The offset a paint left for `key`.
+    fn painted_offset(panel: &crate::widgets::WidgetPanelState, key: &str) -> u32 {
+        panel.painted.get(key).map(|w| w.offset).unwrap_or(0)
     }
 
     #[test]
@@ -7767,30 +8244,33 @@ pub(crate) mod tests {
         // 6 items, 3 visible → max_scroll 3.
         let spec = boxed_list("l", 6, 3);
         let mut panel = wheel_panel(&spec);
+        let vp = viewport_of(&panel, "l");
         // Consume 3 notches down…
         for i in 1..=3 {
             assert!(
-                behavior(&spec).on_wheel(&spec, "l", &mut panel, 1),
+                behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, 1),
                 "notch {i} should scroll"
             );
         }
+        assert_eq!(painted_offset(&panel, "l"), 3, "and the window moved");
         // …then the bound is hit: the wheel is NOT consumed, so the
         // dispatcher keeps bubbling (scroll chaining) instead of the
         // event going dead on a maxed-out list.
-        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, 1));
+        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, 1));
         // Back up consumes again.
-        assert!(behavior(&spec).on_wheel(&spec, "l", &mut panel, -1));
+        assert!(behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, -1));
     }
 
     /// **A page is a window of items, and the window is measured in rows.**
     ///
     /// `select_move` adds its delta to the selection and clamps against the
-    /// item count, so the delta counts *items*. `effective_visible_rows`
-    /// answers in rows. Handing one to the other undivided pages
+    /// item count, so the delta counts *items*, while the window a panel is
+    /// painted into is a row count. Handing one to the other undivided pages
     /// `item_height` times too far — here, eleven cards when four are on
     /// screen — which on the orchestrator's card lists jumped a PageDown
-    /// clean past the end every time. `on_wheel` has always done this
-    /// division; this seam did not.
+    /// clean past the end every time. There were two copies of that
+    /// conversion and only one was right; now the paint publishes both
+    /// numbers and the resolver hands over the one each seam is in.
     #[test]
     fn page_down_on_a_card_list_moves_a_window_of_cards_not_rows() {
         use crate::widgets::kinds::behavior;
@@ -7815,15 +8295,16 @@ pub(crate) mod tests {
             key: Some("cards".into()),
         };
         let mut panel = wheel_panel(&spec);
-        assert!(
-            matches!(
-                panel.instance_states.get("cards"),
-                Some(WidgetInstanceState::List { item_height: 3, .. })
-            ),
-            "the fixture really is a 3-row card list"
+        assert_eq!(
+            panel.painted.get("cards").map(|w| (w.rows, w.items)),
+            Some((12, 4)),
+            "the fixture really is a 3-row card list in a 12-row window: \
+             four of them fit"
         );
+        let vp = viewport_of(&panel, "cards");
+        assert_eq!(vp.items, 4, "four cards on screen");
         let mut fx = crate::widgets::kinds::KeyFx::default();
-        behavior(&spec).on_key(&spec, "cards", &mut panel, "PageDown", &mut fx);
+        behavior(&spec).on_key(&spec, "cards", &mut panel, vp, "PageDown", &mut fx);
         let sel = match panel.instance_states.get("cards") {
             Some(WidgetInstanceState::List { selected_index, .. }) => *selected_index,
             _ => panic!("the list kept its state"),
@@ -7850,8 +8331,6 @@ pub(crate) mod tests {
             "l".into(),
             WidgetInstanceState::List {
                 selected_index: 5,
-                scroll_offset: 0,
-                item_height: 1,
                 user_scrolled: false,
             },
         );
@@ -7870,8 +8349,9 @@ pub(crate) mod tests {
         // wheel must fall through to the enclosing pane.
         let spec = boxed_list("l", 3, 10);
         let mut panel = wheel_panel(&spec);
-        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, 1));
-        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, -1));
+        let vp = viewport_of(&panel, "l");
+        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, 1));
+        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, -1));
     }
     #[test]
     fn box_tree_carries_popup_pseudo_boxes() {
@@ -8032,7 +8512,6 @@ pub(crate) mod tests {
 
     #[test]
     fn component_is_a_transparent_focus_trap() {
-        use crate::widgets::layout_box::focus_ring_scoped;
         let btn = |k: &str| WidgetSpec::Button {
             label: k.to_uppercase(),
             focused: false,
@@ -8069,10 +8548,30 @@ pub(crate) mod tests {
         assert!(comp.focus_trap);
         assert_eq!(comp.key.as_deref(), Some("dialog"));
         // Tab cycling from inside the component stays inside it; from
-        // outside, the whole panel ring applies.
-        assert_eq!(focus_ring_scoped(&out.boxes, "ok"), vec!["ok", "cancel"]);
+        // outside, the whole panel ring applies. Asked of the spec, because
+        // that is what the advance asks now — a described panel has the trap
+        // and no boxes.
+        assert_eq!(focus_ring_scoped_in_spec(&spec, "ok"), vec!["ok", "cancel"]);
         assert_eq!(
-            focus_ring_scoped(&out.boxes, "outside"),
+            focus_ring_scoped_in_spec(&spec, "outside"),
+            vec!["outside", "ok", "cancel"]
+        );
+        // No trap in the path, and an unknown / empty focus, both give the
+        // whole ring — the two fallbacks the arena's version also had.
+        let flat = WidgetSpec::Col {
+            key: None,
+            children: vec![btn("outside"), btn("ok"), btn("cancel")],
+        };
+        assert_eq!(
+            focus_ring_scoped_in_spec(&flat, "ok"),
+            vec!["outside", "ok", "cancel"]
+        );
+        assert_eq!(
+            focus_ring_scoped_in_spec(&spec, ""),
+            vec!["outside", "ok", "cancel"]
+        );
+        assert_eq!(
+            focus_ring_scoped_in_spec(&spec, "nosuch"),
             vec!["outside", "ok", "cancel"]
         );
     }

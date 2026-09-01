@@ -184,6 +184,46 @@ pub struct HitArea {
     pub event: WidgetEvent,
 }
 
+/// **The window one keyed `List`/`Tree` was last painted into.**
+///
+/// Not the widget's state — the *painter's*. A scroll offset is a fold over
+/// its own previous value, and the row window, the item window and the
+/// measured card band are derivations over geometry; all four used to sit in
+/// [`WidgetInstanceState`] and in a parallel `effective_rows` map, where they
+/// read as things a plugin's spec could set and a handler could own. They are
+/// neither. Naming them the last paint's window is the whole point of the
+/// type: a reader that wants "how big was the window" is asking about a
+/// *paint*, and it can now say so.
+///
+/// **Three quantities, kept apart on purpose** (§6i of the retained-mode
+/// plan is the record of what conflating two of them costs): `rows` is how
+/// tall the widget was painted, `items` is how many things that showed, and
+/// `offset` counts in the kind's own scroll unit — items for a `List`, whose
+/// window steps a card at a time, and *rows* for a `Tree`, which scrolls line
+/// by line so a bordered card can sit clipped at either edge.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PaintedWindow {
+    /// Rows the widget windowed to: the spec's explicit `visible_rows`,
+    /// the auto-size height budget, or the legacy fallback.
+    pub rows: u32,
+    /// How many items those rows showed. For a `Tree` with bordered cards
+    /// of unequal height this is the conservative estimate its paging has
+    /// always used (`rows / rows-per-node`), never an overshoot.
+    pub items: u32,
+    /// First painted position, in the kind's own scroll unit (items for a
+    /// `List`, rows for a `Tree`). The scroll fold's previous value: the
+    /// next paint reads it back, clamps it, and republishes it.
+    pub offset: u32,
+    // Rows one item occupies was here — the measured card band. It was the
+    // fourth of the four numbers S1 moved out of `WidgetInstanceState`, and
+    // the only one that never acquired a reader on this side: the division
+    // from rows to items happens where the window is resolved, so `items`
+    // above is the answer everything downstream wanted and the band itself
+    // was never asked for again. `Editor::widget_viewport`'s spec fallback
+    // takes a tree's rows-per-node from the *spec*, which is where a `Tree`
+    // declares it; a card list's band is measured, and measuring is layout's.
+}
+
 /// Widget instance state retained across spec updates, keyed by
 /// the widget's stable `key`. This is the "Spec/instance separation"
 /// described in §6 of the design doc — a plugin can rebuild its
@@ -195,30 +235,28 @@ pub enum WidgetInstanceState {
     /// Empty/placeholder — never persisted, used as a default.
     #[default]
     None,
-    /// `List` instance state: host-owned scroll offset *and*
-    /// selected index. `selected_index` becomes authoritative
-    /// after first render — same correctness reasoning as
-    /// `TextInput`'s host-owned value (host can mutate it via
-    /// `WidgetCommand::SelectMove` without racing the plugin's
-    /// spec round-trip).
+    /// `List` instance state: the host-owned selected index, and
+    /// whether the user has taken the window away from it.
+    /// `selected_index` becomes authoritative once a handler decides
+    /// one — same correctness reasoning as `TextInput`'s host-owned
+    /// value (the host can mutate it via `WidgetCommand::SelectMove`
+    /// without racing the plugin's spec round-trip); until then the
+    /// spec's value is the seed and there is no entry here at all.
+    ///
+    /// **The window is not here.** The scroll offset, the row window
+    /// and the measured card height used to sit in this variant, and
+    /// none of them is the widget's state: they are what the last
+    /// paint did, so they live in [`PaintedWindow`] on the panel.
     List {
-        scroll_offset: u32,
         selected_index: i32,
-        /// Rows each item occupies in the last render: 1 for a classic
-        /// one-row-per-item list, or the uniform card height for an
-        /// `item_specs` (card) list. The renderer writes it; mouse
-        /// handlers read it to convert the row-denominated `visible_rows`
-        /// into a per-item scroll window (so wheel/scrollbar bounds are
-        /// right for card lists, and an un-scrollable list still lets the
-        /// wheel bubble to an enclosing scrollable pane).
-        item_height: u32,
         /// True once the user has scrolled the list by mouse (wheel or
         /// scrollbar) without moving the selection. While set, the
-        /// renderer respects `scroll_offset` as-is instead of snapping
-        /// it back to keep `selected_index` in view — so a mouse scroll
-        /// can push the selected card off-screen. Cleared whenever the
-        /// selection itself moves (keyboard nav, click, or a plugin
-        /// `SetSelectedIndex`), which re-arms scroll-follows-selection.
+        /// renderer respects the painted offset as-is instead of
+        /// snapping it back to keep `selected_index` in view — so a
+        /// mouse scroll can push the selected card off-screen. Cleared
+        /// whenever the selection itself moves (keyboard nav, click, or
+        /// a plugin `SetSelectedIndex`), which re-arms
+        /// scroll-follows-selection.
         user_scrolled: bool,
     },
     /// `Text` instance state: host-owned `TextEdit` (value + cursor
@@ -244,6 +282,21 @@ pub enum WidgetInstanceState {
     /// to widget-backed text inputs too.
     Text {
         editor: TextEdit,
+        /// **The last of the paint's numbers still living in instance
+        /// state**, and it stays because it still has a painted reader.
+        ///
+        /// It is the same shape as the offsets S1 moved to
+        /// [`PaintedWindow`] — a fold the *painter* owns — and for a
+        /// *described* panel it is already dead: the description gives the
+        /// window to the element (`view::shell::widgets`'s `windowed`), which
+        /// seeds from this once at mount and never reads it again, and no
+        /// handler writes it there either (`Text::on_wheel`'s document branch
+        /// needs a box arena a described panel does not have). What keeps the
+        /// field is the painted path: a pane-mounted panel the tree does not
+        /// describe still resolves its text window through
+        /// `render_widget_text_area`, which reads this back and republishes
+        /// it. It leaves when that renderer does — S8's wrapped viewport —
+        /// not with the collector's other outputs.
         scroll: u32,
         /// Completion popup candidates the plugin most recently
         /// pushed via `WidgetMutation::SetCompletions`. Empty =
@@ -262,6 +315,13 @@ pub enum WidgetInstanceState {
         /// Up/Down adjusts this implicitly (the renderer auto-
         /// scrolls to keep selection in view); the mouse wheel
         /// scrolls it directly without moving the selection.
+        ///
+        /// **Not a paint's window, despite looking like one.** The candidate
+        /// list is the one window in a described panel that is not a viewport
+        /// — `SetCompletions` is host state no element holds — so this is
+        /// read by the description (`completion_popup` slices its rows out of
+        /// it) and written by `Text::on_wheel` through `UiFact::WidgetWheel`.
+        /// §6i is the record of why it cannot become the tree's.
         completion_scroll_offset: u32,
         /// Whether the user has *explicitly* moved into the open
         /// completion popup (via ↑/↓ or the mouse wheel). Reset to
@@ -280,20 +340,23 @@ pub enum WidgetInstanceState {
         /// Same contract as `List`/`Tree`'s flag.
         user_scrolled: bool,
     },
-    /// `Tree` instance state: host-owned scroll offset, selected
-    /// index, and the set of expanded item keys. All three become
-    /// authoritative after first render — the spec's
-    /// `selected_index` / `expanded_keys` are seed values only.
-    /// `expanded_keys` is a `HashSet` because expansion is
-    /// set-membership semantically (a key is either expanded or
-    /// not); ordering doesn't matter and we hit-test on contains.
+    /// `Tree` instance state: host-owned selected index and the set
+    /// of expanded item keys. Both become authoritative once a
+    /// handler decides one — the spec's `selected_index` /
+    /// `expanded_keys` are seed values until then, and an untouched
+    /// tree records no entry at all. `expanded_keys` is a `HashSet`
+    /// because expansion is set-membership semantically (a key is
+    /// either expanded or not); ordering doesn't matter and we
+    /// hit-test on contains.
+    ///
+    /// The scroll offset that used to sit here is the painter's, not
+    /// the tree's — see [`PaintedWindow`].
     Tree {
-        scroll_offset: u32,
         selected_index: i32,
         expanded_keys: HashSet<String>,
         /// True once the user has scrolled the tree by mouse (wheel or
         /// scrollbar) without moving the selection. While set, the
-        /// renderer respects `scroll_offset` as-is instead of snapping
+        /// renderer respects the painted offset as-is instead of snapping
         /// it back to keep `selected_index` in view — so a mouse scroll
         /// can push the selected node off-screen. Cleared whenever the
         /// selection itself moves (keyboard nav, click, or a plugin
@@ -379,48 +442,128 @@ pub struct WidgetPanelState {
     /// current `focus_key`'s position in this list and advances by
     /// the requested delta (with wraparound).
     pub tabbable: Vec<String>,
-    /// Effective rows each keyed `List`/`Tree` actually windowed to in
-    /// the most recent render — the spec's explicit value, the
-    /// auto-size height budget, or the legacy fallback. Key/mouse
-    /// handlers read this for scroll/page bounds instead of the spec,
-    /// because an auto-sized widget's spec carries no number at all.
-    pub effective_rows: HashMap<String, u32>,
+    /// The window each keyed `List`/`Tree` was last painted into, by
+    /// widget key — see [`PaintedWindow`]. The scroll fold's own previous
+    /// value lives here, and so does one of the three answers to "how big is
+    /// this widget's window": the *paint's*. A described panel's comes from
+    /// the tree instead and this map is empty for one, because the walk that
+    /// filled it does not run (`Editor::resolve_described_panel`); the spec
+    /// answers last, for a widget nothing has laid out yet
+    /// ([`super::kinds::Viewport::from_spec`]).
+    pub painted: HashMap<String, PaintedWindow>,
     /// The panel's layout-box tree from the most recent render
     /// (root-last arena; see [`crate::widgets::layout_box`]).
-    /// Structure + panel-relative geometry for hit-tested dispatch
-    /// and the derived focus ring.
+    /// Structure + panel-relative geometry for hit-tested dispatch.
+    ///
+    /// **Empty for a described panel**, which never had a use for it: its
+    /// rectangles are the tree's, the wheel router declines it outright, and
+    /// the Tab ring it used to supply is now a walk of the spec
+    /// (`render::focus_ring_scoped_in_spec`) — the same two `box_meta` facts,
+    /// asked of the thing that states them.
     pub boxes: Vec<crate::widgets::LayoutBox>,
 }
 
 impl WidgetPanelState {
-    /// Rows the keyed widget actually windowed to in the last render,
-    /// falling back to the spec's explicit value and then the legacy
-    /// default (a panel that has never rendered).
-    pub fn effective_visible_rows(&self, key: &str, spec_visible: Option<u32>) -> u32 {
-        self.effective_rows
-            .get(key)
-            .copied()
-            .or(spec_visible)
-            .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+    /// The window the keyed widget is being driven against, read off
+    /// the last paint — `None` for a widget this panel has never painted.
+    ///
+    /// **Absent is an answer, not a default.** It used to fall back to the
+    /// spec's own `visible_rows` here, which made one function two: "what did
+    /// the paint measure" and "what does the spec ask for". The caller
+    /// ([`crate::app::Editor::widget_viewport`]) now asks the tree first and
+    /// falls through to [`super::kinds::Viewport::from_spec`] last, and a
+    /// fallback buried in the middle of that chain could only shadow the
+    /// tree's answer with a stale one.
+    pub(crate) fn painted_viewport(&self, key: &str) -> Option<super::kinds::Viewport> {
+        self.painted.get(key).map(|w| super::kinds::Viewport {
+            rows: w.rows,
+            items: w.items.max(1),
+        })
+    }
+
+    /// The painted window for `key`, for a handler that is about to move
+    /// it.
+    ///
+    /// A widget the panel has never painted still gets a window: the one
+    /// the host just delivered. That is the honest answer — the handler
+    /// is acting inside a window somebody resolved, and recording that
+    /// window is not a claim that a paint happened, only that this is the
+    /// frame the offset is measured in. It is also what keeps a wheel
+    /// notch on a not-yet-painted list from silently going nowhere, which
+    /// is what it did when the offset lived in an absent instance state.
+    pub(crate) fn window_mut(
+        &mut self,
+        key: &str,
+        viewport: super::kinds::Viewport,
+    ) -> &mut PaintedWindow {
+        self.painted
+            .entry(key.to_string())
+            .or_insert(PaintedWindow {
+                rows: viewport.rows,
+                items: viewport.items,
+                offset: 0,
+            })
+    }
+
+    /// Latch "the user moved this window by hand" on a `List` or `Tree`.
+    ///
+    /// **Seeded from the spec when there is no entry**, because now that
+    /// the render walk stops writing derivations an untouched widget has
+    /// none — and a wheel notch is not a reason to forget which row the
+    /// plugin said was selected. Every handler that folds this state has
+    /// the same obligation; this is the one that has no spec-shaped
+    /// resolver of its own to route through.
+    pub(crate) fn latch_user_scrolled(&mut self, key: &str) {
+        if let Some(
+            WidgetInstanceState::List { user_scrolled, .. }
+            | WidgetInstanceState::Tree { user_scrolled, .. },
+        ) = self.instance_states.get_mut(key)
+        {
+            *user_scrolled = true;
+            return;
+        }
+        if self.instance_states.contains_key(key) {
+            return;
+        }
+        let seeded = match crate::widgets::find_widget_by_key(&self.spec, key) {
+            Some(WidgetSpec::List { selected_index, .. }) => WidgetInstanceState::List {
+                selected_index: *selected_index,
+                user_scrolled: true,
+            },
+            Some(WidgetSpec::Tree {
+                selected_index,
+                expanded_keys,
+                ..
+            }) => WidgetInstanceState::Tree {
+                selected_index: *selected_index,
+                expanded_keys: expanded_keys.iter().cloned().collect(),
+                user_scrolled: true,
+            },
+            _ => return,
+        };
+        self.instance_states.insert(key.to_string(), seeded);
     }
 
     /// Set the host-owned selected index for a `List` or `Tree`
     /// instance, dispatching on the *existing* instance variant so a
-    /// Tree keeps its scroll + expanded-keys set (and a List keeps
-    /// its item height / user-scroll flag). Shared by the pointer
-    /// select path (`Tree::on_pointer`) and the `SetSelectedIndex`
-    /// mutation in the plugin dispatcher so both move Tree
-    /// selections, not just List ones. Does not re-render; callers
-    /// decide when to repaint.
+    /// Tree keeps its expanded-keys set. Shared by the pointer select
+    /// path (`Tree::on_pointer`) and the `SetSelectedIndex` mutation
+    /// in the plugin dispatcher so both move Tree selections, not
+    /// just List ones. Does not re-render; callers decide when to
+    /// repaint.
+    ///
+    /// **What it carries is now only what it owns.** It used to shuttle
+    /// a scroll offset and a measured item height through both arms;
+    /// those are the painter's and live in [`PaintedWindow`], so a
+    /// selection move no longer has to know they exist — and cannot
+    /// reset them by forgetting to copy one.
     pub fn set_selected_index(&mut self, widget_key: &str, index: i32) {
         let new_state = match self.instance_states.get(widget_key) {
             Some(WidgetInstanceState::Tree {
-                scroll_offset,
                 selected_index,
                 expanded_keys,
                 user_scrolled,
             }) => WidgetInstanceState::Tree {
-                scroll_offset: *scroll_offset,
                 expanded_keys: expanded_keys.clone(),
                 // Re-pinning the *same* index (which the orchestrator
                 // dock's `refreshOpenDialog` does on every probe-poll
@@ -433,19 +576,12 @@ impl WidgetPanelState {
                 selected_index: index,
             },
             other => {
-                let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) = match other {
+                let (prev_index, prev_user_scrolled) = match other {
                     Some(WidgetInstanceState::List {
-                        scroll_offset,
                         selected_index,
-                        item_height,
                         user_scrolled,
-                    }) => (
-                        *scroll_offset,
-                        *selected_index,
-                        *item_height,
-                        *user_scrolled,
-                    ),
-                    _ => (0, -1, 1, false),
+                    }) => (*selected_index, *user_scrolled),
+                    _ => (-1, false),
                 };
                 // Re-pinning the *same* index (which `refreshOpenDialog`
                 // does on every repaint) must preserve a user scroll —
@@ -453,9 +589,7 @@ impl WidgetPanelState {
                 // to the selection a beat after a mouse scroll. Only an
                 // actual selection change re-arms scroll-follows-selection.
                 WidgetInstanceState::List {
-                    scroll_offset: prev_scroll,
                     selected_index: index,
-                    item_height: prev_item_height,
                     user_scrolled: prev_user_scrolled && index == prev_index,
                 }
             }
@@ -497,7 +631,7 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
-        effective_rows: HashMap<String, u32>,
+        painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<WidgetPanelState> {
         self.panels.insert(
@@ -509,7 +643,7 @@ impl WidgetRegistry {
                 instance_states,
                 focus_key,
                 tabbable,
-                effective_rows,
+                painted,
                 boxes,
             },
         )
@@ -531,7 +665,7 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
-        effective_rows: HashMap<String, u32>,
+        painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Result<BufferId, ()> {
         match self.panels.get_mut(panel_key) {
@@ -541,7 +675,7 @@ impl WidgetRegistry {
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
                 state.tabbable = tabbable;
-                state.effective_rows = effective_rows;
+                state.painted = painted;
                 state.boxes = boxes;
                 Ok(state.buffer_id)
             }
@@ -573,15 +707,22 @@ impl WidgetRegistry {
         }
     }
 
-    /// Host-driven scroll of a `List` widget (e.g. a scrollbar drag).
-    /// Sets the list's `scroll_offset` and, when the list has a live
-    /// selection, clamps `selected_index` into the new visible window
-    /// `[scroll, scroll + visible)` so the next render's
-    /// ensure-selected-visible doesn't snap the thumb back.
+    /// Host-driven scroll of a `List`/`Tree` widget (e.g. a scrollbar
+    /// drag): move the painted window's offset and latch
+    /// `user_scrolled` so the next paint respects it.
     ///
     /// Returns the post-clamp `selected_index` when the list has a
     /// selection that moved (so the caller can notify the plugin to
     /// keep its own selection mirror + preview in sync), else `None`.
+    /// It never does — the selection is deliberately left where it is,
+    /// see below — but the channel stays because that is the caller's
+    /// contract, not this function's guess.
+    ///
+    /// **Two writes, to the two owners.** The offset is the painter's
+    /// window, so it lands in [`PaintedWindow`]; the latch is the
+    /// widget's own fold, so it lands in the instance state. A widget
+    /// that has never been painted has no bar to drag, which is why an
+    /// absent window declines the whole call.
     pub fn set_list_scroll(
         &mut self,
         panel_key: &PanelKey,
@@ -597,22 +738,8 @@ impl WidgetRegistry {
         // returns a moved selection, so no `select`/live-switch fires.
         // Trees get the same treatment so a scrollbar drag on a tree
         // panel (the orchestrator dock) sticks instead of no-opping.
-        match state.instance_states.get_mut(list_key)? {
-            WidgetInstanceState::List {
-                scroll_offset: so,
-                user_scrolled,
-                ..
-            }
-            | WidgetInstanceState::Tree {
-                scroll_offset: so,
-                user_scrolled,
-                ..
-            } => {
-                *so = scroll_offset;
-                *user_scrolled = true;
-            }
-            _ => return None,
-        }
+        state.painted.get_mut(list_key)?.offset = scroll_offset;
+        state.latch_user_scrolled(list_key);
         None
     }
 
@@ -630,7 +757,7 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
-        effective_rows: HashMap<String, u32>,
+        painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<BufferId> {
         let state = self.panels.get_mut(panel_key)?;
@@ -639,10 +766,10 @@ impl WidgetRegistry {
         state.focus_key = focus_key;
         state.tabbable = tabbable;
         // Host-driven rerenders (focus moves, hover, wheel) refresh the
-        // window sizes and geometry too — previously `effective_rows`
-        // was only written on the plugin-driven mount/update paths and
-        // went stale across every host-side rerender.
-        state.effective_rows = effective_rows;
+        // painted windows and geometry too — previously the window
+        // sizes were only written on the plugin-driven mount/update
+        // paths and went stale across every host-side rerender.
+        state.painted = painted;
         state.boxes = boxes;
         Some(state.buffer_id)
     }
@@ -1125,10 +1252,19 @@ mod tests {
         states.insert(
             "lst".to_string(),
             WidgetInstanceState::List {
-                scroll_offset: scroll,
                 selected_index: sel,
-                item_height: 1,
                 user_scrolled: false,
+            },
+        );
+        // The window a paint left behind — a scrollbar drag moves this,
+        // not the widget's state.
+        let mut painted = HashMap::new();
+        painted.insert(
+            "lst".to_string(),
+            PaintedWindow {
+                rows: 8,
+                items: 8,
+                offset: scroll,
             },
         );
         reg.mount(
@@ -1139,18 +1275,16 @@ mod tests {
             states,
             String::new(),
             Vec::new(),
-            HashMap::new(),
+            painted,
             Vec::new(),
         );
     }
 
     fn list_state(reg: &WidgetRegistry) -> (u32, i32) {
-        match reg.instance_states(&pk(7)).unwrap().get("lst").unwrap() {
-            WidgetInstanceState::List {
-                scroll_offset,
-                selected_index,
-                ..
-            } => (*scroll_offset, *selected_index),
+        let panel = reg.get(&pk(7)).unwrap();
+        let offset = panel.painted.get("lst").unwrap().offset;
+        match panel.instance_states.get("lst").unwrap() {
+            WidgetInstanceState::List { selected_index, .. } => (offset, *selected_index),
             _ => panic!("not a list"),
         }
     }

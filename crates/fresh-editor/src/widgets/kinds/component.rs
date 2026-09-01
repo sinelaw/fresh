@@ -1,8 +1,9 @@
 //! `Component` — a transparent focus/event scope around a subtree.
 //!
-//! Renders its child unchanged; its layout box carries `focus_trap`,
-//! which is what scopes Tab cycling (`focus_ring_scoped`) to the
-//! subtree. See widget-framework-v2-review.md §4.3/§4.4.
+//! Renders its child unchanged; `focus_trap` on its `box_meta` is what
+//! scopes Tab cycling (`render::focus_ring_scoped_in_spec`, and the layout
+//! box that carries the same flag) to the subtree. See
+//! widget-framework-v2-review.md §4.3/§4.4.
 
 use std::collections::HashMap;
 

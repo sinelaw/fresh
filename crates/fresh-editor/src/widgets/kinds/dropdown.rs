@@ -20,6 +20,7 @@ impl WidgetImpl for Dropdown {
         spec: &WidgetSpec,
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
+        _viewport: super::Viewport,
         key: &str,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
@@ -415,6 +416,49 @@ pub(crate) fn popup_of(
         entries,
         row_indices,
     }
+}
+
+/// **Which keyed `Dropdown` in this spec has its option list up**, as a walk
+/// of the spec rather than a field the render walk left behind.
+///
+/// The one thing `FloatingWidgetState::popup` was still read for was this
+/// string — `UiFact::WidgetPopupDismiss` needs to know which widget to toggle
+/// shut — and the rest of that struct (rendered rows, an anchor, per-row click
+/// payloads) had no described reader at all: the described `Dropdown` arm
+/// builds its own pop-over from [`popup_of`] and never looked at it. So the
+/// field is gone and this is what replaced it.
+///
+/// [`resolve`] is what decides, so this cannot disagree with what the
+/// description painted: same clamp, same focus gate, same spec-`open`
+/// fallback for a surface that renders statelessly. At most one list is up at
+/// a time (the focused widget's), and the first in declaration order wins if a
+/// spec somehow says otherwise — which is exactly what the collector's
+/// `popups.into_iter().next()` did.
+pub(crate) fn open_key(
+    spec: &WidgetSpec,
+    states: &HashMap<String, WidgetInstanceState>,
+    focus_key: &str,
+) -> Option<String> {
+    if let WidgetSpec::Dropdown {
+        options,
+        selected_index,
+        focused,
+        open,
+        key,
+        ..
+    } = spec
+    {
+        let k = key.as_deref();
+        let keyed = k.is_some_and(|k| !k.is_empty());
+        let is_focused = match keyed {
+            true => k == Some(focus_key),
+            false => *focused,
+        };
+        if resolve(options, *selected_index, *open, k, states, is_focused).open {
+            return Some(key.clone().unwrap_or_default());
+        }
+    }
+    spec.children().find_map(|c| open_key(c, states, focus_key))
 }
 
 /// Is this Dropdown's option popup open?

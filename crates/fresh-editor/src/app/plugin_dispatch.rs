@@ -5141,10 +5141,20 @@ impl Editor {
         // a fresh prefill) sees its spec values take effect. To
         // *preserve* state across renders, the plugin uses Update.
         let prev = std::collections::HashMap::new();
+        // A mount paints from scratch: no previous window either, so
+        // every list starts at the top.
+        let prev_painted = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.widget_panel_width(buffer_id);
         let avail_height = self.widget_panel_height(buffer_id);
-        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
+        let out = self.render_panel_spec(
+            &spec,
+            &prev,
+            &prev_painted,
+            &prev_focus,
+            panel_width,
+            avail_height,
+        );
         self.record_widget_panel_render_height(&panel_key, avail_height);
         // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
         // buffer-mounted panels consume only the base rows + hits —
@@ -5164,7 +5174,7 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            out.effective_rows,
+            out.painted,
             out.boxes,
         );
         // Mark the buffer as hosting an interactive widget panel so the
@@ -5211,6 +5221,11 @@ impl Editor {
                 return;
             }
         };
+        let prev_painted = self
+            .widget_registry
+            .get(panel_key)
+            .map(|p| p.painted.clone())
+            .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
@@ -5223,7 +5238,14 @@ impl Editor {
             .unwrap_or(BufferId(0));
         let panel_width = self.widget_panel_width(buffer_id_for_width);
         let avail_height = self.widget_panel_height(buffer_id_for_width);
-        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
+        let out = self.render_panel_spec(
+            &spec,
+            &prev,
+            &prev_painted,
+            &prev_focus,
+            panel_width,
+            avail_height,
+        );
         self.record_widget_panel_render_height(panel_key, avail_height);
         let entries = out.entries;
         match self.widget_registry.update(
@@ -5233,7 +5255,7 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            out.effective_rows,
+            out.painted,
             out.boxes,
         ) {
             Ok(buffer_id) => {
@@ -5457,21 +5479,27 @@ impl Editor {
             WidgetMutation::SetExpandedKeys { widget_key, keys } => {
                 // Tree expanded_keys lives in instance state.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let (prev_scroll, prev_sel, prev_user_scrolled) =
-                        match panel.instance_states.get(&widget_key) {
-                            Some(crate::widgets::WidgetInstanceState::Tree {
-                                scroll_offset,
-                                selected_index,
-                                user_scrolled,
-                                ..
-                            }) => (*scroll_offset, *selected_index, *user_scrolled),
-                            _ => (0, -1, false),
+                    // Selection and the scroll latch carry through the one
+                    // resolver, so a mutation on a tree nobody has touched
+                    // keeps the spec's seeded selection instead of blanking
+                    // it. The scroll offset is not here at all any more —
+                    // it is the paint's window.
+                    let (prev_sel, prev_user_scrolled) =
+                        match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
+                            Some(spec) => {
+                                let r = crate::widgets::kinds::tree::resolve(
+                                    spec,
+                                    &widget_key,
+                                    &panel.instance_states,
+                                );
+                                (r.selected, r.user_scrolled)
+                            }
+                            None => (-1, false),
                         };
                     let expanded: std::collections::HashSet<String> = keys.into_iter().collect();
                     panel.instance_states.insert(
                         widget_key,
                         crate::widgets::WidgetInstanceState::Tree {
-                            scroll_offset: prev_scroll,
                             selected_index: prev_sel,
                             expanded_keys: expanded,
                             user_scrolled: prev_user_scrolled,
@@ -5638,9 +5666,10 @@ impl Editor {
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
-            popup: None,
         });
         let prev = std::collections::HashMap::new();
+        // A mount paints from scratch — no previous window either.
+        let prev_painted = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.floating_panel_inner_width(slot);
         // A fresh mount has nothing hovered: the pointer hasn't been
@@ -5652,6 +5681,7 @@ impl Editor {
                 focus_marker,
                 &spec,
                 &prev,
+                &prev_painted,
                 &prev_focus,
                 panel_width,
                 self.floating_panel_inner_height(slot),
@@ -5665,7 +5695,6 @@ impl Editor {
             )
         };
         let entries = out.entries;
-        let popup = out.popup;
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5674,12 +5703,11 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            out.effective_rows,
+            out.painted,
             out.boxes,
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
-            fwp.popup = popup;
         }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
@@ -5714,6 +5742,11 @@ impl Editor {
             .instance_states(panel_key)
             .cloned()
             .unwrap_or_default();
+        let prev_painted = self
+            .widget_registry
+            .get(panel_key)
+            .map(|p| p.painted.clone())
+            .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
@@ -5741,6 +5774,7 @@ impl Editor {
                 focus_marker,
                 &spec,
                 &prev,
+                &prev_painted,
                 &prev_focus,
                 panel_width,
                 self.floating_panel_inner_height(slot),
@@ -5754,7 +5788,6 @@ impl Editor {
             )
         };
         let entries = out.entries;
-        let popup = out.popup;
         if self
             .widget_registry
             .update(
@@ -5764,7 +5797,7 @@ impl Editor {
                 out.instance_states,
                 out.focus_key,
                 out.tabbable,
-                out.effective_rows,
+                out.painted,
                 out.boxes,
             )
             .is_err()
@@ -5777,7 +5810,6 @@ impl Editor {
         }
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
-            fwp.popup = popup;
         }
     }
 

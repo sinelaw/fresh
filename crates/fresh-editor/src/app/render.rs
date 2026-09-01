@@ -7948,7 +7948,7 @@ impl Editor {
     /// into their outer pane's interior, and `SplitManager::visible_leaves`
     /// does not walk into them because a group's layout lives in a side map.
     /// Both halves of C.5 need the same list, so it is stated once.
-    fn window_panes(&self) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
+    pub(crate) fn window_panes(&self) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
         let win = self.active_window();
         let Some((mgr, _)) = win.buffers.splits() else {
             return Vec::new();

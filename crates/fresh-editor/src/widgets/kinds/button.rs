@@ -20,6 +20,7 @@ impl WidgetImpl for Button {
         spec: &WidgetSpec,
         _widget_key: &str,
         _panel: &mut crate::widgets::WidgetPanelState,
+        _viewport: super::Viewport,
         key: &str,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {

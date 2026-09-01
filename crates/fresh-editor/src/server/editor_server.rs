@@ -1803,7 +1803,6 @@ mod wave_dismiss_tests {
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
-            popup: None,
         });
 
         let consumed = server

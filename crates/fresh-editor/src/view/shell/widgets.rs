@@ -455,15 +455,14 @@ fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::Overla
     }
 }
 
-/// The selection a controlled `List` or `Tree` actually has.
+/// The selection a controlled `Tree` actually has.
 ///
 /// **The spec's `selected_index` is a seed, not the live value**, and the
 /// described arms were reading it as though it were live.
-/// `WidgetInstanceState::List` says so in as many words — it "becomes
-/// authoritative after first render … so the host can mutate it via
+/// `WidgetInstanceState::Tree` says so in as many words — it becomes
+/// authoritative once a handler decides one, "so the host can mutate it via
 /// `WidgetCommand::SelectMove` without racing the plugin's spec round-trip" —
-/// and the collector obeys it ("Spec values are initial-only",
-/// `kinds::tree::render_widget_tree`).
+/// and the collector obeys it (`kinds::tree::resolve`).
 ///
 /// Reading the spec makes the stale copy the input, and the host's own
 /// mutations then paint nothing: Search & Replace moves its match cursor with
@@ -471,21 +470,31 @@ fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::Overla
 /// spec, so `Ctrl+Alt+→` moved the match and the highlight stayed on the row
 /// it started on.
 ///
-/// The same is true of a `Tree`'s `expanded_keys` and of both kinds' scroll
-/// offset. Those are read from the spec here still, and they agree today
-/// because the plugins that drive them re-send the spec; the mutation route
-/// this closes had no such second writer.
+/// This is `kinds::tree::resolve`'s selection half, restated only because a
+/// description holds the spec's fields rather than the spec node. A `List`'s
+/// arms call `kinds::list::resolve` directly, because that one also clamps —
+/// there is nothing left in this codebase that sanitises a stored list index,
+/// so every reader has to.
+///
+/// A `Tree`'s `expanded_keys` is still read from the spec here, and agrees
+/// today because the plugins that drive it re-send the spec; the mutation
+/// route this closes had no such second writer.
 fn live_selection(cx: &Ctx<'_>, key: &Option<String>, seed: i32) -> i32 {
     use crate::widgets::WidgetInstanceState as St;
     let Some(k) = key.as_deref().filter(|k| !k.is_empty()) else {
         return seed;
     };
     match cx.states.get(k) {
-        Some(St::List { selected_index, .. }) | Some(St::Tree { selected_index, .. }) => {
-            *selected_index
-        }
+        Some(St::Tree { selected_index, .. }) => *selected_index,
         _ => seed,
     }
+}
+
+/// The selection a controlled `List` actually has — [`live_selection`]'s
+/// sibling, through the kind's own resolver so the clamp is the same one
+/// the painter and every handler apply.
+fn live_list_selection(cx: &Ctx<'_>, key: &Option<String>, seed: i32, total: usize) -> i32 {
+    crate::widgets::kinds::list::resolve(total as u32, seed, key.as_deref(), cx.states).selected
 }
 
 fn row_surface(st: fresh_ui::widgets::RowState, plain: &Ink) -> Ink {
@@ -1161,7 +1170,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let keys = Rc::new(item_keys.clone());
             let list_key = key.clone().unwrap_or_default();
             let slot = cx.slot;
-            let sel = live_selection(cx, key, *selected_index);
+            let sel = live_list_selection(cx, key, *selected_index, n);
             let hit_keys = keys.clone();
             let list = fresh_ui::List::windowed_stateful(
                 n,
@@ -1331,7 +1340,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         } if !item_specs.is_empty() => {
             use std::rc::Rc;
             let card_width = width.saturating_sub(1).max(1);
-            let sel = live_selection(cx, key, *selected_index);
+            let sel = live_list_selection(cx, key, *selected_index, item_specs.len());
             // The bold half of the marker. Said on the surface every arm
             // already reads, so it reaches the whole card without a second
             // rule per kind — `ink_of` merges an overlay's attributes over
@@ -2021,6 +2030,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     markdown: cx.markdown,
                     marker_gutter: cx.marker_gutter,
                     avail_height: cx.avail_height,
+                    // A shadow render of ONE markdown Text, for its
+                    // reflowed rows and its caret: no list, no window,
+                    // nothing to carry.
+                    prev_painted: None,
                 },
                 width as u32,
             );

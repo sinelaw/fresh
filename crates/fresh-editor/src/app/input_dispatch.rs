@@ -526,7 +526,7 @@ impl Editor {
             instance_states: std::collections::HashMap::new(),
             focus_key: key.to_string(),
             tabbable: Vec::new(),
-            effective_rows: std::collections::HashMap::new(),
+            painted: std::collections::HashMap::new(),
             boxes: Vec::new(),
         };
         // Every trigger converges on the kind's activation key; Toggle and
@@ -535,6 +535,9 @@ impl Editor {
             &spec_node,
             key,
             &mut scratch,
+            // A Toggle has no window; the one kind reached here never
+            // reads it.
+            crate::widgets::kinds::Viewport::default(),
             "Space",
             &mut fx,
         );
