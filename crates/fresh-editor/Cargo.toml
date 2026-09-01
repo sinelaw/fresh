@@ -119,6 +119,7 @@ runtime = [
     "syntect/default-themes",
 
     "dep:alacritty_terminal",
+    "dep:vte",  # see the vte entry below: keeps build/test feature resolution identical
     "dep:portable-pty",
     "dep:trash",
     "dep:open",
@@ -271,6 +272,19 @@ chardetng = "0.1"
 
 # Terminal emulation (optional)
 alacritty_terminal = { version = "0.26", optional = true }
+# Not used in code. `alacritty_terminal` pulls vte *without* default features,
+# while the dev-dependency `vt100` pulls it *with* them. Under resolver 2 that
+# one flag makes the lib's dependency closure differ between `cargo build` and
+# `cargo test`, so the whole 387k-line crate gets compiled twice -- once per
+# resolution -- and switching between the two costs a full lib rebuild. Naming
+# vte here with the features the dev graph already asks for makes the two
+# closures identical, which is worth a measured ~70s the first time and ~7s on
+# every later switch.
+#
+# It changes no code: vte's `default` is exactly `["std"]`, and `std` is already
+# on in both resolutions. Optional and enabled by `runtime` alongside
+# alacritty_terminal, so builds without a terminal do not gain a dependency.
+vte = { version = "0.15", features = ["default"], optional = true }
 portable-pty = { version = "0.9", optional = true }
 
 # Session persistence / client-server IPC
