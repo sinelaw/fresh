@@ -97,6 +97,7 @@ mod text_ops;
 mod theme_inspect;
 mod toggle_actions;
 pub mod types;
+mod ui_tree_dump;
 mod undo_actions;
 mod view_actions;
 mod virtual_buffers;

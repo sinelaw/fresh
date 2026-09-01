@@ -111,3 +111,69 @@ fn shape_is_the_dump_without_the_volatile_parts() {
     assert_ne!(ui.dump(), before);
     assert_eq!(before, "Screen\n  Box\n    Row #row:1\n      TextRun\n");
 }
+
+#[test]
+fn dump_json_carries_the_same_facts_in_a_shape_a_program_can_read() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.reconcile(Screen.node());
+    let row = ui.at(&[0, 0]).unwrap();
+    ui.set_state::<Count>(row, |s| s.n = 3);
+    ui.flush();
+
+    let j = ui.dump_json();
+    for needle in [
+        r#""type": "Row""#,
+        r#""key": "row:1""#, // the `#` sigil belongs to the text dump
+        r#""state": "Count""#,
+        r#""state_detail": "n=3""#,
+        r#""builds": 2"#,
+        r#""text": "n=3""#,
+        r#""rect": {"x": 0, "y": 0,"#,
+    ] {
+        assert!(j.contains(needle), "missing {needle} in:\n{j}");
+    }
+    assert!(
+        j.contains(r#""cause": "set_state"#),
+        "the marking site\n{j}"
+    );
+
+    // No serde here — `fresh-ui` depends on `unicode-width` and nothing else —
+    // so check well-formedness the way this crate can: brackets balance outside
+    // strings, and every leaf closes its `children`.
+    let (mut curly, mut square, mut in_str, mut esc) = (0i32, 0i32, false, false);
+    for c in j.chars() {
+        match (in_str, esc, c) {
+            (true, true, _) => esc = false,
+            (true, false, '\\') => esc = true,
+            (true, false, '"') => in_str = false,
+            (true, false, _) => {}
+            (false, _, '"') => in_str = true,
+            (false, _, '{') => curly += 1,
+            (false, _, '}') => curly -= 1,
+            (false, _, '[') => square += 1,
+            (false, _, ']') => square -= 1,
+            _ => {}
+        }
+        assert!(curly >= 0 && square >= 0, "closed too early\n{j}");
+    }
+    assert_eq!((curly, square, in_str), (0, 0, false), "unbalanced\n{j}");
+}
+
+#[test]
+fn dump_json_escapes_text_that_would_otherwise_break_the_document() {
+    struct Awkward;
+    impl Component<()> for Awkward {
+        type State = ();
+        fn build(&self, _s: &(), _cx: &mut BuildCx<'_, ()>) -> Node<()> {
+            text("a \"quoted\" \\ path\tand\na newline")
+        }
+    }
+    let mut ui: Ui<()> = Ui::new();
+    ui.reconcile(Awkward.node());
+    assert!(
+        ui.dump_json()
+            .contains(r#""text": "a \"quoted\" \\ path\tand\na newline""#),
+        "{}",
+        ui.dump_json()
+    );
+}

@@ -784,6 +784,9 @@ pub enum Action {
     // Config operations
     DumpConfig,
 
+    // Open this window's retained UI tree in a read-only buffer
+    DumpUiTree,
+
     // Force a full terminal clear + redraw (fixes display corruption from external output)
     RedrawScreen,
 
@@ -1274,6 +1277,7 @@ impl Action {
             "remove_ruler" => RemoveRuler,
 
             "dump_config" => DumpConfig,
+            "dump_ui_tree" => DumpUiTree,
             "redraw_screen" => RedrawScreen,
 
             "search" => Search,
@@ -3007,6 +3011,7 @@ impl KeybindingResolver {
             Action::ToggleWhitespaceIndicators => t!("action.toggle_whitespace_indicators"),
             Action::ResetBufferSettings => t!("action.reset_buffer_settings"),
             Action::DumpConfig => t!("action.dump_config"),
+            Action::DumpUiTree => t!("action.dump_ui_tree"),
             Action::RedrawScreen => t!("action.redraw_screen"),
             Action::Search => t!("action.search"),
             Action::FindInSelection => t!("action.find_in_selection"),
