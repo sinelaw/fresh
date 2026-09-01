@@ -6,14 +6,24 @@
 //! keyboard, wheel and selection. The windowed form is what makes a million-row
 //! list ordinary: off-screen rows have no descriptions, no elements and no
 //! state.
+//!
+//! That last sentence is [`RowHeight::Cells`]'s, and it is why that variant is
+//! the default. [`RowHeight::UniformMeasured`] gives up the first half of it —
+//! every item is described, because "the tallest" is not a question the visible
+//! ones can answer — and keeps the second: nothing off screen is mounted
+//! between the measurement and the frame, and nothing at all is described to
+//! *scroll*.
 
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::desc::{col, focusable, gesture, layout_reader, text, viewport, Node, Sizing};
+use crate::desc::{
+    col, focusable, gesture, layout_reader, stack, text, viewport, Align, Node, Sizing,
+};
 use crate::event::{Event, GestureKind};
 use crate::focus::Intent;
 use crate::key::Key;
+use crate::render::object::Band;
 use crate::schedule::{BuildCx, Updater};
 use crate::{Component, ComponentExt};
 
@@ -91,6 +101,63 @@ impl RowState {
             RowState::Hover => "list.row.hover",
             RowState::Selected => "list.row.selected",
             RowState::SelectedBlur => "list.row.selected.blur",
+        }
+    }
+}
+
+/// How tall one row of a windowed list is.
+///
+/// **Uniform either way — the question is who counts.** A window is
+/// addressable by index because every row is the same height: row `i` starts at
+/// cell `i * height`, so a scroll is arithmetic and nothing is measured to
+/// serve it. Both variants keep that. What they differ on is whether the number
+/// can be stated before the rows exist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowHeight {
+    /// The caller states it. No item is ever measured and no off-screen item is
+    /// ever described: this is the million-row case, and the default is
+    /// `Cells(1)` — a list of lines.
+    Cells(u16),
+    /// Uniform, but *measured*: every item is laid out once at the current
+    /// width and the tallest sets the band; shorter items pad to it.
+    ///
+    /// For a card list, where each item is a small block rather than a line and
+    /// the height is a function of the width — so no number exists until layout
+    /// runs, and a caller that produces one anyway has written a second copy of
+    /// the layout rules.
+    ///
+    /// **What it costs, and when.** The measurement is O(count): every item's
+    /// description is built and laid out, the off-screen ones included, because
+    /// the tallest item is not something the visible ones know. It is paid when
+    /// the width changes and when this list's own description is rebuilt —
+    /// which is conservative, since a rebuild that changed only which row is
+    /// hovered pays for an answer that comes back the same. It is **not** paid
+    /// to scroll: the band is cached against the width, and a wheel, a key or a
+    /// reveal moves the window without describing anything off screen. Nor is
+    /// it paid by a frame that only paints.
+    ///
+    /// Two things follow from measuring one band for the whole list. The band
+    /// is measured with every row in [`RowState::Normal`], so a builder whose
+    /// row is *taller* when selected or hovered is not uniform and will be cut
+    /// to the normal height. And the items are described during layout and
+    /// discarded before the frame is painted, so a row carrying its own
+    /// component state pays a mount and an unmount for each measurement.
+    UniformMeasured,
+}
+
+impl Default for RowHeight {
+    fn default() -> Self {
+        RowHeight::Cells(1)
+    }
+}
+
+impl RowHeight {
+    /// The number to build rows against before anything has been measured: the
+    /// caller's, or one cell where the band is still a question.
+    fn declared(self) -> u16 {
+        match self {
+            RowHeight::Cells(c) => c.max(1),
+            RowHeight::UniformMeasured => 1,
         }
     }
 }
@@ -174,7 +241,7 @@ pub struct List<M> {
     bar_theme: Option<String>,
     #[allow(clippy::type_complexity)]
     row_theme: Option<Rc<dyn Fn(usize, RowState) -> String>>,
-    row_rows: u16,
+    row_height: RowHeight,
 }
 
 impl<M: 'static> List<M> {
@@ -248,7 +315,7 @@ impl<M: 'static> List<M> {
             stable_gutter: false,
             bar_theme: None,
             row_theme: None,
-            row_rows: 1,
+            row_height: RowHeight::default(),
         }
     }
 
@@ -383,14 +450,25 @@ impl<M: 'static> List<M> {
     /// How many cells one row occupies. One by default, which is what a list
     /// of lines is.
     ///
-    /// **Uniform, and that is the point.** A card list — each item a little
-    /// block rather than a line — is still addressable by index: the window
-    /// knows which items it holds without measuring any of them, which is what
-    /// keeps a window onto a million of them possible. Rows that each decide
-    /// their own height are a different widget and would need a different
-    /// answer.
-    pub fn row_rows(mut self, cells: u16) -> Self {
-        self.row_rows = cells.max(1);
+    /// **Uniform, and that is the point.** A list of little blocks rather than
+    /// lines is still addressable by index: the window knows which items it
+    /// holds without measuring any of them, which is what keeps a window onto a
+    /// million of them possible. Rows that each decide their *own* height are a
+    /// different widget and would need a different answer — a prefix sum over
+    /// every row, which is the measurement an index exists to avoid.
+    ///
+    /// This is the shorthand for [`RowHeight::Cells`]. A band that is uniform
+    /// but that the caller cannot state — a card list, whose height is a
+    /// function of the width — is not the other widget either, and is
+    /// [`RowHeight::UniformMeasured`]; see [`List::row_height`].
+    pub fn row_rows(self, cells: u16) -> Self {
+        self.row_height(RowHeight::Cells(cells.max(1)))
+    }
+
+    /// Where one row's height comes from: the caller, or the layout. See
+    /// [`RowHeight`], which carries the cost of each.
+    pub fn row_height(mut self, h: RowHeight) -> Self {
+        self.row_height = h;
         self
     }
 }
@@ -499,13 +577,24 @@ impl<M: 'static> Component<M> for List<M> {
 
         // The window comes from the viewport, which owns it. This component
         // decides only which rows fill it.
-        let row_rows = self.row_rows;
+        //
+        // The band comes from the viewport too. For a stated height it is the
+        // caller's number arriving back where it is needed; for a measured one
+        // it is the viewport's answer to its own question, which is why the
+        // builder below runs twice in the one layout pass.
+        let measured = self.row_height == RowHeight::UniformMeasured;
+        let declared = self.row_height.declared();
         let reader = layout_reader(move |info| {
+            let measuring = info.band == Some(Band::Measuring);
+            let row_rows = match info.band {
+                Some(Band::Cells(h)) => h.max(1),
+                _ => declared,
+            };
             let win = info.scroll_window.unwrap_or_default();
             let visible = (win.h as usize).max(1);
             let first = (win.y.max(0) as usize).min(n.saturating_sub(visible.min(n)));
             let last = (first + visible + OVERSCAN).min(n);
-            col().children((first..last).map(|i| {
+            let window = col().children((first..last).map(|i| {
                 let state = if Some(i) == sel {
                     // A selected row reads as focused only when the list has
                     // focus; otherwise it is muted.
@@ -530,10 +619,49 @@ impl<M: 'static> Component<M> for List<M> {
                     Some(mk) => g.on(GestureKind::Click, mk(i)),
                     None => g,
                 }
-            }))
+            }));
+            if !measured {
+                return window;
+            }
+            // **Two slots, in both asks, so that only the probe is transient.**
+            // Answering the band means describing every item, and the window's
+            // rows have to survive that: a reader whose whole output is
+            // replaced loses element identity for everything under it, which
+            // for a row means its nested state and any press in flight. So the
+            // shape is the same either way — a probe slot and a window slot —
+            // and only the probe's contents come and go.
+            //
+            // The height of what this returns is what the viewport reads as the
+            // band, which is why the probe is a stack: laid one on top of
+            // another, the items measure as tall as the tallest of them. The
+            // window slot is flattened to nothing so that the height coming
+            // back is the probe's alone; its rows are built against a band
+            // nobody will see, and the ask with the real band is the one whose
+            // rows are painted.
+            //
+            // `Align::Start` gives each item the loose width a row of the
+            // window gets from its column, rather than the stretched one a
+            // stack would otherwise impose, so the two measurements are of the
+            // same thing.
+            stack().children([
+                stack().align(Align::Start).children(match measuring {
+                    true => (0..n)
+                        .filter_map(|i| source.at(i, RowState::Normal).map(|(_, row)| row))
+                        .collect::<Vec<_>>(),
+                    false => Vec::new(),
+                }),
+                match measuring {
+                    true => window.h(Sizing::Cells(0)),
+                    false => window,
+                },
+            ])
         });
 
-        let mut body = viewport(reader).items(n as u32).item_rows(row_rows);
+        let mut body = viewport(reader).items(n as u32);
+        body = match self.row_height {
+            RowHeight::Cells(c) => body.item_rows(c),
+            RowHeight::UniformMeasured => body.item_rows_measured(),
+        };
         if let Some(a) = anchor.clone() {
             body = body.anchor_to(a);
         }

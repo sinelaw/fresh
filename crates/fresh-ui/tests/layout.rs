@@ -276,6 +276,92 @@ fn a_layout_reader_receives_its_constraints_during_the_pass() {
     );
 }
 
+/// **A measured band is asked for and then stated, in the one pass.**
+///
+/// An item-scrolled window is addressable by index because every item is the
+/// same height, and the builder has to give each item that height — so when the
+/// number is a fact of layout rather than of the caller, the viewport asks
+/// first and tells afterwards. Both asks happen inside a single layout, which
+/// is what keeps a measured band from costing a frame of the window built
+/// against the wrong number.
+#[test]
+fn an_item_window_asks_for_its_band_before_it_states_it() {
+    use fresh_ui::{Axis, Band, Input, Mods, Point};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let seen: Rc<RefCell<Vec<Option<Band>>>> = Rc::default();
+    let s = seen.clone();
+
+    let mut ui = ui();
+    ui.frame(
+        viewport(layout_reader(move |info| {
+            s.borrow_mut().push(info.band);
+            match info.band {
+                // The answer: one item is as tall as what comes back.
+                Some(Band::Measuring) => col().children([text("a"), text("b"), text("c")]),
+                band => {
+                    let h = match band {
+                        Some(Band::Cells(h)) => h,
+                        _ => 1,
+                    };
+                    let win = info.scroll_window.unwrap_or_default();
+                    let first = win.y.max(0) as usize;
+                    col().children(
+                        (first..first + win.h as usize)
+                            .map(|i| text(format!("row {i}")).h(Sizing::Cells(h)).key(i)),
+                    )
+                }
+            }
+        }))
+        .items(20)
+        .item_rows_measured(),
+        Size::new(20, 9),
+    );
+
+    assert_eq!(
+        seen.borrow().first().copied().flatten(),
+        Some(Band::Measuring),
+        "the first thing the builder is asked is how tall an item is"
+    );
+    assert!(
+        seen.borrow().contains(&Some(Band::Cells(3))),
+        "and it is told the answer: {:?}",
+        seen.borrow()
+    );
+    // Nine cells of window over three-cell items is a window of three items,
+    // and each of them sits on the band the answer set.
+    let row = |ui: &Ui<()>, i: usize| {
+        ui.rect(
+            ui.find_by_key(&Key::from(i))
+                .unwrap_or_else(|| panic!("row {i}")),
+        )
+    };
+    assert_eq!(row(&ui, 0), Rect::new(0, 0, 20, 3));
+    assert_eq!(row(&ui, 2), Rect::new(0, 6, 20, 3));
+
+    // And a scroll is arithmetic over that band — the band is not asked for
+    // again, which is the whole of what "index addressable" buys.
+    seen.borrow_mut().clear();
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 2,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    ui.tick();
+    assert!(
+        !seen.borrow().is_empty() && !seen.borrow().contains(&Some(Band::Measuring)),
+        "a scroll re-ran the builder as {:?}",
+        seen.borrow()
+    );
+    assert_eq!(
+        row(&ui, 2),
+        Rect::new(0, 0, 20, 3),
+        "the window moved two items"
+    );
+}
+
 #[test]
 #[should_panic(expected = "geometry is not readable during build")]
 fn geometry_is_not_readable_during_build() {

@@ -355,7 +355,7 @@ impl WidgetImpl for Text {
 /// the plugin-supplied `field_width` verbatim (`render_text_area`
 /// already fills the panel width by default).
 #[allow(clippy::too_many_arguments)]
-fn effective_text_field_width(
+pub(crate) fn effective_text_field_width(
     full_width: bool,
     multiline: bool,
     label: &str,
@@ -543,7 +543,7 @@ fn emit_completion_overlays(
 /// the Number edit cell), where a hardware cursor isn't visible.
 /// Clamps to the entry text; a caret at end-of-text reverses the last
 /// cell if there is one (renderers reserve a trailing pad cell).
-fn push_block_caret_overlay(entry: &mut TextPropertyEntry, byte: usize) {
+pub(crate) fn push_block_caret_overlay(entry: &mut TextPropertyEntry, byte: usize) {
     let text = &entry.text;
     let b = byte.min(text.len());
     let (start, end) = if b < text.len() {
@@ -1125,7 +1125,7 @@ pub(crate) fn resolve(
 /// spec-seeded render (stateless surfaces like Settings, which re-emit their
 /// model each frame) falls back to the spec's `sel_start`/`sel_end` byte
 /// range, clamped into the value.
-fn selection_of(
+pub(crate) fn selection_of(
     editor: &crate::primitives::text_edit::TextEdit,
     is_focused: bool,
     spec_sel: (i32, i32),

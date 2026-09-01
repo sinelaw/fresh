@@ -503,6 +503,12 @@ impl<M: 'static> Ui<M> {
             return (false, false);
         };
         let ctl = Rc::new(Ctl::default());
+        // **Asked of the target, delivered to every listener.** The string
+        // belongs to a leaf; the handler that cares about a caret is usually a
+        // gesture wrapped around it. Computing it here means a listener reads
+        // the byte without knowing which leaf under it holds the text, and
+        // means it is computed once rather than per handler.
+        let text_byte = self.text_byte_at(target, pos);
 
         for capture in [true, false] {
             let order: Vec<ElementId> = if capture {
@@ -527,6 +533,7 @@ impl<M: 'static> Ui<M> {
                     mods,
                     delta: wheel.delta,
                     axis: wheel.axis,
+                    text_byte,
                     key,
                     clicks,
                     selection: SelectionOnFocus::None,
@@ -644,6 +651,7 @@ impl<M: 'static> Ui<M> {
             mods,
             delta: 0,
             axis: Axis::Vertical,
+            text_byte: self.text_byte_at(n, pos),
             key: None,
             clicks: 1,
             selection: SelectionOnFocus::None,
@@ -823,6 +831,19 @@ impl<M: 'static> Ui<M> {
 
     /// The one part of a layer that cannot live on the render object: a
     /// handler is typed by the message, and a render object never sees one.
+    /// The byte of the logical string under `pos`, for the text this element
+    /// is — `None` when it is not text.
+    ///
+    /// One hop: element to its render object, which answers for itself. The
+    /// object is asked because it is the only thing that knows where its
+    /// shaping put each character; see `Event::text_byte`.
+    fn text_byte_at(&self, id: ElementId, pos: Point) -> Option<usize> {
+        let r = self.arena.get(id)?.render?;
+        let obj = self.render.get(r)?.obj.as_ref()?;
+        let rect = self.rect_of(id);
+        obj.text_byte_at(Point::new(pos.x - rect.x, pos.y - rect.y))
+    }
+
     fn dismiss_handler(&self, lid: ElementId) -> Option<crate::desc::Handler<M>> {
         match &resolve(&self.arena.get(lid)?.desc).desc {
             Desc::Layer(l) => l.on_dismiss.clone(),
@@ -890,6 +911,9 @@ impl<M: 'static> Ui<M> {
                     mods: Mods::NONE,
                     delta: 0,
                     axis: Axis::Vertical,
+                    // A dismissal is delivered to the layer, not to whatever
+                    // the pointer happened to be over outside it.
+                    text_byte: None,
                     key: None,
                     clicks: 1,
                     selection: SelectionOnFocus::None,
@@ -952,6 +976,7 @@ impl<M: 'static> Ui<M> {
                     clicks: 1,
                     delta: 0,
                     axis: Axis::Vertical,
+                    text_byte: None,
                     key: Some(k),
                     selection: SelectionOnFocus::None,
                     target: lid,

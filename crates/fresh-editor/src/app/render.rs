@@ -8008,6 +8008,10 @@ impl Editor {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
+            // A pane-mounted panel has no keyboard layer of its own, so
+            // neither field is read for it; see `panel::Interior`.
+            has_focus_targets: false,
+            claims_tab: false,
         })
     }
 
@@ -8100,7 +8104,36 @@ impl Editor {
                             .scrollbar_flash_until
                             .is_some_and(|until| self.time_source().now() < until)
                 }),
+            // The runtime's own answer to "is there anything here to focus".
+            has_focus_targets: self
+                .widget_registry
+                .get(&key)
+                .is_some_and(|p| !p.tabbable.is_empty()),
+            claims_tab: self.panel_mode_binds_tab(),
         })
+    }
+
+    /// Whether the active editor mode explicitly binds Tab.
+    ///
+    /// The one precedence question `panel::interior` creates: the tree resolves
+    /// Tab to move focus, and a plugin that bound Tab through `defineMode`
+    /// would lose it. Asked the same way `router::widget_panel_key` asks —
+    /// explicitly-set bindings for the mode only, because the resolver's full
+    /// lookup falls back to Normal-context bindings and would report Tab bound
+    /// in every mode.
+    fn panel_mode_binds_tab(&self) -> bool {
+        let Some(mode) = self.active_window().editor_mode.clone() else {
+            return false;
+        };
+        let ev = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let ctx = crate::input::keybindings::KeyContext::Mode(mode);
+        self.keybindings
+            .read()
+            .map(|kb| kb.has_explicit_binding(&ev, &ctx))
+            .unwrap_or(false)
     }
 
     pub(crate) fn panel_description(&self) -> Option<crate::view::shell::panel::Panel> {

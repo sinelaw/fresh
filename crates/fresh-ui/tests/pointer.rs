@@ -1033,3 +1033,96 @@ fn a_press_on_the_node_a_layer_is_anchored_to_does_not_dismiss_it() {
         log.borrow()
     );
 }
+
+// -- Event::text_byte ---------------------------------------------------------
+
+/// A press on text reports the byte, not the column.
+///
+/// The two are the same number only while every character is one byte and one
+/// cell. `名前` is two characters, six bytes and four cells, so a caller that
+/// used the column would be three bytes out by the fourth cell — which is
+/// exactly the arithmetic this field exists to remove from callers.
+#[test]
+fn a_press_on_text_reports_the_byte_under_it() {
+    let seen: Rc<RefCell<Vec<Option<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(gesture(text("名前: value")).on(
+            GestureKind::Press,
+            Rc::new(move |e: &Event| {
+                sink.borrow_mut().push(e.text_byte);
+                None
+            }),
+        )),
+        FRAME,
+    );
+    // Cells:  0,1 = 名   2,3 = 前   4 = ':'  5 = ' '  6.. = "value"
+    // Bytes:  0    = 名   3    = 前   6 = ':'  7 = ' '  8.. = "value"
+    for (col, want) in [(0, 0), (1, 0), (2, 3), (3, 3), (4, 6), (6, 8), (8, 10)] {
+        ui.dispatch(Input::press(
+            Point::new(col, 0),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert_eq!(
+            seen.borrow().last().copied().flatten(),
+            Some(want),
+            "column {col} should be byte {want}"
+        );
+    }
+}
+
+/// Past the end of the run is the end of the run, and a press on something
+/// that is not text has no byte at all.
+#[test]
+fn text_byte_is_absent_where_there_is_no_text() {
+    let seen: Rc<RefCell<Vec<Option<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col()
+            .child(gesture(text("ab")).w(Sizing::Cells(10)).on(
+                GestureKind::Press,
+                Rc::new({
+                    let sink = sink.clone();
+                    move |e: &Event| {
+                        sink.borrow_mut().push(e.text_byte);
+                        None
+                    }
+                }),
+            ))
+            .child(
+                gesture(col().w(Sizing::Cells(10)).h(Sizing::Cells(1)))
+                    .on(
+                        GestureKind::Press,
+                        Rc::new(move |e: &Event| {
+                            sink.borrow_mut().push(e.text_byte);
+                            None
+                        }),
+                    )
+                    .h(Sizing::Cells(1)),
+            ),
+        FRAME,
+    );
+    ui.dispatch(Input::press(
+        Point::new(7, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(
+        seen.borrow().last().copied().flatten(),
+        Some(2),
+        "a press past the last character is the end of the string"
+    );
+    ui.dispatch(Input::press(
+        Point::new(3, 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(
+        seen.borrow().last().copied().flatten(),
+        None,
+        "a box is not text and has no byte"
+    );
+}

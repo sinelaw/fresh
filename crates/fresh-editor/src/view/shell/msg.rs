@@ -47,13 +47,29 @@ pub enum UiFact {
     WidgetHit {
         slot: super::widgets::Slot,
         hit: crate::widgets::HitArea,
+        /// The byte the press landed on, within the hit's own piece.
+        ///
+        /// **A byte, not a column, and the difference is a bug this carried.**
+        /// A press on a text field means "put the caret here", and the runtime
+        /// answered it by comparing the screen column against geometry the
+        /// painter had stamped. The piece the gesture sits on *is* that
+        /// geometry — but the offset inside it was reported in cells and then
+        /// added to a byte offset, which agrees only while every character is
+        /// one byte and one cell. `fresh_ui::Event::text_byte` reports the byte
+        /// instead, from the shaping that actually drew the row.
+        ///
+        /// `None` for a hit with no pointer behind it, and for a press on a
+        /// piece that is not text.
+        byte: Option<usize>,
         /// The column the press landed on, within the hit's own piece.
         ///
-        /// A press on a text field means "put the caret here", and the runtime
-        /// answered that by comparing the screen column against geometry the
-        /// painter had stamped. The piece the gesture is on *is* that
-        /// geometry, so the offset inside it is what is left to say. `None`
-        /// for a hit that arrived without a pointer behind it.
+        /// **Not a worse `byte`; a different question.** `byte` asks where in
+        /// the *text* the press was, and is what a caret wants. This asks
+        /// where in the *row* it was, and is what a control with furniture at
+        /// fixed columns wants — a `TextList` row's trailing `[x]` is at the
+        /// columns the row was built with, and no byte of the label answers
+        /// where that button is. Both are facts about one press; neither
+        /// substitutes for the other.
         at: Option<u16>,
         /// How many presses in the run this one was — `Event::clicks`.
         ///

@@ -488,3 +488,230 @@ fn an_arrow_key_with_nothing_focused_is_not_traversal() {
         "with a starting point, a direction traverses"
     );
 }
+
+// -- a layer that names its focus scope ---------------------------------------
+
+/// The shape a panel's keyboard needs: a `Modality::Focus` layer that ranks
+/// early, holding no content, and the content elsewhere in the tree.
+///
+/// `sink` stands for the fallback key handler the layer carries; `body` is the
+/// panel, declared after it so it paints later.
+fn scoped_panel(scope: bool) -> Node<()> {
+    let keys = layer()
+        .anchor(Anchor::Screen(Align::Start))
+        .modality(Modality::Focus)
+        .child(focusable(text("sink")).key("sink"));
+    let keys = match scope {
+        true => keys.scope_at("body".into()),
+        false => keys,
+    };
+    col()
+        .child(keys)
+        .child(col().key("body").children([field("one"), field("two")]))
+}
+
+/// **Without a scope, confinement is containment and the content is outside
+/// it.** This is the state the editor's plugin panels are in: every widget is
+/// focusable and none is reachable, because the keyboard layer holds one node
+/// and traversal is confined to the layer.
+#[test]
+fn a_keyboard_layer_confines_traversal_to_itself() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(scoped_panel(false), FRAME);
+    let reachable: Vec<_> = ui
+        .focus_scope()
+        .ordered()
+        .into_iter()
+        .filter_map(|e| ui.key_of(e))
+        .collect();
+    assert_eq!(
+        reachable,
+        vec!["sink".into()],
+        "the layer's own subtree is all traversal can reach"
+    );
+}
+
+/// Naming a scope moves the confinement to the content, leaving the rank where
+/// it was declared.
+#[test]
+fn a_named_scope_confines_traversal_to_the_content() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(scoped_panel(true), FRAME);
+    let reachable: Vec<_> = ui
+        .focus_scope()
+        .ordered()
+        .into_iter()
+        .filter_map(|e| ui.key_of(e))
+        .collect();
+    assert_eq!(
+        reachable,
+        vec!["one".into(), "two".into()],
+        "the named element's focusables, and not the layer's sink"
+    );
+
+    // A scope that opens takes focus, and the scope is the content now, so
+    // the frame lands on the first control rather than on the sink.
+    assert_eq!(ui.key_of(ui.focused().unwrap()), Some("one".into()));
+    let tab = Input::Key(KeyPress::new(KeyCode::Tab));
+    ui.dispatch(tab);
+    assert_eq!(ui.key_of(ui.focused().unwrap()), Some("two".into()));
+    ui.dispatch(tab);
+    assert_eq!(
+        ui.key_of(ui.focused().unwrap()),
+        Some("one".into()),
+        "wraps inside the scope rather than escaping to the sink"
+    );
+}
+
+/// The containment questions the host asks must follow the scope too.
+///
+/// Focus is outside the layer's own subtree by construction here, so an
+/// ancestor walk alone would report that no keyboard layer is up — and the
+/// host would go on resolving keys the panel had claimed.
+#[test]
+fn a_scoped_layer_still_answers_the_containment_questions() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(scoped_panel(true), FRAME);
+    assert_eq!(ui.key_of(ui.focused().unwrap()), Some("one".into()));
+    assert!(
+        ui.focus_confined(),
+        "focus is inside the scope the keyboard layer named"
+    );
+}
+
+/// A scope naming a key nothing carries confines nothing — the same answer as
+/// not naming one, rather than an empty ring.
+#[test]
+fn a_scope_naming_nothing_falls_back_to_the_layer() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col()
+            .child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Start))
+                    .modality(Modality::Focus)
+                    .scope_at("absent".into())
+                    .child(focusable(text("sink")).key("sink")),
+            )
+            .child(col().key("body").children([field("one")])),
+        FRAME,
+    );
+    let reachable: Vec<_> = ui
+        .focus_scope()
+        .ordered()
+        .into_iter()
+        .filter_map(|e| ui.key_of(e))
+        .collect();
+    assert_eq!(reachable, vec!["sink".into()]);
+}
+
+/// **A scope whose content has nothing focusable still holds the keyboard.**
+///
+/// `skip_traversal` says Tab does not *stop* on a node; it does not say focus
+/// may never *rest* there. `focus_scope` reads it as the former when it builds
+/// the traversal set, so a scope root marked skippable is absent from its own
+/// scope — and when its descendants are unfocusable too, the set is empty.
+/// Focus was then dropped, and with focus nowhere the containment questions
+/// answer that no keyboard layer is up at all, so the layer's keys leak to
+/// whatever is behind it.
+///
+/// The editor reached this with a plugin panel whose interior is described but
+/// holds no focusable control. The symptom was a dialog that would not close:
+/// Escape never reached the panel, and the scrim it had raised outlived it,
+/// swallowing clicks meant for the menu bar underneath.
+#[test]
+fn an_empty_scope_keeps_the_keyboard_at_its_root() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col()
+            .child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Start))
+                    .modality(Modality::Focus)
+                    .scope_at("body".into()),
+            )
+            // The scope root is focusable but skipped, exactly as a panel's
+            // fallback key handler is, and nothing inside it takes focus.
+            .child(focusable(col().child(text("nothing focusable"))).key("body").skip_traversal()),
+        FRAME,
+    );
+    let root = ui.find_by_key(&"body".into()).expect("the scope root");
+    assert_eq!(
+        ui.focused(),
+        Some(root),
+        "focus rests on the scope root rather than being dropped"
+    );
+    assert!(
+        ui.focus_scope().ordered().is_empty(),
+        "and it is still not a Tab stop"
+    );
+}
+
+// -- the key capture leg ------------------------------------------------------
+
+/// A capture listener sees the key before the focused element, and can decline
+/// it without swallowing the rest.
+///
+/// This is what lets a surface reserve one key. Before it existed, the only
+/// way to pre-empt a focused control was a bubble listener that stopped
+/// everything — which is why a plugin panel that wants `Enter` ended up
+/// claiming every key its widgets would have handled.
+#[test]
+fn a_capture_listener_runs_before_the_focused_element() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let (a, b) = (log.clone(), log.clone());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        focusable(
+            col().child(focusable(text("field")).key("field").on_key(move |_| {
+                b.borrow_mut().push("field".into());
+                None
+            })),
+        )
+        .skip_traversal()
+        .on_key_capture(move |_| {
+            a.borrow_mut().push("root capture".into());
+            None
+        }),
+        FRAME,
+    );
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    log.borrow_mut().clear();
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Enter)));
+    assert_eq!(
+        *log.borrow(),
+        vec!["root capture".to_string(), "field".to_string()],
+        "down leg first, then the focused element"
+    );
+}
+
+/// Stopping on the capture leg keeps the key from the focused element.
+#[test]
+fn a_capture_listener_that_stops_pre_empts_the_control() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let (a, b) = (log.clone(), log.clone());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        focusable(
+            col().child(focusable(text("field")).key("field").on_key(move |_| {
+                b.borrow_mut().push("field".into());
+                None
+            })),
+        )
+        .skip_traversal()
+        .on_key_capture(move |e: &Event| {
+            a.borrow_mut().push("root capture".into());
+            e.stop();
+            None
+        }),
+        FRAME,
+    );
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    log.borrow_mut().clear();
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Enter)));
+    assert_eq!(
+        *log.borrow(),
+        vec!["root capture".to_string()],
+        "the focused element never saw it"
+    );
+}

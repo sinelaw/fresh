@@ -1171,7 +1171,7 @@ impl Editor {
     pub(crate) fn settings_widget_hit(
         &mut self,
         hit: &crate::widgets::HitArea,
-        at: Option<u16>,
+        byte: Option<usize>,
         clicks: u8,
     ) {
         use crate::view::settings::items::SettingControl;
@@ -1229,39 +1229,20 @@ impl Editor {
             _ => SettingsHit::Item(idx),
         };
         // A press on a text field also says *where* in the value the caret
-        // goes (#2573). The payload carries the value's own offsets; the row
-        // it sits in is what turns a column into a byte, and re-rendering the
-        // control is how the entry dialog's click path gets it too.
+        // goes (#2573). The press reports its byte in the row; the hit's own
+        // payload carries the breadcrumbs that undo the field's layout.
+        //
+        // **This used to render the control a second time and measure the row
+        // it produced**, because a column cannot be turned into a byte without
+        // laying the text out — and the width it had to be laid out at was a
+        // rectangle read back off the tree, with a comment explaining that a
+        // byte resolved at any other width is not the byte under the pointer.
+        // A byte needs none of that: the shaping that drew the row is the one
+        // that answered.
         let caret = match resolved {
-            SettingsHit::ControlText(_) => at.and_then(|col| {
-                let item = &page.items[idx];
-                let spec = crate::view::settings::widget_map::setting_control_to_widget_aligned(
-                    &item.path,
-                    &item.control,
-                    crate::view::settings::items::page_label_width(&page.items),
-                );
-                // **The width layout gave the card, not "unbounded".** A
-                // `full_width` field takes the panel's width as its own, so
-                // `u32::MAX` asked for a field four billion columns wide and
-                // `render_text_input` padded it one space at a time, counting
-                // the string's characters on each pass — the click never
-                // returned. It was wrong before it was slow: the window a long
-                // value slides through, and where it elides, both follow the
-                // width, so a byte resolved at any other width is not the byte
-                // under the pointer.
-                let w = self
-                    .panel_rect(&crate::view::shell::settings::card_key(idx))
-                    .map_or(0, |r| r.width as u32)
-                    .max(1);
-                let out = crate::widgets::render_spec_no_autofocus(
-                    &spec,
-                    crate::view::shell::widgets::no_state(),
-                    "",
-                    w,
-                );
-                crate::widgets::WidgetTextClickGeometry::from_render_output(&out, 0)
-                    .map(|g| g.value_byte_in_cell(hit.byte_start, col))
-            }),
+            SettingsHit::ControlText(_) => {
+                byte.and_then(|b| crate::widgets::value_byte_from_hit(hit, b))
+            }
             _ => None,
         };
 
@@ -1438,22 +1419,22 @@ impl Editor {
             UiFact::WidgetHit {
                 slot,
                 hit,
+                byte,
                 at,
                 clicks,
             } => {
-                // **The byte the press landed on, which the fact has carried
-                // all along.** `at` is the column inside the hit's own piece
-                // and `byte_start` is where that piece begins in the entry's
-                // rendered row, so their sum is the entry byte
-                // `reposition_widget_text_cursor_from_click` subtracts
-                // `byte_start` back off. Every arm below used to pass `None`,
-                // which made `fx.place_caret` unreachable for a described
-                // panel: clicking into a Search & Replace field focused it and
-                // left the caret wherever it was. The painter this replaces
-                // resolved the same byte by comparing the screen column
-                // against geometry it had stamped; the piece the gesture sits
-                // on *is* that geometry.
-                let clicked_byte = at.map(|c| hit.byte_start.saturating_add(c as usize));
+                // **The byte the press landed on.** `byte` is the offset
+                // inside the hit's own piece and `byte_start` is where that
+                // piece begins in the entry's rendered row, so their sum is
+                // the entry byte `reposition_widget_text_cursor_from_click`
+                // subtracts `byte_start` back off.
+                //
+                // This used to add a *column* to `byte_start` — the two agree
+                // only while every character is one byte and one cell, so
+                // clicking into a field with a localized label or a non-ASCII
+                // value put the caret in the wrong place. The library reports
+                // the byte now, from the shaping that drew the row.
+                let clicked_byte = byte.map(|b| hit.byte_start.saturating_add(b));
                 let slot = match slot {
                     crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
@@ -1461,13 +1442,13 @@ impl Editor {
                     // are settings actions rather than a plugin's
                     // `widget_event`.
                     crate::view::shell::widgets::Slot::Settings => {
-                        self.settings_widget_hit(&hit, at, clicks);
+                        self.settings_widget_hit(&hit, byte, clicks);
                         return;
                     }
                     // The same, one surface in: an entry dialog's fields are
                     // its own, not the page's.
                     crate::view::shell::widgets::Slot::SettingsEntry => {
-                        self.settings_entry_widget_hit(&hit, at, clicks);
+                        self.settings_entry_widget_hit(&hit, byte, at, clicks);
                         return;
                     }
                     // A panel mounted into a pane's buffer. It is a plugin
