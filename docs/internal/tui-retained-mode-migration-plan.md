@@ -274,22 +274,59 @@ builder is `'static`, so the pane's rows must be answerable from behind an
 `Rc` during layout, without `&mut Editor` — and the view pipeline that
 produces a row today wants exactly that borrow.
 
-**Lifts it:**
+**The seam now exists: `view::shell::content`.** The choice among the three
+candidate shapes resolved to the first — a pre-frame snapshot — because the
+circularity that seemed to rule it out is already solved twice in this
+codebase. `Ui::layout_only` exists so a host can lay out a description it has
+just built and read rectangles back off it ("a host that needs a rectangle
+out of a description it has just built … needs the build and the layout"),
+and `SplitManager::get_leaves_with_rects` already lays the *same* grid
+description out in a scratch `Ui` to answer where the panes are. A pane's
+exact content height is therefore knowable before the frame that shows it,
+with no second geometry and nothing stale.
 
-1. Get one pane's visible rows answerable from behind an `Rc` during layout
-   — the whole of what is left. The candidates are a pre-frame snapshot of
-   the window's rows, interior mutability over the pipeline's caches, or a
-   new host-build callback in `fresh-ui` symmetric with `Draw::Host` that
-   hands the host `&mut` at build time.
-2. Prototype it on one read-only pane and assert the item count is equal for
-   a 5 KB and a 5 MB file.
-3. Only then port the row *content* (runs, themes, caret).
+What landed:
 
-Note the tension with §2a, and it is the sharp edge of choice 1: a pre-frame
-snapshot needs the window before layout has produced it, which is the
-circularity this blocker is about; interior mutability keeps the laziness
-but has to be reentrancy-safe, because `layout_reader`'s builder "may run
-more than once per frame".
+- `Row` — one visual row as `Vec<Run>`. A row, not a line: a soft-wrapped
+  source line is several, which is what keeps the unit uniform at one cell
+  and so indexable, and it is the unit `WrapIndex` already counts in.
+- `Content` — `Rc<[Row]>`, because the builder that reads it is `'static`
+  and may run more than once per layout pass.
+- `content(c)` — a `layout_reader` emitting one `text_runs` node per row the
+  box actually has room for.
+- `runs_of` / `ink_of` — `Vec<Span>` → `Vec<Run>` through the `Ink` grammar
+  the chrome already writes its theme names in.
+
+**The style stack does not move.** The editor's row renderer already produces
+`Vec<Span>`; a row crossing into the tree keeps the colours the painter gave
+it rather than being re-derived from a lookup that would have to reproduce
+the whole overlay stack to agree with it. What moves is where a row *is*.
+
+**The reader clips to the height layout grants**, rather than placing every
+row it was handed. A disagreement between the editor's idea of a pane's
+height and layout's degrades to a short pane instead of rows painted through
+their box: the supply is a superset to draw from, not an instruction. It is
+also why an over-prepared supply costs memory but not nodes — the builder
+slices, so node count is a function of the rows shown even when the supply
+is long.
+
+Six tests, `a_pane_costs_its_rows_not_its_document` among them: ten rows of a
+hundred-thousand-row supply produce the same display list as ten rows of a
+ten-row one.
+
+**What is left of Blocker A:**
+
+1. Fill the supply from the real pipeline — call the existing row renderer
+   for the window `layout_only` reported and collect its spans.
+2. Mount it in `PaneSlots::content` behind a flag, and compare cell-for-cell
+   against the painter over the e2e corpus.
+3. The end-to-end form of the invariant: a 5 KB and a 5 MB file in the same
+   pane, same item count. The unit test pins the supply→list half; only the
+   whole path can pin the prepare half.
+
+Note the remaining tension with §2a: step 1 must prepare rows for the window
+and no more. The seam permits over-preparation without paying for it in
+nodes, which makes it tempting; the buffer model is what makes it wrong.
 
 ### Blocker B — text in the tree is mispainted, and its cost is unknown
 
@@ -349,8 +386,9 @@ retired by describing a surface.
 ### Order
 
 A is the critical path and 1→2→3 is serial, though it is a shorter path than
-it looked: the library half is verified done, and only the row supply is
-left. B runs alongside it, and its
+it looked: the library half is verified done, the seam is built
+(`view::shell::content`), and what is left is filling it from the real
+pipeline and mounting it. B runs alongside it, and its
 last item cannot be decided until the bench produces numbers. C, D and E are
 independent of A, of B, and of each other.
 
