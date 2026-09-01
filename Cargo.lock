@@ -1592,6 +1592,7 @@ version = "0.4.10"
 dependencies = [
  "crossterm",
  "proptest",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

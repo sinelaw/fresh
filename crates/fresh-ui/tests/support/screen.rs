@@ -6,15 +6,22 @@
 //! print. A real terminal backend does the same fold into cells with colours.
 
 use fresh_ui::desc::Scrim;
+use fresh_ui::glyph::glyphs_in;
 use fresh_ui::render::geom::Rect;
 use fresh_ui::render::spec::{Draw, Item, LayoutSpec};
 
-/// A character grid.
+/// A grid of cells, each holding the symbol painted into it.
+///
+/// A symbol is a grapheme cluster — one `char` for most text, a base and its
+/// marks for a composed one — and a wide cluster occupies its first cell and
+/// leaves the cells after it *empty* (`""`), which is how `line` comes out the
+/// right length in columns and how a test can tell a continuation cell from a
+/// blank one. See `fresh_ui::glyph` for the policy.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Screen {
     pub w: u16,
     pub h: u16,
-    cells: Vec<char>,
+    cells: Vec<String>,
 }
 
 impl Screen {
@@ -22,26 +29,71 @@ impl Screen {
         Screen {
             w,
             h,
-            cells: vec![' '; w as usize * h as usize],
+            cells: vec![" ".to_string(); w as usize * h as usize],
         }
     }
 
     fn put(&mut self, x: i32, y: i32, c: char, clip: Rect) {
+        let mut b = [0u8; 4];
+        self.put_symbol(x, y, c.encode_utf8(&mut b), 1, clip);
+    }
+
+    /// Paint `sym` at `(x, y)` and blank the `w - 1` continuation cells after
+    /// it. The caller has already clipped the columns (`glyph::glyphs_in`).
+    fn put_symbol(&mut self, x: i32, y: i32, sym: &str, w: u16, clip: Rect) {
         if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 {
             return;
         }
         if !clip.contains(fresh_ui::render::geom::Point::new(x, y)) {
             return;
         }
-        self.cells[y as usize * self.w as usize + x as usize] = c;
+        let row = y as usize * self.w as usize;
+        let end = row + self.w as usize;
+        let i = row + x as usize;
+        // Painting over the continuation of a wide glyph cuts that glyph in
+        // half; what is left of it shows as a blank, as it would on a
+        // terminal that cannot draw half of `你`.
+        if self.cells[i].is_empty() {
+            let mut j = i;
+            while j > row && self.cells[j].is_empty() {
+                j -= 1;
+            }
+            self.cells[j] = " ".to_string();
+        }
+        self.cells[i] = sym.to_string();
+        for k in 1..w as usize {
+            if i + k < end {
+                self.cells[i + k].clear();
+            }
+        }
+        // And a narrower glyph over the head of a wide one orphans the wide
+        // one's continuation cells, which then belong to nothing.
+        let mut j = i + w as usize;
+        while j < end && self.cells[j].is_empty() {
+            self.cells[j] = " ".to_string();
+            j += 1;
+        }
     }
 
+    /// The symbol in a cell: `" "` when blank, `""` when the cell is the
+    /// continuation of a wide glyph to its left.
+    pub fn symbol(&self, x: u16, y: u16) -> &str {
+        &self.cells[y as usize * self.w as usize + x as usize]
+    }
+
+    /// The first `char` of the cell's symbol; a blank for a continuation
+    /// cell, which shows nothing of its own.
     pub fn at(&self, x: u16, y: u16) -> char {
-        self.cells[y as usize * self.w as usize + x as usize]
+        self.symbol(x, y).chars().next().unwrap_or(' ')
+    }
+
+    /// Whether the cell is the second (or later) column of a wide glyph.
+    pub fn is_continuation(&self, x: u16, y: u16) -> bool {
+        self.symbol(x, y).is_empty()
     }
 
     pub fn line(&self, y: u16) -> String {
-        (0..self.w).map(|x| self.at(x, y)).collect()
+        (0..self.w).map(|x| self.symbol(x, y)).collect()
     }
 
     /// Every row, trailing blanks trimmed, one per line.
@@ -108,8 +160,12 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
             let clip = clip.intersect(r);
             for (i, line) in lines.iter().enumerate() {
                 let y = r.y + i as i32;
-                for (j, ch) in line.chars().enumerate() {
-                    s.put(r.x + j as i32, y, ch, clip);
+                // By display width, not by char: the library says which
+                // columns each cluster takes (`glyph`), and a backend that
+                // stepped one cell per char would paint `你好` into two cells
+                // of the four layout reserved.
+                for g in glyphs_in(line, r.x, clip.x, clip.right()) {
+                    s.put_symbol(g.x, y, g.text, g.width, clip);
                 }
             }
         }

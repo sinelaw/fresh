@@ -905,7 +905,7 @@ const ELLIPSIS: &str = "…";
 /// a fragment mid-glyph. Fragments are walked whole and only the one straddling
 /// the boundary is split, so a styled run keeps its pieces' colours.
 fn elide_row(row: &[Frag], w: u16, mode: crate::desc::Elide) -> Vec<Frag> {
-    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    use unicode_width::UnicodeWidthStr;
     let total: usize = row.iter().map(|f| UnicodeWidthStr::width(&*f.text)).sum();
     if mode == crate::desc::Elide::None || total <= w as usize {
         return row.to_vec();
@@ -923,24 +923,29 @@ fn elide_row(row: &[Frag], w: u16, mode: crate::desc::Elide) -> Vec<Frag> {
 
     // `take` walks a fragment in one direction and returns the piece that fits
     // in `left` cells, along with what it consumed.
+    //
+    // Walked by grapheme cluster, so a cut never separates a mark from its
+    // base or splits an emoji sequence — the units the painter advances by
+    // (`glyph`) are the units the cut is made in.
     let take = |f: &Frag, left: usize, from_end: bool| -> (String, usize) {
-        let mut chars: Vec<char> = f.text.chars().collect();
+        use unicode_segmentation::UnicodeSegmentation;
+        let mut parts: Vec<&str> = f.text.graphemes(true).collect();
         if from_end {
-            chars.reverse();
+            parts.reverse();
         }
-        let (mut used, mut out) = (0usize, String::new());
-        for c in chars {
-            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        let (mut used, mut kept) = (0usize, Vec::new());
+        for part in parts {
+            let cw = UnicodeWidthStr::width(part);
             if used + cw > left {
                 break;
             }
             used += cw;
-            out.push(c);
+            kept.push(part);
         }
         if from_end {
-            out = out.chars().rev().collect();
+            kept.reverse();
         }
-        (out, used)
+        (kept.concat(), used)
     };
 
     let mut kept: Vec<Frag> = Vec::new();
@@ -1008,6 +1013,17 @@ pub struct TextRender {
     /// Rather than depend on every path remembering to re-measure, the cache
     /// says whether it is still true, and paint re-shapes when it is not.
     pub(crate) stale: bool,
+    /// The pieces [`Self::shaped`] was shaped from, when it was shaped
+    /// unwrapped — `None` after a wrapped shaping, whose rows depend on a
+    /// width as well.
+    ///
+    /// An unwrapped shaping is a function of the pieces alone, so a measure
+    /// that finds the same pieces keeps it rather than joining and re-cutting
+    /// them. The editor rebuilds its tree every frame with fresh `Rc`s around
+    /// unchanged text, so this compares content when the pointers differ:
+    /// a walk over the bytes, against a shaping that allocates per row and
+    /// per fragment.
+    shaped_from: Option<Rc<[crate::desc::Run]>>,
 }
 
 impl TextRender {
@@ -1016,31 +1032,72 @@ impl TextRender {
             props,
             shaped: Shaping::default(),
             stale: false,
+            shaped_from: None,
+        }
+    }
+
+    /// Whether [`Self::shaped`] is the unwrapped shaping of the pieces held
+    /// now.
+    fn shaped_unwrapped_from_props(&self) -> bool {
+        match &self.shaped_from {
+            Some(from) => Rc::ptr_eq(from, &self.props.runs) || **from == *self.props.runs,
+            None => false,
         }
     }
 }
 
+/// The extent of `runs` laid out unwrapped: the widest line in cells, and how
+/// many lines there are.
+///
+/// Measured from the pieces, without joining them (plan §2.5). A `\n` inside a
+/// piece ends a line, and a line's width is the sum of the widths of the
+/// pieces of it — which is also how paint places them, one item per fragment,
+/// so a cluster a piece boundary happens to split measures and paints the
+/// same (see [`glyph`](crate::render::glyph) for what that does to it).
+pub fn unwrapped_extent(runs: &[crate::desc::Run]) -> (u16, usize) {
+    let mut widest = 0usize;
+    let mut cur = 0usize;
+    let mut lines = 1usize;
+    for r in runs {
+        let mut parts = r.text.split('\n');
+        cur += crate::render::glyph::width(parts.next().unwrap_or("")) as usize;
+        for part in parts {
+            widest = widest.max(cur);
+            cur = crate::render::glyph::width(part) as usize;
+            lines += 1;
+        }
+    }
+    (widest.max(cur).min(u16::MAX as usize) as u16, lines)
+}
+
 impl RenderObject for TextRender {
     fn layout(&mut self, c: Constraints, _cx: &mut dyn LayoutCx) -> Size {
-        use unicode_width::UnicodeWidthStr;
-        // Measured as one string, whatever it is made of: the pieces are one
-        // logical run, so styling never changes where the text breaks.
-        let whole = self.props.plain();
-        let natural = UnicodeWidthStr::width(whole.as_str()) as u16;
+        // Measured from the pieces, never by joining them into a string of
+        // their own (plan §2.5): the natural width is a sum of piece widths,
+        // and shaping — which does join, because a wrap point may fall inside
+        // a piece and the byte mapping indexes the joined string — happens
+        // once per distinct content rather than once per measure.
+        let (natural, _) = unwrapped_extent(&self.props.runs);
         if self.props.wrap != Wrap::None {
             let w = if c.min_w > 0 {
                 c.max_w
             } else {
                 c.max_w.min(natural.max(1))
             };
+            // The pieces are one logical run, so styling never changes where
+            // the text breaks: `shape_runs` wraps them as one string.
             self.shaped = shape_runs(&self.props.runs, w, self.props.wrap);
+            self.shaped_from = None;
             self.stale = false;
             c.constrain(Size::new(
                 w,
                 self.shaped.rows.len().min(u16::MAX as usize) as u16,
             ))
         } else {
-            self.shaped = shape_runs(&self.props.runs, 0, Wrap::None);
+            if !self.shaped_unwrapped_from_props() {
+                self.shaped = shape_runs(&self.props.runs, 0, Wrap::None);
+                self.shaped_from = Some(self.props.runs.clone());
+            }
             self.stale = false;
             c.constrain(Size::new(natural, self.shaped.rows.len().max(1) as u16))
         }
@@ -1098,11 +1155,13 @@ impl RenderObject for TextRender {
                 .collect();
             out.push(Draw::Lines(lines), g);
         } else {
-            use unicode_width::UnicodeWidthStr;
             for (i, row) in rows.iter().enumerate() {
                 let mut x = g.rect.x;
                 for frag in row {
-                    let w = UnicodeWidthStr::width(&*frag.text) as u16;
+                    // Display cells, as layout measured and as every backend
+                    // advances (`glyph`), so the next fragment starts where
+                    // this one's last cluster ends.
+                    let w = crate::render::glyph::width(&frag.text);
                     if w == 0 {
                         continue;
                     }
@@ -1708,6 +1767,176 @@ impl RenderObject for ReaderRender {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod measure_tests {
+    //! How a `TextRun` measures (plan §2.5): from its pieces, not from a
+    //! string joined out of them, and shaping the unwrapped case once per
+    //! distinct content rather than once per measure.
+
+    use std::rc::Rc;
+
+    use super::{unwrapped_extent, TextRender};
+    use crate::desc::{Elide, Run, TextProps, Wrap};
+    use crate::render::geom::{Constraints, Point, Size};
+    use crate::render::object::{LayoutCx, LayoutInfo, RenderId, RenderObject, ScrollInfo};
+
+    /// A leaf has no children and asks its context for nothing, so this is
+    /// the least a `LayoutCx` can be.
+    struct Leaf;
+
+    impl LayoutCx for Leaf {
+        fn children(&self) -> Vec<RenderId> {
+            Vec::new()
+        }
+        fn sizing(&self, _: RenderId) -> (crate::desc::Sizing, crate::desc::Sizing) {
+            unreachable!("a text run has no children")
+        }
+        fn measure(&mut self, _: RenderId, _: Constraints) -> Size {
+            unreachable!("a text run has no children")
+        }
+        fn place(&mut self, _: RenderId, _: Point) {
+            unreachable!("a text run has no children")
+        }
+        fn enclosing_window(&self, info: LayoutInfo) -> LayoutInfo {
+            info
+        }
+        fn scroll(&self) -> Point {
+            Point::new(0, 0)
+        }
+        fn set_offset(&mut self, _: Point) {}
+        fn set_scroll(&mut self, _: ScrollInfo) {}
+        fn rebuild(&mut self, _: LayoutInfo) {}
+        fn element(&self) -> crate::element::ElementId {
+            unreachable!("nothing here reads the element")
+        }
+    }
+
+    fn props(runs: Vec<Run>, wrap: Wrap) -> TextProps {
+        TextProps {
+            runs: Rc::from(runs),
+            wrap,
+            elide: Elide::None,
+            cursor: None,
+        }
+    }
+
+    fn loose() -> Constraints {
+        Constraints {
+            min_w: 0,
+            max_w: 80,
+            min_h: 0,
+            max_h: 20,
+        }
+    }
+
+    #[test]
+    fn the_unwrapped_extent_is_the_widest_line_by_display_width() {
+        assert_eq!(unwrapped_extent(&[Run::plain("fn")]), (2, 1));
+        assert_eq!(unwrapped_extent(&[Run::plain("你好")]), (4, 1));
+        // Pieces sum; a piece boundary is not a column.
+        assert_eq!(
+            unwrapped_extent(&[Run::themed("你好", "kw"), Run::plain("fn")]),
+            (6, 1)
+        );
+        // Lines end inside a piece, and across pieces the line continues.
+        assert_eq!(unwrapped_extent(&[Run::plain("ab\ncdef\nx")]), (4, 3));
+        assert_eq!(
+            unwrapped_extent(&[Run::plain("ab"), Run::plain("cd\ne")]),
+            (4, 2)
+        );
+        assert_eq!(unwrapped_extent(&[]), (0, 1));
+        assert_eq!(unwrapped_extent(&[Run::plain("")]), (0, 1));
+        // A combining mark is not a column; an emoji sequence is two.
+        assert_eq!(unwrapped_extent(&[Run::plain("e\u{301}")]), (1, 1));
+        assert_eq!(
+            unwrapped_extent(&[Run::plain("👨\u{200d}👩\u{200d}👧")]),
+            (2, 1)
+        );
+    }
+
+    /// The width and height an unwrapped run reports are the extent of its
+    /// pieces, and a multi-line run is as wide as its widest line — not the
+    /// sum of them, which is what measuring the joined string used to say.
+    #[test]
+    fn an_unwrapped_run_measures_its_widest_line() {
+        let mut t = TextRender::new(props(vec![Run::plain("你好\nab")], Wrap::None));
+        assert_eq!(t.layout(loose(), &mut Leaf), Size::new(4, 2));
+    }
+
+    /// Equal content in a fresh `Rc` — what the editor hands a live object
+    /// every frame — keeps the shaping it has instead of joining and cutting
+    /// again. Changed content does not.
+    #[test]
+    fn an_unwrapped_measure_reshapes_only_when_the_pieces_change() {
+        let first: Rc<[Run]> = Rc::from(vec![Run::themed("你好", "kw"), Run::plain(" fn")]);
+        let mut t = TextRender::new(TextProps {
+            runs: first.clone(),
+            wrap: Wrap::None,
+            elide: Elide::None,
+            cursor: None,
+        });
+        assert_eq!(t.layout(loose(), &mut Leaf), Size::new(7, 1));
+        assert!(t
+            .shaped_from
+            .as_ref()
+            .is_some_and(|f| Rc::ptr_eq(f, &first)));
+
+        // Same pieces, new allocation.
+        t.props.runs = Rc::from(vec![Run::themed("你好", "kw"), Run::plain(" fn")]);
+        t.stale = true;
+        assert_eq!(t.layout(loose(), &mut Leaf), Size::new(7, 1));
+        assert!(
+            t.shaped_from
+                .as_ref()
+                .is_some_and(|f| Rc::ptr_eq(f, &first)),
+            "unchanged pieces were shaped again"
+        );
+        assert!(!t.stale);
+
+        // A different theme on the same text is a different shaping: the
+        // fragments carry the theme.
+        let third: Rc<[Run]> = Rc::from(vec![Run::themed("你好", "id"), Run::plain(" fn")]);
+        t.props.runs = third.clone();
+        assert_eq!(t.layout(loose(), &mut Leaf), Size::new(7, 1));
+        assert!(t
+            .shaped_from
+            .as_ref()
+            .is_some_and(|f| Rc::ptr_eq(f, &third)));
+        assert_eq!(t.shaped.frags[0][0].theme, third[0].theme);
+
+        // Different text: reshaped, and the rows say so.
+        t.props.runs = Rc::from(vec![Run::plain("a\nb")]);
+        assert_eq!(t.layout(loose(), &mut Leaf), Size::new(1, 2));
+        assert_eq!(t.shaped.rows.len(), 2);
+    }
+
+    /// A wrapped shaping depends on the width too, so it is never kept
+    /// across a measure — and switching an object from wrapped to unwrapped
+    /// with the same pieces must not reuse the wrapped rows.
+    #[test]
+    fn a_wrapped_shaping_is_not_kept_for_an_unwrapped_measure() {
+        let runs: Rc<[Run]> = Rc::from(vec![Run::plain("one two three")]);
+        let mut t = TextRender::new(TextProps {
+            runs: runs.clone(),
+            wrap: Wrap::Word,
+            elide: Elide::None,
+            cursor: None,
+        });
+        let narrow = Constraints {
+            min_w: 0,
+            max_w: 5,
+            min_h: 0,
+            max_h: 20,
+        };
+        assert_eq!(t.layout(narrow, &mut Leaf), Size::new(5, 3));
+        assert!(t.shaped_from.is_none());
+
+        t.props.wrap = Wrap::None;
+        assert_eq!(t.layout(loose(), &mut Leaf), Size::new(13, 1));
+        assert_eq!(t.shaped.rows.len(), 1);
     }
 }
 

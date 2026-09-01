@@ -25,6 +25,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
+use fresh_ui::glyph::glyphs_in;
 use fresh_ui::{BorderStyle, Draw, LayoutSpec, Scrim, ThemeKey};
 
 use super::frame::HostTarget;
@@ -254,10 +255,17 @@ pub fn fold_band(
                 let clip = intersect(clip, rect);
                 for (i, line) in lines.iter().enumerate() {
                     let y = rect.y.saturating_add(i as u16);
-                    let mut x = rect.x;
-                    for ch in line.chars() {
-                        put(buf, x, y, ch, style, clip);
-                        x = x.saturating_add(1);
+                    // By display width, not by char — the library's policy
+                    // (`fresh_ui::glyph`): a wide glyph keeps both cells
+                    // layout measured for it, a mark rides in its base's
+                    // cell, and a glyph the clip would halve is a blank.
+                    for g in glyphs_in(
+                        line,
+                        i32::from(rect.x),
+                        i32::from(clip.x),
+                        i32::from(clip.x.saturating_add(clip.width)),
+                    ) {
+                        put_symbol(buf, g.x as u16, y, g.text, g.width, style, clip);
                     }
                 }
             }
@@ -423,12 +431,35 @@ fn contains(r: Rect, x: u16, y: u16) -> bool {
 }
 
 fn put(buf: &mut Buffer, x: u16, y: u16, ch: char, style: Style, clip: Rect) {
+    let mut b = [0u8; 4];
+    put_symbol(buf, x, y, ch.encode_utf8(&mut b), 1, style, clip);
+}
+
+/// Paint one grapheme cluster at `(x, y)`, and blank the `w - 1` cells after
+/// it that a wide glyph spills into.
+///
+/// `Cell::set_symbol` writes one cell and leaves the next alone, and ratatui
+/// then skips that next cell when it draws, because the wide glyph before it
+/// covers it — so whatever was in it stays *in the buffer*, and the moment
+/// something narrow is painted over the glyph, the stale cell is back on
+/// screen. Blanking it here is what `Buffer::set_stringn` does for the same
+/// reason.
+fn put_symbol(buf: &mut Buffer, x: u16, y: u16, sym: &str, w: u16, style: Style, clip: Rect) {
     if !contains(clip, x, y) || !contains(buf.area, x, y) {
         return;
     }
     let cell = &mut buf[(x, y)];
-    cell.set_char(ch);
+    cell.set_symbol(sym);
     cell.set_style(style);
+    for k in 1..w {
+        let cx = x.saturating_add(k);
+        if !contains(clip, cx, y) || !contains(buf.area, cx, y) {
+            break;
+        }
+        let cell = &mut buf[(cx, y)];
+        cell.set_symbol(" ");
+        cell.set_style(style);
+    }
 }
 
 fn fill(buf: &mut Buffer, r: Rect, ch: char, style: Style, clip: Rect) {
@@ -712,6 +743,85 @@ mod tests {
         let _ = fold(spec, &mut buf, &plain, &mut host_state);
 
         assert!(host_state.painted > 0);
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    //! Display-width painting (plan §2.1, Stage 0.1): the fold advances by
+    //! what layout measured, and a wide glyph's continuation cell is blank.
+
+    use super::*;
+    use fresh_ui::{row, text, text_runs, Node, Run, Size, Sizing, Ui};
+
+    fn fold_into(root: Node<()>, w: u16) -> Buffer {
+        let mut ui: Ui<()> = Ui::new();
+        let spec = ui.frame(root, Size::new(w, 1)).clone();
+        // Pre-filled with a marker, so a cell the fold did not write is
+        // visible as one — a continuation cell that was merely skipped
+        // would still read `~`.
+        let mut buf = Buffer::filled(Rect::new(0, 0, w, 1), ratatui::buffer::Cell::new("~"));
+        struct NoHosts;
+        impl HostPainter for NoHosts {
+            fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {
+                unreachable!("no hosts in these trees")
+            }
+        }
+        fn plain(_: &ThemeKey) -> Style {
+            Style::default()
+        }
+        fold(&spec, &mut buf, &plain, &mut NoHosts);
+        buf
+    }
+
+    fn symbols(buf: &Buffer) -> Vec<&str> {
+        (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
+    /// `text("你好")` occupies exactly its four columns: the glyphs in the
+    /// first and third, blanks — written, not skipped — in the second and
+    /// fourth, and the sibling in the fifth.
+    #[test]
+    fn a_wide_glyph_takes_two_cells_and_blanks_its_continuation() {
+        let buf = fold_into(row().children([text("你好"), text("!")]), 6);
+        assert_eq!(symbols(&buf), ["你", " ", "好", " ", "!", "~"]);
+    }
+
+    /// The next run starts where the last one's glyphs end: a CJK identifier
+    /// then a keyword, and the keyword is at column four.
+    #[test]
+    fn the_next_run_starts_after_the_wide_glyphs() {
+        let buf = fold_into(
+            text_runs([
+                Run::themed("你好", "identifier"),
+                Run::themed("fn", "keyword"),
+            ]),
+            8,
+        );
+        assert_eq!(symbols(&buf), ["你", " ", "好", " ", "f", "n", "~", "~"]);
+    }
+
+    /// A combining mark is painted into its base's cell and takes no column
+    /// of its own; an emoji sequence is one two-cell symbol.
+    #[test]
+    fn marks_ride_in_their_base_cell_and_emoji_sequences_are_one_symbol() {
+        let buf = fold_into(row().children([text("e\u{301}x"), text("|")]), 4);
+        assert_eq!(symbols(&buf), ["e\u{301}", "x", "|", "~"]);
+
+        let family = "👨\u{200d}👩\u{200d}👧";
+        let buf = fold_into(row().children([text(family), text("|")]), 4);
+        assert_eq!(symbols(&buf), [family, " ", "|", "~"]);
+    }
+
+    /// A wide glyph the clip would halve is a blank in its visible column,
+    /// and its hidden column is never touched.
+    #[test]
+    fn a_wide_glyph_at_the_clip_edge_is_a_blank() {
+        let buf = fold_into(
+            row().children([text("你好").w(Sizing::Cells(3)), text("|")]),
+            5,
+        );
+        assert_eq!(symbols(&buf), ["你", " ", " ", "|", "~"]);
     }
 }
 

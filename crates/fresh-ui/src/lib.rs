@@ -60,6 +60,7 @@ pub use focus::{
 pub use hit::Dispatch;
 pub use key::{Key, KeyPath};
 pub use render::geom::{distribute, Constraints, Point, Rect, Size};
+pub use render::glyph;
 pub use render::object::{
     Band, FocusReg, Geom, Hit, HostLeaf, LayerGeom, LayoutCx, LayoutInfo, PlainHost, RenderId,
     RenderObject, ScrollInfo,
