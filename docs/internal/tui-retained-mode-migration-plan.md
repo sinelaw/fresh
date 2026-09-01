@@ -1,50 +1,51 @@
 # Migrating the editor TUI to retained mode on `fresh-ui`
 
-**Status:** plan. Written from the code on
-`claude/fresh-editor-fresh-ui-migration-glu9af` @ `2451eb9`, then re-verified
-against `master` @ `8a22e12` after that branch was squash-merged. Every fact
-in §1 was re-checked at that point and held, bar one noted at §1.5.
-**Objective:** the terminal UI is one retained tree. One description, one
-layout, one paint, one hit-test, one source of geometry.
+**Status:** plan, second revision. First written from
+`claude/fresh-editor-fresh-ui-migration-glu9af` @ `2451eb9`, re-verified
+against `master` @ `8a22e12` after the squash-merge, then rewritten after a
+review of the first increment (`view::shell::content`) against three
+criteria: architectural robustness, performance, and alignment with the
+style of `fresh-ui` itself. Where this revision reverses the first, it says
+so and why.
 
-This plan was written by reading the code, not the prior docs. Where it
-states a fact about the tree today, that fact was checked against the
-source or against a test that was run; the places where it could not be
-checked are marked **unverified**. Comments in the tree are not treated as
+**Objective:** the terminal UI is one retained tree. One description, one
+layout, one paint, one hit-test, one source of geometry — and the buffer
+model that makes large files editable is a constraint on that tree, not a
+casualty of it.
+
+This plan was written by reading the code, not the prior docs. Facts about
+the tree today were checked against source or against a test that was run;
+what could not be checked is marked **unverified**. Comments are not
 evidence — several are stale (`view::shell::widgets`'s header describes a
 `covered()` gate that no longer exists; `frame::HostRegion::Body`'s says the
-body "never migrates", which is a decision this plan reopens rather than a
-fact).
+body "never migrates", which is a decision this plan reopens).
 
 ---
 
 ## 1. Where the TUI actually is
 
-The migration is much further along than "start here". The *frame* is
-already a retained tree; what is left is concentrated in the editing
-surface and in a scaffold that exists only to let painters and the tree
-coexist.
+The frame is already a retained tree. What is left is concentrated in the
+editing surface and in a scaffold that exists only to let painters and the
+tree coexist.
 
 ### 1.1 What the tree already owns
 
 `Editor::render` builds one `fresh_ui::Node` (`view::shell::frame::frame_tree`)
-and lays it out once. Every region's rectangle comes from that layout.
-Natively described — the tree paints them, no `Draw::Host` is emitted:
+and lays it out once; every region's rectangle comes from that layout.
+Natively described — no `Draw::Host` emitted:
 
-- menu bar and its dropdown chain, status bar, search-options row
+- menu bar and dropdown chain, status bar, search-options row
 - the file explorer sidebar, the dock column (whenever a panel is mounted)
 - every overlay layer: popups, the prompt's suggestion list, context menus,
   settings, the keybinding editor, the trust prompt, the calibration wizard,
   the event-debug dialog, the theme inspector, the floating panel's frame
 - plugin panel *interiors*: `view::shell::widgets` has an arm for every
-  `WidgetSpec` variant but `WindowEmbed`, built as nodes rather than routed
-  through the old collector
+  `WidgetSpec` variant but `WindowEmbed`
 
-Input is already single-walk. `handle_mouse_impl` offers the pointer to
+Input is already single-walk: `handle_mouse_impl` offers the pointer to
 `shell_dispatch` first and only falls to the legacy walk when the tree
 declines; `Editor::handle_key` does the same and, when the tree owns the
-keyboard, refuses to fall through at all. `app::chrome` no longer memoises
-a box tree or dispatches through one — it derives the layer stack and
+keyboard, refuses to fall through. `app::chrome` derives the layer stack and
 nothing else.
 
 ### 1.2 What is still a `Host` leaf
@@ -54,50 +55,62 @@ nothing else.
 
 | Target | Painter | Notes |
 |---|---|---|
-| `Region(Body)` | `BodyPainter::body` | Separators and the panes' shared preamble only |
+| `Region(Body)` | `BodyPainter::body` | Separators and the panes' shared preamble |
 | `Region(PromptLine)` | `Editor::render_prompt_line` | One row, via `StatusBarRenderer::render_prompt` |
 | `Pane(LeafId)` | `BodyPainter::pane` → `split_rendering::paint_leaf` | Gutter, text, tabs, scrollbars, terminals |
 | `Embed(u32)` | `Editor::render_session_preview_into_rect` | An editor window inside a plugin panel |
 
-(`Card(CardRegion)` also resolves, but paints nothing — the bands exist so
-`render_overlay_prompt` and the read-backs share one set of rectangles.)
+(`Card(CardRegion)` resolves but paints nothing; the bands exist so
+`render_overlay_prompt` and the read-backs share rectangles.)
 
 ### 1.3 What still paints outside the tree
 
 `Editor::render` folds the display list in **two bands** — `Band::Background`
-before the legacy painters and `Band::Overlay` after — with these still
-running in between:
+(`render.rs:899`) before the legacy painters and `Band::Overlay`
+(`render.rs:1341`) after — with these running in between:
 
 - `render_terminal_splits` (live PTY grids)
 - `render_overlay_prompt` (~630 lines; 14 of the 26 remaining
   `frame.render_widget` calls in the crate)
-- `render_floating_widget_panel` (dimming, the dock's divider, embeds)
+- `render_floating_widget_panel` (dimming, the dock divider, embeds)
 - `render_split_widget_panel_scrollbars`, `rerender_widget_panel`
 - `render_hover_highlights`, `render_tab_drop_zone`
-- `render_modal_overlays` → `view::settings::render_settings` (the settings
-  box's `Clear`, ground and border — 4 `render_widget` calls)
-- `FileBrowserRenderer::render` (the open dialog's interior; the tree owns
-  its box)
+- `render_modal_overlays` → `view::settings::render_settings`
+- `FileBrowserRenderer::render` (the open dialog's interior)
 - the dormant / preparing / placeholder shell pages
 - the software cursor pass
 
 ### 1.4 The geometry that is still recorded
 
-`app::types::layout::ChromeLayout` is the ledger of "a painter measured
-this and filed it for a handler to compare against". Still populated:
-
+`app::types::layout::ChromeLayout` is the ledger of "a painter measured this
+and filed it for a handler to compare against". Still populated:
 `popup_areas`, `global_popup_areas`, `suggestions_area`,
 `suggestions_outer_area`, `prompt_toolbar_boxes`, `prompt_results_area`,
 `prompt_preview_area`, `cell_theme_map`, `split_areas`,
 `horizontal_scrollbar_areas`, `separator_areas`, `tab_layouts`,
 `view_line_mappings`.
 
-Of these, `view_line_mappings` is not chrome geometry — it is the byte↔visual
-projection of the text pipeline and survives the migration. Everything else
-is a second derivation of something layout already knows, and each one is a
-place the two can drift.
+`view_line_mappings` is not chrome geometry — it is the byte↔visual
+projection of the text pipeline and survives. Everything else is a second
+derivation of something layout already knows.
 
-### 1.5 Code volume
+### 1.5 Geometry is computed more than once per frame — and already three ways
+
+This is the fact the first revision under-weighted. Today:
+
+1. `Editor::render` lays out the shell tree (`Ui::frame`).
+2. `SplitManager::get_leaves_with_rects` (`view/split.rs:951`) lays the
+   *same* grid description out again in a scratch `Ui<()>` to answer where
+   the panes are, and `compute_content_layout` calls it
+   (`orchestration/mod.rs:943`).
+3. The macro-replay path (`render.rs:6933`) does a *third*: builds the shell,
+   `Ui::layout_only`, reads `regions_of`, then runs `compute_content_layout`
+   — which calls (2) again inside it.
+
+Path 3 is the precedent for Blocker A's fix and is also what the fix must
+not multiply.
+
+### 1.6 Code volume
 
 ```
 crates/fresh-ui/src                      14,520
@@ -108,298 +121,229 @@ fresh-editor/src/view/ui/{tabs,status_bar,menu,
   file_explorer,file_browser,scrollbar,scroll_panel}  9,107
 ```
 
-`view/ui/file_explorer.rs` (456 lines) is already dead —
-`FileExplorerRenderer` has no call site outside doc comments.
-`FileBrowserToggle`, `FileBrowserToggleSpan`, `FocusRegion` and
-`TabsRenderer` are likewise unreferenced, as are
-`widgets::render::wrap_entry_between`,
-`widgets::layout_box::{ancestor_path, document_order}` and
-`view::ui::status_bar::input_hscroll`.
-
-`layout_box::hit_stack` was on that list and is **gone on master** — deleted
-upstream, with only a mention left in its module header. It is the one §1
-fact the re-verification changed.
+Already dead: `view/ui/file_explorer.rs` (456 lines; `FileExplorerRenderer`
+has no call site), `FileBrowserToggle`, `FileBrowserToggleSpan`,
+`FocusRegion`, `TabsRenderer`, `widgets::render::wrap_entry_between`,
+`widgets::layout_box::{ancestor_path, document_order}`,
+`view::ui::status_bar::input_hscroll`. (`layout_box::hit_stack` was deleted
+upstream between revisions.)
 
 ---
 
 ## 2. What blocks the endgame
 
-Four gaps, in the order they bite. The first is a live defect, not just a
-migration blocker.
+### 2.1 Wide characters are painted one column each — **verified, live defect**
 
-### 2.1 Wide characters are painted one column each — **verified**
+Layout measures with `unicode-width`; every backend paints `Draw::Lines` by
+advancing one column per `char` (`view::shell::fold::fold_band`,
+`fresh-ui/examples/interactive.rs:348`, `fresh-ui/tests/support/screen.rs:109`).
+Throwaway test against the reference backend: `text("你好")` reserved
+`w=4`, painted two cells, left a two-cell hole before its sibling. In the
+ratatui fold `Cell::set_char('你')` also fails to blank the continuation
+cell, so everything to the right shifts.
 
-Layout measures text with `unicode-width`. Every backend paints
-`Draw::Lines` by advancing `x` one column per `char`. All three
-implementations agree with each other and disagree with layout:
-`view::shell::fold::fold_band`, `fresh-ui/examples/interactive.rs:348`,
-`fresh-ui/tests/support/screen.rs:109`.
+`TextRender::paint` (`fresh-ui/src/render/prim.rs:1105`) advances `x` per
+run by the same `unicode-width`, so the mismatch is per *run*, not per row:
+a CJK identifier followed by a keyword paints the keyword two cells right of
+where the identifier ends. `draw_buffer_in_split` handles wide characters
+itself today. **Mounting real buffer text through `text_runs` regresses
+every CJK/emoji file until this is fixed.** It is a prerequisite of Blocker
+A's mount, not a parallel item.
 
-Confirmed with a throwaway test against the library's reference backend:
-
-```
-text("你好") → Lines(["你好"]) rect = Rect { x: 0, y: 0, w: 4, h: 3 }
-next sibling → Lines(["|X"])   rect = Rect { x: 4, ... }
-painted row  → "你好  |X"        (two glyphs in two cells, two-cell hole)
-```
-
-Layout reserved four columns and the fold used two. In the ratatui fold
-the failure is worse than a hole: `Cell::set_char('你')` puts a two-column
-glyph in a one-column cell without blanking the continuation cell, so the
-terminal renders four columns of glyphs where the buffer holds four cells
-of content and everything to the right shifts.
-
-This is already wrong today for any CJK or emoji text in migrated chrome —
-a filename in the explorer, a plugin's panel label. It is *fatal* for the
-text surface, whose whole job is arbitrary Unicode.
-
-### 2.2 There is no draw primitive for a styled cell grid
+### 2.2 There is no primitive for a block of styled rows
 
 `Draw` is `Fill | Border | Scrim | Lines | Scrollbar | Selectable | Host`.
-A styled run of text is expressible (`text_runs` → `Run { text, theme }`,
-one `ThemeKey` per run). A *grid* of independently styled cells — which is
-what a live PTY is — is not, except as one item per run per row.
+A styled run is expressible (`text_runs` → `Run { text, theme }`). A block
+of *N uniform rows, each a run list, windowed by the box's height* — which is
+what a text pane is — is expressible only as N `text_runs` elements under a
+`layout_reader`, which is what `view::shell::content` does. It works; it is
+not the shape the library wants (§3).
 
 ### 2.3 The editor re-reconciles the whole tree every frame
 
-`Component::memo`'s own doc says it, and names the editor:
+`Component::memo`'s own doc names the editor as the host for which "the
+short-circuit never fires". `frame_tree` is rebuilt every frame and nothing
+editor-side uses `Node::shared`/`shared_rc` or implements `memo`. Tolerable
+for chrome; measured before, not after, the text surface lands (Stage 0.2).
 
-> a host that derives its description from a store every frame structurally
-> cannot [hold an `Rc` across frames] … so for such a host the short-circuit
-> never fires and the whole tree re-reconciles on every frame, however little
-> changed. That is not a hypothetical: it is the state the editor integration
-> is in.
+### 2.4 `ThemeKey` is a string, and text pays for it per run per frame
 
-`frame_tree` is built fresh in `Editor::render` each frame and nothing on
-the editor side uses `Node::shared` or implements `memo`. This is tolerable
-while the tree describes chrome. It stops being tolerable the frame a pane's
-text lands in it: a 200×50 frame of four splits is on the order of a few
-thousand nodes per frame instead of a few hundred.
+`shell_theme::Ink` serialises `fg/bg+attr` into the opaque `ThemeKey`. Right
+for chrome (it converges with the theme inspector). For a text pane the
+chain per span per frame is: `Span` → `Ink::to_string` (String) →
+`Run::themed` (two `Rc<str>`) → at fold `Ink::parse` (`shell_host.rs:934`,
+via `Palette::style`) back to a `Style`. Four allocations and a grammar
+parse per span, one to two thousand spans per full-height pane.
 
-### 2.4 `ThemeKey` is a string, and styled text pays for it per run
+### 2.5 `TextRender` measures by concatenation
 
-`shell_theme::Ink` serialises `fg/bg+attr` into the single opaque
-`ThemeKey`, with `Paint::Lit(Color::Rgb)` for colours no theme named. It is
-the right design for chrome — it converges with the theme inspector, and it
-is why the display list and the inspector say the same thing in the same
-words. But it means every styled run allocates a string on build and parses
-one on fold. Chrome has hundreds of runs a frame; highlighted text has
-thousands.
+`TextRender::layout` (`prim.rs:1028`) builds `props.plain()` — a fresh
+`String` of all runs — on every measure, even for `Wrap::None` where a width
+sum suffices. Per row, per frame, per `layout_reader` re-run.
 
----
+### 2.6 `layout_reader` drops layout-dirt
 
-## 2a. The buffer model is a constraint on the architecture, not the reverse
+`TextRender` carries a `stale` flag (`prim.rs:996–1010`) solely because a
+subtree rebuilt by a `layout_reader` during layout loses its dirty marks and
+would otherwise paint one frame behind its description. Any primitive
+mounted under a reader needs the same defensive re-shape. `content()` puts
+the editor's main surface on that wart.
 
-The piece tree, the wrap index and the highlight engine are the reason large
-files are editable, and the retained tree has to fit around them rather than
-the other way round. Three properties must survive stage 5 intact:
+### 2.7 A run cannot say "inherit the background"
 
-1. **Edits repair, they do not invalidate.** `WrapIndex` is deliberately not
-   keyed on `buffer.version()` — `damage_bytes` leaves every row boundary
-   before the edit untouched and resynchronises within a row or two, and its
-   totals are a Fenwick tree so an edit is not O(lines). A description that
-   is rebuilt from the whole buffer on every keystroke would hand that back:
-   the cost would move from the cache into the node build, and the 500 KB
-   single-line file would re-wrap per keystroke again by another route.
-2. **Only the visible window is ever materialised.** `prepare_content`
-   already narrows to the visible buffers and `paint_leaf` to the pane's
-   rows. The pane's description must be built from the same window — one
-   `text_runs` node per *visual row on screen*, never per document line —
-   and the viewport must scroll by changing which rows are described, not by
-   describing more of them.
-3. **The buffer is never copied to be described.** Runs borrow or `Rc` the
-   text the view pipeline already produced. `Run::text` is an `Rc<str>`,
-   which is the right shape for this; what must not appear is a `String` per
-   run per frame.
+An `Item` carries one `ThemeKey` that the palette resolves to a *full*
+`Style`. `content::ink_of` therefore always emits a background (the ground's,
+when the span names none). Consequently a described `Fill` *under* a row —
+cursor column, ruler, compose margin, column guide — is painted over by the
+row. The four cell patches in `draw_buffer_in_split` cannot become fills
+under the text; they must become styles the formatter folds into the runs.
 
-The practical consequence for stage 5a: the first thing to prototype is not
-the paint, it is the **build**. The obstacle is not the borrow — `shell_frame`
-already takes `&mut Editor` and runs before `Ui::frame`, so
-`WindowBuffers::with_all_mut` is available at build time. It is narrower and
-worse than that, and it is Blocker A in §2b: a pane's height is a layout
-*output*, and every builder the library offers below layout
-(`layout_reader`'s closure, `HostSpec::Leaf`'s factory) is `'static` and
-cannot reach the `Editor` at all.
+### 2.8 Two cursor sources
 
-A useful invariant to assert early, and to keep asserting: **the number of
-display-list items a pane produces is a function of its on-screen rows, not
-of its document length.** A test that opens a 5 KB file and a 5 MB file in
-the same pane and asserts the same item count is cheap, and it is the one
-thing that catches every way this can go wrong.
+`draw_buffer_in_split` writes `pending_hardware_cursor`; the tree has
+`TextProps.cursor` (byte in run) → `LayoutSpec.cursor`. A described pane
+must use the latter or the frame has two opinions about the caret.
 
 ---
 
-## 2b. Blockers, ranked by the legacy code each one releases
+## 2a. The buffer model is a constraint on the architecture
 
-The stages in §4 say what to build. This says what is *in the way*, because
-the priority is retiring legacy paths and almost none of them are waiting on
-effort — they are waiting on one of five blockers. Each blocker below names
-the code it holds hostage and the work that lifts it.
+Three properties must survive intact:
+
+1. **Edits repair, they do not invalidate.** `WrapIndex` is not keyed on
+   `buffer.version()`; `damage_bytes` resynchronises within a row or two and
+   totals are a Fenwick tree. A description rebuilt from the whole buffer per
+   keystroke hands that back.
+2. **Only the visible window is materialised.** One node (or one row of one
+   primitive) per *visual row on screen*, never per document line; scrolling
+   changes which rows are described, not how many.
+3. **The buffer is never copied to be described.** `Run::text` is `Rc<str>`;
+   what must not appear is a `String` per run per frame — and §2.4 shows the
+   first increment has three.
+
+The invariant to assert and keep asserting: **a pane's display-list item
+count is a function of its on-screen rows, not of its document length.**
+
+### Who owns the text pane's scroll — decided
+
+**The editor, not the tree.** This is a rule, not a first-increment
+compromise, and it is the one place the text pane deliberately departs from
+the library's `List::windowed` idiom. `ScrollMode::Items` needs a total row
+count; `WrapIndex` exists to avoid computing one for a 5 MB file. Scrolloff,
+cursor-follow, horizontal scroll and `max_line_length_seen` live in
+`SplitViewState.viewport` and are consulted by editing commands, not only by
+paint. The tree receives a *supply* — the rows for the window the editor
+chose — and clips it to the height it grants. The pane's `vscroll` thumb is
+fed from editor state, not `ScrollInfo`.
+
+---
+
+## 2b. Blockers, ranked by the legacy code each releases
 
 ### Blocker A — pane content cannot be described
 
 **Holds:** `view/ui/split_rendering`'s paint half (~16,000 lines),
 `BodyPainter::{body, pane}`, `paint_leaf`, most of `handle_mouse_impl`'s
-post-dispatch tail, and every pane-shaped field of `ChromeLayout`.
+post-dispatch tail, every pane-shaped `ChromeLayout` field.
 
-**Why.** The description is a layout *input*; a pane's height is a layout
-*output*. `paint_leaf` escapes this by running after layout with the
-rectangle in hand. A description cannot. And the two seams the library
-offers below layout are both `'static` and so cannot reach the `Editor`:
-`layout_reader`'s builder (`impl Fn(LayoutInfo) -> Node<M> + 'static`, and
-it "may run more than once per frame"), and `HostSpec::Leaf`'s factory
-(`Rc<dyn Fn() -> Box<dyn HostLeaf>>`).
+**Why.** A description is a layout input; a pane's height is a layout
+output. Both builders the library offers below layout are `'static`
+(`layout_reader`'s closure; `HostSpec::Leaf`'s factory) and cannot reach the
+`Editor`.
 
-**The library half is already done — verified.** An earlier draft said only
-that the mechanism "exists", citing doc comments. It was measured instead. A
-viewport in `ScrollMode::Items` publishes its window through `ScrollInfo`,
-and a `layout_reader` under it reads that window from
-`LayoutInfo::scroll_window` and builds only the rows in it. Two probes, both
-against a **one-million-row** list in a ten-cell viewport:
+**Library half — verified.** A `layout_reader` under a `viewport` in
+`ScrollMode::Items` builds only the window: 1M rows in a 10-cell viewport →
+10–12 builder calls, 10–22 items, at offsets 0, 1, 5,000, 900,000. The
+windowing mechanism is not the gap; a *supply the builder can reach* is.
 
-| Construction | Offset | Builder calls | Display-list items |
-|---|---|---|---|
-| `List::windowed` | 0 | 12 (10 + 2 overscan) | 22 |
-| `List::windowed` | 1 | 12 | 22 |
-| `List::windowed` | 5,000 | 12 | 22 |
-| bare `viewport(...).items(N).item_rows(1)` + `layout_reader` | 0 | 10 | 10 |
-| bare `viewport` + `layout_reader` | 900,000 | 10 | 10 |
+**What landed — `view::shell::content` (273 lines, 6 tests).** `Row`
+(`Vec<Run>`), `Content` (`Rc<[Row]>`), `content(c)` (a `layout_reader`
+emitting one `text_runs` per row the box has room for, clipped to
+`constraints.max_h`), `runs_of`/`ink_of` (`Vec<Span>` → `Vec<Run>` through
+the `Ink` grammar). `a_pane_costs_its_rows_not_its_document` pins the
+supply→list half of the invariant.
 
-Constant in the count and constant in the depth, and the rows at offset
-900,000 render correctly. This is §2a's invariant — items are a function of
-on-screen rows, not of document length — already holding in the library,
-and the second row of that table is the construction a pane wants: visual
-rows are uniformly one cell, and `WrapIndex` already supplies both the count
-and the byte↔visual mapping the offset indexes into.
+**Review verdict on what landed.** The *seam* is right: the formatter/painter
+split already exists in the editor (`compute_buffer_layout` →
+`render_output.lines`; `draw_buffer_in_split` writes cells), so a described
+pane and the legacy pane share one formatter and parity is exact by
+construction. The *shape* is provisional: `layout_reader` + N `text_runs`
+sits on §2.5, §2.6, §2.7 and §2.8 simultaneously, and `runs_of` pays §2.4 in
+full. It is the right first increment and the wrong final one; §3 names the
+final one.
 
-`Source::Windowed { count, key: Rc<dyn Fn(usize) -> Key>, row: Rc<dyn
-Fn(usize, RowState) -> Node<M>> }` is the shape the library expects a host
-to supply, and its doc says why: "the application resolves it against its
-own storage, so the library never holds the collection."
+**The rest of Blocker A, in order:**
 
-**So Blocker A is now entirely on the editor's side.** What is missing is
-not a windowing mechanism; it is a *row supply the builder can reach*. The
-builder is `'static`, so the pane's rows must be answerable from behind an
-`Rc` during layout, without `&mut Editor` — and the view pipeline that
-produces a row today wants exactly that borrow.
-
-**The seam now exists: `view::shell::content`.** The choice among the three
-candidate shapes resolved to the first — a pre-frame snapshot — because the
-circularity that seemed to rule it out is already solved twice in this
-codebase. `Ui::layout_only` exists so a host can lay out a description it has
-just built and read rectangles back off it ("a host that needs a rectangle
-out of a description it has just built … needs the build and the layout"),
-and `SplitManager::get_leaves_with_rects` already lays the *same* grid
-description out in a scratch `Ui` to answer where the panes are. A pane's
-exact content height is therefore knowable before the frame that shows it,
-with no second geometry and nothing stale.
-
-What landed:
-
-- `Row` — one visual row as `Vec<Run>`. A row, not a line: a soft-wrapped
-  source line is several, which is what keeps the unit uniform at one cell
-  and so indexable, and it is the unit `WrapIndex` already counts in.
-- `Content` — `Rc<[Row]>`, because the builder that reads it is `'static`
-  and may run more than once per layout pass.
-- `content(c)` — a `layout_reader` emitting one `text_runs` node per row the
-  box actually has room for.
-- `runs_of` / `ink_of` — `Vec<Span>` → `Vec<Run>` through the `Ink` grammar
-  the chrome already writes its theme names in.
-
-**The style stack does not move.** The editor's row renderer already produces
-`Vec<Span>`; a row crossing into the tree keeps the colours the painter gave
-it rather than being re-derived from a lookup that would have to reproduce
-the whole overlay stack to agree with it. What moves is where a row *is*.
-
-**The reader clips to the height layout grants**, rather than placing every
-row it was handed. A disagreement between the editor's idea of a pane's
-height and layout's degrades to a short pane instead of rows painted through
-their box: the supply is a superset to draw from, not an instruction. It is
-also why an over-prepared supply costs memory but not nodes — the builder
-slices, so node count is a function of the rows shown even when the supply
-is long.
-
-Six tests, `a_pane_costs_its_rows_not_its_document` among them: ten rows of a
-hundred-thousand-row supply produce the same display list as ten rows of a
-ten-row one.
-
-**What is left of Blocker A:**
-
-1. Fill the supply from the real pipeline — call the existing row renderer
-   for the window `layout_only` reported and collect its spans.
-2. Mount it in `PaneSlots::content` behind a flag, and compare cell-for-cell
-   against the painter over the e2e corpus.
-3. The end-to-end form of the invariant: a 5 KB and a 5 MB file in the same
-   pane, same item count. The unit test pins the supply→list half; only the
-   whole path can pin the prepare half.
-
-Note the remaining tension with §2a: step 1 must prepare rows for the window
-and no more. The seam permits over-preparation without paying for it in
-nodes, which makes it tempting; the buffer model is what makes it wrong.
+1. **Library first** (each small, each with a library test): §2.1 wide-char
+   paint parity in all three backends; §2.5 `Wrap::None` measures by width
+   sum; a `ThemeKey → Style` cache in the fold's palette keyed by `Rc`
+   pointer (or decision 3 in §6, if taken now).
+2. **One geometry pass per frame.** Promote the replay path
+   (`render.rs:6933`) to every frame: build shell → `layout_only` → read
+   pane content rects with `rect_of(content_key(id))` **off the same `Ui`**
+   — not via `get_leaves_with_rects`, whose scratch grid becomes a third
+   geometry the reader's clip would silently paper over. `debug_assert!`
+   supply length == granted rows; the clip is a release safety net, not the
+   contract. Measure whether the following `Ui::frame` re-layout is a
+   near-no-op for an unchanged description before deciding whether the
+   pre-pass needs a geometry-changed gate.
+3. **Fill the supply and mount it.** Inside the existing `with_all_mut`
+   borrow, call `compute_buffer_layout` per pane for the rect from step 2
+   (it already takes `&mut Viewport`/`&mut FoldManager` and clamps
+   `left_column` — that mutation now happens *before* the description reads
+   the state, which is the right order; it must happen exactly once per pane
+   per frame, and nothing on the legacy path may re-run it for a described
+   pane to refill `cell_theme_map`). Convert `render_output.lines` with an
+   `Ink → Rc<str>` intern table per frame (a file has few distinct styles).
+   Fold the four cell patches (`render_compose_margins`, `render_ruler_bg`,
+   `render_cursor_column_bg`, `render_column_guides`) and
+   `apply_background_to_lines` into the formatter as run styles (§2.7). Put
+   the caret on the row's node (§2.8). Mount via `PaneSlots::content`
+   behind a per-pane gate; a described pane skips `draw_buffer_in_split`.
+4. **Parity.** The 324-test e2e corpus with the gate forced on for every
+   pane, plus cases the corpus lacks: CJK/emoji rows, cursor-column band,
+   rulers, compose margins, a 5 KB and a 5 MB file in the same pane with the
+   same item count.
+5. **The primitive** (§3) replaces `content()`'s reader+col; `Row`/`Content`
+   move into `fresh-ui`; `draw_buffer_in_split`, the four patches, and the
+   `pending_hardware_cursor` side channel are deleted.
 
 ### Blocker B — text in the tree is mispainted, and its cost is unknown
 
-**Holds:** every stage that puts a glyph in a node, which is all of them.
-
-**Lifts it:** §2.1's display-width fix; the frame-cost bench from stage 0.2;
-`shared_rc`/`memo` from stage 0.3; and a decision on how a cell's layered
-styling is expressed (a `Fill` under the runs versus a richer `Run`) and
-whether `ThemeKey` stays a string once it is paid per run per frame rather
-than per chrome label.
+**Holds:** every stage that puts a glyph in a node. **Lifts it:** A.1 above
+and the bench from Stage 0.2. Folded into A's ordering; kept as a name.
 
 ### Blocker C — the formatter and the painter are the same function
 
 **Holds:** `widgets/render.rs`'s paint and hit halves (~18,000 lines) and
 the paint halves of `view/ui/{tabs, status_bar}` (~4,600).
-
-**Why.** `render_spec_with_options` decides *what a row says* and *where it
-lands and what it paints into* in one pass, returning rows, boxes and hit
-areas together. The first is domain knowledge the tree needs to keep
-calling; the second is what the tree replaces. They cannot be separated by
-deleting call sites, only by cutting the function.
-
-**Lifts it:** split `render_spec_with_options` into a formatter returning
-rows and a painter consuming them; make the same cut in `view/ui/tabs.rs`
-and `view/ui/status_bar.rs`, keeping `calculate_tab_widths`,
-`split_control_reserve` and the row formatters.
+`render_spec_with_options` decides what a row says *and* where it lands in
+one pass. **Lifts it:** cut it into a formatter returning rows and a painter
+consuming them; same cut in `tabs.rs` / `status_bar.rs`, keeping
+`calculate_tab_widths`, `split_control_reserve` and the row formatters.
 
 ### Blocker D — painters must run between the two fold bands
 
-**Holds:** the band collapse, and with it `Band`, `Paints`, `SkipHosts`,
-`view/settings/render.rs`'s box paint and `view::dimming`'s passes.
-
-**Why.** The settings box paints its own `Clear`, ground and border not
-because it is undescribed — `view::shell::settings` describes the dialog —
-but because it must land *under* a painter that runs between the bands. The
-floating panel's dimming is a painter pass for the same reason: a `Scrim`
-declared in the tree would be overpainted by the dock, and the frame would
-read half-dimmed. Both are ordering problems wearing a painter's clothes.
-
-**Lifts it:** move `render_terminal_splits` into the fold as a `paint_host`
-arm; move the dock's content into the overlay band so its dimming can become
-`Scrim::Dim`.
+**Holds:** the band collapse — `Band`, `Paints`, `SkipHosts`,
+`view/settings/render.rs`'s box paint, `view::dimming`. The settings box
+paints its own `Clear`/ground/border because it must land *under* a painter
+that runs between bands; the floating panel's dimming is a painter pass for
+the same reason. **Lifts it:** `render_terminal_splits` becomes a
+`paint_host` arm; the dock's content moves to the overlay band so dimming
+becomes `Scrim::Dim`.
 
 ### Blocker E — `ChromeLayout`'s readers are not all input routing
 
-**Holds:** emptying `ChromeLayout`, even after the surfaces above it migrate.
-
-**Why.** `record_suggestions_geometry`'s own header lists them: the web
-`Scene`, which draws from rects; `cursor_obscured_by_overlay`, which asks
-whether the terminal caret is under a box; and the column widths the next
-frame's description is measured against. None is a click walk, so none is
-retired by describing a surface.
-
-**Lifts it:** feed the web `Scene` from `LayoutSpec`; answer
-`cursor_obscured_by_overlay` from the tree's layers.
+**Holds:** emptying `ChromeLayout`. The web `Scene` draws from rects;
+`cursor_obscured_by_overlay` asks whether the caret is under a box; column
+widths feed the next frame's description. **Lifts it:** feed the web `Scene`
+from `LayoutSpec`; answer `cursor_obscured_by_overlay` from the tree's
+layers.
 
 ### Order
 
-A is the critical path and 1→2→3 is serial, though it is a shorter path than
-it looked: the library half is verified done, the seam is built
-(`view::shell::content`), and what is left is filling it from the real
-pipeline and mounting it. B runs alongside it, and its
-last item cannot be decided until the bench produces numbers. C, D and E are
-independent of A, of B, and of each other.
+A.1–A.5 is the critical path and serial. C, D and E are independent of A
+and of each other.
 
 ---
 
@@ -414,301 +358,243 @@ Editor state ──build──▶ Node tree ──reconcile──▶ Element tre
                                               fold → ratatui cells          hit-test / focus
 ```
 
-- **One band.** The fold runs once, in paint order. No painter runs between
-  two halves of the display list.
-- **`Host` is a design choice, not a migration seam.** Two leaves keep it
-  permanently — a live PTY grid, and an embedded editor window — because
-  their content is genuinely cells that no description can state more
-  cheaply. What makes a `Host` legacy is not that it paints cells; it is
-  that its geometry is recorded somewhere else. A designed `Host` takes its
-  rectangle from layout and its position from paint order, and records
-  nothing.
-- **`ChromeLayout` holds `view_line_mappings` and nothing else** except the
-  fold's own provenance output.
-- **`HostPainter` has two arms**, both above.
-- Every pointer and key goes through one walk. `handle_mouse_impl`'s
-  post-dispatch tail is gone.
+**One band.** The fold runs once, in paint order.
+
+**One geometry.** Per frame: one `layout_only` to size the panes, one
+`frame`. `get_leaves_with_rects` remains for non-render callers only. Nothing
+records a rectangle for a later handler; handlers ask `rect_of`.
+
+**The text pane is a `rows` primitive, not a reader.** A single `fresh-ui`
+element `rows(Rc<[Row]>)` that measures one cell per row, clips to the
+granted height, paints one item per themed run, places the caret by
+`(row, byte)` and hit-tests to `(row, col)`. `TextRender` is the template
+(cursor-by-byte and byte↔column mapping already exist there; this is its
+multi-row form). It retires the `layout_reader` dependency (§2.6), the
+per-row elements (§2.2/§2.3), and the caret side channel (§2.8), and gives
+the inspector a real node type. `Row`/`Content` are library-shaped already
+and move with it; `runs_of`/`ink_of` stay editor-side as the ratatui→`Ink`
+adapter.
+
+**Scroll is the editor's** for the text pane (§2a). The tree never learns
+the document's row count.
+
+**The formatter emits styles, not patches.** Everything that today is a
+cell patch after the fact — cursor column, rulers, compose margins, column
+guides, `apply_background_to_lines` — becomes part of what a row *says*.
+The tree paints rows; it does not paint under them.
+
+**Theme keys.** Chrome keeps the `Ink` string grammar. The text pane must not
+pay a format+parse per span: at minimum the fold caches `ThemeKey → Style`
+by pointer and the formatter interns `Ink → Rc<str>` per frame; the fuller
+answer is decision 3 in §6. Provenance debt is logged: `render_view_lines`
+resolves theme→`Color` in the formatter, so described runs carry
+`Paint::Lit` colours and the tree cannot answer "which theme key is this".
+Parity-exact today; the formatter should eventually emit keys and let the
+palette resolve.
+
+**`Host` is a design choice, not a migration seam.** Two leaves keep it —
+a live PTY grid and an embedded editor window — because their content is
+cells no description states more cheaply. A designed `Host` takes its
+rectangle from layout and its position from paint order, and records
+nothing.
+
+**`ChromeLayout` holds `view_line_mappings`** and the fold's provenance
+output, nothing else. **`HostPainter` has two arms.** **One pointer walk,
+one keyboard walk.**
 
 ---
 
 ## 4. Stages
 
-Each stage is independently shippable, and each ends with the editor
-building and the e2e corpus (324 tests under `crates/fresh-editor/tests/e2e`)
-green. Stages 1–4 are safe in any order after stage 0; stage 5 depends on
-all of 0.
+Each stage ends with the editor building and the e2e corpus (324 tests
+under `crates/fresh-editor/tests/e2e`) green.
 
-### Stage 0 — instruments, and the two things that must be true first
+### Stage 0 — library correctness and instruments
 
-**0.1 Display-width-correct painting.** Fix all three backends to advance by
-`char_width` and, in the ratatui fold, to blank the continuation cell of a
-wide glyph. Decide and write down the grapheme policy: a combining mark must
-not consume a column, so the unit of advance is the cluster, not the `char`.
-Add the missing conformance test to `crates/fresh-ui/tests/` — the library
-owns the invariant, so the library should assert it — plus one in
-`view::shell::fold`'s test module against a ratatui `Buffer`.
+**0.1 Display-width-correct painting** (§2.1). All three backends advance by
+display width and the ratatui fold blanks continuation cells; grapheme
+policy written down (a combining mark consumes no column). Conformance test
+in `crates/fresh-ui/tests/` and one in `view::shell::fold` against a ratatui
+`Buffer`. *Exit:* `text("你好")` occupies exactly its four columns in all
+three backends.
 
-*Exit:* `text("你好")` occupies exactly the four columns layout gave it, in
-all three backends, and a `Screen`/`Buffer` assertion proves it.
+**0.2 `Wrap::None` measures without concatenation** (§2.5). *Exit:* a test
+that `TextRender::layout` with `Wrap::None` allocates no string (or simply
+the code no longer calls `plain()` on that path, asserted by review).
 
-**0.2 A frame-cost instrument.** There is no bench directory in the
-workspace. Add one measuring, for a set of representative frames (empty
-buffer; a 5k-line highlighted file; four splits; a full-screen dock panel):
-`LayoutSpec::items.len()`, reconcile time, layout time, fold time.
-`EditorTestHarness::render_real` is the right driver — it already runs a
-full frame headlessly. Record the baseline in this document.
+**0.3 Palette resolve cache** (§2.4). `fold_band`'s palette resolves each
+distinct `ThemeKey` once per frame. *Exit:* a fold of N items with K
+distinct keys parses K names.
 
-*Exit:* `cargo bench -p fresh-editor` prints a table; the numbers for
-today's tree are written down here.
+**0.4 A frame-cost instrument.** Bench measuring, for representative frames
+(empty buffer; 5k-line highlighted file; four splits; full-screen dock
+panel): `LayoutSpec::items.len()`, reconcile, layout, fold time, and
+allocations per frame. `EditorTestHarness::render_real` is the driver.
+*Exit:* `cargo bench -p fresh-editor` prints a table; baseline recorded here.
 
-**0.3 Memoization on the editor side.** Give the per-window chrome and each
-pane subtree an identity that survives a frame — `Rc<Node>` held on the
-`Editor` and re-offered with `shared_rc` when its inputs are unchanged, or
-a `Component` with a real `memo`. Which of the two is right differs by
-subtree and is a judgement to make per site, not up front.
+**0.5 Memoisation on the editor side** (§2.3), per subtree via `shared_rc`
+or `memo`. *Exit:* an idle frame rebuilds no pane subtree. Gates Stage 5
+only.
 
-*Exit:* 0.2's reconcile time for an idle frame (no state change) drops to
-approximately the cost of the dirty set alone, and a test asserts that an
-idle frame rebuilds no pane subtree.
+### Stage 1 — one geometry pass (Blocker A.2)
 
-> **This stage is a hard gate for stage 5** and only for stage 5. Stages 1–4
-> add tens of nodes, not thousands.
+Promote the replay geometry pass to every frame; pane content rects from
+`rect_of(content_key)`; retire the scratch grid on the render path. *Exit:*
+`get_leaves_with_rects` has no caller in `render.rs` or
+`split_rendering/orchestration`; the frame-cost table shows the cost of the
+second layout.
 
-### Stage 1 — the prompt row
+### Stage 2 — buffer content behind a gate (Blocker A.3–A.4)
 
-The smallest remaining `HostRegion`. `StatusBarRenderer::render_prompt` and
-`render_file_open_prompt` keep their *formatting* (what a prompt row says is
-domain knowledge) and give up their paint: the row becomes `text_runs` in
-the region that already carries the `PromptLine` key, and the caret becomes
-`CursorSpec` instead of the `caret` out-parameter.
+Supply from `compute_buffer_layout`, interned inks, patches folded into
+styles, caret on the row, mount via `PaneSlots::content`, per-pane gate,
+parity corpus with the gate forced on. *Exit:* the e2e corpus is green with
+every pane described; the 5 KB / 5 MB item-count test passes end to end;
+0.4's numbers are recorded for the described path.
 
-*Exit:* `HostRegion::PromptLine` emits no `Draw::Host`; `render_prompt_line`
-is deleted; the e2e prompt tests pass unchanged.
+### Stage 3 — the `rows` primitive (Blocker A.5)
 
-### Stage 2 — the overlay prompt card
+Add `rows` to `fresh-ui` with its own tests (clip, caret, hit-test, wide
+chars); replace `content()`; move `Row`/`Content` into the library; delete
+`draw_buffer_in_split`, the four patches, `pending_hardware_cursor`; drop the
+gate. *Exit:* `HostTarget::Pane` is gone for buffer panes; `Region(Body)` is
+gone with the separators; `split_rendering`'s paint half is deleted;
+`view_pipeline`, `wrap_index`, `base_tokens`, `transforms`,
+`view_line_mappings` remain as the view model.
 
-`render_overlay_prompt` is the single largest block of direct ratatui
-painting left. Its bands are already stated in the tree (`CardRegion`,
-`card_host_id`) purely so the painter and the read-backs agree; describing
-the card deletes both the painter and the band ids, and `CARD_TAG` with
-them.
+### Stage 4 — the prompt row
 
-Takes with it: `prompt_results_area`, `prompt_preview_area`,
-`prompt_toolbar_boxes`, `suggestions_area`, `suggestions_outer_area` — all
-read from the tree instead of recorded. `UiFact::CardToolbarPress`'s
-"the painter measured this label" seam closes: a toolbar entry becomes a
-keyed node and the press names the entry, not a column.
+`StatusBarRenderer::render_prompt` keeps formatting, gives up paint; the row
+becomes `text_runs` under the `PromptLine` key; caret via the tree. *Exit:*
+`HostRegion::PromptLine` emits no `Draw::Host`; `render_prompt_line` deleted.
 
-*Exit:* `HostTarget::Card` and `CardRegion` are gone; those five
-`ChromeLayout` fields are gone; `record_suggestions_geometry` shrinks to the
-web projection's needs alone.
+### Stage 5 — the overlay prompt card
 
-### Stage 3 — pane chrome: tabs, scrollbars, split controls
+Describe `render_overlay_prompt`'s card; delete `CardRegion`, `CARD_TAG`,
+`card_host_id`, and the five `ChromeLayout` prompt fields; a toolbar entry
+becomes a keyed node so `UiFact::CardToolbarPress` names the entry, not a
+column. *Exit:* `HostTarget::Card` gone; `record_suggestions_geometry`
+shrinks to the web projection's needs.
 
-The *outline* is already the tree's: `splits::tab_strip`, `splits::scrollbar`
-and `splits::controls` carry keys, gestures and rectangles. The *interiors*
-are `view::ui::tabs`, which lays out tab widths, records a `TabHitArea` per
-tab in `TabLayout`, and answers a click by scanning them.
+### Stage 6 — pane chrome: tabs, scrollbars, split controls (Blocker C, part)
 
-Describe each tab as its own keyed node. `calculate_tab_widths` and
-`split_control_reserve` stay as formatters; `TabLayout`, `TabHitArea`,
-`TabHit` and `ChromeLayout::tab_layouts` go. `UiFact::PaneTabsPress { x, y }`
-becomes `PaneTabSelect(TabTarget)` / `PaneTabClose(TabTarget)` — the node
-knows which tab it is, so no handler has to recover it from a column.
+Each tab a keyed node; `calculate_tab_widths` and `split_control_reserve`
+stay as formatters; `TabLayout`, `TabHitArea`, `TabHit`,
+`ChromeLayout::tab_layouts` go; scrollbars from `Draw::Scrollbar`. *Exit:*
+`tab_layouts`, `horizontal_scrollbar_areas`, `split_areas` are gone.
 
-The scrollbars are already a display-list primitive (`Draw::Scrollbar`,
-whose `scrollbar_thumb` is shared so every backend renders the bar
-identically). Emitting them from the pane's description retires
-`horizontal_scrollbar_areas`, `record_scrollbar_theme_runs` and
-`view::ui::scrollbar`.
+### Stage 7 — the gutter
 
-*Exit:* a pane's strip and bars emit no `Draw::Host`; `tab_layouts`,
-`horizontal_scrollbar_areas` and `split_areas` are gone.
+Line numbers, folds, signs, bookmarks: a fixed column of the same `rows`
+primitive. `split_rendering/gutter.rs` becomes a formatter. Ordered after
+Stage 3 rather than before it (the first revision had it first) because the
+primitive is what makes it cheap. *Exit:* the gutter emits no `Host`.
 
-### Stage 4 — the gutter
+### Stage 8 — terminals and embeds (Blocker D, part)
 
-Line numbers, fold markers, git and diagnostic signs, bookmarks: a fixed
-column of short runs, one per visual row. Small, low-risk, and it
-establishes the per-row description shape stage 5 uses at scale.
-`split_rendering/gutter.rs` becomes a formatter: it keeps deciding what a
-gutter cell *says*, and stops deciding where it goes.
+Stay `Host` by design (§3). `render_terminal_splits` becomes a `paint_host`
+arm; `render_floating_widget_panel` reduces to the embed arm. *Exit:* no
+painter runs between the bands for terminals or embeds.
 
-*Exit:* the gutter is `text_runs`; 0.2's item count for a full-screen frame
-is measured and recorded (this is the first real data point on per-row cost).
+### Stage 9 — collapse the scaffold (Blockers C, D, E)
 
-### Stage 5 — buffer content
-
-The one that changes the architecture rather than extending it. Do it in
-three sub-stages, each behind a config flag comparing the described output
-cell-for-cell against the painter's on the e2e corpus, so a divergence is a
-red test rather than a bug report.
-
-- **5a — plain content.** Prototype the *build-time* borrow first (§2a),
-  then `paint_leaf`'s per-row `Vec<Span<'static>>` becomes `Vec<Run>` and
-  the row becomes a `text_runs` node inside the pane's keyed viewport.
-  Syntax highlighting only; no overlays, no selection. The caret becomes
-  `CursorSpec`. Land the "items scale with rows, not document length"
-  assertion with it.
-- **5b — everything layered on a cell.** Selection, search highlight, the
-  current-line and current-column bands, inline diff, diagnostics squiggles,
-  plugin overlays. Each is a `Fill` under the runs or a themed run, and
-  `resolve_overlay_style`'s precedence has to be preserved exactly — this is
-  where parity is hardest and where the cell-for-cell comparison earns its
-  cost.
-- **5c — retire the painter.** Delete `split_rendering`'s paint half. Keep
-  `view_pipeline`, `wrap_index`, `base_tokens`, `transforms` and
-  `view_line_mappings`: those are the view model, and the description is
-  built *from* them.
-
-Click-to-byte keeps going through `ViewLineMapping`, but reads the pane's
-rectangle from the tree (it already does — `content_key`).
-
-*Exit:* `HostTarget::Pane` is gone for buffer panes; `Region(Body)` is gone
-with the separators; 0.2's numbers are inside the budget agreed in §6.
-
-### Stage 6 — terminals and embeds
-
-The remaining two. **The recommendation is that they stay `Host` leaves by
-design**, and that the work here is closing their *geometry* duplication
-rather than describing their cells:
-
-- a live PTY is a grid of independently styled cells with its own damage
-  model; expressing it as one display-list item per run per row is more
-  expensive than the `Host` callback it replaces, and buys nothing — nothing
-  hit-tests inside a PTY grid except the terminal's own mouse protocol,
-  which already routes through `pane_content_takes_pointer`
-- an embedded editor window is a second editor render; it is a `Host` for
-  the same reason the outer one would be
-
-What does change: `render_terminal_splits` stops being called between the
-bands and becomes a `paint_host` arm, so it lands in paint order rather than
-after it; and `render_floating_widget_panel` reduces to the embed arm plus
-the dimming pass, which becomes a `Scrim` once stage 7 collapses the bands.
-
-**Alternative, if the objective is read strictly:** add a `Draw::Cells`
-primitive carrying a run-length-encoded styled grid, and describe them too.
-This is a real library change with a real cost and it is listed in §6 as a
-decision, not assumed here.
-
-### Stage 7 — collapse the scaffold
-
-The structural end. **The two-band fold is the last piece of migration
-scaffolding**, and several described surfaces are shaped by it: the settings
-box still paints its own `Clear`/ground/border in `view::settings::render`
-*because* it must land under a painter that runs between the bands, and the
-floating panel's dimming is a painter pass for the same reason. Neither is a
-description problem; both are ordering problems that disappear when nothing
-runs between the bands.
-
-- collapse `fold_band` to one `fold`; delete `Band` and `Paints`
-- `render_settings` → the box is a node; `apply_dimming*` → `Scrim::Dim`
-- the file-open dialog's interior (`FileBrowserRenderer`) is described; the
-  "the painter measured the label" seam its module header describes closes
-  the same way stage 2's toolbar does
-- delete `view/ui/file_explorer.rs`, `view/ui/file_browser.rs`,
-  `view/ui/scroll_panel.rs`, `view/ui/scrollbar.rs`, `view/ui/tabs.rs`'s hit
-  half, `view/ui/status_bar.rs`'s paint half
-- delete `widgets/layout_box.rs` and `widgets/render.rs`'s paint and hit
-  halves; keep the formatters `view::shell::widgets` calls
-- `handle_mouse_impl`'s post-dispatch tail (~830 lines) goes; the tree is
-  the only walk
-- `HostPainter` reduces to two arms
-
-*Exit:* `grep -c "frame.render_widget" src` is 0. `ChromeLayout` holds
+Collapse `fold_band` to one `fold`; delete `Band`, `Paints`, `SkipHosts`;
+`render_settings`'s box becomes a node; `apply_dimming*` → `Scrim::Dim`;
+`FileBrowserRenderer` interior described; delete `view/ui/{file_explorer,
+file_browser, scroll_panel, scrollbar}.rs`, `tabs.rs`'s hit half,
+`status_bar.rs`'s paint half, `widgets/layout_box.rs`, `widgets/render.rs`'s
+paint and hit halves; `handle_mouse_impl`'s post-dispatch tail (~830 lines);
+`HostPainter` to two arms; web `Scene` from `LayoutSpec`;
+`cursor_obscured_by_overlay` from the tree's layers. *Exit:*
+`grep -c "frame.render_widget" src` is 0; `ChromeLayout` holds
 `view_line_mappings` and `cell_theme_map`.
 
-### Stage 8 — provenance and the second frontend
+### Stage 10 — provenance
 
-`cell_theme_map` becomes the fold's `ProvenanceSink` output alone — the fold
-is already the only party that sees every described cell, which is why the
-inspector went blank over migrated chrome before it was taught to record
-there. With no painters left, no other writer exists.
-
-Re-check `view::scene` and `webui`: the semantic projections are supposed to
-be computed once and consumed by both frontends. With the TUI reading its
-geometry from `LayoutSpec` and the web reading `RectView`s, confirm there is
-one derivation and not two. `tests/scene_parity.rs` is the existing guard.
+`cell_theme_map` becomes the fold's `ProvenanceSink` output alone. Re-check
+`view::scene`/`webui` for one derivation, not two; `tests/scene_parity.rs`
+is the guard.
 
 ---
 
-## 5. Ordering and what each stage gates
+## 5. Ordering
 
 ```
-        ┌─────────────────────────────────────────┐
-0.1 ────┼──▶ 1 ──▶ 2 ──▶ 3 ──▶ 4 ──▶ 5a ─▶ 5b ─▶ 5c ──▶ 7 ──▶ 8
-0.2 ────┤                             ▲                 ▲
-0.3 ────┘─────────────────────────────┘        6 ───────┘
+0.1 0.2 0.3 ──▶ 1 ──▶ 2 ──▶ 3 ──▶ 7 ─────────────┐
+0.4 ────────────┘     ▲                          │
+0.5 ──────────────────┘                          ▼
+                 4 ──▶ 5 ──▶ 6 ──▶ 8 ──▶ 9 ──▶ 10
 ```
 
-- 0.1 gates everything that puts text in the tree, which is every stage.
-- 0.3 gates only stage 5, and hard.
-- 6 is independent of 1–5 and can be done at any time after 0.1; it gates 7
-  only because 7 collapses the bands and 6 is what moves the terminal paint
-  into the fold.
-- 7 requires 2, 5c and 6 — it deletes what they stop using.
+- 0.1–0.3 gate Stage 2 (the first real text in the tree). 0.5 gates Stage 2
+  hard; 0.4 is what decides whether 0.5 is enough.
+- 4, 5, 6, 8 are independent of 1–3 and of each other; 9 needs all of them
+  plus 3.
 
 ---
 
-## 6. Decisions needed before stage 5, and risks
+## 6. Decisions and risks
 
-**Decisions.** These change the shape of the work and are not mine to make:
+**Decisions.**
 
-1. **Do PTY grids and embedded windows migrate?** §Stage 6 recommends they
-   stay designed `Host` leaves and argues why. Reading the objective
-   strictly ("everything retained") means adding a `Draw::Cells` primitive
-   instead. I would take the recommendation: a `Host` whose rectangle comes
-   from layout and whose paint sits in list order is already retained-mode;
-   what the objective is really about is the *second geometry*, and that
-   goes either way.
-2. **What is the frame budget?** Stage 5 multiplies the display list by
-   roughly the number of visible text rows times runs per row. Without a
-   number from 0.2 and a ceiling agreed here, "is this fast enough" has no
-   answer and stage 5 has no exit criterion.
-3. **Does `ThemeKey` stay a string?** §2.4. Chrome can afford it; text at
-   scale may not. The alternative — an interned handle, with `Ink` behind it
-   — is a library change that touches every backend and the inspector. 0.2's
-   numbers should decide it, not taste.
+1. **Do PTY grids and embedded windows migrate?** Recommendation: they stay
+   designed `Host` leaves. A `Host` whose rectangle comes from layout and
+   whose paint sits in list order is retained-mode; the objective's real
+   target is the second geometry, and that goes either way. The strict
+   alternative is a `Draw::Cells` run-length styled-grid primitive.
+2. **What is the frame budget?** Stage 2 multiplies the display list by
+   visible rows × runs per row. Without a ceiling, "fast enough" has no
+   answer and Stage 2 has no exit.
+3. **Does `ThemeKey` stay a string?** The first revision deferred this to the
+   bench. The review moves it earlier: the text pane is the first surface
+   with thousands of items, and the string grammar's cost is paid per item
+   per frame. Options, cheapest first: (a) pointer-keyed resolve cache in
+   the fold + per-frame intern table in the formatter (no library API
+   change; Stage 0.3); (b) `ThemeKey` becomes generic over the host's key
+   type (`K: Clone + Eq + Hash`), so the editor passes `Ink` and nothing is
+   formatted or parsed — a library change touching every backend and the
+   inspector. Take (a) now; decide (b) on 0.4's numbers.
+4. **Should the pre-frame `layout_only` be gated?** Only if 0.4 shows the
+   second layout is not a near-no-op. The replay path's own comment is
+   right that a hand-picked "may have changed" set is a replica of a layout.
 
 **Risks.**
 
-- *Parity at the cell level in 5b.* Overlay precedence
-  (`resolve_overlay_style`) is subtle and under-tested. The cell-for-cell
-  comparison against the painter, run over the whole e2e corpus while both
-  paths exist, is the mitigation, and it is the reason 5 is split in three.
-- *`ui_shell_frame_parity.rs` is a golden, not a cross-check.* Its own
-  header says so: the production copy of the second computation was deleted,
-  so the test compares the tree against a reference it also owns. It cannot
-  catch both sides being wrong together. Do not treat it as proof of a
-  stage's correctness; the e2e corpus is the real net.
-- *The layout/build cycle.* An earlier draft of this plan called this "the
-  borrow shape" and said the disjoint borrow has to move from paint time to
-  build time. That was wrong, and wrong in a way that understated the
-  problem: `shell_frame` already holds `&mut Editor`, so the borrow is
-  there. What is not there is the pane's *height*, which is a layout output,
-  while the description is a layout input — and the two builders the library
-  offers below layout are both `'static`. See Blocker A in §2b. This is the
-  one place where the migration may need a library change rather than a
-  translation, and it is the first thing stage 5a prototypes.
-- *Plugin-visible behaviour.* `lines_changed` hooks run between the current
-  two bands and add overlays that paint has to see. Collapsing the bands in
-  stage 7 changes when they run relative to paint; the ordering has to be
-  preserved deliberately, not incidentally.
+- *Parity at the cell level.* `resolve_overlay_style`'s precedence is subtle
+  and under-tested; the corpus with the gate forced on is the net, and it
+  must be widened with the cases §2b A.4 lists before Stage 3 deletes the
+  painter.
+- *`ui_shell_frame_parity.rs` is a golden, not a cross-check.* It compares
+  the tree against a reference it also owns.
+- *State mutation moving before the description.* `compute_buffer_layout`
+  clamps the viewport; running it pre-frame is the right order but changes
+  *when* clamping is visible to commands that run between frames. Look for
+  tests that depend on the old order.
+- *Plugin-visible behaviour.* `lines_changed` hooks run between the bands
+  and add overlays paint must see; Stage 9's collapse must preserve that
+  ordering deliberately.
+- *An earlier framing error, kept for the record.* The first draft said the
+  disjoint borrow must move from paint to build time; `shell_frame` already
+  holds `&mut Editor`. The real blocker was that a pane's height is a layout
+  output and both builders below layout are `'static` — solved by the
+  pre-frame `layout_only`, not by a library change.
 
 ---
 
 ## 7. Definition of done
 
 - `Draw::Host` is emitted for live PTY grids and embedded editor windows
-  only, and for no other reason (or for nothing at all, if decision 1 goes
-  the other way).
-- One fold, one band, in paint order.
+  only (or nothing, per decision 1).
+- One fold, one band, in paint order. One `layout_only` + one `frame` per
+  frame; no scratch grid on the render path.
 - No `frame.render_widget` in `crates/fresh-editor/src`.
 - `ChromeLayout` holds the view-model and the fold's provenance, and no
   rectangle a painter measured.
-- One pointer walk and one keyboard walk.
-- Wide characters occupy the columns layout gave them, asserted by a test in
-  the library and one in the fold.
-- The frame-cost table in §Stage 0.2 is inside the budget from decision 2.
-- A pane's display-list item count is a function of its visible rows and not
-  of its document length, asserted by a test; `WrapIndex`'s damage-based
-  repair is still the only thing an edit invalidates.
+- One pointer walk and one keyboard walk. One caret source.
+- Wide characters occupy the columns layout gave them, asserted in the
+  library and in the fold.
+- The frame-cost table is inside the budget from decision 2; a described
+  pane allocates O(distinct styles) theme keys per frame, not O(spans).
+- A pane's display-list item count is a function of its visible rows and
+  not of its document length, asserted end to end; `WrapIndex`'s
+  damage-based repair is still the only thing an edit invalidates.
