@@ -1,7 +1,9 @@
 # Migrating the editor TUI to retained mode on `fresh-ui`
 
-**Status:** plan, written from the code on
-`claude/fresh-editor-fresh-ui-migration-glu9af` @ `2451eb9`.
+**Status:** plan. Written from the code on
+`claude/fresh-editor-fresh-ui-migration-glu9af` @ `2451eb9`, then re-verified
+against `master` @ `8a22e12` after that branch was squash-merged. Every fact
+in §1 was re-checked at that point and held, bar one noted at §1.5.
 **Objective:** the terminal UI is one retained tree. One description, one
 layout, one paint, one hit-test, one source of geometry.
 
@@ -98,9 +100,9 @@ place the two can drift.
 ### 1.5 Code volume
 
 ```
-crates/fresh-ui/src                      14,261
-fresh-editor/src/view/shell              28,941   (the tree)
-fresh-editor/src/widgets                 18,149   (legacy widget runtime)
+crates/fresh-ui/src                      14,520
+fresh-editor/src/view/shell              29,528   (the tree)
+fresh-editor/src/widgets                 18,992   (legacy widget runtime)
 fresh-editor/src/view/ui/split_rendering 16,067   (the text painter)
 fresh-editor/src/view/ui/{tabs,status_bar,menu,
   file_explorer,file_browser,scrollbar,scroll_panel}  9,107
@@ -108,8 +110,15 @@ fresh-editor/src/view/ui/{tabs,status_bar,menu,
 
 `view/ui/file_explorer.rs` (456 lines) is already dead —
 `FileExplorerRenderer` has no call site outside doc comments.
-`FileBrowserToggle`, `FocusRegion` and `TabsRenderer` are likewise
-unreferenced.
+`FileBrowserToggle`, `FileBrowserToggleSpan`, `FocusRegion` and
+`TabsRenderer` are likewise unreferenced, as are
+`widgets::render::wrap_entry_between`,
+`widgets::layout_box::{ancestor_path, document_order}` and
+`view::ui::status_bar::input_hscroll`.
+
+`layout_box::hit_stack` was on that list and is **gone on master** — deleted
+upstream, with only a mention left in its module header. It is the one §1
+fact the re-verification changed.
 
 ---
 
