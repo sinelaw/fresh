@@ -1924,33 +1924,30 @@ impl SplitManager {
             .collect()
     }
 
-    /// Get all split IDs that display a specific buffer
+    /// Get all split IDs that display a specific buffer.
+    ///
+    /// A question about the leaf set, answered from the leaf set. It used to
+    /// lay the grid out in a 1×1 probe to get the same list — which put a
+    /// scratch layout on the render path once per pane per frame, through
+    /// `update_menu_context`'s "same buffer in another split" check.
     pub fn splits_for_buffer(&self, target_buffer_id: BufferId) -> Vec<LeafId> {
         self.root
-            .get_leaves_with_rects(Rect {
-                x: 0,
-                y: 0,
-                width: 1,
-                height: 1,
-            })
+            .visible_leaves()
             .into_iter()
-            .filter(|(_, buffer_id, _)| *buffer_id == target_buffer_id)
-            .map(|(split_id, _, _)| split_id)
+            .filter(|(_, buffer_id)| *buffer_id == target_buffer_id)
+            .map(|(split_id, _)| split_id)
             .collect()
     }
 
-    /// Get the buffer ID for a specific leaf split
+    /// Get the buffer ID for a specific leaf split. See
+    /// [`Self::splits_for_buffer`] for why this walks the tree rather than
+    /// laying it out.
     pub fn buffer_for_split(&self, target_split_id: LeafId) -> Option<BufferId> {
         self.root
-            .get_leaves_with_rects(Rect {
-                x: 0,
-                y: 0,
-                width: 1,
-                height: 1,
-            })
+            .visible_leaves()
             .into_iter()
-            .find(|(split_id, _, _)| *split_id == target_split_id)
-            .map(|(_, buffer_id, _)| buffer_id)
+            .find(|(split_id, _)| *split_id == target_split_id)
+            .map(|(_, buffer_id)| buffer_id)
     }
 
     /// Maximize the active split (hide all other splits temporarily)
