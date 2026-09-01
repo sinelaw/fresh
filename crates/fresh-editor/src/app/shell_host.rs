@@ -31,6 +31,7 @@ use ratatui::style::Style;
 
 use crate::app::Editor;
 use crate::model::event::LeafId;
+use crate::view::shell::geometry::PaneRects;
 use crate::view::shell::splits::PaneChrome;
 use crate::view::ui::split_rendering::{
     paint_leaf, paint_separators, prepare_content, record_scrollbar_theme_runs, ContentPass,
@@ -154,6 +155,15 @@ pub struct BodyPainter<'a> {
     /// [`crate::view::ui::split_rendering::orchestration::paint_leaf`] to skip
     /// the text pass. See `FrameFacts::described_panes`.
     described_panes: HashSet<LeafId>,
+    /// Where the frame put every pane, read off the tree `render` just laid
+    /// out — the same tree whose display list this painter is folded over.
+    ///
+    /// The body's pass used to ask `SplitManager::get_visible_buffers` for
+    /// this, which laid the grid out a second time in a scratch `Ui<()>`; a
+    /// pane's box came from that grid and its `Host` rect from the tree, and
+    /// only a parity test said the two agreed. Now there is one answer, and
+    /// [`Self::pane`] asserts the fold's rect is it.
+    rects: PaneRects,
 }
 
 impl<'a> BodyPainter<'a> {
@@ -161,6 +171,7 @@ impl<'a> BodyPainter<'a> {
         editor: &'a mut Editor,
         state: BodyState,
         pane_chrome: std::collections::HashMap<LeafId, PaneChrome>,
+        rects: PaneRects,
     ) -> Self {
         let scrollback = editor
             .windows
@@ -187,6 +198,7 @@ impl<'a> BodyPainter<'a> {
             pane_chrome,
             scrollback,
             described_panes,
+            rects,
         }
     }
 
@@ -223,6 +235,9 @@ impl<'a> BodyPainter<'a> {
     fn body(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state;
         self.screen_width = buf.area.width;
+        // The pass keeps its own copy: a `ContentPass` is what the preview
+        // path builds for a grid with no painter, so it owns its rects.
+        let rects = self.rects.clone();
         self.pass = with_grid(
             self.editor,
             state,
@@ -231,13 +246,15 @@ impl<'a> BodyPainter<'a> {
             &self.scrollback,
             &self.described_panes,
             |facts, stores, mgr, window_chrome| {
-                let base_visible = mgr.get_visible_buffers(area);
+                // The panes at the boxes the tree placed them in — not a
+                // second layout of the grid into `area`.
+                let base_visible = rects.visible(&mgr.visible_leaves());
                 let pass = prepare_content(
+                    rects,
                     &base_visible,
                     mgr,
                     stores.split_view_states.as_deref_mut(),
                     facts.grouped_subtrees,
-                    facts.pane_chrome,
                     window_chrome,
                 );
                 paint_separators(buf, area, mgr, &base_visible, facts, stores);
@@ -266,6 +283,13 @@ impl<'a> BodyPainter<'a> {
         let Some(mut pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
             return;
         };
+        // The fold's rect is the pane's node's, and the pass's rect was read
+        // off the same node before the fold: one layout, one answer.
+        debug_assert_eq!(
+            self.rects.pane(leaf),
+            Some(rect),
+            "pane {leaf:?}: the fold's rect is not the one the tree placed it at"
+        );
         pane.3 = rect;
         let state = self.state;
         let out = &mut self.out;

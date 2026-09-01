@@ -37,6 +37,7 @@ use crate::model::event::{BufferId, EventLog, LeafId};
 use crate::state::EditorState;
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
+use crate::view::shell::geometry::PaneRects;
 use crate::view::shell::splits::{PaneChrome, PaneKind};
 use crate::view::split::SplitManager;
 use crate::view::ui::tabs::TabsRenderer;
@@ -85,6 +86,10 @@ pub(crate) struct ContentPass {
     pub window_chrome: PaneChrome,
     pub active_split_id: LeafId,
     pub has_multiple_splits: bool,
+    /// Where the frame put every pane, off the one layout that placed them.
+    /// The rects in `visible` came from here, and [`paint_leaf`] checks the
+    /// content rect it carves against it.
+    pub rects: PaneRects,
 }
 
 /// What every pane in a frame reads and none of them writes.
@@ -274,13 +279,36 @@ pub(crate) fn render_content(
         hscroll: style.cfg.show_horizontal_scrollbar,
     };
 
-    let base_visible = split_manager.get_visible_buffers(area);
+    // The preview's grid, laid out once from the same description the frame
+    // mounts — `splits::overlay` — at the preview's box. This is the one grid
+    // the frame's own tree has no nodes for, so it is the one place the
+    // render path lays a grid out beside the frame; what it no longer does
+    // is lay it out in a scratch `Ui<()>` and carve each pane's interior a
+    // second time from the result.
+    let rects = PaneRects::offscreen(
+        &crate::view::shell::splits::Splits {
+            root: split_manager.root().clone(),
+            maximized: split_manager.maximized_split().map(LeafId),
+            chrome: pane_chrome.clone(),
+            // The strip's buttons take their width from the tabs slot, never
+            // from the content, and the preview paints none.
+            controls: Default::default(),
+            groups: stores
+                .split_view_states
+                .as_deref()
+                .map(|vs| split_manager.pane_groups(vs, grouped_subtrees))
+                .unwrap_or_default(),
+            interiors: Default::default(),
+        },
+        area,
+    );
+    let base_visible = rects.visible(&split_manager.visible_leaves());
     let pass = prepare_content(
+        rects,
         &base_visible,
         split_manager,
         stores.split_view_states.as_deref_mut(),
         grouped_subtrees,
-        pane_chrome,
         window_chrome,
     );
 
@@ -348,25 +376,25 @@ pub(crate) fn paint_separators(
 }
 
 /// Resolve what every pane in this frame shares. See [`ContentPass`].
+///
+/// `rects` is where the frame put every pane, and `base_visible` is the
+/// split manager's visible leaves at the boxes `rects` gives them — the
+/// caller reads both off the same layout, which is the whole point.
 pub(crate) fn prepare_content(
+    rects: PaneRects,
     base_visible: &[(LeafId, BufferId, Rect)],
     split_manager: &SplitManager,
     split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
-    pane_chrome: &HashMap<LeafId, PaneChrome>,
     window_chrome: PaneChrome,
 ) -> ContentPass {
     ContentPass {
         // Expand any active buffer-group tabs into their inner panels.
-        visible: expand_visible_buffers(
-            base_visible,
-            split_view_states,
-            grouped_subtrees,
-            pane_chrome,
-        ),
+        visible: expand_visible_buffers(base_visible, split_view_states, grouped_subtrees, &rects),
         window_chrome,
         active_split_id: split_manager.active_split(),
         has_multiple_splits: base_visible.len() > 1,
+        rects,
     }
 }
 
@@ -514,6 +542,16 @@ pub(crate) fn paint_leaf(
     // `pane_interior` with those two flags off lays out. It used to be
     // four rectangles written by hand right here.
     let layout = split_layout(split_id, split_area, chrome);
+    // The content rect this carves is the one the tree's `content_key` node
+    // has: `pane_interior` is one statement laid out twice, at the pane's box
+    // here and inside the frame there. The clip below is a release safety
+    // net, not the contract — where the two ever differ, this says so.
+    if let Some(described) = pass.rects.content(split_id) {
+        debug_assert_eq!(
+            layout.content_rect, described,
+            "pane {split_id:?}: the content rect handed to the painter is not the tree's"
+        );
+    }
     let (split_buffers, tab_scroll_offset) = if is_inner_group_leaf {
         (Vec::new(), 0)
     } else {
@@ -908,11 +946,16 @@ pub(crate) fn paint_leaf(
 /// one [`RenderKind::InnerLeaf`] entry per panel. Inner-panel viewports are
 /// resized to their rendered rects so `editor.getViewport()` reports the panel
 /// size (not the terminal size) and resize timing stays correct.
+///
+/// A panel's rect is the tree's: the group's grid is mounted in the outer
+/// pane's content slot and each panel is keyed there like any pane, so
+/// `rects` answers for it. This used to carve the outer pane's content rect
+/// and lay the group out again in a scratch grid inside it.
 fn expand_visible_buffers(
     base_visible: &[(LeafId, BufferId, Rect)],
     mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
-    pane_chrome: &HashMap<LeafId, PaneChrome>,
+    rects: &PaneRects,
 ) -> Vec<VisibleBuffer> {
     let mut visible_buffers: Vec<VisibleBuffer> = Vec::new();
     for (main_split_id, main_buffer_id, split_area) in base_visible {
@@ -933,14 +976,8 @@ fn expand_visible_buffers(
             continue;
         };
 
-        // Compute the content rect for this main split (after its tab bar),
-        // then lay the group's leaves out within it.
-        let main_layout = split_layout(
-            *main_split_id,
-            *split_area,
-            pane_chrome.get(main_split_id).copied().unwrap_or_default(),
-        );
-        let inner_leaves = grouped.get_leaves_with_rects(main_layout.content_rect);
+        // The group's panels, at the boxes the tree placed them in.
+        let inner_leaves = rects.visible(&grouped.visible_leaves());
         visible_buffers.push((
             *main_split_id,
             *main_split_id,
@@ -1334,9 +1371,15 @@ pub(crate) fn record_scrollbar_theme_runs(
 /// Layout-only path: computes view_line_mappings for all visible splits
 /// without drawing anything. Used by macro replay to keep the cached layout
 /// fresh between actions without paying the cost of full rendering.
+///
+/// `rects` is where the shell's geometry pass put the panes — read off the
+/// same `Ui` the frame lays out, by the caller, after `layout_only`. This
+/// used to lay the grid out again in a scratch `Ui<()>` and carve each
+/// pane's interior from the result; the content rect it hands the viewport
+/// is the tree's now.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_content_layout(
-    area: Rect,
+    rects: &PaneRects,
     split_manager: &SplitManager,
     buffers: &mut HashMap<BufferId, EditorState>,
     split_view_states: &mut HashMap<LeafId, crate::view::split::SplitViewState>,
@@ -1348,23 +1391,19 @@ pub(crate) fn compute_content_layout(
     use_terminal_bg: bool,
     session_mode: bool,
     software_cursor_only: bool,
-    pane_chrome: &HashMap<LeafId, PaneChrome>,
     diagnostics_inline_text: bool,
     show_tilde: bool,
     bracket_highlight: BracketHighlightSettings,
 ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
-    let visible_buffers = split_manager.get_visible_buffers(area);
     let active_split_id = split_manager.active_split();
     let mut view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>> = HashMap::new();
 
-    for (split_id, buffer_id, split_area) in visible_buffers {
+    for (split_id, buffer_id) in split_manager.visible_leaves() {
         let is_active = split_id == active_split_id;
 
-        let layout = split_layout(
-            split_id,
-            split_area,
-            pane_chrome.get(&split_id).copied().unwrap_or_default(),
-        );
+        // A leaf the tree did not place gets a zero rect, as the scratch
+        // grid gave one it could not find.
+        let content_rect = rects.content(split_id).unwrap_or_default();
 
         let state = match buffers.get_mut(&buffer_id) {
             Some(s) => s,
@@ -1382,10 +1421,7 @@ pub(crate) fn compute_content_layout(
             .get(&split_id)
             .map(|vs| vs.viewport.clone())
             .unwrap_or_else(|| {
-                crate::view::viewport::Viewport::new(
-                    layout.content_rect.width,
-                    layout.content_rect.height,
-                )
+                crate::view::viewport::Viewport::new(content_rect.width, content_rect.height)
             });
         let mut viewport = viewport_clone;
 
@@ -1416,7 +1452,7 @@ pub(crate) fn compute_content_layout(
             &mut viewport,
             &mut state.buffer,
             &split_cursors,
-            layout.content_rect,
+            content_rect,
             &hidden_ranges,
             split_compose_width,
             split_show_line_numbers,
@@ -1443,7 +1479,7 @@ pub(crate) fn compute_content_layout(
             &split_cursors,
             &mut viewport,
             folds,
-            layout.content_rect,
+            content_rect,
             is_active,
             theme,
             lsp_waiting,
