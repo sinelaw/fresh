@@ -15,6 +15,9 @@ use std::path::{Component, Path, PathBuf};
 /// lookup would silently drop every decoration/slot override on Windows.
 pub(crate) fn normalize_explorer_plugin_path(path: &Path, root: &Path) -> PathBuf {
     let path = normalize_path(path);
+    if path.starts_with(root) {
+        return path;
+    }
     let root_key = explorer_path_key(root);
 
     for candidate in explorer_path_candidates(&path) {
@@ -34,6 +37,9 @@ pub(crate) fn normalize_explorer_plugin_path(path: &Path, root: &Path) -> PathBu
 /// Return true when `path` lies under `root`, tolerant of Windows separator
 /// and `\\?\` extended-prefix differences between plugin and tree paths.
 pub(crate) fn explorer_path_under_root(path: &Path, root: &Path) -> bool {
+    if path.starts_with(root) {
+        return true;
+    }
     let root_key = explorer_path_key(root);
     explorer_path_candidates(path)
         .into_iter()

@@ -36,6 +36,7 @@ fn hostile_plugin_cannot_stall_the_editor_loop() {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let working_dir = temp.path().join("work");
     fs::create_dir_all(&working_dir).unwrap();
+    let root = working_dir.canonicalize().unwrap();
     let plugins_dir = working_dir.join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "dashboard");
@@ -117,6 +118,22 @@ if (dash) {
     )
     .expect("harness");
     harness.editor_mut().fire_ready_hook();
+    let started = Instant::now();
+    harness
+        .editor_mut()
+        .handle_plugin_command(fresh_core::api::PluginCommand::SetFileExplorerDecorations {
+            namespace: "hostile".to_string(),
+            decorations: vec![fresh_core::file_explorer::FileExplorerDecoration {
+                path: root.join("src/gen_0.rs"),
+                symbol: "M".to_string(),
+                color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "ui.file_status_modified_fg".to_string(),
+                ),
+                priority: 50,
+            }; 25_000],
+        })
+        .unwrap();
+    assert!(started.elapsed() < Duration::from_millis(500));
 
     // Dashboard open with the hostile sections registered and painting.
     harness
