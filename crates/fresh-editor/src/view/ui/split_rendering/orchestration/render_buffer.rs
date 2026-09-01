@@ -1,7 +1,10 @@
 //! Per-buffer render orchestration.
 //!
 //! Three functions compose here:
-//! - [`compute_buffer_layout`] — pure layout phase (no drawing).
+//! - [`compute_buffer_layout`] — pure layout phase (no drawing). A read of
+//!   the pane's state, viewport and rect; the writes that used to precede
+//!   the build (placement, margins, the wrap index) run before the frame,
+//!   in [`super::reconcile`].
 //! - [`draw_buffer_in_split`] — drawing phase from a `BufferLayoutOutput`.
 //! - [`render_buffer_in_split`] — the two phases combined, the API used by
 //!   the top-level `render_content`.
@@ -45,6 +48,9 @@ pub(crate) struct BufferLayoutOutput {
     pub compose_layout: ComposeLayout,
     pub effective_editor_bg: Color,
     pub view_mode: ViewMode,
+    /// The horizontal scroll the rows were laid out with — the viewport's
+    /// column after this frame's cursor-column check, which the pane's paint
+    /// stores back once it has drawn.
     pub left_column: usize,
     pub gutter_width: usize,
     pub buffer_ends_with_newline: bool,
@@ -153,12 +159,20 @@ pub(crate) fn resolve_cursor_fallback(
 /// Pure layout computation for a buffer in a split pane.
 /// No frame/drawing involved — produces a `BufferLayoutOutput` that the
 /// drawing phase can consume.
+///
+/// **A read of `(state, viewport, rect)`.** The viewport has been placed and
+/// the buffer's margins and wrap index brought up to date by
+/// [`super::reconcile`] before this runs; nothing here writes the viewport,
+/// the folds or the margins, and the rows are built exactly once. `state` is
+/// still `&mut` for the reads that fill caches as they go — the buffer's
+/// lazy chunk loads under `line_iterator`, the highlighter, the overlay and
+/// marker resolution in `decoration_context` — none of which is placement.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_buffer_layout(
     state: &mut EditorState,
     cursors: &Cursors,
-    viewport: &mut Viewport,
-    folds: &mut FoldManager,
+    viewport: &Viewport,
+    folds: &FoldManager,
     area: Rect,
     is_active: bool,
     theme: &Theme,
@@ -183,6 +197,7 @@ pub(crate) fn compute_buffer_layout(
     cell_theme_map: Option<(&mut Vec<CellThemeInfo>, u16)>,
 ) -> BufferLayoutOutput {
     let _span = tracing::trace_span!("compute_buffer_layout").entered();
+    crate::view::ui::split_rendering::instrument::count_buffer_layout();
 
     // Compute effective editor background: terminal default or theme-defined
     let effective_editor_bg = if use_terminal_bg {
@@ -217,10 +232,6 @@ pub(crate) fn compute_buffer_layout(
         compose_width,
         estimated_lines,
     );
-    // The buffer's shared margin state is what the readers between frames
-    // (mouse mapping, `left_total_width`) consult; it holds the last pane's
-    // gutter, as it always has.
-    state.margins.left_config = gutter.margin.clone();
     let GutterLayout {
         margin,
         width: gutter_width,
@@ -233,25 +244,14 @@ pub(crate) fn compute_buffer_layout(
     // movement changes what's active without any marker churn).
     let cursor_positions = cursors.positions();
 
-    // Decide the scroll *before* building. The layout-based pass below can only
-    // run on materialised rows, so it makes the frame build rows to discover it
-    // needs to scroll and then rebuild because it did. In row space the wrap
-    // index answers "which row is the cursor on" directly, so the common case —
-    // a cursor that has drifted into the scroll margin — is settled with no rows
-    // built at all, and the layout pass then finds nothing left to do.
-    //
-    // Build the index if it is stale, then place. With repair keeping the
-    // version current across text edits, a stale index here means a
-    // decoration batch arrived — compose's `lines_changed` round-trip — and
-    // re-placing against the fresh rows is exactly the re-place-on-arrival
-    // trigger the model requires (`test_arrival_without_replacement_loses_
-    // the_cursor`): nothing else re-runs placement, because the post-render
-    // fixup pass is gone. Bounded by the scrollbar's size ceilings so a huge
-    // file never builds an index just to place the viewport. (The fold
-    // carve-out that used to sit here is gone: folds are in the geometry key
-    // now, so index rows *are* drawn rows.)
-    let mut build_anchor: Option<BuildAnchor> = None;
-    {
+    // Where the build starts. The viewport was placed before this frame by
+    // `reconcile::place_pane`, which built the wrap index for this geometry
+    // (when the buffer is within the index's size ceilings) and decided the
+    // scroll in row space; here the same index — read, never built — says
+    // which row the viewport's top is and where the wrap can be resumed.
+    // Without an index the build starts at the logical line, as it always
+    // did for buffers beyond the ceilings.
+    let build_anchor: Option<BuildAnchor> = {
         let fold_ranges = state.fold_ranges(folds);
         let geometry = wrap_index_geometry_for(
             viewport,
@@ -260,119 +260,24 @@ pub(crate) fn compute_buffer_layout(
             &view_mode,
             crate::view::wrap_index::fold_signature(&fold_ranges),
         );
-        let inputs = state.pipeline_inputs();
-        let cursor_byte = cursors.primary().position;
-        let buffer_len = state.buffer.len();
-        // Large-file mode has no line data at all — the gutter is byte-based
-        // and `line_count` is byte arithmetic, so an index built here would be
-        // one meaningless line and placement against it pins the viewport at
-        // the top. The byte pass owns those buffers outright. `line_count()`
-        // (an Option, no scan) replaces the earlier `get_line_number(len-1)`,
-        // which forced exactly the scan large-file mode exists to avoid.
-        let indexable = !state.buffer.is_large_file();
-        let within_bounds = indexable
-            && buffer_len <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_BYTES
-            && state.buffer.line_count().is_some_and(|lc| {
-                lc <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_LINES
-            });
-        if within_bounds || (indexable && state.wrap_indices.get(&geometry).is_some()) {
-            let line_ending = state.buffer.line_ending();
-            // Decorations — virtual-line anchors included — are resolved into
-            // one owned snapshot before `entry` takes `&mut state`.
-            let decorations = state.index_decorations(geometry.view_mode, fold_ranges.clone(), &[]);
-            let index = state.wrap_indices.entry(geometry);
-            index.ensure_built(
-                &mut state.buffer,
-                geometry,
-                inputs,
-                line_ending,
-                &decorations,
-            );
-
-            // Cursor-line expansion: the frame draws the cursor's line
-            // cursor-aware, so placement must target the row the cursor is
-            // *drawn* on and clamp against the rows that will actually exist.
-            // Activation scopes are line-local, so this one line is the only
-            // possible divergence; everything else stays canonical. Mirrors
-            // the model's `EditorModel.ensure_cursor_visible`.
-            let cursor_line = state.buffer.get_line_number(cursor_byte);
-            let cl_start = state.buffer.line_start_offset(cursor_line).unwrap_or(0);
-            let cl_end = state
-                .buffer
-                .line_start_offset(cursor_line + 1)
-                .unwrap_or_else(|| state.buffer.len());
-            let divergent = state
-                .conceals
-                .earliest_cursor_divergence(cl_start, cl_end, &state.marker_list, &cursor_positions)
-                .is_some()
-                || state
-                    .soft_breaks
-                    .earliest_cursor_divergence(
-                        cl_start,
-                        cl_end,
-                        &state.marker_list,
-                        &cursor_positions,
-                    )
-                    .is_some();
-            let expansion = if divergent {
-                let canonical = state
-                    .wrap_indices
-                    .get(&geometry)
-                    .and_then(|i| i.line_wrap(cursor_line))
-                    .filter(|lw| !lw.hidden)
-                    .map(|lw| lw.wrap_rows());
-                let first_row = state
-                    .wrap_indices
-                    .get(&geometry)
-                    .map(|i| i.row_of_byte(&state.buffer, cl_start));
-                match (canonical, first_row) {
-                    (Some(canonical_rows), Some(first_row)) => {
-                        let aware = state.index_decorations(
-                            geometry.view_mode,
-                            state.fold_ranges(folds),
-                            &cursor_positions,
-                        );
-                        let starts = crate::view::wrap_index::line_drawn_row_starts(
-                            &mut state.buffer,
-                            cursor_line,
-                            geometry.rule,
-                            line_ending,
-                            &aware,
-                        );
-                        let rel = cursor_byte.saturating_sub(cl_start) as u32;
-                        let within = starts.partition_point(|s| *s <= rel).saturating_sub(1);
-                        Some(crate::view::viewport::CursorLineExpansion {
-                            line_start: cl_start,
-                            first_row,
-                            canonical_rows: canonical_rows as usize,
-                            drawn_rows: starts.len().max(1),
-                            cursor_row_drawn: first_row + within as u32,
-                        })
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
-
-            if let Some(index) = state.wrap_indices.get(&geometry) {
-                viewport.ensure_visible_in_rows(
-                    index,
-                    &state.buffer,
-                    cursor_byte,
-                    expansion.as_ref(),
-                );
-                viewport.row_pass_owns_placement = true;
-                // Resolve the anchor *after* the scroll decision, so the build
-                // starts where the frame will actually draw.
-                build_anchor = resolve_build_anchor(index, state, viewport, &cursor_positions);
-            }
-        } else {
-            // Beyond the size ceilings with no index built: the byte-oriented
-            // pass is the only vertical authority there is.
-            viewport.row_pass_owns_placement = false;
-        }
-    }
+        // The reconcile builds the index for every indexable buffer within
+        // the ceilings; a pane formatted without one is a pane reconciled
+        // against a different geometry, or not at all.
+        debug_assert!(
+            state.wrap_indices.get(&geometry).is_some()
+                || state.buffer.is_large_file()
+                || state.buffer.len()
+                    > crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_BYTES
+                || state.buffer.line_count().is_none_or(|lc| {
+                    lc > crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_LINES
+                }),
+            "compute_buffer_layout ran without a reconciled wrap index for its geometry"
+        );
+        state
+            .wrap_indices
+            .get(&geometry)
+            .and_then(|index| resolve_build_anchor(index, state, viewport, &cursor_positions))
+    };
 
     let view_data = {
         let _span = tracing::trace_span!("build_view_data").entered();
@@ -392,48 +297,13 @@ pub(crate) fn compute_buffer_layout(
         )
     };
 
-    // Same-buffer scroll sync: if the sync code flagged this viewport to
-    // scroll to the end, apply it now using the view lines we just built.
-    let sync_scrolled = if viewport.sync_scroll_to_end {
-        viewport.sync_scroll_to_end = false;
-        viewport.scroll_to_end_of_view(&view_data.lines)
-    } else {
-        false
-    };
-
-    // If the sync adjustment changed top_byte, rebuild view_data so the
-    // horizontal pass below sees the rows the frame will actually draw.
-    let view_data = if sync_scrolled {
-        viewport.set_top_view_line_offset(0);
-        let rebuilt = build_view_data(
-            state,
-            viewport,
-            estimated_line_length,
-            visible_count,
-            line_wrap,
-            render_area.width as usize,
-            gutter_width,
-            &view_mode,
-            folds,
-            theme,
-            &cursor_positions,
-            // A sync scroll moved the viewport; the anchor described where it
-            // used to be.
-            None,
-        );
-        viewport.scroll_to_end_of_view(&rebuilt.lines);
-        rebuilt
-    } else {
-        view_data
-    };
-
     // Horizontal placement from the rows that were built. Vertical placement
-    // is settled in row space above (`ensure_visible_in_rows`), so this pass
-    // never moves `top_byte` and the rows never need rebuilding after it — the
-    // third build this function used to carry (a "scrolled, so rebuild" retry
-    // guarded by `may_rebuild`) could no longer run and is gone.
+    // was settled in row space by the reconcile, so this never moves
+    // `top_byte` and the rows never need rebuilding after it. The column is a
+    // value here — the frame is drawn with it, and the pane's paint stores
+    // it afterwards (`reconcile::settle_pane`).
     let primary = *cursors.primary();
-    viewport.ensure_visible_in_layout_with_render_width(
+    let left_column = viewport.layout_column_scroll(
         &view_data.lines,
         &primary,
         render_area.width as usize,
@@ -507,7 +377,7 @@ pub(crate) fn compute_buffer_layout(
                 viewport_start,
                 estimated_line_length,
                 adjusted_visible_count,
-                viewport.left_column,
+                left_column,
                 render_area.width as usize,
             );
             (viewport_start, viewport_end)
@@ -570,7 +440,7 @@ pub(crate) fn compute_buffer_layout(
         is_active,
         line_wrap,
         estimated_lines,
-        left_column: viewport.left_column,
+        left_column,
         relative_line_numbers,
         session_mode,
         software_cursor_only,
@@ -602,7 +472,7 @@ pub(crate) fn compute_buffer_layout(
         compose_layout,
         effective_editor_bg,
         view_mode,
-        left_column: viewport.left_column,
+        left_column,
         gutter_width,
         buffer_ends_with_newline,
         selection,
@@ -801,16 +671,27 @@ pub(crate) fn draw_buffer_in_split(
     }
 }
 
+/// What a pane's text pass hands back to the paint that ran it.
+pub(crate) struct PaneTextResult {
+    /// The per-row mappings for mouse click handling.
+    pub view_line_mappings: Vec<ViewLineMapping>,
+    /// The horizontal scroll the rows were drawn with, for
+    /// [`super::reconcile::settle_pane`] to store.
+    pub left_column: usize,
+}
+
 /// Render a single buffer in a split pane (convenience wrapper).
 /// Calls [`compute_buffer_layout`] then [`draw_buffer_in_split`].
-/// Returns the view line mappings for mouse click handling.
+///
+/// The pane must have been reconciled for this frame
+/// (`super::reconcile`); this writes nothing to the view state.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_buffer_in_split(
     buf: &mut ratatui::buffer::Buffer,
     state: &mut EditorState,
     cursors: &Cursors,
-    viewport: &mut Viewport,
-    folds: &mut FoldManager,
+    viewport: &Viewport,
+    folds: &FoldManager,
     event_log: Option<&mut EventLog>,
     area: Rect,
     is_active: bool,
@@ -831,7 +712,7 @@ pub(crate) fn render_buffer_in_split(
     cell_theme_map: &mut Vec<CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
-) -> Vec<ViewLineMapping> {
+) -> PaneTextResult {
     // The style group provides theme + the appearance flags; unpack into the
     // locals the body already uses by name. The cfg fields this painter
     // doesn't read are ignored.
@@ -884,6 +765,7 @@ pub(crate) fn render_buffer_in_split(
     );
 
     let view_line_mappings = layout_output.view_line_mappings.clone();
+    let left_column = layout_output.left_column;
 
     draw_buffer_in_split(
         buf,
@@ -904,7 +786,10 @@ pub(crate) fn render_buffer_in_split(
         pending_hardware_cursor,
     );
 
-    view_line_mappings
+    PaneTextResult {
+        view_line_mappings,
+        left_column,
+    }
 }
 
 /// Where the build should start for this viewport, if the index can say.

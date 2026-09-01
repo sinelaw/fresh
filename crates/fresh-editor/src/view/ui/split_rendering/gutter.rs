@@ -137,11 +137,7 @@ pub(super) fn render_left_margin(
         }
         push_span_with_map(line_spans, line_view_map, blank, style, None);
     } else if ctx.byte_offset_mode && ctx.show_line_numbers {
-        let rendered_text = format!(
-            "{:>width$}",
-            ctx.gutter_num,
-            width = ctx.margin.width
-        );
+        let rendered_text = format!("{:>width$}", ctx.gutter_num, width = ctx.margin.width);
         let mut margin_style = if is_cursor_line {
             Style::default().fg(ctx.theme.editor_fg)
         } else {
@@ -157,11 +153,7 @@ pub(super) fn render_left_margin(
         } else {
             ctx.gutter_num.abs_diff(ctx.cursor_line_number)
         };
-        let rendered_text = format!(
-            "{:>width$}",
-            display_num,
-            width = ctx.margin.width
-        );
+        let rendered_text = format!("{:>width$}", display_num, width = ctx.margin.width);
         let mut margin_style = if is_cursor_line {
             Style::default().fg(ctx.theme.editor_fg)
         } else {
