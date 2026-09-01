@@ -120,9 +120,50 @@ mod test_plugin_i18n_completeness;
 mod test_save_all;
 #[path = "test_theme_schema_i18n.rs"]
 mod test_theme_schema_i18n;
+#[path = "ui_shell_frame_parity.rs"]
+mod ui_shell_frame_parity;
 #[path = "undo_redo_marker_roundtrip_tests.rs"]
 mod undo_redo_marker_roundtrip_tests;
 #[path = "workspace_persistence_gates.rs"]
 mod workspace_persistence_gates;
 #[path = "workspace_virtual_buffer_clobber.rs"]
 mod workspace_virtual_buffer_clobber;
+
+/// `autotests = false` means cargo no longer discovers `tests/*.rs` on its own:
+/// a root missing from the list above is not an error, it simply never runs.
+/// That is a silent hole, and it caught a real file (`ui_shell_frame_parity`)
+/// the first time this branch was rebased onto other work. So the list checks
+/// itself.
+#[test]
+fn every_test_root_is_listed_in_this_file() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let me = std::fs::read_to_string(dir.join("all_tests.rs")).expect("read all_tests.rs");
+
+    // Declared in Cargo.toml as its own target instead (gated on a feature).
+    const SEPARATE_TARGETS: &[&str] = &["scene_parity"];
+
+    let mut unlisted: Vec<String> = std::fs::read_dir(&dir)
+        .expect("read tests/")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let stem = name.strip_suffix(".rs")?.to_string();
+            if stem == "all_tests" || SEPARATE_TARGETS.contains(&stem.as_str()) {
+                return None;
+            }
+            let listed = me.contains(&format!("#[path = \"{name}\"]"));
+            (!listed).then_some(stem)
+        })
+        .collect();
+    unlisted.sort();
+
+    assert!(
+        unlisted.is_empty(),
+        "these test roots exist under tests/ but are not declared in all_tests.rs, \
+         so none of their tests run:\n  {}\n\
+         Add `#[path = \"<name>.rs\"] mod <name>;` to all_tests.rs (or declare a \
+         [[test]] target in Cargo.toml and list it in SEPARATE_TARGETS).",
+        unlisted.join("\n  ")
+    );
+}
