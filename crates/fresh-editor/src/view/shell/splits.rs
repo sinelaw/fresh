@@ -4,8 +4,10 @@
 //! layout engine — `get_leaves_with_rects` recursing over ratios and reserving
 //! a cell per separator — and everything downstream was keyed on the
 //! rectangles it produced: the separator drags, the per-pane scrollbars, the
-//! tab strips, click-to-byte. That engine is this description now, and the
-//! model's queries are reads of it (`SplitManager::get_visible_buffers`).
+//! tab strips, click-to-byte. That engine is this description now, laid out
+//! once per frame as part of the shell tree, and where the panes are is read
+//! off that layout (`view::shell::geometry::PaneRects`) — the model no longer
+//! lays anything out to answer.
 //!
 //! The rule itself does not move. `split_rect_ext` converts a ratio to cells
 //! and pins the first child so its sibling keeps `MIN_PANE_{WIDTH,HEIGHT}` —
@@ -46,8 +48,8 @@ pub fn grid<M: 'static>(root: &SplitNode, maximized: Option<LeafId>) -> Node<M> 
     if let Some(id) = maximized {
         if let Some(SplitNode::Leaf { split_id, .. }) = root.find(id.into()) {
             // A maximized pane is the whole box and there are no separators —
-            // the same two facts `get_visible_buffers` and `get_separators`
-            // state separately.
+            // the same two facts `SplitManager::visible_leaves` and
+            // `get_separators` state separately.
             return pane(*split_id);
         }
     }
@@ -208,8 +210,9 @@ mod tests {
 
     /// **The tree lays the grid out exactly as the model always did.**
     ///
-    /// This is the swap's whole safety argument: `get_leaves_with_rects` is a
-    /// layout engine, and it is being replaced by one. It shares the rule
+    /// This is the swap's whole safety argument: the model's walk
+    /// (`reference_leaves_with_rects`, the engine that was) is a layout
+    /// engine, and it was replaced by one. The two share the rule
     /// (`split_rect_ext`), so a divergence here would be the *structure*
     /// disagreeing — a reserved separator cell, or which child takes the
     /// remainder.
@@ -243,7 +246,8 @@ mod tests {
     }
 
     /// A maximized pane is the whole box, and the separators go with it —
-    /// two facts `get_visible_buffers` and `get_separators` state apart.
+    /// two facts `SplitManager::visible_leaves` and `get_separators` state
+    /// apart.
     #[test]
     fn a_maximized_pane_takes_the_whole_box() {
         let root = split(SplitDirection::Vertical, leaf(0), leaf(1), 0.5, 10);
@@ -431,8 +435,8 @@ mod tests {
 
     /// **A maximized pane is the only one the fold reaches.**
     ///
-    /// The same two facts `get_visible_buffers` states when a pane is
-    /// maximized: it is the whole box, and it is alone.
+    /// The same two facts `SplitManager::visible_leaves` and the grid state
+    /// when a pane is maximized: it is alone, and it is the whole box.
     #[test]
     fn a_maximized_pane_is_the_only_host_in_the_grid() {
         let root = split(SplitDirection::Vertical, leaf(0), leaf(1), 0.5, 10);

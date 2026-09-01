@@ -1,34 +1,48 @@
 //! Where the frame put each pane — read once, off the `Ui` that laid the
 //! frame out.
 //!
-//! **One source of pane geometry per frame.** The render path used to lay
-//! the pane grid out more than once and three different ways: `Editor::render`
-//! laid out the shell tree, `SplitManager::get_leaves_with_rects` laid the
-//! *same* grid out again in a scratch `Ui<()>` to answer where the panes are,
-//! and the macro-replay path did a third — a `layout_only` of the shell, then
-//! `compute_content_layout`, which ran the scratch grid inside it. The scratch
-//! grid was a second implementation of the pane layout; where it disagreed
-//! with the tree by a cell, the painter's clip papered over it.
+//! **One source of pane geometry.** The pane grid used to be laid out more
+//! than once and three different ways: `Editor::render` laid out the shell
+//! tree, `SplitManager::get_leaves_with_rects` laid the *same* grid out again
+//! in a scratch `Ui<()>` to answer where the panes are — for the render path
+//! at first, and for every action that asked after it — and the macro-replay
+//! path did a third, a `layout_only` of the shell and then the scratch grid
+//! inside `compute_content_layout`. The scratch grid was a second
+//! implementation of the pane layout; where it disagreed with the tree by a
+//! cell, the painter's clip papered over it. It is gone, and nothing lays the
+//! grid out alone any more.
 //!
 //! [`PaneRects`] is the one answer. It is read off the shell's `Ui` right
-//! after the frame's layout — [`Ui::frame`](fresh_ui::Ui::frame) on the render
-//! path, [`Ui::layout_only`](fresh_ui::Ui::layout_only) on the replay path —
-//! and handed to everything that used to ask the scratch grid: the plugin
-//! `lines_changed` hooks, the body painter, and the layout-only pass. The keys
-//! it reads are the ones the description applies: [`leaf_key`] for the box a
-//! pane fills and [`content_key`] for the content slot inside it, past the
-//! strip and beside the scrollbar.
+//! after a layout — [`Ui::frame`](fresh_ui::Ui::frame) on the render path,
+//! [`Ui::layout_only`](fresh_ui::Ui::layout_only) on the replay path and on
+//! `Editor::refresh_pane_rects` — and handed to everything that used to ask
+//! the scratch grid: the plugin `lines_changed` hooks, the body painter, and
+//! the layout-only pass. The keys it reads are the ones the description
+//! applies: [`leaf_key`] for the box a pane fills and [`content_key`] for the
+//! content slot inside it, past the strip and beside the scrollbar.
 //!
-//! **Never last frame's rect.** Every chrome toggle — the dock, the explorer,
-//! the menu bar, a separator drag — changes pane widths between frames, and a
-//! pane laid out at the old width is a visibly wrong frame, not a short one.
-//! The rects here are this frame's, from this frame's layout.
+//! **Never last frame's rect, on the render path.** Every chrome toggle — the
+//! dock, the explorer, the menu bar, a separator drag — changes pane widths
+//! between frames, and a pane laid out at the old width is a visibly wrong
+//! frame, not a short one. The rects a frame paints with are this frame's,
+//! from this frame's layout.
 //!
-//! The session preview is the one caller with no tree to read: it paints
-//! *another window's* grid offscreen, where this window's tree has no nodes.
-//! [`PaneRects::offscreen`] lays that grid out once, from the same description
-//! the frame uses (`splits::overlay`), and reads it the same way — one layout
-//! of one description, rather than a scratch grid plus a per-pane interior.
+//! **Between frames, the last layout's.** The action paths that ask where a
+//! pane is — a terminal's PTY sized to its pane, a tab strip's width, the
+//! plugin snapshot, the pane beside this one — read the [`PaneRects`] the
+//! window retains (`Window::pane_rects`), which every layout writes. The
+//! layout funnel (`Editor::push_layout_geometry`) refreshes it with a
+//! `layout_only` of the frame *before* those callers run, so an action that
+//! just split, closed, maximized or dragged a pane asks about the grid as it
+//! is, not as the last frame had it.
+//!
+//! Two callers have no tree to read, and lay the grid out offscreen from the
+//! same description the frame mounts (`splits::overlay`), reading it the same
+//! way: the session preview, which paints *another window's* grid into a box
+//! of this one's frame, and the layout funnel for the windows that are not
+//! the active one, whose grids the one retained tree does not hold.
+//! [`PaneRects::offscreen`] is that — one layout of one description, rather
+//! than a scratch grid plus a per-pane interior.
 
 use std::collections::HashMap;
 
@@ -67,9 +81,9 @@ impl PaneRects {
     /// in screen coordinates.
     ///
     /// A pane with no node — one hidden behind a maximized sibling — is simply
-    /// absent. A zero-size pane is *not*: the scratch grid answered a zero
-    /// rectangle for it and the painter painted nothing in it, and this keeps
-    /// that shape rather than dropping the pane from the frame's list.
+    /// absent. A zero-size pane is *not*: the painter paints nothing in it,
+    /// and this keeps that shape rather than dropping the pane from the
+    /// frame's list.
     pub fn read(
         ui: &fresh_ui::Ui<UiMsg>,
         panes: impl IntoIterator<Item = LeafId>,
@@ -97,11 +111,12 @@ impl PaneRects {
     /// no nodes for.
     ///
     /// The session preview paints another window's panes into a rectangle of
-    /// this one's frame. That grid is described by the same `overlay` the
-    /// frame mounts, laid out once here at the preview's box, so the preview's
-    /// panes come off one layout of one description — the rule the render
-    /// path follows, applied to the one grid the render path's tree cannot
-    /// hold.
+    /// this one's frame, and the layout funnel sizes every window's terminals
+    /// to their panes, not only the active window's. Those grids are
+    /// described by the same `overlay` the frame mounts, laid out once here at
+    /// the caller's box, so their panes come off one layout of one
+    /// description — the rule the render path follows, applied to the grids
+    /// the retained tree cannot hold.
     pub fn offscreen(s: &Splits, area: Rect) -> Self {
         stats::note_offscreen_grid();
         let mut ui: fresh_ui::Ui<UiMsg> = fresh_ui::Ui::new();
@@ -119,14 +134,14 @@ impl PaneRects {
         self.by_pane.get(&pane).map(|r| r.content)
     }
 
-    /// `leaves`, each with the box it fills — the shape
-    /// `SplitManager::get_visible_buffers` answered in, so the callers that
-    /// took that list take this one.
+    /// `leaves`, each with the box it fills, in the order given — the shape
+    /// `SplitManager::get_visible_buffers` used to answer in, so the callers
+    /// that took that list take this one, in the same order (the tree's,
+    /// first child before second: left to right, top to bottom).
     ///
-    /// A leaf the tree did not place gets a zero rectangle, as the scratch
-    /// grid gave one it could not find; the set of leaves is the caller's,
-    /// and `SplitManager::visible_leaves` already leaves out what a maximized
-    /// pane hides.
+    /// A leaf the tree did not place gets a zero rectangle; the set of leaves
+    /// is the caller's, and `SplitManager::visible_leaves` already leaves out
+    /// what a maximized pane hides.
     pub fn visible(&self, leaves: &[(LeafId, BufferId)]) -> Vec<(LeafId, BufferId, Rect)> {
         leaves
             .iter()
@@ -159,10 +174,11 @@ fn panes_of(s: &Splits) -> Vec<LeafId> {
 /// How many times the pane grid was laid out, per frame.
 ///
 /// The instrument Stage 2 of the retained-mode plan asks for: a count of
-/// shell layout passes and of scratch-grid layouts, so a test can pin "one
-/// shell layout, no scratch grid" per frame and per replayed action, and so
-/// the next path to lay the grid out a second time fails a test rather than
-/// hiding behind the clip.
+/// shell layout passes and of offscreen grids, so a test can pin "one shell
+/// layout, nothing else" per frame and per replayed action, and so the next
+/// path to lay the grid out a second time fails a test rather than hiding
+/// behind the clip. The scratch grid's own counter went with the scratch
+/// grid: there is no path left that lays the grid out alone.
 ///
 /// Thread-local, because the editor renders on one thread and tests run one
 /// editor per thread. Counted only with debug assertions on; the release
@@ -174,7 +190,6 @@ pub mod stats {
     #[cfg(debug_assertions)]
     thread_local! {
         static SHELL_LAYOUTS: Cell<u32> = const { Cell::new(0) };
-        static SCRATCH_GRIDS: Cell<u32> = const { Cell::new(0) };
         static OFFSCREEN_GRIDS: Cell<u32> = const { Cell::new(0) };
     }
 
@@ -182,15 +197,14 @@ pub mod stats {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct LayoutCounts {
         /// Layouts of the shell tree: `Ui::frame` on the render path,
-        /// `Ui::layout_only` on the replay path. One per frame is the rule.
+        /// `Ui::layout_only` on the replay path and on
+        /// `Editor::refresh_pane_rects`. One per frame is the rule.
         pub shell: u32,
-        /// Scratch layouts of the pane grid in a `Ui<()>` —
-        /// `SplitNode::get_leaves_with_rects`. Zero on the render path is
-        /// the rule; its remaining callers are model queries and tests.
-        pub scratch_grids: u32,
-        /// Offscreen layouts of another window's grid, for the session
-        /// preview ([`super::PaneRects::offscreen`]). One per embedded
-        /// window painted.
+        /// Offscreen layouts of a grid the retained tree does not hold
+        /// ([`super::PaneRects::offscreen`]): one per embedded window the
+        /// session preview paints, one per non-active window the layout
+        /// funnel sizes. Zero per frame is the rule when no preview is
+        /// painted.
         pub offscreen_grids: u32,
     }
 
@@ -198,12 +212,6 @@ pub mod stats {
     pub fn note_shell_layout() {
         #[cfg(debug_assertions)]
         SHELL_LAYOUTS.with(|c| c.set(c.get().saturating_add(1)));
-    }
-
-    #[inline]
-    pub fn note_scratch_grid() {
-        #[cfg(debug_assertions)]
-        SCRATCH_GRIDS.with(|c| c.set(c.get().saturating_add(1)));
     }
 
     #[inline]
@@ -217,7 +225,6 @@ pub mod stats {
     pub fn take() -> LayoutCounts {
         LayoutCounts {
             shell: SHELL_LAYOUTS.with(|c| c.replace(0)),
-            scratch_grids: SCRATCH_GRIDS.with(|c| c.replace(0)),
             offscreen_grids: OFFSCREEN_GRIDS.with(|c| c.replace(0)),
         }
     }
@@ -250,10 +257,14 @@ mod tests {
         }
     }
 
-    /// The tree's answer is the scratch grid's answer, pane for pane, for the
-    /// box and for the content slot — which is what lets the scratch grid go.
+    /// The tree's answer is the model's own walk's answer, pane for pane, for
+    /// the box and for the content slot — which is what let the scratch grid
+    /// go. The oracle is `reference_leaves_with_rects`, the recursion over
+    /// `split_rect_ext` that was the layout before the description was, kept
+    /// under `cfg(test)` for exactly this; and for this fixed grid the rects
+    /// are also spelled out by hand, so the oracle is checked too.
     #[test]
-    fn the_tree_places_panes_where_the_scratch_grid_did() {
+    fn the_tree_places_panes_where_the_model_walk_does() {
         let root = split(
             SplitDirection::Vertical,
             leaf(0),
@@ -279,15 +290,25 @@ mod tests {
         let _ = stats::take();
         let rects = PaneRects::offscreen(&s, area);
 
-        let want = root.get_leaves_with_rects(area);
-        assert_eq!(want.len(), 3);
-        // The instrument sees both: the one offscreen layout, and the oracle's
-        // scratch grid.
+        let want = root.reference_leaves_with_rects(area);
+        // By hand: a column is reserved for the separator, and 99 columns at
+        // 0.6 round to 59 for pane 0, leaving 40 for the right half past the
+        // separator; a row is reserved there too, and 39 rows at 0.3 round to
+        // 12 for pane 1, leaving 27 for pane 2 below the separator.
+        assert_eq!(
+            want,
+            vec![
+                (id(0), BufferId(0), Rect::new(3, 2, 59, 40)),
+                (id(1), BufferId(1), Rect::new(63, 2, 40, 12)),
+                (id(2), BufferId(2), Rect::new(63, 15, 40, 27)),
+            ]
+        );
+        // The instrument sees the one offscreen layout and nothing else: the
+        // oracle is a walk of the model, not a layout.
         assert_eq!(
             stats::take(),
             stats::LayoutCounts {
                 shell: 0,
-                scratch_grids: 1,
                 offscreen_grids: 1,
             }
         );
@@ -304,8 +325,7 @@ mod tests {
     }
 
     /// A maximized pane is the only one placed; the others are absent, not
-    /// zero — and `visible` gives a leaf the tree did not place a zero rect,
-    /// as the scratch grid did.
+    /// zero — and `visible` gives a leaf the tree did not place a zero rect.
     #[test]
     fn a_maximized_pane_is_the_only_one_placed() {
         let s = Splits {
@@ -354,8 +374,14 @@ mod tests {
         let rects = PaneRects::offscreen(&s, area);
         let outer = rects.content(id(0)).expect("the outer content slot");
         assert_eq!(outer, Rect::new(0, 1, 79, 23));
-        let want = group.get_leaves_with_rects(outer);
-        assert_eq!(want.len(), 2);
+        let want = group.reference_leaves_with_rects(outer);
+        assert_eq!(
+            want,
+            vec![
+                (id(20), BufferId(20), Rect::new(0, 1, 39, 23)),
+                (id(21), BufferId(21), Rect::new(40, 1, 39, 23)),
+            ]
+        );
         for (leaf, _, r) in want {
             assert_eq!(rects.pane(leaf), Some(r), "{leaf:?} inside the outer pane");
         }

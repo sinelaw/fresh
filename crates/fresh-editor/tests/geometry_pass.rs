@@ -5,11 +5,13 @@
 //! source of pane geometry per frame. Before it, the render path laid the
 //! pane grid out three ways — the shell tree, a scratch `Ui<()>` in
 //! `SplitManager::get_leaves_with_rects`, and (on macro replay) a
-//! `layout_only` of the shell followed by the scratch grid again.
+//! `layout_only` of the shell followed by the scratch grid again. The scratch
+//! grid is gone now (Stage 2b): the action paths that asked it read the pane
+//! rects the window retains from the last layout instead.
 //!
 //! `view::shell::geometry::stats` counts the passes; these tests pin the
 //! counts a frame and a replayed action are allowed: **one shell layout, no
-//! scratch grid**, over the shapes the grid takes — one pane, nested splits,
+//! offscreen grid**, over the shapes the grid takes — one pane, nested splits,
 //! a maximized pane, the explorer open and shut. The counters exist only
 //! with debug assertions on, which is what `cargo test` builds with.
 #![cfg(debug_assertions)]
@@ -37,7 +39,6 @@ fn replay(h: &mut EditorTestHarness) -> LayoutCounts {
 
 const ONE_PASS: LayoutCounts = LayoutCounts {
     shell: 1,
-    scratch_grids: 0,
     offscreen_grids: 0,
 };
 

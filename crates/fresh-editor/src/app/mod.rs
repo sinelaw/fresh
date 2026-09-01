@@ -4308,9 +4308,10 @@ mod tests {
         // Split vertically into two side-by-side panes.
         editor.split_pane_vertical();
 
+        // The panes as the split's relayout placed them.
         let panes: Vec<(crate::model::event::LeafId, u16)> = editor
-            .split_manager()
-            .get_visible_buffers(editor.active_window().editor_content_area())
+            .active_window()
+            .visible_panes()
             .into_iter()
             .map(|(leaf, _buf, area)| (leaf, area.width))
             .collect();
@@ -4333,6 +4334,101 @@ mod tests {
                 full_width
             );
         }
+    }
+
+    /// A pane created by an action is placed before the frame that would
+    /// paint it: the split's relayout lays the frame out once and the
+    /// window retains where the panes are, so the neighbour query — which
+    /// pane is beside this one, by geometry — answers off the grid as it is.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_new_pane_is_beside_its_source_before_any_frame() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        let source = editor.active_split_id();
+        assert_eq!(
+            editor.pane_beside(source),
+            None,
+            "one pane has no neighbour"
+        );
+
+        let _ = stats::take();
+        editor.split_pane_vertical();
+        // The split reflowed through the funnel: one `layout_only` of the
+        // frame, no grid laid out alone.
+        assert_eq!(
+            stats::take(),
+            stats::LayoutCounts {
+                shell: 1,
+                offscreen_grids: 0,
+            }
+        );
+
+        let panes = editor.active_window().visible_panes();
+        assert_eq!(panes.len(), 2);
+        let (left, right) = (panes[0], panes[1]);
+        assert_eq!(left.0, source, "the source keeps the first slot");
+        assert_eq!(left.2.y, right.2.y);
+        assert_eq!(left.2.height, right.2.height);
+        assert_eq!(
+            right.2.x,
+            left.2.x + left.2.width + 1,
+            "the new pane sits past the source and the separator"
+        );
+        assert_eq!(editor.pane_beside(source), Some(right.0));
+        assert_eq!(editor.pane_beside(right.0), Some(source));
+    }
+
+    /// Every window's panes are placed by the layout funnel, not only the
+    /// active window's: the active window's off the frame, another window's
+    /// off one offscreen layout of its own grid at its own body.
+    #[test]
+    fn the_funnel_places_every_windows_panes() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        let other_root = tempfile::tempdir().unwrap();
+        let other = editor.create_window_at(other_root.path().to_path_buf(), "other".into());
+        assert_ne!(other, editor.active_window);
+
+        let _ = stats::take();
+        editor.relayout();
+        assert_eq!(
+            stats::take(),
+            stats::LayoutCounts {
+                shell: 1,
+                offscreen_grids: 1,
+            },
+            "the frame once for the active window, one offscreen grid for the other"
+        );
+
+        let active = editor.active_window().visible_panes();
+        let theirs = editor.windows[&other].visible_panes();
+        assert_eq!(active.len(), 1);
+        assert_eq!(theirs.len(), 1);
+        // The other window's one pane fills its own body, which is the same
+        // chrome at the same screen size.
+        assert_eq!(theirs[0].2, editor.windows[&other].editor_content_area());
+        assert_eq!(theirs[0].2, active[0].2);
     }
 
     /// Regression for sinelaw/fresh#2229.

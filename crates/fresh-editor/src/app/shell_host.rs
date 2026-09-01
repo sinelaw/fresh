@@ -158,11 +158,11 @@ pub struct BodyPainter<'a> {
     /// Where the frame put every pane, read off the tree `render` just laid
     /// out — the same tree whose display list this painter is folded over.
     ///
-    /// The body's pass used to ask `SplitManager::get_visible_buffers` for
-    /// this, which laid the grid out a second time in a scratch `Ui<()>`; a
-    /// pane's box came from that grid and its `Host` rect from the tree, and
-    /// only a parity test said the two agreed. Now there is one answer, and
-    /// [`Self::pane`] asserts the fold's rect is it.
+    /// The body's pass used to ask the split manager for this, which laid
+    /// the grid out a second time in a scratch `Ui<()>`; a pane's box came
+    /// from that grid and its `Host` rect from the tree, and only a parity
+    /// test said the two agreed. Now there is one answer, and [`Self::pane`]
+    /// asserts the fold's rect is it.
     rects: PaneRects,
     /// The grid as [`reconcile_body`] prepared it for this frame, taken by
     /// [`Self::body`] so the panes are prepared once per frame — preparing
