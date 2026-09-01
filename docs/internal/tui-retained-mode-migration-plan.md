@@ -241,25 +241,55 @@ offers below layout are both `'static` and so cannot reach the `Editor`:
 it "may run more than once per frame"), and `HostSpec::Leaf`'s factory
 (`Rc<dyn Fn() -> Box<dyn HostLeaf>>`).
 
-The mechanism to build on exists: a viewport publishes its window through
-`ScrollInfo`, and `ItemHeight::Cells` is documented as "the million-item
-case", with `ask_band`'s comment describing "a builder that keeps its window
-filled". So windowed building below layout is a pattern the library already
-has. What is missing is a way for that builder to reach host state.
+**The library half is already done — verified.** An earlier draft said only
+that the mechanism "exists", citing doc comments. It was measured instead. A
+viewport in `ScrollMode::Items` publishes its window through `ScrollInfo`,
+and a `layout_reader` under it reads that window from
+`LayoutInfo::scroll_window` and builds only the rows in it. Two probes, both
+against a **one-million-row** list in a ten-cell viewport:
+
+| Construction | Offset | Builder calls | Display-list items |
+|---|---|---|---|
+| `List::windowed` | 0 | 12 (10 + 2 overscan) | 22 |
+| `List::windowed` | 1 | 12 | 22 |
+| `List::windowed` | 5,000 | 12 | 22 |
+| bare `viewport(...).items(N).item_rows(1)` + `layout_reader` | 0 | 10 | 10 |
+| bare `viewport` + `layout_reader` | 900,000 | 10 | 10 |
+
+Constant in the count and constant in the depth, and the rows at offset
+900,000 render correctly. This is §2a's invariant — items are a function of
+on-screen rows, not of document length — already holding in the library,
+and the second row of that table is the construction a pane wants: visual
+rows are uniformly one cell, and `WrapIndex` already supplies both the count
+and the byte↔visual mapping the offset indexes into.
+
+`Source::Windowed { count, key: Rc<dyn Fn(usize) -> Key>, row: Rc<dyn
+Fn(usize, RowState) -> Node<M>> }` is the shape the library expects a host
+to supply, and its doc says why: "the application resolves it against its
+own storage, so the library never holds the collection."
+
+**So Blocker A is now entirely on the editor's side.** What is missing is
+not a windowing mechanism; it is a *row supply the builder can reach*. The
+builder is `'static`, so the pane's rows must be answerable from behind an
+`Rc` during layout, without `&mut Editor` — and the view pipeline that
+produces a row today wants exactly that borrow.
 
 **Lifts it:**
 
-1. Choose the seam — a custom `HostLeaf` render object that emits runs from
-   its own `paint`, a windowed `layout_reader` over an `Rc` row source, or a
-   new host-build callback in `fresh-ui` symmetric with `Draw::Host`.
-2. Prototype it on one read-only pane, and assert that a row is materialised
-   only when the viewport's window contains it.
-3. Give the pane's row supply an `Rc`-reachable form, since whichever seam
-   wins, the builder is `'static`.
+1. Get one pane's visible rows answerable from behind an `Rc` during layout
+   — the whole of what is left. The candidates are a pre-frame snapshot of
+   the window's rows, interior mutability over the pipeline's caches, or a
+   new host-build callback in `fresh-ui` symmetric with `Draw::Host` that
+   hands the host `&mut` at build time.
+2. Prototype it on one read-only pane and assert the item count is equal for
+   a 5 KB and a 5 MB file.
+3. Only then port the row *content* (runs, themes, caret).
 
-Note the tension with §2a: whatever shape this takes must not force rows
-outside the window to be wrapped or highlighted, or the buffer model's
-incremental repair is paid for twice.
+Note the tension with §2a, and it is the sharp edge of choice 1: a pre-frame
+snapshot needs the window before layout has produced it, which is the
+circularity this blocker is about; interior mutability keeps the laziness
+but has to be reentrancy-safe, because `layout_reader`'s builder "may run
+more than once per frame".
 
 ### Blocker B — text in the tree is mispainted, and its cost is unknown
 
@@ -318,7 +348,9 @@ retired by describing a surface.
 
 ### Order
 
-A is the critical path and 1→2→3 is serial. B runs alongside it, and its
+A is the critical path and 1→2→3 is serial, though it is a shorter path than
+it looked: the library half is verified done, and only the row supply is
+left. B runs alongside it, and its
 last item cannot be decided until the bench produces numbers. C, D and E are
 independent of A, of B, and of each other.
 
