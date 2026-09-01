@@ -216,7 +216,7 @@ impl SplitRenderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn compute_content_layout(
-        area: Rect,
+        rects: &crate::view::shell::geometry::PaneRects,
         split_manager: &SplitManager,
         buffers: &mut HashMap<BufferId, EditorState>,
         split_view_states: &mut HashMap<LeafId, crate::view::split::SplitViewState>,
@@ -228,13 +228,12 @@ impl SplitRenderer {
         use_terminal_bg: bool,
         session_mode: bool,
         software_cursor_only: bool,
-        pane_chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         diagnostics_inline_text: bool,
         show_tilde: bool,
         bracket_highlight: BracketHighlightSettings,
     ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
         orchestration::compute_content_layout(
-            area,
+            rects,
             split_manager,
             buffers,
             split_view_states,
@@ -246,7 +245,6 @@ impl SplitRenderer {
             use_terminal_bg,
             session_mode,
             software_cursor_only,
-            pane_chrome,
             diagnostics_inline_text,
             show_tilde,
             bracket_highlight,

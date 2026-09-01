@@ -947,9 +947,20 @@ impl SplitNode {
     ///
     /// Laying out a fresh tree per call is what makes this affordable: a
     /// three-pane grid costs ~38µs cold in a debug build (measured in
-    /// `shell::splits`), against callers that run once a frame or on resize.
+    /// `shell::splits`), against callers that run on a window action or on
+    /// resize.
+    ///
+    /// **Not on the render path.** A frame reads its panes off the shell
+    /// tree it laid out — `view::shell::geometry::PaneRects` — because a
+    /// second layout of the same grid is a second answer, and where the two
+    /// differed by a cell the painter's clip hid it. What is left to this is
+    /// the model's own questions (which leaves show a buffer, a probe for the
+    /// leaf set) and the tests that use it as the oracle the tree is checked
+    /// against. `geometry::stats` counts every call so a frame that reaches
+    /// it again fails a test.
     pub fn get_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
         use crate::view::shell::splits::{grid, leaf_key};
+        crate::view::shell::geometry::stats::note_scratch_grid();
         let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
         ui.frame(
             grid::<()>(self, None),
@@ -1890,6 +1901,27 @@ impl SplitManager {
             let prev_pos = if pos == 0 { leaf_ids.len() } else { pos } - 1;
             self.active_split = leaf_ids[prev_pos];
         }
+    }
+
+    /// The buffer group each visible pane is showing, by the pane showing
+    /// it — the shape `view::shell::splits::Splits::groups` takes.
+    ///
+    /// A group's layout lives in `grouped_subtrees`, keyed by the *group's*
+    /// leaf, and a pane names the group it shows through its view state's
+    /// `active_group_tab`. This is the one join of the two; the frame's
+    /// description and the session preview's offscreen layout both take it.
+    pub fn pane_groups(
+        &self,
+        view_states: &HashMap<LeafId, SplitViewState>,
+        grouped_subtrees: &HashMap<LeafId, SplitNode>,
+    ) -> HashMap<LeafId, SplitNode> {
+        self.visible_leaves()
+            .into_iter()
+            .filter_map(|(leaf, _)| {
+                let group = view_states.get(&leaf)?.active_group_tab?;
+                Some((leaf, grouped_subtrees.get(&group)?.clone()))
+            })
+            .collect()
     }
 
     /// Get all split IDs that display a specific buffer

@@ -2897,13 +2897,7 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return HashMap::new();
         };
-        mgr.visible_leaves()
-            .into_iter()
-            .filter_map(|(leaf, _)| {
-                let group = vs_map.get(&leaf)?.active_group_tab?;
-                Some((leaf, self.grouped_subtrees.get(&group)?.clone()))
-            })
-            .collect()
+        mgr.pane_groups(vs_map, &self.grouped_subtrees)
     }
 
     /// Which chrome each of this window's visible panes has, by leaf.
