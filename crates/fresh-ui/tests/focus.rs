@@ -719,3 +719,69 @@ fn a_capture_listener_that_stops_pre_empts_the_control() {
         "the focused element never saw it"
     );
 }
+
+/// **A key the ring cannot serve is handed back by one modality and swallowed
+/// by the other.** Which of the two a surface declared decides whether it may
+/// decline a key at all.
+///
+/// Declining is how a surface lets the tree's ring resolve a key: the fallback
+/// returns without `stop`, `propagate_key` reports nothing claimed, and
+/// `default_for_intent` moves focus. When the scope holds one focusable there
+/// is nowhere to move, `move_focus` answers false — and what happens to the key
+/// then is the layer's modality, not the fallback's choice.
+///
+/// `Modality::Focus` confines traversal without swallowing, so the key leaves
+/// `dispatch` unclaimed and the host's own pipeline still answers it. That is
+/// what lets a plugin panel's fallback decline Tab unconditionally: a panel
+/// holding one widget, or none, still hands Tab back to the router that had it
+/// before.
+///
+/// `Modality::Keyboard` swallows what nothing acted on — that is what makes an
+/// open menu a dead end for a stray key — so the same declined Tab is claimed
+/// by the layer with no message, no move and no host. A surface declared that
+/// way can only decline a key it knows the ring will serve, which is not
+/// something a description can know about itself.
+#[test]
+fn a_key_the_ring_cannot_serve_is_handed_back_only_by_a_focus_layer() {
+    // One focusable under a fallback that declines Tab and claims the rest —
+    // the shape both the plugin panel and the settings dialog have.
+    let one_focusable = |m: Modality| {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(
+            col().child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Start))
+                    .modality(m)
+                    .child(
+                        focusable(col().child(field("only")))
+                            .key("fallback")
+                            .skip_traversal()
+                            .on_key(|e: &Event| {
+                                if e.key.is_some_and(|k| k.code == KeyCode::Tab) {
+                                    return None;
+                                }
+                                e.stop();
+                                None
+                            }),
+                    ),
+            ),
+            FRAME,
+        );
+        // The first Tab settles focus on the only focusable; the second is the
+        // one with nowhere to go.
+        ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+        let landed = ui.focused();
+        let d = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+        assert_eq!(ui.focused(), landed, "there was nowhere else to go");
+        assert!(d.msgs.is_empty(), "and nothing was said about it");
+        d.claimed
+    };
+    assert!(
+        !one_focusable(Modality::Focus),
+        "a focus layer hands back the Tab it could not serve"
+    );
+    assert!(
+        one_focusable(Modality::Keyboard),
+        "a keyboard layer swallows it, and the host never hears it"
+    );
+}

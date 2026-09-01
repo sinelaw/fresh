@@ -123,17 +123,19 @@ impl WidgetImpl for Toggle {
             apply_hover_band(&mut entry);
         }
         out.hits.push(HitArea {
-            row_target: false,
-            context_click: false,
             overlay: false,
-            widget_key: key.unwrap_or("").to_string(),
-            widget_kind: "toggle",
             buffer_row: 0,
             byte_start: chip_range.0,
             byte_end: chip_range.1,
-            payload: json!({ "checked": !checked }),
-            event_type: "toggle",
-            owner_key: None,
+            event: crate::widgets::WidgetEvent {
+                row_target: false,
+                context_click: false,
+                widget_key: key.unwrap_or("").to_string(),
+                widget_kind: "toggle",
+                payload: json!({ "checked": !checked }),
+                event_type: "toggle",
+                owner_key: None,
+            },
         });
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);

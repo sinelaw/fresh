@@ -284,7 +284,15 @@ impl Editor {
                 .widget_registry
                 .hit_test_row_aware(buffer_id, brow, bcol, false)
             {
-                self.deliver_widget_hit(&panel_key, &hit, Some(bcol as usize));
+                // **The one place that rebases, because it is the one place
+                // holding a byte in a composed row.** `bcol` is measured from
+                // the start of the buffer *line*, and a line can carry two
+                // fields side by side (Search + Replace); the matched area's
+                // `byte_start` is where the widget's own row begins in it,
+                // which is the space `deliver_widget_hit` and the `focus`
+                // event's `valueInnerStart` are both in.
+                let byte_in_field = (bcol as usize).saturating_sub(hit.byte_start);
+                self.deliver_widget_hit(&panel_key, &hit.event, Some(byte_in_field));
             }
         }
 

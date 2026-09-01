@@ -639,17 +639,19 @@ fn collect_dual_list(
                 continue;
             };
             out.hits.push(HitArea {
-                row_target: false,
-                context_click: false,
                 overlay: false,
-                widget_key: widget_key.clone(),
-                widget_kind: "dual_list",
                 buffer_row: row,
                 byte_start,
                 byte_end,
-                payload: json!({ "column": column, "index": i }),
-                event_type: "dual_focus",
-                owner_key: None,
+                event: crate::widgets::WidgetEvent {
+                    row_target: false,
+                    context_click: false,
+                    widget_key: widget_key.clone(),
+                    widget_kind: "dual_list",
+                    payload: json!({ "column": column, "index": i }),
+                    event_type: "dual_focus",
+                    owner_key: None,
+                },
             });
         }
         out.entries.push(entry);

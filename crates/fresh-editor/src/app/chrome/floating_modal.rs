@@ -49,12 +49,22 @@ impl ChromeComponent for FloatingModal {
 /// the handlers its arms dispatch to).
 impl Editor {
     /// Mouse handler for the centered widget modal (`floating_widget_panel`).
-    /// The dialog is fully modal: presses hit-test the panel (focusing the
-    /// clicked widget / placing the text cursor), wheel scrolls it, and a
-    /// drag drives only its scrollbar. Every other event — and every press
-    /// that lands outside the panel box — is swallowed, so nothing reaches
-    /// the buffer, terminal, or dock beneath. Always returns
-    /// `Ok(true)` (a render is cheap and the modal just consumed an event).
+    ///
+    /// The dialog is fully modal: every event that reaches here is swallowed,
+    /// so nothing gets to the buffer, terminal, or dock beneath. Always
+    /// returns `Ok(true)` (a render is cheap and the modal just consumed an
+    /// event).
+    ///
+    /// **What reaches here is what the panel's own nodes declined.** Its
+    /// widgets answer their own presses (`hit_node`) and its box claims and
+    /// stops the rest (`view::shell::panel::frame_box`), so the presses left
+    /// for this handler land *outside* the box — which is why the only one it
+    /// acts on is an anchored popup's dismissal. The press hit-test, the
+    /// scrollbar press and the scrollbar drag that used to be here were
+    /// resolved against rectangles the interior painter recorded, and that
+    /// painter is deleted; they could not answer on any path (S7). The wheel
+    /// is not in that class: it still routes to the panel by
+    /// `last_inner_rect`, which layout writes for a described panel.
     pub(crate) fn handle_floating_modal_mouse(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
@@ -78,18 +88,10 @@ impl Editor {
                     self.dismiss_floating_panel_with_cancel(crate::app::PanelSlot::Floating);
                     return Ok(true);
                 }
-                // Single / double / triple clicks all map to one panel
-                // hit-test — never the buffer's word/line select beneath.
-                self.handle_floating_widget_click(crate::app::PanelSlot::Floating, col, row);
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                // Only a scrollbar drag is meaningful; other drags are
-                // swallowed rather than starting a buffer text-selection.
-                self.try_widget_scrollbar_drag(crate::app::PanelSlot::Floating, row);
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.release_widget_scrollbar();
-            }
+            // Swallowed rather than starting a buffer text-selection.
+            MouseEventKind::Drag(MouseButton::Left) => {}
+            MouseEventKind::Up(MouseButton::Left) => {}
             MouseEventKind::ScrollUp => {
                 self.handle_floating_widget_panel_wheel(
                     crate::app::PanelSlot::Floating,

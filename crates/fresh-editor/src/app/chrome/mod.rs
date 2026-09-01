@@ -110,19 +110,13 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     if ed.widget_text_drag.is_some() {
         return Some(PointerGrab::WidgetText);
     }
-    if ed
-        .dock
-        .as_ref()
-        .is_some_and(|p| p.scrollbar_drag_key.is_some())
-        || ed
-            .floating_widget_panel
-            .as_ref()
-            .is_some_and(|p| p.scrollbar_drag_key.is_some())
-    {
-        return Some(PointerGrab::WidgetScrollbar);
-    }
-    // Same grab for a scrollbar on a buffer-mounted widget panel; its
-    // tracks live on the editor rather than on a panel struct.
+    // A scrollbar on a buffer-mounted widget panel; its tracks live on the
+    // editor rather than on a panel struct.
+    //
+    // The dock's and the floating panel's own drag flags were tested here
+    // first. Nothing set them: the press that armed one was resolved against
+    // tracks the interior painter recorded, and that painter is deleted, so
+    // the two clauses answered `false` on every path (S7).
     if ed.split_widget_scrollbar_drag.is_some() {
         return Some(PointerGrab::WidgetScrollbar);
     }

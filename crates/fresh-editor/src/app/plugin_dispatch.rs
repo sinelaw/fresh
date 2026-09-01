@@ -5615,11 +5615,6 @@ impl Editor {
             placement,
             focused: !start_blurred,
             entries: Vec::new(),
-            overlays: Vec::new(),
-            boxes: Vec::new(),
-            scrollbar_tracks: Vec::new(),
-            scrollbar_mouse: Default::default(),
-            scrollbar_drag_key: None,
             last_inner_rect: None,
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
@@ -5634,8 +5629,6 @@ impl Editor {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             popup: None,
-            popup_hits: Vec::new(),
-            popup_rect: None,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
@@ -5662,8 +5655,6 @@ impl Editor {
             )
         };
         let entries = out.entries;
-        let overlays = out.overlays;
-        let panel_boxes = out.boxes.clone();
         let popup = out.popup;
         self.widget_registry.mount(
             panel_key.clone(),
@@ -5678,8 +5669,6 @@ impl Editor {
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
-            fwp.overlays = overlays;
-            fwp.boxes = panel_boxes;
             fwp.popup = popup;
         }
         tracing::debug!(
@@ -5755,8 +5744,6 @@ impl Editor {
             )
         };
         let entries = out.entries;
-        let overlays = out.overlays;
-        let panel_boxes = out.boxes.clone();
         let popup = out.popup;
         if self
             .widget_registry
@@ -5780,8 +5767,6 @@ impl Editor {
         }
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
-            fwp.overlays = overlays;
-            fwp.boxes = panel_boxes;
             fwp.popup = popup;
         }
     }

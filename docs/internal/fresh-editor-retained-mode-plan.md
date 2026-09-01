@@ -338,10 +338,18 @@ painter, two probes that had become no-ops on every path, and three helpers each
 of which had already been replaced by a description — including the one that
 located the dock's active card by scanning painted cells for box glyphs.
 
-Two things were deliberately kept and are worth knowing. `probe_floating_widget`
-looks dead and is not: a dock open with *no* mounted panel has no interior, so
-its column still emits a press that reaches it. And the stored overlay rows stay
-with that probe, since it is their only reader.
+Two things were deliberately kept here and are worth knowing, **and the reason
+given for the first was wrong — it is deleted now.** `probe_floating_widget`
+was kept on the reading that a dock open with *no* mounted panel has no
+interior, so its column still emits a press that reaches it. The press does
+reach `handle_floating_widget_click`; the probe cannot answer it. With no
+panel in the slot there is no `last_inner_rect` and no panel key, and the
+handler returns above the probe — and with a panel in the slot the interior
+*is* described, so the column emits `DockFocus` and the press never comes.
+Tracing every emitter of both facts found no path that reaches the probe with
+a rectangle to test against, so it went, and the stored overlay rows and the
+box mirror went with it, together with the pop-over rectangles and the
+scrollbar tracks the deleted painter was the only writer of.
 
 The same audit named the fields of the runtime's per-panel output whose every
 consumer is a path a described panel never takes: the window-embed rectangles
@@ -428,6 +436,28 @@ scope, with `PanelKey` as the fallback for keys no widget claims, rather than a
 sink that owns the scope and holds focus. Until that lands, "delete the second
 focus ring" is not available: the box-arena ring in `handle_widget_focus_advance`
 is the only ring that works.
+
+*That landed as S2, and what it makes available is narrower than "delete the
+second ring".* A panel whose interior the tree describes — with something in it
+to focus — now names that interior as its keyboard layer's scope, and Tab there
+is the tree's. A panel without one keeps the sink and keeps the arena, so the
+arena cannot be deleted: deleting it would take Tab away from exactly those
+panels. What *is* available is that the two rings stop disagreeing.
+`handle_widget_focus_advance` is the single seam every host-driven advance
+arrives at — `WidgetAction::FocusAdvance`, `KeyFx::focus_advance`, the
+smart-key `Tab` — and it now asks the tree whether the tree is holding this
+panel's focus (`has_focus_within` on the interior's scope key, which is a fact
+only the tree has) before falling back. Where the tree holds it, `move_focus`
+is the move and the registry's key is written by the `WidgetFocus` mirror;
+where it does not, the arena is untouched. The proxy shape to avoid is asking
+the *runtime* whether the panel has focus targets: that is one fact with two
+sources, and the runtime cannot know where the tree's focus actually is.
+
+One thing found while doing it and not fixed: `Ui::pending_messages` — where
+`apply_autofocus` leaves the focus change it settles — is never drained by the
+editor. `Ui::dispatch` returns only what handlers produced during routing, and
+nothing calls `take_messages`. So the settle's `FocusGained` never reaches the
+host, and the backlog grows for the life of the process.
 
 **The second blocker, as previously recorded here, was not real.** It was written
 down twice — that Tab is overloaded inside the body, committing an edit and
@@ -566,6 +596,15 @@ Three additions, in priority order:
 - **One push per CI run.** A push cancels the running workflow; batching is the
   difference between getting signal and spending forty minutes learning nothing.
 - **Do not run the full suite locally.** Push and read CI.
+- **Check a non-default feature configuration before pushing.** `cargo check
+  -p fresh-editor --lib` and targeted test filters do not compile the
+  `plugins`-gated arms out, so a call added to a `#[cfg(feature = "plugins")]`
+  item compiles cleanly for the whole session and breaks
+  `cargo check --no-default-features --features runtime --all-targets`. S6 did
+  exactly that: `slot_of_panel` carried a gate inherited from its one previous
+  caller, and the ring's new call site is ungated. The gate was incidental —
+  `PanelKey` and both panel slots are ungated — so the fix was to drop it, not
+  to gate the caller and let the ring take a different path in that build.
 
 ---
 
@@ -620,6 +659,89 @@ tree that painted rather than a parallel walk, the settings dialog's painter is
 down to a box and a divider column, the widget-panel interior painter really is
 deleted, and `fresh-ui`'s own focus fixes are real bugs found with the right
 explanation.
+
+---
+
+## 6b. Escape does not close a plugin's floating panel. **This branch's.**
+
+**Retracted, in full.** This section previously argued the failure was master's,
+on two grounds: master's Web UI workflow has failed every run since 2026-08-10
+with a similar `TimeoutError`, and the router's panel-Escape path, the outcome
+handling and the orchestrator plugin are all byte-identical to master. Both
+grounds are true. The conclusion drawn from them is false.
+
+**The controlled test.** Same isolated `HOME`/`XDG_*`, same workspace, same
+sequence — palette, Toggle Dock, click `[ New Task… ▾ ]`, click `New Task…`,
+then Escape — driven in a real terminal against both binaries:
+
+| | Escape #1 | #2 | #3 |
+|---|---|---|---|
+| `master` | **closes** | — | — |
+| this branch | open | open | open |
+
+Five presses on the branch in an earlier run also left it open. The dialog is
+unclosable by keyboard here and closes on the first press on master.
+
+**Why the earlier reasoning failed, which is the part worth keeping.** "Master's
+CI is also red" is not "master has this bug", and I treated them as the same
+claim. The diff evidence pointed at the wrong layer: the router and the plugin
+*are* unchanged — but what this branch rewired is the keyboard layer that
+decides whether Escape reaches the router at all (`panel::keys_layer`'s scope,
+S2). A trace showed the fact arriving at `dispatch_floating_widget_key` with
+`slot=Floating` and the router answering `FallThrough`, which is consistent with
+both stories; what distinguishes them is running master, and I did not until the
+UI was driven by hand.
+
+**Status: open, and the highest-priority defect on the branch.** It is a
+keyboard-only regression — the dialog still closes by clicking its `[×]` — on a
+surface a plugin raises, which makes it a plugin-facing break rather than a
+chrome one.
+
+---
+
+## 6c. Open defects found while finishing, not fixed here
+
+**`Ui::pending_messages` is never drained by the editor — and it poisons
+repaint, not just focus.** `needs_frame()` returns true forever once anything
+lands there (`fresh-ui/src/schedule.rs:673`), `shell_dispatch` reads it as
+`tree_stale` and folds it into `changed`, so after the first autofocus settle
+the editor reports "changed" for every input event and repaints unconditionally
+— defeating the optimisation the comment above it introduces. The Vec also
+grows for the life of the process. `apply_autofocus`
+settles focus after a frame and leaves the resulting `FocusGained` there;
+`Ui::dispatch` returns only what handlers produced during routing, and nothing
+calls `take_messages`. So a focus change the *tree* settled has never reached
+the host, and the backlog grows for the life of the process.
+`advance_panel_focus_in_tree` takes and discards it before moving — applying it
+would deliver a stale `WidgetFocus` for whatever was autofocused frames ago —
+but draining it properly is its own change, and until then autofocus is
+invisible to the host.
+
+**A mounted-but-unfocused panel still advances on the arena**, so its registry
+key can name a widget the tree's focus is not on, until focus next enters the
+panel. Closing it means seeding the tree from the registry when a panel takes
+focus: the second direction of the focus-key mirror, which belongs with that
+mirror's own step.
+
+**`UiFact::DockContext { x, y }` carries a cell its applier destructures away** —
+the same dead-payload shape as `DockPress`, which collapsed into `DockFocus`,
+but a fact's shape rather than a dead path, so it wants its own decision.
+
+**A settings entry-dialog `[x]` is unreachable by mouse. A regression, not
+pre-existing — this entry said "pre-existing" and was wrong.** The described
+`List` arm reports `at: None` (`view/shell/widgets.rs:1105`, `:1289`) and
+`entry_text_list_press` reads it as `at.unwrap_or(0)`
+(`view/settings/mouse.rs:445`), so `text_list_target` never answers `Button`.
+Master resolved it from a real column: `handle_text_list_click(idx, sub_row,
+col, layout)` hit-tested the trailing button
+(`origin/master:crates/fresh-editor/src/view/settings/mouse.rs:1026`,
+`:1113-1115`). Clicking `[x]` on a committed row focuses it instead of removing
+it. Uncovered by any test — a click on that column would have failed on the
+first frame.
+
+Do **not** fix it by sending the piece-local `x` the way `row_pieces` does: a
+piece's column cannot be rebased to a row's, so that produces wrong-but-plausible
+columns, which is worse than always-zero because it looks tested.
 
 ---
 

@@ -7,6 +7,16 @@
 //! to which widget." It does *not* own the virtual buffer the
 //! rendered output goes into — the plugin still owns the virtual
 //! buffer and passes its `BufferId` at mount time.
+//!
+//! **Two types where there was one.** [`WidgetEvent`] is what a press
+//! *means* — a pure function of the spec and the instance state, which is
+//! why the three `synthesize_*_hit` functions can rebuild one from the spec
+//! alone. [`HitArea`] is where the text projection *drew* one, in the rows of
+//! a virtual buffer. They used to be one struct, and the surfaces that have
+//! no such rows carried four fields they could not interpret — and
+//! interpreted two of them anyway, adding a byte offset on at the press and
+//! taking it off again at the dispatch. Splitting them is what lets a
+//! described widget hand over an event with no coordinate space attached.
 
 use crate::primitives::text_edit::TextEdit;
 use fresh_core::api::WidgetSpec;
@@ -44,34 +54,37 @@ impl std::fmt::Display for PanelKey {
     }
 }
 
-/// One clickable rectangle within a rendered widget panel.
+/// **What a press means**, with nothing about where it was drawn.
 ///
-/// The renderer produces one `HitArea` per interactive widget node
-/// (`Toggle`, `Button` in v1). Layout containers (`Row`, `Col`,
-/// `Spacer`, `HintBar`, `Raw`) emit no hit areas of their own; their
-/// children's hit areas bubble up with row/byte offsets adjusted to
-/// reflect the final on-screen position.
+/// This is the identity half of what used to be one `HitArea`: which widget
+/// the press belongs to, which part of it, what event that fires and with
+/// what payload. Every field is a pure function of `(spec, instance state)` —
+/// `Editor::synthesize_list_hit` and its two siblings already rebuild exactly
+/// this from the spec when no hit was recorded, and they are the proof: none
+/// of them can name a row or a byte, and none of them needs to.
 ///
-/// Hit-test is `(buffer_row, buffer_col_byte) ∈ rectangle`; the byte
-/// range is in UTF-8 bytes within the row's text, matching the
-/// coordinate space `mouse_click` already delivers
-/// (`HookArgs::MouseClick::buffer_col`).
-// `PartialEq` because a hit travels as a `UiFact` now — the tree finds the
-// widget a press landed on and the fact carries what the byte-range scan used
-// to reconstruct — and facts are compared in tests.
+/// **Why it is its own type.** The other half — `buffer_row`, `byte_start`,
+/// `byte_end`, `overlay` — is meaningful only in one coordinate space: the
+/// rows of the *text projection*, `WidgetSpec` rendered into a virtual
+/// buffer. A described surface has no such rows; its widgets are nodes and
+/// the tree hit-tests their rectangles. While the two halves shared a struct
+/// the described path carried four numbers it could not interpret, and did
+/// interpret two of them: it added `byte_start` to the pressed byte at
+/// `shell_host.rs` and subtracted it again in
+/// `reposition_widget_text_cursor_from_click`, a round trip through a
+/// coordinate space that surface is not in. Splitting the type is what makes
+/// that unstateable rather than merely unused.
+///
+/// `PartialEq` because an event travels as a `UiFact` — the tree finds the
+/// widget a press landed on and the fact carries what the byte-range scan
+/// used to reconstruct — and facts are compared in tests.
 #[derive(Debug, Clone, PartialEq)]
-pub struct HitArea {
+pub struct WidgetEvent {
     /// Stable widget key from the spec, or empty when the spec did
     /// not assign one.
     pub widget_key: String,
     /// Widget kind discriminator: `"toggle"` or `"button"`.
     pub widget_kind: &'static str,
-    /// 0-indexed row within the rendered virtual buffer.
-    pub buffer_row: u32,
-    /// First UTF-8 byte (inclusive) within the row's text.
-    pub byte_start: usize,
-    /// Last UTF-8 byte (exclusive) within the row's text.
-    pub byte_end: usize,
     /// Event payload to deliver with the `widget_event` hook.
     /// For `"toggle"`: `{ "checked": <new value> }`. For
     /// `"button"`: `{}`.
@@ -79,38 +92,32 @@ pub struct HitArea {
     /// Event type to deliver with the `widget_event` hook
     /// (`"toggle"` or `"activate"`).
     pub event_type: &'static str,
-    /// The spec key of the widget that OWNS this hit — where focus
+    /// The spec key of the widget that OWNS this event — where focus
     /// moves, whose instance state a click mutates, and the key the
     /// default event fires against. `None` means `widget_key` is
     /// already the owner, which is every kind except `List`: a list
     /// row's `widget_key` is the per-item key (row hover and pointer
-    /// resolution key off it), so the row's hit names its List here.
+    /// resolution key off it), so the row's event names its List here.
     /// Set by the kind's own `collect` — the pointer dispatcher never
     /// inspects kinds to find the owner.
     pub owner_key: Option<String>,
-    /// True when this hit came from an `Overlay` child — a popup the
-    /// renderer paints *over* the rows beneath it without reflowing
-    /// them (the dock's "New Task… ▾" and "Move to Folder…" dropdowns).
-    /// Its byte range is measured against the overlay's own row text,
-    /// not the text of the row it covers, so click resolution has to
-    /// keep the two apart — `hit_test_row_aware` takes the surface as
-    /// a parameter, decided by the panel's layout-box tree (a z>0 box
-    /// covers the base rows beneath it).
-    pub overlay: bool,
-    /// Capability, DECLARED BY THE KIND at collect: this hit is a
-    /// row-wide gesture target — a click anywhere on its row resolves
-    /// to it even past the hit's own byte range (List/Tree row
-    /// `select` hits, markdown document line `focus` hits).
-    /// `row_select_hit` keys off this instead of matching kind
-    /// strings.
+    /// Capability, DECLARED BY THE KIND at collect: this is a row-wide
+    /// gesture target — a press anywhere on its row resolves to it even
+    /// past the target's own byte range (List/Tree row `select` events,
+    /// markdown document line `focus` events).
+    ///
+    /// Read in both projections, and it is the same capability in each:
+    /// `WidgetRegistry::row_select_hit` uses it for the text projection's
+    /// nearest-row fallback, and `view::shell::widgets::row_pieces` uses it
+    /// to decide which event the row's trailing `Flex(1)` piece carries.
     pub row_target: bool,
-    /// Capability, declared by the kind: a right-click on this hit
-    /// raises the plugin's context menu (fires a `context`
-    /// widget_event) — List/Tree row selects. The right-click seam
-    /// keys off this instead of matching kind strings.
+    /// Capability, declared by the kind: a right-click raises the
+    /// plugin's context menu (fires a `context` widget_event) —
+    /// List/Tree row selects. The right-click seam keys off this
+    /// instead of matching kind strings.
     ///
     /// SCOPE: consumed today only by the DOCK slot's right-click arm
-    /// (`chrome/dock.rs` → `handle_floating_widget_context_click`).
+    /// (`view::shell::widgets::hit_node` → `UiFact::WidgetContext`).
     /// Split-mounted panels have no right-click seam (Base's tab menu
     /// takes the gesture), and the centered modal swallows right
     /// -clicks whole — wiring those is part of the recorded
@@ -119,12 +126,62 @@ pub struct HitArea {
     pub context_click: bool,
 }
 
-impl HitArea {
+impl WidgetEvent {
     /// The owning widget's spec key: `owner_key` when the kind set
     /// one, otherwise `widget_key`.
     pub fn owner(&self) -> &str {
         self.owner_key.as_deref().unwrap_or(&self.widget_key)
     }
+}
+
+/// **Where a [`WidgetEvent`]'s target was drawn** — in the rows of the text
+/// projection, and nowhere else.
+///
+/// The collector renders a `WidgetSpec` into `TextPropertyEntry` rows inside
+/// a virtual buffer, and this is the byte range one interactive target
+/// occupies in them. Hit-test is `(buffer_row, buffer_col_byte) ∈ range`; the
+/// bytes are UTF-8 bytes within the row's text, matching the coordinate space
+/// `mouse_click` already delivers to plugins
+/// (`HookArgs::MouseClick::buffer_col`).
+///
+/// **That space is real for exactly one class of surface**: a pane-mounted
+/// panel that rides the *buffer's* scroll, whose rows genuinely are buffer
+/// lines and whose cursor is the plugin's selection model
+/// (`Editor::pane_panel_owns_its_scroll`). `WidgetRegistry::hit_test_row_aware`
+/// is the resolver for that class. Every described surface answers its own
+/// presses from the rectangle layout gave it and never constructs one of
+/// these — which is why the geometry lives here and the identity lives in
+/// `event`, rather than both living in one struct that half its readers had
+/// to ignore.
+///
+/// Layout containers (`Row`, `Col`, `Spacer`, `HintBar`, `Raw`) emit no hit
+/// areas of their own; their children's bubble up with row/byte offsets
+/// adjusted to reflect the final on-screen position (`kinds::containers`).
+/// The `event` half is **not** shifted by that pass and must not be: its
+/// payload's `valueInnerStart` stays relative to the field's own rendered
+/// text. That is why a caller resolving a press through these ranges
+/// subtracts the matched area's `byte_start` from its click before handing it
+/// to `Editor::deliver_widget_hit` — the two numbers have to be in one space,
+/// and the event's is the field's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HitArea {
+    /// 0-indexed row within the rendered virtual buffer.
+    pub buffer_row: u32,
+    /// First UTF-8 byte (inclusive) within the row's text.
+    pub byte_start: usize,
+    /// Last UTF-8 byte (exclusive) within the row's text.
+    pub byte_end: usize,
+    /// True when this area came from an `Overlay` child - a popup the
+    /// renderer paints *over* the rows beneath it without reflowing
+    /// them (the dock's "New Task... " and "Move to Folder..." dropdowns).
+    /// Its byte range is measured against the overlay's own row text,
+    /// not the text of the row it covers, so click resolution has to
+    /// keep the two apart - `hit_test_row_aware` takes the surface as
+    /// a parameter, decided by the panel's layout-box tree (a z>0 box
+    /// covers the base rows beneath it).
+    pub overlay: bool,
+    /// What a press here means. Placing it does not change it.
+    pub event: WidgetEvent,
 }
 
 /// Widget instance state retained across spec updates, keyed by
@@ -283,10 +340,26 @@ pub struct WidgetPanelState {
     pub buffer_id: BufferId,
     /// The currently-mounted spec.
     pub spec: WidgetSpec,
-    /// Click rectangles for the rendered output, in declaration
-    /// order. Hit-test scans linearly — the small N (one per
-    /// interactive widget per panel) doesn't justify a spatial
-    /// index.
+    /// **The text projection's output**: one [`HitArea`] per interactive
+    /// target in the rows the collector rendered, in declaration order.
+    /// Hit-test scans linearly — the small N (one per interactive widget per
+    /// panel) doesn't justify a spatial index.
+    ///
+    /// Two readers, and they read different halves:
+    ///
+    /// * [`Self::hit_test_row_aware`](WidgetRegistry::hit_test_row_aware)
+    ///   reads the geometry, for the one surface whose rows are real buffer
+    ///   lines — a pane-mounted panel that rides the buffer's scroll
+    ///   (`app::click_handlers`).
+    /// * `view::scene::widgets_view` and the two `deliver_widget_hit_*`
+    ///   entry points read only [`HitArea::event`]: the web lays the spec out
+    ///   itself and sends back an index plus the identity, so what crosses to
+    ///   it is the identity half and an ordering.
+    ///
+    /// Nothing else reads this. A described surface's widgets are nodes and
+    /// answer their own presses from the rectangles layout gave them; the
+    /// event they carry is the same value as `hits[i].event`, stated where the
+    /// widget is rather than looked up by a row and a byte.
     pub hits: Vec<HitArea>,
     /// Widget instance state by widget `key`. Survives re-renders —
     /// see `WidgetInstanceState` for what's stored.
@@ -646,6 +719,11 @@ impl WidgetRegistry {
     /// beneath. Which surface the pointer is on is the layout-box
     /// tree's call (a z>0 box covers the base) — made by the caller,
     /// not re-derived here.
+    ///
+    /// Returns the whole [`HitArea`], geometry included, because the caller
+    /// needs `byte_start` to rebase its click out of the *composed row's*
+    /// coordinate space and into the widget's own before handing it to
+    /// `deliver_widget_hit`.
     fn surface_hit(
         &self,
         buffer_id: BufferId,
@@ -681,14 +759,37 @@ impl WidgetRegistry {
     /// `select` hit ([`row_select_hit`](Self::row_select_hit)), so the
     /// whole row is a target.
     ///
-    /// Every click path — left-click, right-click, and the mounted-panel
-    /// buffer-cell handler — resolves through this one method, so the "a
-    /// row is clickable across its width" invariant lives in a single
-    /// place. It regressed once precisely because it did not: the
-    /// right-click context path grew a `row_select_hit` fallback while
+    /// **This is the text projection's resolver, and it should stay one
+    /// surface's.** It was every click path's: while a panel's interior was
+    /// painted rows, a press anywhere — dock, floating modal, mounted pane —
+    /// arrived as a screen cell and had to be turned back into a widget by
+    /// scanning these ranges. A described surface does not, because its
+    /// widgets are nodes; what is left is the class of panel whose rows
+    /// genuinely *are* buffer lines, riding the buffer's own scroll, whose
+    /// cursor and `mouse_click` coordinates are a contract plugins read
+    /// (`Editor::pane_panel_owns_its_scroll`, `plugins/git_log.ts`). For
+    /// those, `(row, col_byte)` is not a second layout — it is the only
+    /// coordinate space there is, and this scan is the right way to answer in
+    /// it. `app::click_handlers` is that caller.
+    ///
+    /// (`Editor::probe_floating_widget` compiled against it until S7, for a
+    /// dock or modal whose panel the adapter could not describe. It is gone:
+    /// `render_floating_widget_panel` records `last_inner_rect` only for a
+    /// *described* panel or the web's no-paint pass, while the two facts that
+    /// reached the probe — `DockPress`, and `ModalPointer` from the panel's
+    /// own box — were emitted only when the interior was **not** described.
+    /// No path could reach the probe with a rectangle to test against, and
+    /// the stored overlay rows it read went with it.)
+    ///
+    /// The caller holds a byte in a *composed row* and rebases it by the
+    /// matched hit's `byte_start` before dispatch: `valueInnerStart` and
+    /// `deliver_widget_hit` are both in the widget's own row's space.
+    ///
+    /// The "a row is clickable across its width" invariant lives here rather
+    /// than at each call site. It regressed once precisely because it did not:
+    /// the right-click context path grew a `row_select_hit` fallback while
     /// the left-click path stayed byte-exact, so compact dock rows
-    /// silently ignored left-clicks past their label. Route new click
-    /// surfaces through here rather than calling `hit_test` directly.
+    /// silently ignored left-clicks past their label.
     /// `on_overlay` = the pointer sits on a popup surface (decided by
     /// the panel's layout-box tree). Overlay surfaces are opaque: only
     /// hits the popup itself contributed are reachable, with no
@@ -756,7 +857,7 @@ impl WidgetRegistry {
                 // placement competes too — without them, a click on the
                 // seam beside a document column would resolve to a
                 // *list* in the neighbouring column).
-                if hit.buffer_row != row || !hit.row_target {
+                if hit.buffer_row != row || !hit.event.row_target {
                     continue;
                 }
                 let d = distance(hit, col);
@@ -792,16 +893,18 @@ mod tests {
     fn make_hit(row: u32, byte_start: usize, byte_end: usize, key: &str) -> HitArea {
         HitArea {
             overlay: false,
-            row_target: false,
-            context_click: false,
-            widget_key: key.into(),
-            widget_kind: "button",
             buffer_row: row,
             byte_start,
             byte_end,
-            payload: json!({}),
-            event_type: "activate",
-            owner_key: None,
+            event: WidgetEvent {
+                row_target: false,
+                context_click: false,
+                widget_key: key.into(),
+                widget_kind: "button",
+                payload: json!({}),
+                event_type: "activate",
+                owner_key: None,
+            },
         }
     }
 
@@ -821,7 +924,7 @@ mod tests {
         );
         let hit = reg.hit_test(BufferId(7), 0, 8).expect("inside b");
         assert_eq!(hit.0, pk(42));
-        assert_eq!(hit.1.widget_key, "b");
+        assert_eq!(hit.1.event.widget_key, "b");
     }
 
     #[test]
@@ -850,16 +953,18 @@ mod tests {
     fn make_row_select_hit(row: u32, byte_end: usize, key: &str) -> HitArea {
         HitArea {
             overlay: false,
-            row_target: true,
-            context_click: true,
-            widget_key: key.into(),
-            widget_kind: "tree",
             buffer_row: row,
             byte_start: 0,
             byte_end,
-            payload: json!({ "index": row as i64 }),
-            event_type: "select",
-            owner_key: None,
+            event: WidgetEvent {
+                row_target: true,
+                context_click: true,
+                widget_key: key.into(),
+                widget_kind: "tree",
+                payload: json!({ "index": row as i64 }),
+                event_type: "select",
+                owner_key: None,
+            },
         }
     }
 
@@ -887,8 +992,52 @@ mod tests {
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(2), 0, 40, false)
             .expect("click past text still lands on the row");
-        assert_eq!(hit.widget_key, "session-a");
-        assert_eq!(hit.event_type, "select");
+        assert_eq!(hit.event.widget_key, "session-a");
+        assert_eq!(hit.event.event_type, "select");
+    }
+
+    /// **The scan answers in the row's coordinate space, and says where the
+    /// widget's own begins.**
+    ///
+    /// This is the whole of what geometry is still for, and the reason
+    /// [`hit_test_row_aware`](WidgetRegistry::hit_test_row_aware) returns a
+    /// `HitArea` rather than a bare [`WidgetEvent`]. Two fields can share one
+    /// rendered line — Search and Replace do — and the container pass shifts
+    /// each field's byte range by the line-so-far *without* shifting the
+    /// payload its `focus` event carries, whose `valueInnerStart` stays
+    /// measured from the field's own text. So a caller holding a byte in the
+    /// composed line has to subtract the matched area's `byte_start` before
+    /// handing it to `Editor::deliver_widget_hit`, and that subtraction is
+    /// what the geometry is for.
+    ///
+    /// The identity half is what it always was: neither field's event knows
+    /// or needs to know where on the line it was drawn.
+    #[test]
+    fn a_composed_row_names_where_each_field_s_own_row_begins() {
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(11),
+            BufferId(5),
+            empty_spec(),
+            // `[search]` at bytes 0..20 of the line, `[replace]` at 20..40.
+            vec![make_hit(0, 0, 20, "search"), make_hit(0, 20, 40, "replace")],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+            HashMap::new(),
+            Vec::new(),
+        );
+        let bcol = 27u32;
+        let (_, hit) = reg
+            .hit_test_row_aware(BufferId(5), 0, bcol, false)
+            .expect("byte 27 of the line is in the second field");
+        assert_eq!(hit.event.widget_key, "replace");
+        assert_eq!(
+            (bcol as usize).saturating_sub(hit.byte_start),
+            7,
+            "byte 7 of the replace field's own row, which is the space its \
+             `valueInnerStart` is measured in"
+        );
     }
 
     #[test]
@@ -910,8 +1059,8 @@ mod tests {
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(3), 0, 2, false)
             .expect("on button");
-        assert_eq!(hit.widget_key, "btn");
-        assert_eq!(hit.event_type, "activate");
+        assert_eq!(hit.event.widget_key, "btn");
+        assert_eq!(hit.event.event_type, "activate");
     }
 
     #[test]
@@ -937,8 +1086,8 @@ mod tests {
     fn overlay_surface_is_opaque_and_separate() {
         let mut reg = WidgetRegistry::default();
         let mut base = make_hit(0, 0, 10, "under");
-        base.event_type = "select";
-        base.widget_kind = "list";
+        base.event.event_type = "select";
+        base.event.widget_kind = "list";
         let mut popup = make_hit(0, 2, 6, "option");
         popup.overlay = true;
         reg.mount(
@@ -956,7 +1105,7 @@ mod tests {
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(9), 0, 3, true)
             .expect("popup option");
-        assert_eq!(hit.widget_key, "option");
+        assert_eq!(hit.event.widget_key, "option");
         // …and a miss (border/padding) is swallowed — no row fallback
         // to the covered list row.
         assert!(reg.hit_test_row_aware(BufferId(9), 0, 8, true).is_none());
@@ -964,7 +1113,7 @@ mod tests {
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(9), 0, 3, false)
             .expect("covered row");
-        assert_eq!(hit.widget_key, "under");
+        assert_eq!(hit.event.widget_key, "under");
     }
 
     fn mount_with_list(reg: &mut WidgetRegistry, scroll: u32, sel: i32) {
@@ -1069,10 +1218,10 @@ mod tests {
 
         let (key_a, hit_a) = reg.hit_test(BufferId(10), 0, 2).expect("alpha hit");
         assert_eq!(key_a, PanelKey::new("alpha", 1));
-        assert_eq!(hit_a.widget_key, "a-btn");
+        assert_eq!(hit_a.event.widget_key, "a-btn");
         let (key_b, hit_b) = reg.hit_test(BufferId(20), 0, 2).expect("beta hit");
         assert_eq!(key_b, PanelKey::new("beta", 1));
-        assert_eq!(hit_b.widget_key, "b-btn");
+        assert_eq!(hit_b.event.widget_key, "b-btn");
 
         // Unmounting one plugin's panel leaves the other untouched.
         reg.unmount(&PanelKey::new("beta", 1));
@@ -1127,6 +1276,6 @@ mod tests {
         // Old hit gone; new hit visible.
         assert!(reg.hit_test(BufferId(2), 0, 1).is_none());
         let hit = reg.hit_test(BufferId(2), 1, 5).unwrap();
-        assert_eq!(hit.1.widget_key, "new");
+        assert_eq!(hit.1.event.widget_key, "new");
     }
 }

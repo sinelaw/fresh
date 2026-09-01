@@ -1391,14 +1391,17 @@ mod tests {
             let mut hits: Vec<_> = out
                 .hits
                 .iter()
-                .filter(|h| h.event_type == "select")
+                .filter(|h| h.event.event_type == "select")
                 .collect();
             hits.sort_by_key(|h| h.buffer_row);
             hits.iter()
                 .map(|h| {
                     (
-                        h.payload["list_key"].as_str().unwrap_or("").to_string(),
-                        h.payload["index"].as_i64().unwrap_or(-1),
+                        h.event.payload["list_key"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
+                        h.event.payload["index"].as_i64().unwrap_or(-1),
                     )
                 })
                 .collect()

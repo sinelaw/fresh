@@ -302,6 +302,18 @@ pub fn interior_key(slot: super::widgets::Slot) -> Key {
 /// how the tree's ring moves focus, and a plugin that bound Tab through
 /// `defineMode` would lose it. So the host says whether this panel's mode
 /// binds Tab, and when it does the fallback claims it like any other key.
+///
+/// **Declining a key it might need back is safe here because of the layer's
+/// modality, not because of anything this node does.** A declined Tab the ring
+/// cannot serve — a panel holding one widget, or none — leaves `move_focus`
+/// with nowhere to go, and what happens to the key then belongs to
+/// [`keys_layer`]: `Modality::Focus` confines traversal without swallowing, so
+/// `dispatch` reports the key unclaimed and the router answers it exactly as it
+/// did before any of this. A layer that *swallows* — `Modality::Keyboard`, which
+/// is what the settings dialog declares — would drop that Tab instead, with no
+/// move and no host. `fresh-ui`'s
+/// `a_key_the_ring_cannot_serve_is_handed_back_only_by_a_focus_layer` pins the
+/// asymmetry.
 pub fn interior(slot: super::widgets::Slot, claims_tab: bool, body: Node<UiMsg>) -> Node<UiMsg> {
     let (w, h) = (body.w, body.h);
     fresh_ui::focusable(body)
@@ -985,7 +997,7 @@ mod tests {
         assert!(
             got.iter().any(|f| matches!(
                 f,
-                UiFact::WidgetHit { hit, .. } if hit.widget_key == "go"
+                UiFact::WidgetHit { event: hit, .. } if hit.widget_key == "go"
             )),
             "a press on the button at {at:?} should be its hit, got {got:?}"
         );

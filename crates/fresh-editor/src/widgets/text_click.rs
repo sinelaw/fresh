@@ -62,32 +62,48 @@ pub fn row_byte_to_value_byte(
 }
 
 /// The byte in a field's *value* under a press, from the press's own byte in
-/// the rendered row.
+/// the field's rendered row.
 ///
 /// **The library reports where the press landed; this undoes the field's
 /// layout.** `fresh_ui::Event::text_byte` gives the byte inside the piece the
-/// gesture sits on, `HitArea::byte_start` says where that piece begins in the
-/// entry's row, and the `focus` hit's payload carries the breadcrumbs the
+/// gesture sits on, and the `focus` event's payload carries the breadcrumbs the
 /// renderer stamped. Nothing here re-renders anything, which is the point: the
 /// two Settings click paths used to render the whole control again and measure
 /// the row they produced, because a *column* cannot be turned into a byte
 /// without laying the text out. A byte can.
 ///
-/// `None` for a hit with no layout payload — a non-text widget, or a text
+/// **One coordinate space, and it is the field's own.** `valueInnerStart` is
+/// stamped by `kinds::text::single_line` against the row *that field* built,
+/// and the container pass that composes two fields onto one line
+/// (`kinds::containers`) shifts the `HitArea`'s byte range without shifting
+/// the payload — so the value origin never moves and the caller must hand a
+/// byte already measured from the field's own row start. A press on a
+/// described field is one already: the field is its own node, and its piece
+/// begins where the field does.
+///
+/// This used to take a `HitArea` and subtract `byte_start` from
+/// `valueInnerStart`, which double-counted a composed row's offset. It could
+/// not be observed — every producer of a text `focus` hit sets `byte_start`
+/// to 0, and the composing pass runs only in the text projection, which does
+/// not reach here — but the arithmetic disagreed with the other consumer of
+/// the same payload (`Editor::reposition_widget_text_cursor_from_click`,
+/// which rebases the click rather than the origin). A `WidgetEvent` cannot
+/// state the disagreement.
+///
+/// `None` for an event with no layout payload — a non-text widget, or a text
 /// field an older render path produced.
-pub fn value_byte_from_hit(hit: &super::HitArea, byte_in_piece: usize) -> Option<usize> {
+pub fn value_byte_from_hit(event: &super::WidgetEvent, byte_in_field: usize) -> Option<usize> {
     let field = |k: &str| {
-        hit.payload
+        event
+            .payload
             .get(k)
             .and_then(|v| v.as_u64())
             .map(|v| v as usize)
     };
-    let inner_start = field("valueInnerStart")?;
-    let row_byte = hit.byte_start.saturating_add(byte_in_piece);
     Some(row_byte_to_value_byte(
-        row_byte,
-        hit.byte_start,
-        inner_start.saturating_sub(hit.byte_start),
+        byte_in_field,
+        0,
+        field("valueInnerStart")?,
         field("valueDropped").unwrap_or(0),
         field("ellipsisBytes").unwrap_or(0),
         field("valueLen").unwrap_or(0),
@@ -119,17 +135,10 @@ mod tests {
         assert_eq!(row_byte_to_value_byte(15, 0, 10, 4, 3, 20), 6); // 2 past the tail start
     }
 
-    fn text_hit(
-        byte_start: usize,
-        inner_start: usize,
-        value_len: usize,
-    ) -> crate::widgets::HitArea {
-        crate::widgets::HitArea {
+    fn text_event(inner_start: usize, value_len: usize) -> crate::widgets::WidgetEvent {
+        crate::widgets::WidgetEvent {
             widget_key: "field".into(),
             widget_kind: "text",
-            buffer_row: 0,
-            byte_start,
-            byte_end: byte_start + 64,
             payload: serde_json::json!({
                 "valueInnerStart": inner_start,
                 "valueDropped": 0,
@@ -138,7 +147,6 @@ mod tests {
             }),
             event_type: "focus",
             owner_key: None,
-            overlay: false,
             row_target: false,
             context_click: false,
         }
@@ -147,14 +155,14 @@ mod tests {
     /// The press's byte, through the field's layout, is the value's byte.
     ///
     /// Row `"Name: [abcdef]"`: the value begins at row byte 7, so the press's
-    /// byte inside the piece maps straight through once the label is undone.
+    /// byte inside the field maps straight through once the label is undone.
     #[test]
     fn value_byte_from_hit_undoes_the_label() {
-        let hit = text_hit(0, 7, 6);
-        assert_eq!(value_byte_from_hit(&hit, 0), Some(0)); // on the 'N' → clamp
-        assert_eq!(value_byte_from_hit(&hit, 7), Some(0)); // the 'a'
-        assert_eq!(value_byte_from_hit(&hit, 10), Some(3)); // the 'd'
-        assert_eq!(value_byte_from_hit(&hit, 200), Some(6)); // past the end → clamp
+        let ev = text_event(7, 6);
+        assert_eq!(value_byte_from_hit(&ev, 0), Some(0)); // on the 'N' → clamp
+        assert_eq!(value_byte_from_hit(&ev, 7), Some(0)); // the 'a'
+        assert_eq!(value_byte_from_hit(&ev, 10), Some(3)); // the 'd'
+        assert_eq!(value_byte_from_hit(&ev, 200), Some(6)); // past the end → clamp
     }
 
     /// **The case a column got wrong.** Row `"[中b]"`, value `"中b"` — `中` is
@@ -163,31 +171,40 @@ mod tests {
     /// the column were passed here it would answer 2, in the middle of `中`.
     #[test]
     fn value_byte_from_hit_is_bytes_not_cells() {
-        let hit = text_hit(0, 1, 4);
-        assert_eq!(value_byte_from_hit(&hit, 1), Some(0), "the start of 中");
-        assert_eq!(value_byte_from_hit(&hit, 4), Some(3), "the 'b' after it");
+        let ev = text_event(1, 4);
+        assert_eq!(value_byte_from_hit(&ev, 1), Some(0), "the start of 中");
+        assert_eq!(value_byte_from_hit(&ev, 4), Some(3), "the 'b' after it");
         assert_ne!(
-            value_byte_from_hit(&hit, 3),
+            value_byte_from_hit(&ev, 3),
             Some(3),
             "byte 3 is not the 'b'; a column of 3 would have been"
         );
     }
 
-    /// A hit whose payload has no layout breadcrumbs is not a text field.
+    /// An event whose payload has no layout breadcrumbs is not a text field.
     #[test]
     fn value_byte_from_hit_is_absent_without_the_payload() {
-        let mut hit = text_hit(0, 0, 0);
-        hit.payload = serde_json::json!({});
-        assert_eq!(value_byte_from_hit(&hit, 3), None);
+        let mut ev = text_event(0, 0);
+        ev.payload = serde_json::json!({});
+        assert_eq!(value_byte_from_hit(&ev, 3), None);
     }
 
-    /// The field's own offset within a composed row is rebased away — Search
-    /// and Replace share one line, so `byte_start` is not always zero.
+    /// **The value origin is the field's own row, and there is nothing else
+    /// to rebase against.**
+    ///
+    /// Search and Replace share one line in the text projection, and the
+    /// container pass shifts the composed `HitArea`'s byte range by the
+    /// line-so-far — but not the payload it carries, whose `valueInnerStart`
+    /// stays measured from the field's own text. So the press's byte must
+    /// already be field-relative when it arrives, and this answers the same
+    /// value byte whatever the field's offset in a composed row was. The
+    /// version that took a `HitArea` subtracted `byte_start` from the origin
+    /// as well and drifted by exactly that offset; a `WidgetEvent` has no
+    /// `byte_start` to subtract.
     #[test]
-    fn value_byte_from_hit_rebases_a_composed_row() {
-        // The field starts 20 bytes into the row; its value 7 bytes further.
-        let hit = text_hit(20, 27, 6);
-        assert_eq!(value_byte_from_hit(&hit, 7), Some(0));
-        assert_eq!(value_byte_from_hit(&hit, 10), Some(3));
+    fn the_value_origin_is_the_field_s_own_row() {
+        let ev = text_event(7, 6);
+        assert_eq!(value_byte_from_hit(&ev, 7), Some(0));
+        assert_eq!(value_byte_from_hit(&ev, 10), Some(3));
     }
 }

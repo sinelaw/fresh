@@ -62,25 +62,25 @@ pub fn dock(
 
 /// The panel's own pointer surface.
 ///
-/// **What a left press means depends on what is under it.** While the
-/// interior is a painter, the press reports *where* and the runtime
-/// hit-tests its own boxes — the same seam the overlay prompt's toolbar band
-/// sits on (`UiFact::CardToolbarPress`). Once the interior is described its
+/// **A left press focuses the dock and says nothing else.** The column's
 /// widgets answer their own presses and stop the flow, so what reaches here
-/// is a press they declined: the column's dead space. That still focuses the
-/// dock, which is the half of `DockPress` that was never about geometry —
-/// `handle_floating_widget_click` already returns without doing anything
-/// when its probe finds no widget.
+/// is a press they declined: the column's dead space. It used to report the
+/// *cell* whenever the interior was a painter, for the runtime to hit-test
+/// its own boxes with — the same seam the overlay prompt's toolbar band still
+/// sits on (`UiFact::CardToolbarPress`). That branch is gone with the probe
+/// behind it (S7): `panel_interior` is `None` only for a column with no panel
+/// mounted at all, where there are no boxes to hit-test and nothing but the
+/// focus to do.
 ///
-/// **A right press reports the same fact either way, but not by the same
-/// route.** The column emits `DockContext` on both sides of the seam; what
-/// answers it differs. While the interior is a painter,
-/// `handle_floating_widget_context_click` probes the runtime's boxes. Once it
-/// is described that probe stands down — it would answer from a *second*
-/// layout that reads the runtime's own scroll offset, which the description
-/// does not, so a scrolled list would raise the menu for a different row from
-/// the one clicked — and the menu comes from the widget's own
-/// `UiFact::WidgetContext` instead.
+/// **A right press still carries its cell, and nothing reads it.** The column
+/// emits `DockContext { x, y }` on both sides of the seam. The menu comes
+/// from the widget's own `UiFact::WidgetContext`, whose hit the node carried;
+/// what `DockContext` does is focus the dock first, so a mirror of dock-focus
+/// state is current before the menu the press raises reads it. The runtime's
+/// own right-press probe over the box arena — which would have answered from
+/// a *second* layout reading the runtime's scroll offset, so a scrolled list
+/// raised the menu for a different row from the one clicked — has been gone
+/// since 2.4, and the applier destructures the cell away.
 fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     let described = interior.is_some();
     let scoped = interior
@@ -93,10 +93,11 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
             // spec at `floating_panel_inner_width` — `width_cols - 2` for a
             // left dock — and the painter draws the divider into the column's
             // last cell. Handed the whole column, the description came out two
-            // columns wider than the boxes `probe_floating_widget` resolves
-            // hover and right-click against, and anything a `flexSpacer` pins
-            // to the right edge — the title bar's `[×]` above all — was laid
-            // out past the visible edge and clipped away entirely.
+            // columns wider than that, and anything a `flexSpacer` pins to the
+            // right edge — the title bar's `[×]` above all — was laid out past
+            // the visible edge and clipped away entirely. (It was also two
+            // columns wider than the box arena the runtime's own hover and
+            // right-click probes resolved against, back when there were any.)
             let inner_w = info.constraints.max_w.saturating_sub(DIVIDER_COLS).max(1);
             super::widgets::node(
                 &i.spec,
@@ -143,10 +144,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                 match e.button {
                     MouseButton::Left => {
                         e.stop();
-                        match described {
-                            true => Some(UiMsg::Ui(UiFact::DockFocus)),
-                            false => Some(UiMsg::Ui(UiFact::DockPress { x, y })),
-                        }
+                        Some(UiMsg::Ui(UiFact::DockFocus))
                     }
                     MouseButton::Right => {
                         e.stop();
@@ -165,9 +163,11 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                 // `e.stop()` here is the whole reason the dock stopped
                 // scrolling. Worse than nothing: `DockScroll` moved the
                 // runtime's own `WidgetInstanceState::scroll_offset`, which
-                // the description does not read but `probe_floating_widget`
-                // still does, so a few notches put the hover highlight and the
-                // right-click menu on a different row from the one drawn.
+                // the description does not read but the runtime's probes did,
+                // so a few notches put the hover highlight and the right-click
+                // menu on a different row from the one drawn. (Those probes
+                // are deleted now; the window is the viewport's either way,
+                // and this arm stands down so the chain can run.)
                 //
                 // The same ruling the settings dialog's wheel got. While the
                 // interior is a painter there is no viewport to chain into and
@@ -384,21 +384,21 @@ mod tests {
         ui
     }
 
-    /// **A press on the column means two different things**, and which one
-    /// depends on what is behind the seam.
+    /// **A press on the column says one thing on either side of the seam**,
+    /// and the cell is not it.
     ///
-    /// While the interior is a painter it has to say *where*, because the
-    /// runtime hit-tests its own boxes with the cell. Once the interior is
-    /// described the widgets answer their own presses, so a press that
-    /// reaches the column is one they declined — dead space — and the only
-    /// thing left to do with it is focus the dock.
+    /// It used to say *where* whenever the interior was a painter, because
+    /// the runtime hit-tested its own boxes with that cell. Nothing does any
+    /// more: an interior that is not described is a column with no panel
+    /// mounted, which has no boxes and no rows, so the press has nothing to
+    /// resolve against and the focus is the whole of it (S7).
     #[test]
-    fn a_press_says_where_only_while_a_painter_is_behind_it() {
+    fn a_press_on_the_column_focuses_it_either_side_of_the_seam() {
         let mut ui = laid_out(Some(24), 100, 30);
         assert_eq!(
             press(&mut ui, 10, 5, MouseButton::Left),
-            vec![UiFact::DockPress { x: 10, y: 5 }],
-            "the painter needs the cell to hit-test with"
+            vec![UiFact::DockFocus],
+            "an empty column: there is nothing under the cell to name"
         );
 
         let mut ui = described(Some(24), 100, 30);
@@ -412,10 +412,9 @@ mod tests {
     /// **The column says the same thing on either side of the seam.**
     ///
     /// This is about the *fact*, not the mechanism: `DockContext` carries the
-    /// cell, and the column emits it described or not. What consumes it
-    /// diverges — see `column`'s own doc, and
-    /// `handle_floating_widget_context_click`'s early-out for a described
-    /// panel — so this asserts what it can see and no more.
+    /// cell, and the column emits it described or not. Nothing consumes the
+    /// cell any more — see `column`'s own doc — so this asserts what it can
+    /// see and no more.
     #[test]
     fn a_right_press_reports_where_on_either_side_of_the_seam() {
         for mut ui in [described(Some(24), 100, 30), laid_out(Some(24), 100, 30)] {
@@ -465,7 +464,7 @@ mod tests {
         ));
         assert_eq!(
             press(&mut ui, 22, 10, MouseButton::Left),
-            vec![UiFact::DockPress { x: 22, y: 10 }],
+            vec![UiFact::DockFocus],
             "the cell beside it is the panel's"
         );
     }
@@ -514,7 +513,7 @@ mod tests {
     fn a_press_inside_the_column_does_not_blur() {
         let mut ui = laid_out(Some(24), 100, 30);
         let got = press(&mut ui, 5, 10, MouseButton::Left);
-        assert_eq!(got, vec![UiFact::DockPress { x: 5, y: 10 }]);
+        assert_eq!(got, vec![UiFact::DockFocus]);
     }
 
     /// A hidden dock is still a region with a rectangle, and carries neither
@@ -593,7 +592,6 @@ mod tests {
     /// being claimed by a sink.
     #[test]
     fn tab_in_a_focused_dock_steps_along_the_widgets() {
-        use fresh_core::api::WidgetSpec;
         let mut ui = described_with_buttons();
 
         let ring: Vec<String> = ui
@@ -624,6 +622,95 @@ mod tests {
             )),
             "Tab was resolved by the tree, not handed to the runtime: {:?}",
             got.msgs
+        );
+    }
+
+    /// **Which ring is authoritative is a question only the tree can answer,
+    /// and this is the answer the host reads.**
+    ///
+    /// `Editor::advance_panel_focus_in_tree` routes a plugin's
+    /// `WidgetAction::FocusAdvance` — and every other host-driven advance —
+    /// to `Ui::move_focus` when the tree is holding this panel's focus, and
+    /// leaves it to the runtime's box arena when it is not. The test is that
+    /// the two states are *distinguishable from the tree alone*: a described
+    /// interior with something focusable in it carries the scope key and has
+    /// focus inside it; a panel that kept its key sink has no such element at
+    /// all, so there is nothing to ask and nothing to move.
+    #[test]
+    fn the_tree_says_whether_it_is_holding_the_panels_focus() {
+        let scope = super::super::panel::interior_key(super::super::widgets::Slot::Dock);
+
+        let ui = described_with_buttons();
+        let el = ui
+            .find_by_key(&scope)
+            .expect("a described interior with focusables names the scope");
+        assert!(
+            ui.has_focus_within(el),
+            "and focus settles inside it, so the ring is the tree's"
+        );
+
+        // The same dock with a keyboard and *nothing focusable* in its
+        // interior: `column` leaves the body unwrapped, `keys_layer` keeps the
+        // sink, and the scope key is not in the tree.
+        let mut sink: Ui<UiMsg> = Ui::new();
+        sink.frame(
+            frame_tree(Frame {
+                menu_bar: false,
+                status_bar: false,
+                dock: Some(30),
+                dock_keys: true,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        assert!(
+            sink.find_by_key(&scope).is_none(),
+            "no scope: the arena is the only ring there is"
+        );
+    }
+
+    /// **A move the host asks for imperatively reports its landing the same
+    /// way a Tab does.**
+    ///
+    /// The two rings agreed on nothing before: the arena wrote the registry's
+    /// focus key and the tree's focus stayed where it was. Routing through
+    /// `move_focus` makes the registry a mirror of the same fact Tab writes —
+    /// and the fact travels on `Ui::take_messages`, which is what
+    /// `advance_panel_focus_in_tree` drains into the ordinary applier.
+    #[test]
+    fn an_imperative_move_reports_the_new_holder() {
+        let mut ui = described_with_buttons();
+        // The settle's own gain is already pending — nothing drains it, which
+        // is why `advance_panel_focus_in_tree` clears the backlog before it
+        // moves. Same here, so what is left is the move's.
+        let settled = ui.take_messages();
+        assert!(
+            !settled.is_empty(),
+            "the frame's autofocus produced a gain and left it pending"
+        );
+        let first = ui.focused().expect("the scope took focus");
+        assert!(
+            ui.move_focus(fresh_ui::FocusDir::Next),
+            "two buttons: the ring can serve the move"
+        );
+        assert_ne!(ui.focused(), Some(first), "focus actually moved");
+
+        let named: Vec<String> = ui
+            .take_messages()
+            .into_iter()
+            .filter_map(|m| match m {
+                UiMsg::Ui(UiFact::WidgetFocus { slot, widget })
+                    if slot == super::super::widgets::Slot::Dock =>
+                {
+                    Some(widget)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            named,
+            vec!["two".to_string()],
+            "one gain, naming the widget the ring landed on"
         );
     }
 

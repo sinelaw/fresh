@@ -996,7 +996,13 @@ impl Editor {
     }
 
     /// Which slot currently holds the panel with this identity, if any.
-    #[cfg(feature = "plugins")]
+    ///
+    /// **Not `plugins`-gated, though its first caller was.** The panel slots
+    /// and `PanelKey` are ungated, and S6 gave this a second caller in
+    /// `advance_panel_focus_in_tree`, which the focus ring reaches on every
+    /// host-driven advance whether or not plugins are compiled in. The gate was
+    /// inherited from the one caller it used to have, and `--no-default-features
+    /// --features runtime` is where that showed.
     pub(crate) fn slot_of_panel(
         &self,
         panel_key: &crate::widgets::PanelKey,

@@ -280,8 +280,8 @@ fn seam(c: &Option<Chrome>, content: Node<UiMsg>) -> Node<UiMsg> {
     }
 }
 
-/// The dialog's keyboard seam: the focus scope its controls live in, and the
-/// catch-all that hands back whatever they decline.
+/// The dialog's keyboard seam: the node every key the dialog's own controls
+/// declined ends at, and the one that hands it to the dispatcher.
 ///
 /// The same shape as [`super::modal::keys`], and for the same reason —
 /// listeners run from the focused element outward, so a control that answers
@@ -291,11 +291,31 @@ fn seam(c: &Option<Chrome>, content: Node<UiMsg>) -> Node<UiMsg> {
 /// back to the first in the scope, so marking this one would win over every
 /// control inside it and nothing in the dialog would ever be focused.
 ///
-/// It is still *reachable* — no `skip_traversal` — because it has to be. A
-/// scope with nothing focusable in it drops focus altogether, and with focus
-/// nowhere `Ui::keyboard_owned` is false: the modal would stop swallowing and
-/// its keys would reach the buffer underneath. The narrow layout while no
-/// search is running is exactly that state, so this is not a hypothetical.
+/// It is still *reachable* — no `skip_traversal` — because it has to be. This
+/// node names no scope, so `active_scope` has none to fall back to: were the
+/// traversal set to come out empty, focus would be dropped, and with focus
+/// nowhere `Ui::keyboard_owned` is false — the modal would stop swallowing and
+/// its keys would reach the buffer underneath. (The scope-root fallback that
+/// `fresh-ui` grew for a plugin panel's interior does not apply here: it needs
+/// a *named* scope, which the settings layer does not declare.)
+///
+/// **Including Tab, and that is not an oversight.** Declining Tab is how the
+/// tree's ring moves focus, and it is what `panel::interior` does — but the
+/// two surfaces are not the same case. The dialog's body is a *cursor list*:
+/// `SettingsState::selected_item` is the one cursor, Up/Down and
+/// PageUp/PageDown move it, and `fresh-ui` resolves only `Next`/`Prev` and the
+/// four directions to focus moves — the page keys have no traversal default at
+/// all. So a ring position could never be more than a partial mirror of the
+/// cursor, and the first PageDown would leave the two disagreeing, with the
+/// band on one card and the next Tab stepping from another. Nor could the
+/// decline be made conditional on the ring having somewhere to go: this layer
+/// is `Modality::Keyboard`, which *swallows* what nothing acted on, so a
+/// declined Tab the ring cannot serve is dropped rather than handed back —
+/// `fresh-ui`'s `a_key_the_ring_cannot_serve_is_handed_back_only_by_a_focus_layer`
+/// pins that, and it is why `panel::interior` may decline where this may not.
+/// And the footer's five buttons are not focusable nodes at all, while Tab is
+/// the only way to reach them. Making the dialog's Tab the tree's means first
+/// making its cursor the tree's, which is a larger change than a keyboard seam.
 fn keys(content: Node<UiMsg>) -> Node<UiMsg> {
     fresh_ui::focusable(content).on_key(|e: &Event| {
         e.stop();
@@ -2375,10 +2395,12 @@ mod tests {
         );
     }
 
-    /// Tab is still the dialog's. Three panels take turns at the keyboard and
-    /// only one of them is a node, so traversal has nowhere to put focus —
-    /// the dispatcher's `toggle_focus` remains the authority until the body
-    /// and the query field are elements of their own (Phase 2.1).
+    /// Tab is still the dialog's, and [`keys`] says at length why: the body is
+    /// a cursor list whose cursor the model owns, `fresh-ui` resolves no
+    /// traversal default for the page keys that also move it, this
+    /// layer swallows a declined key the ring cannot serve, and the footer's
+    /// buttons are not focusable nodes. The ring is not the authority for this
+    /// dialog's focus, so the key that moves it is not the ring's either.
     #[test]
     fn tab_is_still_the_dialogs() {
         let mut ui = laid_out(100, 30, None);
@@ -2416,13 +2438,16 @@ mod tests {
         );
     }
 
-    /// **Focus never leaves the dialog, even where nothing in it wants it.**
-    /// The narrow layout while no search is running has no focusable control
-    /// at all — its categories are a strip and the strip is not the wide
-    /// layout's list — and a scope with nothing focusable in it drops focus,
-    /// which turns `Ui::keyboard_owned` off and lets the modal's keys reach
-    /// the buffer underneath. The dialog's own seam is the holder of last
-    /// resort, which is why it is not `skip_traversal`.
+    /// **Focus never leaves the dialog, even where nothing in it is a
+    /// control.** With neither the wide layout's category list nor the narrow
+    /// layout's strip described, the only focusables left in the box are the
+    /// two seams — [`seam`]'s and [`keys`]' own — and neither is a control:
+    /// every key becomes `ModalKey` and the dialog still owns the keyboard.
+    ///
+    /// The floor under this is [`keys`] being reachable. This layer names no
+    /// scope, so a traversal set that came out empty would drop focus
+    /// altogether, and with focus nowhere `Ui::keyboard_owned` is false and
+    /// the modal's keys reach the buffer underneath.
     #[test]
     fn a_key_never_escapes_a_layout_with_no_focusable_control() {
         let mut c = chrome();

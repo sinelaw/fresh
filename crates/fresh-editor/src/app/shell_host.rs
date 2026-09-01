@@ -1170,7 +1170,7 @@ impl Editor {
 impl Editor {
     pub(crate) fn settings_widget_hit(
         &mut self,
-        hit: &crate::widgets::HitArea,
+        hit: &crate::widgets::WidgetEvent,
         byte: Option<usize>,
         clicks: u8,
     ) {
@@ -1229,8 +1229,9 @@ impl Editor {
             _ => SettingsHit::Item(idx),
         };
         // A press on a text field also says *where* in the value the caret
-        // goes (#2573). The press reports its byte in the row; the hit's own
-        // payload carries the breadcrumbs that undo the field's layout.
+        // goes (#2573). The press reports its byte in the field's own row;
+        // the event's payload carries the breadcrumbs that undo the field's
+        // layout, measured from that same row start.
         //
         // **This used to render the control a second time and measure the row
         // it produced**, because a column cannot be turned into a byte without
@@ -1331,7 +1332,7 @@ impl Editor {
         };
         // Cleared before the interiors run, never by whoever reads it: a
         // stale `true` from the previous keystroke would claim this one.
-        self.shell_interior_took_key = false;
+        self.shell_interior_took_key = None;
         let result = ui.dispatch(input);
         // **A change is not always a message.** A widget that keeps its own
         // hover — every `List` and `Tree` — writes `hovered` through an
@@ -1366,7 +1367,42 @@ impl Editor {
         // element boundary produces neither, which is what still keeps an idle
         // pointer from drawing a frame.
         let changed = tree_stale || !result.msgs.is_empty();
-        for msg in result.msgs {
+        self.apply_shell_messages(result.msgs, facts);
+        // **The claim's second half, and the interior really does answer last.**
+        // A `Modality::Focus` surface confines the keyboard without swallowing
+        // it, so whether the key was taken is its interior's answer — and the
+        // interior ran in an applier above, after `dispatch` had already
+        // reported what the *tree* claimed.
+        //
+        // This was `claimed || took`, which cannot express a decline: `||` only
+        // ever adds, so the tree's claim won whenever it said `true` and the
+        // host's `false` was unreachable. The panel's fallback `stop()`s every
+        // non-Tab key as it emits `PanelKey` (`panel::interior`), which sets
+        // `Dispatch.claimed` — so `dispatch_base_key` was skipped and a
+        // plugin's `defineMode` binding never ran. Escape stopped closing a
+        // plugin's floating panel; the same line also cost a dock chord its
+        // first press and the New-Session form its Enter.
+        //
+        // `None` means no interior answered, so the tree's word stands.
+        let claimed = self.shell_interior_took_key.unwrap_or(claimed);
+        Dispatched { claimed, changed }
+    }
+
+    /// Apply what the tree produced.
+    ///
+    /// Split out of [`Self::shell_dispatch`] because a dispatch is not the
+    /// only thing that produces messages: `Ui::take_messages` carries the ones
+    /// framework-initiated activity raises — a focus change asked for
+    /// imperatively, which is how a plugin's `FocusAdvance` reaches the tree's
+    /// ring (`Editor::advance_panel_focus_in_tree`). One loop, so a fact
+    /// cannot mean one thing when a key produced it and another when the host
+    /// did.
+    pub(super) fn apply_shell_messages(
+        &mut self,
+        msgs: Vec<crate::view::shell::msg::UiMsg>,
+        facts: EventFacts,
+    ) {
+        for msg in msgs {
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
                     // Straight into the pipeline that has always applied
@@ -1378,13 +1414,6 @@ impl Editor {
                 crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact, facts),
             }
         }
-        // **The claim's second half.** A `Modality::Focus` surface confines
-        // the keyboard without swallowing it, so whether the key was taken is
-        // its interior's answer — and the interior ran in an applier above,
-        // after `dispatch` had already reported what the *tree* claimed. The
-        // authoritative party answers last.
-        let claimed = claimed || self.shell_interior_took_key;
-        Dispatched { claimed, changed }
     }
 
     /// Whether a wheel notch over a pane's content was taken by a live
@@ -1418,23 +1447,26 @@ impl Editor {
             // payload now, not a position the caller resolved.
             UiFact::WidgetHit {
                 slot,
-                hit,
+                event: hit,
                 byte,
                 at,
                 clicks,
             } => {
-                // **The byte the press landed on.** `byte` is the offset
-                // inside the hit's own piece and `byte_start` is where that
-                // piece begins in the entry's rendered row, so their sum is
-                // the entry byte `reposition_widget_text_cursor_from_click`
-                // subtracts `byte_start` back off.
+                // **The byte the press landed on, and nothing is done to it.**
+                // A described widget is its own node, so the piece the press
+                // sits on begins where the widget's row does and `byte` is
+                // already in the coordinate space `deliver_widget_hit` wants.
                 //
-                // This used to add a *column* to `byte_start` — the two agree
-                // only while every character is one byte and one cell, so
-                // clicking into a field with a localized label or a non-ASCII
-                // value put the caret in the wrong place. The library reports
-                // the byte now, from the shaping that drew the row.
-                let clicked_byte = byte.map(|b| hit.byte_start.saturating_add(b));
+                // Two arithmetics have stood here. The first added a *column*
+                // to the recorded `byte_start`, which agrees with a byte only
+                // while every character is one byte and one cell — so a
+                // localized label or a non-ASCII value put the caret in the
+                // wrong place. The second added the *byte* to `byte_start`
+                // and the dispatch subtracted it straight back off: correct,
+                // but a round trip through the text projection's rows, which
+                // this surface does not have. The event carries no
+                // `byte_start` now, so neither is stateable.
+                let clicked_byte = byte;
                 let slot = match slot {
                     crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
@@ -1506,20 +1538,16 @@ impl Editor {
                             (!key.is_empty()).then(|| (p.panel_key.clone(), key))
                         });
                         if let Some((panel_key, widget_key)) = open {
-                            let ha = crate::widgets::HitArea {
-                                overlay: false,
+                            let ev = crate::widgets::WidgetEvent {
                                 row_target: false,
                                 context_click: false,
                                 widget_key,
                                 widget_kind: "dropdown",
-                                buffer_row: 0,
-                                byte_start: 0,
-                                byte_end: 0,
                                 payload: serde_json::json!({}),
                                 event_type: "dropdown_toggle",
                                 owner_key: None,
                             };
-                            self.deliver_widget_hit(&panel_key, &ha, None);
+                            self.deliver_widget_hit(&panel_key, &ev, None);
                         }
                     }
                 }
@@ -1602,11 +1630,16 @@ impl Editor {
             }
             // The right press's second half, from a hit the node carried.
             //
-            // The re-focus is first for the same reason it is in `DockPress`
+            // The re-focus is first for the same reason it is in `DockFocus`
             // and `DockContext`: the un-blur fires a `focus` widget_event, and
             // any mirror of dock-focus state has to update before the menu the
             // press raises reads it.
-            UiFact::WidgetContext { slot, hit, x, y } => {
+            UiFact::WidgetContext {
+                slot,
+                event: hit,
+                x,
+                y,
+            } => {
                 use crate::view::shell::widgets::Slot;
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
@@ -2049,21 +2082,11 @@ impl Editor {
             // arm `chrome::Dock::on_pointer` ran; what is gone is the pair of
             // boxes that decided *which* arm, and the insertion-order rule
             // that put the grip above the column.
-            UiFact::DockPress { x, y } => {
-                // Re-focus first when blurred: the un-blur notifies the plugin
-                // via a `focus` widget_event, so any mirror of dock-focus
-                // state updates before the click's row-select event fires its
-                // scheduling logic.
-                if self.dock.as_ref().is_some_and(|f| !f.focused) {
-                    self.refocus_floating_panel(crate::app::PanelSlot::Dock);
-                }
-                self.handle_floating_widget_click(crate::app::PanelSlot::Dock, x, y);
-            }
-            // The described dock's dead space: focus it, and nothing else.
-            // The re-focus is first for the same reason it is in `DockPress`
-            // — the un-blur fires a `focus` widget_event, and any mirror of
-            // dock-focus state has to update before whatever the press goes
-            // on to do.
+            // A press on the column's dead space: focus it, and nothing else.
+            // The re-focus fires a `focus` widget_event, and any mirror of
+            // dock-focus state has to update before whatever the press goes on
+            // to do — which is why it was first here while `DockPress` still
+            // carried a cell into the runtime's own hit test.
             UiFact::DockFocus => {
                 if self.dock.as_ref().is_some_and(|f| !f.focused) {
                     self.refocus_floating_panel(crate::app::PanelSlot::Dock);
@@ -2072,7 +2095,7 @@ impl Editor {
             // **The cell is no longer read, and the menu no longer comes from
             // here.** This used to refocus and then probe the runtime's boxes
             // at `(x, y)` to raise the plugin's context menu. The widget's own
-            // node carries the `HitArea` now, so `UiFact::WidgetContext` has
+            // node carries the `WidgetEvent` now, so `UiFact::WidgetContext` has
             // already raised it by the time this runs — what is left of the
             // right press is the focus it takes, which is the half that was
             // never about geometry.
@@ -2430,8 +2453,12 @@ impl Editor {
                 let Some(ev) = self.shell_key_event else {
                     return;
                 };
+                // Only a take is recorded here, deliberately: the prompt's
+                // seam does not `stop()` (see `prompt::keys_layer`), so the
+                // tree never claims for it and a decline has nothing to undo.
+                // The panel's seam is the one that needed a decline to travel.
                 if self.dispatch_prompt_key(&ev).is_some() {
-                    self.shell_interior_took_key = true;
+                    self.shell_interior_took_key = Some(true);
                 }
             }
             // **A focused plugin panel: the same declining seam.** Its
@@ -2472,13 +2499,17 @@ impl Editor {
                         {
                             tracing::warn!("dock focus toggle failed: {e}");
                         }
-                        self.shell_interior_took_key = true;
+                        self.shell_interior_took_key = Some(true);
                         return;
                     }
                 }
-                if self.dispatch_floating_widget_key(slot, ev.code, ev.modifiers) {
-                    self.shell_interior_took_key = true;
-                }
+                // **Recorded either way.** A `false` here is the interior
+                // declining — `FallThrough` or `BlurUnconsumed` from the
+                // router — and it has to reach the fold above, or the key dies
+                // on the tree's claim instead of continuing to the mode
+                // bindings the plugin declared.
+                let took = self.dispatch_floating_widget_key(slot, ev.code, ev.modifiers);
+                self.shell_interior_took_key = Some(took);
             }
             UiFact::ModalPointer(slot) => {
                 use crate::view::shell::modal::Slot;

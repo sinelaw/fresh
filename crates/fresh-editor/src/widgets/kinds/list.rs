@@ -586,25 +586,27 @@ fn collect_list(
                 let hit_row = entries.len() as u32;
                 entries.push(entry);
                 hits.push(HitArea {
-                    row_target: true,
-                    context_click: true,
                     overlay: false,
-                    widget_key: item_key.clone(),
-                    widget_kind: "list",
                     buffer_row: hit_row,
                     byte_start: 0,
                     byte_end,
-                    payload: json!({
-                        "index": i as i64,
-                        "key": item_key,
-                        "list_key": list_key,
-                    }),
-                    event_type: "select",
-                    // The row's widget_key is the per-item key (hover
-                    // and pointer resolution use it); the List itself
-                    // owns the hit — focus, selection state, and the
-                    // fired event target it.
-                    owner_key: list_key.map(str::to_string),
+                    event: crate::widgets::WidgetEvent {
+                        row_target: true,
+                        context_click: true,
+                        widget_key: item_key.clone(),
+                        widget_kind: "list",
+                        payload: json!({
+                            "index": i as i64,
+                            "key": item_key,
+                            "list_key": list_key,
+                        }),
+                        event_type: "select",
+                        // The row's widget_key is the per-item key (hover
+                        // and pointer resolution use it); the List itself
+                        // owns the hit — focus, selection state, and the
+                        // fired event target it.
+                        owner_key: list_key.map(str::to_string),
+                    },
                 });
                 emitted += 1;
             }
@@ -627,25 +629,27 @@ fn collect_list(
             entries.push(entry);
             let hit_row = (entries.len() - 1) as u32;
             hits.push(HitArea {
-                row_target: true,
-                context_click: true,
                 overlay: false,
-                widget_key: item_key.clone(),
-                widget_kind: "list",
                 buffer_row: hit_row,
                 byte_start: 0,
                 byte_end,
-                payload: json!({
-                    "index": i as i64,
-                    "key": item_key,
-                    // The List's own spec key, so a click handler can
-                    // update the host-owned selection instance state
-                    // (keyed by this) — the item key in `key` is not
-                    // enough to find the widget. Null for keyless lists.
-                    "list_key": list_key,
-                }),
-                event_type: "select",
-                owner_key: list_key.map(str::to_string),
+                event: crate::widgets::WidgetEvent {
+                    row_target: true,
+                    context_click: true,
+                    widget_key: item_key.clone(),
+                    widget_kind: "list",
+                    payload: json!({
+                        "index": i as i64,
+                        "key": item_key,
+                        // The List's own spec key, so a click handler can
+                        // update the host-owned selection instance state
+                        // (keyed by this) — the item key in `key` is not
+                        // enough to find the widget. Null for keyless lists.
+                        "list_key": list_key,
+                    }),
+                    event_type: "select",
+                    owner_key: list_key.map(str::to_string),
+                },
             });
         }
         (end - start) as u32
