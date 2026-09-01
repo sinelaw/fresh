@@ -235,6 +235,27 @@ impl<M: 'static> Ui<M> {
         self.focus_roots = focus_roots;
     }
 
+    /// Relink one subtree a builder has just replaced, from a render parent
+    /// rather than from the root.
+    ///
+    /// **The focus parent's child list is recomputed, not overwritten with
+    /// what this subtree contributed.** A `layout_reader`'s nearest focus
+    /// ancestor is rarely its own: it is whatever focusable encloses it, and
+    /// that focusable's other descendants — the widgets *beside* this reader,
+    /// and every other reader under the same ancestor — are its children too.
+    /// Assigning this subtree's contribution took them all away, and the last
+    /// reader to rebuild decided the whole list: a plugin panel whose
+    /// interior held two readers ended every frame with a focus scope
+    /// containing whichever of them ran last, which for the orchestrator's
+    /// picker was one holding no focusables at all. The scope was then empty,
+    /// `apply_autofocus` fell back to focusing the scope element itself, and
+    /// Tab moved nothing — while the same panel's *nine* focusables sat in
+    /// the tree with their focus parent correctly pointing at it.
+    ///
+    /// So the parent is asked for its children again, over the element tree
+    /// that has just been made current. `relink_from` above is still what
+    /// sets each registration's `parent` and the render links; this settles
+    /// the one list it cannot see the whole of.
     pub(crate) fn relink_from_pub(
         &mut self,
         e: ElementId,
@@ -258,8 +279,29 @@ impl<M: 'static> Ui<M> {
             &mut fout,
         );
         if let Some(fp) = focus_parent {
+            let Some(fe) = self.focus_tree.get(fp).map(|n| n.element) else {
+                return;
+            };
+            let mut kids = Vec::new();
+            self.collect_focus_children(fe, &mut kids);
             if let Some(n) = self.focus_tree.get_mut(fp) {
-                n.children = fout;
+                n.children = kids;
+            }
+        }
+    }
+
+    /// The focus registrations directly under `e`: the first one on each
+    /// branch of its element subtree, in element order.
+    ///
+    /// The same set and the same order [`Self::relink_node`] accumulates on a
+    /// full walk — it descends until it meets a registration and stops there,
+    /// because anything below that one is *its* child.
+    fn collect_focus_children(&self, e: ElementId, out: &mut Vec<crate::focus::FocusId>) {
+        let Some(el) = self.arena.get(e) else { return };
+        for c in el.children.clone() {
+            match self.arena.get(c).and_then(|x| x.focus) {
+                Some(f) => out.push(f),
+                None => self.collect_focus_children(c, out),
             }
         }
     }
@@ -600,6 +642,12 @@ impl<M: 'static> Ui<M> {
                     clip: n.data.clip,
                     scroll: n.data.scroll,
                     content: n.data.content,
+                    // The band travels with the window here for the same
+                    // reason it travels with it into a builder: the window is
+                    // in the unit the offset counts, and the band is the only
+                    // thing that says which unit that is.
+                    window: n.data.window,
+                    band: n.data.band,
                 })
                 .unwrap_or_default();
             store.borrow_mut().entries.insert(id, g);

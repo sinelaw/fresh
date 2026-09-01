@@ -112,19 +112,6 @@ pub struct Interior {
     pub avail_height: Option<u32>,
     /// See [`super::widgets::Ctx::scrollbar_reveal`].
     pub scrollbar_reveal: Option<bool>,
-    /// Whether anything in this interior can take focus.
-    ///
-    /// **A scope with nothing in it is worse than no scope.** `keys_layer`
-    /// names the interior so traversal is confined to it; if the interior has
-    /// no focusable, `apply_autofocus` finds nowhere to put focus and drops it
-    /// — and with focus nowhere, the containment questions say no keyboard
-    /// layer is up and the panel's keys leak to the buffer behind it. So a
-    /// panel with nothing to focus keeps the sink instead, which is exactly
-    /// what it had before any of this.
-    ///
-    /// The runtime already answers this: it is whether the panel has any
-    /// tabbable widget.
-    pub has_focus_targets: bool,
     /// Whether this panel's plugin mode binds Tab.
     ///
     /// See [`interior`]: Tab is the one key the tree now resolves, so it is
@@ -132,6 +119,69 @@ pub struct Interior {
     /// this change. When the plugin bound it, the fallback claims it and the
     /// router hands it to the plugin exactly as before.
     pub claims_tab: bool,
+    /// The host resources a `markdown: true` `Text` widget renders through.
+    ///
+    /// See [`super::widgets::Ctx::markdown`]. Owned handles rather than the
+    /// borrow the collector takes, because the description outlives the
+    /// `Editor` borrow that produced it; [`MarkdownInk::ctx`] takes the
+    /// borrow back where the node is built.
+    pub markdown: Option<MarkdownInk>,
+}
+
+/// The live theme and grammar set, held by handle so a description can carry
+/// them.
+///
+/// **A description is built away from the `Editor`, and markdown needs both.**
+/// `crate::widgets::MarkdownCtx` borrows them, which is right for the
+/// collector — it runs inside one call — and impossible for an `Interior`,
+/// which is built in `Editor::panel_interior` and read in a layout closure
+/// several frames' worth of borrows later. Cloning the handles is what makes
+/// the crossing possible; neither is deep (`Theme` is already cloned once per
+/// frame for the palette, and the registry is shared).
+#[derive(Clone, Debug)]
+pub struct MarkdownInk {
+    pub theme: std::sync::Arc<crate::view::theme::Theme>,
+    pub grammars: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,
+}
+
+impl MarkdownInk {
+    /// The borrow the collector takes.
+    pub fn ctx(&self) -> crate::widgets::MarkdownCtx<'_> {
+        crate::widgets::MarkdownCtx {
+            theme: &self.theme,
+            grammars: Some(&self.grammars),
+        }
+    }
+}
+
+impl Interior {
+    /// Whether anything in this interior can take focus.
+    ///
+    /// **A scope with nothing in it is worse than no scope.** [`keys_layer`]
+    /// names the interior so traversal is confined to it; if the interior has
+    /// no focusable, `apply_autofocus` finds nowhere to put focus and drops it
+    /// — and with focus nowhere, the containment questions say no keyboard
+    /// layer is up and the panel's keys leak to the buffer behind it. So a
+    /// panel with nothing to focus keeps the sink instead, which is exactly
+    /// what it had before any of this.
+    ///
+    /// **It is derived here rather than carried.** This was a `bool` the host
+    /// filled from `WidgetPanelState::tabbable` — the immediate-mode
+    /// collector's ring, recorded at whatever render ran last. Two authorities
+    /// for one fact, and the stale one was the input: a spec that moved without
+    /// a re-render answered from the old ring, and the branch has already paid
+    /// once for the disagreement this shape produces (`c89d25f`). Asking
+    /// [`super::widgets::any_on_the_ring`] asks the *same predicate the tree
+    /// will apply to this same spec*, so the two cannot disagree at all.
+    ///
+    /// Only the two slots with a keyboard layer read it — [`Dock`] and
+    /// [`Floating`]. A pane-mounted panel has no layer and names no scope.
+    ///
+    /// [`Dock`]: super::widgets::Slot::Dock
+    /// [`Floating`]: super::widgets::Slot::Floating
+    pub fn has_focus_targets(&self) -> bool {
+        super::widgets::any_on_the_ring(&self.spec)
+    }
 }
 
 /// The box itself. Its rectangle is what the painter used to call
@@ -525,7 +575,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // an indefinite constraint, so the frame would collapse to its border.
     // Width still fills: the cross axis of the enclosing column, stretched.
     let area = row().w(Sizing::Flex(1)).key(body_key());
-    let (has_focus_targets, claims_tab) = (i.has_focus_targets, i.claims_tab);
+    let (has_focus_targets, claims_tab) = (i.has_focus_targets(), i.claims_tab);
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
     // knows the content width until the box has been measured — and the
@@ -548,6 +598,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 avail_height: i.avail_height,
                 scrollbar_reveal: i.scrollbar_reveal,
                 surface: super::widgets::panel_surface(),
+                markdown: i.markdown.as_ref().map(|m| m.ctx()),
             },
         )
     });
@@ -865,8 +916,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            has_focus_targets: false,
             claims_tab: false,
+            markdown: None,
         });
         let described = rect(&laid_out(Some(p.clone())), &key()).expect("a described box");
         assert_eq!(described.height, 4, "two rows inside two borders");
@@ -914,8 +965,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            has_focus_targets: false,
             claims_tab: false,
+            markdown: None,
         });
         let ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");
@@ -975,8 +1026,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            has_focus_targets: false,
             claims_tab: false,
+            markdown: None,
         });
         let mut ui = laid_out(Some(p));
         let at = ui
@@ -1027,8 +1078,8 @@ mod tests {
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            has_focus_targets: false,
             claims_tab: false,
+            markdown: None,
         });
         let mut ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");

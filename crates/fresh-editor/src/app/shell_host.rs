@@ -435,15 +435,47 @@ impl BodyPainter<'_> {
     /// arithmetic, not the mechanism. Window id `0` names no window and paints
     /// nothing, which is the spec's own "renders empty placeholder rows".
     fn embed(&mut self, window_id: u32, rect: Rect, buf: &mut Buffer) {
-        if window_id == 0 || rect.width == 0 || rect.height == 0 {
-            return;
+        paint_embed(self.editor, window_id, rect, buf);
+    }
+}
+
+/// The body of [`BodyPainter::embed`], as a function, because the *overlay*
+/// band needs it too and has no `BodyPainter`.
+///
+/// See [`EmbedHosts`] for why the overlay band paints hosts at all.
+fn paint_embed(editor: &mut Editor, window_id: u32, rect: Rect, buf: &mut Buffer) {
+    if window_id == 0 || rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    let theme = editor.theme.read().unwrap().clone();
+    let saved = editor.preview_window_id;
+    editor.preview_window_id = Some(fresh_core::WindowId(window_id as u64));
+    editor.render_session_preview_into_rect(buf, rect, &theme);
+    editor.preview_window_id = saved;
+}
+
+/// The overlay band's host painter: embedded windows, and nothing else.
+///
+/// **A `Layer` can contain a `Host`, and one does.** The overlay band folded
+/// with `SkipHosts`, which was right while every host leaf was in flow — the
+/// panes, the status bar, the dock — and stopped being right the moment
+/// `WindowEmbed` became one: a plugin panel is a `Layer`, so its embed is
+/// resolved in the overlay band and was skipped there. The float came out as
+/// an empty box (issue #2035's `windowEmbed` rendered nothing at all).
+///
+/// It is not `BodyPainter`: that one resolves the split grid's shared pass and
+/// hands back the rectangles the frame is read from, and running it twice
+/// would be a second opinion about both. The overlay band's hosts are embeds —
+/// a `Card` band paints nothing by its own arm's rule, and a pane or a region
+/// in an overlay would be a tree that mounted the body inside a popup — so
+/// this answers for the one and ignores the rest.
+pub struct EmbedHosts<'a>(pub &'a mut Editor);
+
+impl crate::view::shell::fold::HostPainter for EmbedHosts<'_> {
+    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer, _: &mut Caret) {
+        if let HostTarget::Embed(window_id) = target {
+            paint_embed(self.0, window_id, rect, buf);
         }
-        let theme = self.editor.theme.read().unwrap().clone();
-        let saved = self.editor.preview_window_id;
-        self.editor.preview_window_id = Some(fresh_core::WindowId(window_id as u64));
-        self.editor
-            .render_session_preview_into_rect(buf, rect, &theme);
-        self.editor.preview_window_id = saved;
     }
 }
 
@@ -1319,6 +1351,25 @@ impl Editor {
     /// tree declines reaches the legacy path exactly as before. A surface
     /// starts taking its own input the moment it stops being a `Host`.
     pub(crate) fn shell_dispatch(&mut self, input: fresh_ui::Input) -> Dispatched {
+        // **The previous frame's settle is applied before this input is
+        // routed, never after it.**
+        //
+        // A settle's facts are produced by `ui.frame` and left in
+        // `Ui::pending_messages`; the only drain is here. Taken *after*
+        // `dispatch`, they are applied after everything this key decided —
+        // so a focus the key just moved is overwritten by where focus was
+        // one frame ago. The dock's `/` was exactly that: the applier moved
+        // the panel's focus to the filter, and the mount frame's pending
+        // `WidgetFocus { sessions }` landed on top of it in the same
+        // `apply_shell_messages` loop, so every character typed after it was
+        // routed to the session list and the filter never filtered.
+        //
+        // Applied first, they say what was true when the key arrived, which
+        // is what the routers below read (`router::WidgetPanelView`'s
+        // `focus_key` is the registry's, and the registry is the tree's
+        // mirror). What `dispatch` itself queues is still drained below and
+        // applied with the messages it routed.
+        self.apply_settled_shell_messages();
         let Some(mut ui) = self.shell_ui.take() else {
             return Dispatched::default();
         };
@@ -1334,6 +1385,31 @@ impl Editor {
         // stale `true` from the previous keystroke would claim this one.
         self.shell_interior_took_key = None;
         let result = ui.dispatch(input);
+        // **What this dispatch itself queued, drained before `needs_frame` is
+        // asked.**
+        //
+        // `dispatch` returns what handlers produced while routing. What
+        // `apply_autofocus` decides when it *settles* focus — a scope opening,
+        // a focused element going away — goes into `Ui::pending_messages`
+        // instead, and until this pair of drains nothing in the editor ever
+        // took it. Two costs, both live:
+        //
+        // 1. A focus change the tree decided never reached the host, so the
+        //    plugin's `focus` event did not fire for it and the registry's
+        //    focus key silently diverged from the tree's.
+        // 2. `needs_frame()` is `true` while that queue is non-empty
+        //    (`fresh-ui/src/schedule.rs`), and `tree_stale` below reads it. So
+        //    one settle left the editor reporting "changed" for every input
+        //    event thereafter — repainting unconditionally, forever, which is
+        //    exactly what the comment below sets out to avoid. Anything
+        //    waiting for the frame to go quiet waited for good;
+        //    `dock_pointer_at_rest_requests_no_frame` is that test.
+        //
+        // Applied with the routed messages below rather than dropped, because
+        // these are facts the host is supposed to act on. What a *frame* left
+        // pending was taken above, before routing; what is here is this
+        // dispatch's own — a handler that asked for focus imperatively.
+        let settled = ui.take_messages();
         // **A change is not always a message.** A widget that keeps its own
         // hover — every `List` and `Tree` — writes `hovered` through an
         // updater and produces nothing, precisely so the host is not bothered
@@ -1367,7 +1443,9 @@ impl Editor {
         // element boundary produces neither, which is what still keeps an idle
         // pointer from drawing a frame.
         let changed = tree_stale || !result.msgs.is_empty();
-        self.apply_shell_messages(result.msgs, facts);
+        let mut msgs = result.msgs;
+        msgs.extend(settled);
+        self.apply_shell_messages(msgs, facts);
         // **The claim's second half, and the interior really does answer last.**
         // A `Modality::Focus` surface confines the keyboard without swallowing
         // it, so whether the key was taken is its interior's answer — and the
@@ -1386,6 +1464,34 @@ impl Editor {
         // `None` means no interior answered, so the tree's word stands.
         let claimed = self.shell_interior_took_key.unwrap_or(claimed);
         Dispatched { claimed, changed }
+    }
+
+    /// Apply what the tree decided on its own since the last input: the
+    /// facts `apply_autofocus` leaves in `Ui::pending_messages` when a frame
+    /// settles focus.
+    ///
+    /// **They are the tree's, and they describe the frame that produced them
+    /// — so they have to be applied before the next input is routed against
+    /// them.** Nothing else drains that queue: `Ui::dispatch` returns only
+    /// what handlers produced while routing, and a settle happens during
+    /// `Ui::frame`, with no input in hand.
+    ///
+    /// Default `EventFacts` for the same reason
+    /// `Editor::advance_panel_focus_in_tree` uses them: they describe the
+    /// pointer event a message was produced *by*, and a settle has none.
+    ///
+    /// The tree is put back before the facts are applied, because an applier
+    /// may reach for it (`advance_panel_focus_in_tree` asks the tree whether
+    /// it is holding a panel's focus, and answers "no ring" if it is out).
+    pub(super) fn apply_settled_shell_messages(&mut self) {
+        let Some(mut ui) = self.shell_ui.take() else {
+            return;
+        };
+        let settled = ui.take_messages();
+        self.shell_ui = Some(ui);
+        if !settled.is_empty() {
+            self.apply_shell_messages(settled, Default::default());
+        }
     }
 
     /// Apply what the tree produced.
@@ -1563,9 +1669,11 @@ impl Editor {
             // It was the authority: the runtime resolved one focused key
             // across a panel's whole spec, the description read it back, and
             // the tree's own ring was declined. Now the ring is the tree's and
-            // this writes what it decided — so the plugin's `focus` event, the
-            // kinds' key handlers and the web projection all keep reading the
-            // field they already read, and it has one writer.
+            // this writes what it decided — so the plugin's `focus` event and
+            // the kinds' key handlers keep reading the field they already
+            // read, and it has one writer. (The web projection was the third
+            // reader; it is deleted, and `router::WidgetPanelView::focus_key`
+            // is the one left that genuinely needs a string.)
             //
             // The plugin is told, exactly as `deliver_widget_hit`'s
             // click-to-focus told it, because a plugin that mirrors focus
@@ -1593,6 +1701,27 @@ impl Editor {
                 // a click did not.
                 self.set_panel_focus_and_notify(&key, widget);
                 self.rerender_widget_panel(&key);
+            }
+            UiFact::WidgetWheel {
+                slot,
+                widget,
+                delta,
+            } => {
+                use crate::view::shell::widgets::Slot;
+                // Only the two plugin-panel slots carry a runtime state map to
+                // scroll. The settings dialogs describe their own `Text`s with
+                // no completions behind them (`Ctx::plain`'s empty state map),
+                // and a pane-mounted panel raises no float yet — the same
+                // boundary `WidgetHover` draws, for the same reason.
+                let panel = match slot {
+                    Slot::Dock => crate::app::PanelSlot::Dock,
+                    Slot::Floating => crate::app::PanelSlot::Floating,
+                    _ => return,
+                };
+                let Some(key) = self.panel(panel).map(|p| p.panel_key.clone()) else {
+                    return;
+                };
+                self.wheel_widget_by_key(&key, &widget, delta);
             }
             UiFact::WidgetHover {
                 slot,
@@ -2480,6 +2609,31 @@ impl Editor {
                     // pane already owns the keyboard when it is focused.
                     Slot::Settings | Slot::SettingsEntry | Slot::Pane(_) => return,
                 };
+                // **A panel that does not own the keyboard answers for
+                // nothing.**
+                //
+                // The fallback that raises this fact is on the panel's
+                // *interior* (`panel::interior`), which is in the tree
+                // whenever the panel is described; the layer that makes the
+                // panel the keyboard's owner (`panel::keys_layer`) is declared
+                // only while it is focused. The two part company when focus is
+                // *restored* into a blurred panel — `apply_autofocus` puts it
+                // back where it was when a scope opened, and the host may have
+                // blurred the panel in between. Closing the command palette
+                // did exactly that: focus went back to the dock button it had
+                // come from, and every keystroke after that went to the dock
+                // instead of the buffer the palette had been opened over.
+                //
+                // Asked of the host because that is where the fact lives —
+                // `FloatingWidgetState::focused`, the same one `Frame`'s
+                // `dock_keys` / `panel_keys` read to declare the layer. A
+                // `false` here is a decline, so the key carries on to the
+                // editor's own pipeline exactly as it did before the panel was
+                // described.
+                if !self.panel(slot).is_some_and(|p| p.focused) {
+                    self.shell_interior_took_key = Some(false);
+                    return;
+                }
                 // **The focus toggle is resolved ahead of the panel.** A
                 // focused dock swallows keys in the dispatch below, so the
                 // global toggle (default Alt+O) could never hand focus back

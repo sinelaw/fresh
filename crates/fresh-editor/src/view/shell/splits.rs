@@ -1282,6 +1282,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior) -> Node<UiMsg> {
                 // Not `panel_surface`: a mounted panel's rows were buffer
                 // text on the editor's own ground. See `widgets::pane_surface`.
                 surface: super::widgets::pane_surface(),
+                markdown: i.markdown.as_ref().map(|m| m.ctx()),
             },
         )
         .w(Sizing::Cells(inner_w))

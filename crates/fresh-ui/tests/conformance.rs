@@ -284,6 +284,69 @@ fn a_handler_can_read_its_own_geometry() {
     assert_eq!(seen.get(), Rect::new(0, 0, 20, 1));
 }
 
+/// **A held window carries its unit with it.**
+///
+/// The snapshot a handle reads is the same window the tree laid out, so it is
+/// in the same unit: an item-scrolling viewport reports how many *items* are on
+/// screen, and the band beside it is what says so. Three-cell items in a
+/// nine-cell viewport are three of them, not nine — and a caller with only
+/// `rect()` and `scroll()` had no way to tell those two numbers apart.
+struct Windowed(Rc<Cell<(Option<Rect>, Option<fresh_ui::Band>)>>);
+
+#[derive(Default)]
+struct WindowedState {
+    geom: Option<GeomHandle>,
+}
+
+impl Component<()> for Windowed {
+    type State = WindowedState;
+
+    fn init(&self, cx: &mut InitCx<'_, ()>) -> WindowedState {
+        WindowedState {
+            geom: Some(cx.geometry()),
+        }
+    }
+
+    fn build(&self, s: &WindowedState, _cx: &mut BuildCx<'_, ()>) -> Node<()> {
+        let seen = self.0.clone();
+        let g = s.geom.clone().expect("constructed");
+        // The viewport is this component's own root, so the handle addresses
+        // it: geometry on a component answers with the render node it owns.
+        viewport(col().children((0..20).map(move |i| {
+            let seen = seen.clone();
+            let g = g.clone();
+            gesture(text(format!("card {i}")).h(Sizing::Cells(3))).on(
+                GestureKind::Press,
+                Rc::new(move |_e: &Event| {
+                    seen.set((g.window(), g.band()));
+                    None
+                }),
+            )
+        })))
+        .items(20)
+        .item_rows(3)
+    }
+}
+
+#[test]
+fn a_handle_reads_a_window_in_the_unit_its_offset_counts() {
+    let seen: Rc<Cell<(Option<Rect>, Option<fresh_ui::Band>)>> = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(Windowed(seen.clone()).node(), Size::new(20, 9));
+    press(&mut ui, 1, 0);
+    let (window, band) = seen.get();
+    assert_eq!(
+        window.map(|w| w.h),
+        Some(3),
+        "nine cells of three-cell items is three items"
+    );
+    assert_eq!(
+        band,
+        Some(fresh_ui::Band::Cells(3)),
+        "and the band is what says the three is in items"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // D5 — a prop change after mount reaches the render object
 // ---------------------------------------------------------------------------
@@ -1133,13 +1196,13 @@ fn a_geometry_handle_does_not_read_a_recycled_slot() {
 #[test]
 fn a_scrollbar_thumb_rounds_its_length_up() {
     // The case above: two cells, not one.
-    assert_eq!(Draw::scrollbar_thumb(0, 434, 28).1, 2);
+    assert_eq!(Draw::scrollbar_thumb(0, 434, 28, 28).1, 2);
 
     // The rule, not the case: for any content longer than the track, the
     // thumb is at least as long as the exact ratio would make it.
     for track in [3u16, 7, 28, 40] {
         for content in (track as u32 + 1)..600 {
-            let len = Draw::scrollbar_thumb(0, content, track).1;
+            let len = Draw::scrollbar_thumb(0, content, track as u32, track).1;
             let exact = (track as f64) * (track as f64) / (content as f64);
             assert!(
                 len as f64 >= exact,
@@ -1154,13 +1217,29 @@ fn a_scrollbar_thumb_rounds_its_length_up() {
     }
 }
 
+/// **The window is an argument because it is not the track.**
+///
+/// A cell-scrolling viewport shows as many cells as its bar is tall, so the
+/// two numbers coincide and either one gives the ratio. An item-scrolling one
+/// does not: sixteen five-row cards in a twenty-two cell track show *four*,
+/// and reading the track as the window makes the ratio 22/16 — over one, so
+/// the thumb clamps to the whole bar. A thumb that fills its track says the
+/// list is entirely visible and has nowhere left to be dragged to, which is
+/// what every card list's bar said.
+#[test]
+fn a_scrollbar_thumb_measures_the_window_not_the_track() {
+    assert_eq!(Draw::scrollbar_thumb(0, 16, 4, 22), (0, 6));
+    // And the fully-scrolled thumb still sits flush against the bottom.
+    assert_eq!(Draw::scrollbar_thumb(12, 16, 4, 22), (16, 6));
+}
+
 /// Content that fits gives the whole track — there is nowhere to scroll, so
 /// there is no gap for the thumb to leave.
 #[test]
 fn a_scrollbar_thumb_fills_a_track_it_cannot_move_along() {
     for content in 1..=28u32 {
         assert_eq!(
-            Draw::scrollbar_thumb(0, content, 28),
+            Draw::scrollbar_thumb(0, content, 28, 28),
             (0, 28),
             "content {content} fits in 28 cells"
         );

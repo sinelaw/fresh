@@ -732,10 +732,9 @@ impl<M: 'static> Ui<M> {
         let Some(n) = self.render.get(r) else {
             return 0;
         };
-        let (rect, max, off) = (n.data.rect, n.data.scroll_max.y, n.data.scroll.y);
-        let track = rect.h.max(1);
-        let content = max.max(0) as u32 + track as u32;
-        let (top, len) = Draw::scrollbar_thumb(off.max(0) as u32, content, track);
+        let (rect, off) = (n.data.rect, n.data.scroll.y);
+        let (content, window) = Self::bar_extents(n);
+        let (top, len) = Draw::scrollbar_thumb(off.max(0) as u32, content, window, rect.h.max(1));
         let rel = y - rect.y;
         match rel >= top as i32 && rel < top as i32 + len as i32 {
             true => rel - top as i32,
@@ -743,16 +742,34 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// The content and the window a scrolling node's bar is drawn from, in the
+    /// unit that node's offset counts.
+    ///
+    /// **Not the track, and not cells.** `scroll_max` is the offset's own
+    /// ceiling, so the content is the window plus it — and the window is the
+    /// one the node published, which for an item-scrolling viewport is a count
+    /// of items and bears no relation to the height of the bar beside it.
+    /// Taking the rectangle's height for the window was right for every
+    /// cell-scrolling viewport (there they are the same number) and silently
+    /// wrong for every card list: a press anywhere in the top two-thirds of
+    /// the track read as a press *inside* the thumb, which picks it up rather
+    /// than jumping, so clicking the track moved nothing at all.
+    fn bar_extents(n: &crate::render::object::RenderNode) -> (u32, u32) {
+        let window = n.data.window.map_or(n.data.rect.h, |w| w.h).max(1) as u32;
+        (n.data.scroll_max.y.max(0) as u32 + window, window)
+    }
+
     fn scroll_to_pointer(&mut self, r: RenderId, y: i32) {
-        let (rect, max) = {
+        let (rect, max, content, window) = {
             let Some(n) = self.render.get(r) else { return };
-            (n.data.rect, n.data.scroll_max.y)
+            let (content, window) = Self::bar_extents(n);
+            (n.data.rect, n.data.scroll_max.y, content, window)
         };
         use crate::render::spec::Draw;
         let track = rect.h.max(1);
-        let content = max.max(0) as u32 + track as u32;
-        let top_of = |off: i32| Draw::scrollbar_thumb(off.max(0) as u32, content, track).0 as i32;
-        let (_, len) = Draw::scrollbar_thumb(0, content, track);
+        let top_of =
+            |off: i32| Draw::scrollbar_thumb(off.max(0) as u32, content, window, track).0 as i32;
+        let (_, len) = Draw::scrollbar_thumb(0, content, window, track);
         let travel = (track as i32 - len as i32).max(0);
         let off = if travel == 0 || max <= 0 {
             0

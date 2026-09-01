@@ -121,7 +121,13 @@ const REGION_FILL={
   // rendered inside it, matching the TUI's single box) plus a `.modal-scrim`
   // behind it in centered-modal placement.
   palette(c,reg){ if(reg.palette) for(const el of paletteEls(reg.palette)) c.appendChild(el); },
-  // native plugin widget panels (floating / dock)
+  // Native plugin widget panels (floating / dock). **The server no longer
+  // sends this region** — the web's plugin-panel projection was deleted so the
+  // retained tree could be the only thing that lays a panel out (see
+  // `docs/internal/fresh-editor-retained-mode-plan.md` §6d). `reg.widgets` is
+  // always undefined, so this renders nothing; the entry stays so the region
+  // slot keeps its place in `REGION_ORDER` and so the replacement has an
+  // obvious seam to land on.
   widgets(c,reg){ if(reg.widgets) for(const s of reg.widgets) for(const el of widgetSurfaceEls(s)) c.appendChild(el); },
   contextMenu(c,reg){ if(reg.contextMenu) c.appendChild(contextMenuEl(reg.contextMenu)); },
   auxModal(c,reg){ if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) c.appendChild(el); },

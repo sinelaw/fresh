@@ -1342,7 +1342,10 @@ impl Editor {
                 ui.spec(),
                 frame.buffer_mut(),
                 &palette,
-                &mut crate::view::shell::fold::SkipHosts,
+                // Not `SkipHosts`: a plugin panel is a `Layer`, so a
+                // `WindowEmbed` inside one is resolved in *this* band. See
+                // `shell_host::EmbedHosts`.
+                &mut crate::app::shell_host::EmbedHosts(self),
                 crate::view::shell::fold::Band::Overlay,
                 crate::view::shell::fold::Paints::All,
                 Some(&mut provenance),
@@ -7369,9 +7372,14 @@ impl Editor {
             },
         };
 
-        // Web renders this panel natively from `widgets_view`; compute geometry
-        // (incl. `last_inner_rect` for click routing) but paint no cells. TUI
-        // passes draw=true so its rendering is unchanged.
+        // **Geometry without cells, and the reason is no longer the web.** A
+        // frontend that suppresses chrome cells still needs this pass to run
+        // for `last_inner_rect`, which the wheel routing and the anchored
+        // popup's dismissal gate read. It used to be the web's plugin-panel
+        // projection that made the distinction worth having; that projection
+        // is deleted, and what remains is a headless frame computing the same
+        // rectangles without painting them. TUI passes draw=true so its
+        // rendering is unchanged.
         let draw = !self.suppress_chrome_cells;
         // Only the centered modal dims the background; the dock and the
         // anchored context-menu popup paint over the editor without it.
@@ -7999,8 +8007,8 @@ impl Editor {
             scrollbar_reveal: None,
             // A pane-mounted panel has no keyboard layer of its own, so
             // neither field is read for it; see `panel::Interior`.
-            has_focus_targets: false,
             claims_tab: false,
+            markdown: Some(self.markdown_ink()),
         })
     }
 
@@ -8109,13 +8117,23 @@ impl Editor {
                             .scrollbar_flash_until
                             .is_some_and(|until| self.time_source().now() < until)
                 }),
-            // The runtime's own answer to "is there anything here to focus".
-            has_focus_targets: self
-                .widget_registry
-                .get(&key)
-                .is_some_and(|p| !p.tabbable.is_empty()),
             claims_tab: self.panel_mode_binds_tab(),
+            markdown: Some(self.markdown_ink()),
         })
+    }
+
+    /// The theme and grammar handles a described markdown document renders
+    /// through.
+    ///
+    /// One place, because the two panel interiors and every future described
+    /// surface want the same pair, and because getting it wrong is silent:
+    /// `render_markdown_text_area` answers a missing context by rendering the
+    /// markdown *source*, not by failing.
+    fn markdown_ink(&self) -> crate::view::shell::panel::MarkdownInk {
+        crate::view::shell::panel::MarkdownInk {
+            theme: self.theme.read().unwrap().clone().into(),
+            grammars: self.grammar_registry.clone(),
+        }
     }
 
     /// Whether the active editor mode explicitly binds Tab.

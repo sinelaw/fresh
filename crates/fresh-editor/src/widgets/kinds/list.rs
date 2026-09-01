@@ -141,8 +141,21 @@ impl WidgetImpl for List {
                 // (`effective_rows`) — an auto-sized list's spec
                 // carries no number, and even an explicit one can be
                 // superseded only there.
-                let page = panel
-                    .effective_visible_rows(widget_key, *visible_rows)
+                //
+                // **And a window is in rows while a page is in items.**
+                // `select_move`'s delta counts items — it adds it to the
+                // selection and clamps against the item *count* — so a row
+                // count handed over undivided pages `item_height` times too
+                // far: a list of three-row cards in a twelve-row window
+                // jumped eleven cards when four were on screen. `on_wheel`
+                // has always converted, and says why; this seam never did.
+                // For the classic path `item_height` is 1 and the arithmetic
+                // is unchanged.
+                let item_height = match panel.instance_states.get(widget_key) {
+                    Some(WidgetInstanceState::List { item_height, .. }) => (*item_height).max(1),
+                    _ => 1,
+                };
+                let page = (panel.effective_visible_rows(widget_key, *visible_rows) / item_height)
                     .saturating_sub(1)
                     .max(1) as i32;
                 let delta = if key == "PageUp" { -page } else { page };
@@ -307,6 +320,8 @@ pub(crate) fn activate_event(
     let WidgetSpec::List {
         selected_index,
         item_keys,
+        items,
+        item_specs,
         ..
     } = spec
     else {
@@ -319,6 +334,22 @@ pub(crate) fn activate_event(
     if sel < 0 {
         return None;
     }
+    // **Clamped here, at the read, because the write that used to sanitise
+    // it is on its way out.** `select_move` clamps its own result, so the
+    // stored index is in range for as long as the selection moved it — but a
+    // dataset that *shrank* underneath a standing selection was only brought
+    // back into range by the collector's per-frame write-back. Reading it raw
+    // fired `activate` with an out-of-range `index` and an empty `key`, and
+    // would have started doing so the moment that write-back went away.
+    let total = if item_specs.is_empty() {
+        items.len()
+    } else {
+        item_specs.len()
+    } as i32;
+    if total == 0 {
+        return None;
+    }
+    let sel = sel.min(total - 1);
     let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
     Some(("activate".into(), json!({ "index": sel, "key": item_key, })))
 }

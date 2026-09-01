@@ -1220,6 +1220,98 @@ fn a_measured_band_is_measured_again_when_the_width_changes() {
     assert_eq!(ui.rect_of(id).y, narrow as i32, "the second card's top");
 }
 
+/// **A window's height is in items, and that is what an outside caller reads
+/// back.**
+///
+/// The number is right inside the tree already — the viewport publishes it,
+/// the reveal path uses it, the scrollbar is drawn from it — and until now
+/// nothing outside could get at it: `scroll()` handed back an offset with no
+/// way to tell items from cells. A caller that paged this list by its
+/// *rectangle* would move eleven cards where four are on screen, which is the
+/// bug this exists to make unavailable. Asserted before anything has scrolled,
+/// because that is when a window is easiest to mistake for a box.
+#[test]
+fn a_keyed_card_lists_window_is_reported_in_items() {
+    let card = |i: usize| -> Node<Msg> {
+        fresh_ui::col()
+            .child(fresh_ui::text(format!("title {i}")))
+            .child(fresh_ui::text(format!("body {i}")))
+            .child(fresh_ui::text("more"))
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(20, fresh_ui::Key::from, card)
+            .row_height(RowHeight::UniformMeasured)
+            .node()
+            .key("cards"),
+        Size::new(24, 12),
+    );
+
+    let key = fresh_ui::Key::from("cards");
+    let win = ui.item_window(&key).expect("the keyed list has a window");
+    assert_eq!(
+        win.h, 4,
+        "four three-row cards fit a twelve-row box; twelve is the cells answer"
+    );
+    assert_eq!(win.y, 0, "and nothing has scrolled yet");
+    assert_eq!(
+        ui.band(ui.find_by_key(&key).expect("the list")),
+        None,
+        "the key is on the component, whose own render node is not the viewport \
+         — which is why the read has to descend"
+    );
+
+    // The twelve is right there to be taken by mistake: the list is twelve
+    // rows tall and every one of them is drawn.
+    assert_eq!(ui.rect_of(ui.find_by_key(&key).expect("the list")).h, 12);
+    // And it is a window, not the whole list: the wheel can still move it.
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(1, 1),
+        delta: 2,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    ui.tick();
+    let moved = ui.item_window(&key).expect("still there");
+    assert_eq!(
+        (moved.y, moved.h),
+        (2, 4),
+        "two items down, four still showing"
+    );
+}
+
+/// A key that names nothing, and one that names something that does not scroll
+/// in items, are both "no item window" rather than a number in the wrong unit.
+#[test]
+fn an_item_window_is_none_where_there_are_no_items() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        col().child(
+            fresh_ui::viewport(
+                col().children((0..40).map(|i| fresh_ui::text(format!("line {i}")))),
+            )
+            .h(Sizing::Cells(12))
+            .key("cells"),
+        ),
+        Size::new(24, 12),
+    );
+    assert_eq!(
+        ui.item_window(&fresh_ui::Key::from("cells")),
+        None,
+        "a cell-scrolling window has no items to count"
+    );
+    assert_eq!(
+        ui.window(
+            ui.find_by_key(&fresh_ui::Key::from("cells"))
+                .expect("the scroll")
+        )
+        .map(|w| w.h),
+        Some(12),
+        "its window is its own height, in cells"
+    );
+    assert_eq!(ui.item_window(&fresh_ui::Key::from("nobody")), None);
+}
+
 /// Two rows of card, one of them uneven: item seven is a row taller than the
 /// rest, so it is the one that sets a measured band.
 fn uneven_card(i: usize) -> Node<Msg> {

@@ -15,7 +15,6 @@ use crate::app::Editor;
 use fresh_core::LeafId;
 use ratatui::layout::Rect;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 /// A cell rectangle, serialized as `{x, y, w, h}` (matching the bridge's
@@ -1047,245 +1046,27 @@ impl Editor {
     }
 }
 
-// ─────────────────────────── plugin widget surfaces (floating / dock) ───────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WidgetHitView {
-    /// Index into this surface's `hits` — sent back on click so the editor runs
-    /// the exact same hit it would for a TUI cell click.
-    pub index: usize,
-    pub widget_key: String,
-    pub widget_kind: String,
-    pub event_type: String,
-    pub payload: serde_json::Value,
-}
-
-/// Host-owned instance state a frontend needs to render a widget correctly.
-/// Keyed by widget `key`. The host is authoritative for ALL of this — the
-/// spec's `value`/`checked`/`selected_index` are initial-only seeds once a
-/// widget has mounted (see `WidgetInstanceState`), so a frontend that renders
-/// from the spec alone shows stale values (e.g. a text field that only
-/// updates after the plugin's spec round-trip instead of on every keystroke).
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WidgetInstanceView {
-    pub selected_index: Option<i32>,
-    pub scroll_offset: Option<u32>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub expanded_keys: Vec<String>,
-    /// Text widget: the host `TextEdit`'s live value — what the TUI echoes
-    /// per keystroke.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text_value: Option<String>,
-    /// Text widget: cursor position as a flat byte offset into `text_value`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor_byte: Option<u32>,
-    /// Text widget: active selection as a flat `[start, end)` byte range.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selection: Option<(u32, u32)>,
-    /// Text widget: completion popup candidate labels (empty = closed).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub completions: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_selected: Option<u32>,
-    /// Text widget: whether ↑/↓ has moved into the open completion popup
-    /// (drives the highlighted row, mirroring the TUI).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_navigated: Option<bool>,
-    /// Number widget: the host-owned current value.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number_value: Option<f64>,
-    /// Dropdown widget: whether the option list is open (the selected
-    /// option index rides in `selected_index`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dropdown_open: Option<bool>,
-    /// DualList widget: host-owned ordered included values + column focus.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub included: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_included: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub available_cursor: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub included_cursor: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WidgetSurfaceView {
-    /// "dock" (left dock) or "floatingModal" (centered).
-    pub kind: &'static str,
-    /// True for a `floatingModal` in the anchored (context-menu popup)
-    /// placement: content-sized, pinned near its opening click, and — unlike
-    /// the centered modal — drawn without a background dim, dismissed by a
-    /// click outside its box.
-    pub anchored: bool,
-    pub plugin: String,
-    pub panel_id: u64,
-    pub rect: RectView,
-    pub focus_key: String,
-    /// The raw, already-serializable `WidgetSpec` tree — rendered natively.
-    pub spec: fresh_core::api::WidgetSpec,
-    /// Keyed by widget key. A `BTreeMap` (not `HashMap`) so serialization is
-    /// key-ordered and therefore STABLE across scene builds: the region-diff
-    /// hashes the serialized bytes, and a randomized map order made an
-    /// otherwise-unchanged panel hash differently every tick, pushing a
-    /// redundant `regions.widgets` frame ~once a second — a full dock rebuild
-    /// (scrollbar flicker, dropped scroll gesture) for no real change.
-    pub instances: BTreeMap<String, WidgetInstanceView>,
-    pub hits: Vec<WidgetHitView>,
-    /// Native modal-frame title (the declarative dialog's *shell*, drawn by
-    /// the frontend as a title bar — not part of the `spec`). `None` for the
-    /// dock, anchored popups, and untitled centered panels.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// True when the centered modal draws a `[×]` close button; the frontend
-    /// renders it and forwards a click to `close_rect` (below).
-    pub closable: bool,
-    /// Screen rect of the `[×]` close button, in terminal cells. The frontend
-    /// forwards a click at this cell back through `handle_mouse`, which the
-    /// TUI hit-test resolves to the same dismiss path. `None` when the panel
-    /// isn't a closable centered modal.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub close_rect: Option<RectView>,
-}
-
-impl Editor {
-    /// Semantic model for plugin-mounted floating / dock widget panels (e.g. the
-    /// orchestrator session dock). Each surface ships its `WidgetSpec` tree +
-    /// instance state + on-screen rect + hit list; the frontend renders the spec
-    /// natively and forwards a clicked hit's index back through `/widget`, which
-    /// runs the same `deliver_widget_hit` path as a TUI cell click. `None`
-    /// surfaces (unmounted panels) are simply omitted.
-    pub fn widgets_view(&self) -> Vec<WidgetSurfaceView> {
-        let mut out = Vec::new();
-        for (kind, slot) in [
-            ("dock", self.dock.as_ref()),
-            ("floatingModal", self.floating_widget_panel.as_ref()),
-        ] {
-            let Some(fwp) = slot else { continue };
-            let Some(rect) = fwp.last_inner_rect else {
-                continue;
-            };
-            let Some(panel) = self.widget_registry.get(&fwp.panel_key) else {
-                continue;
-            };
-            let mut instances = BTreeMap::new();
-            for (key, st) in &panel.instance_states {
-                use crate::widgets::WidgetInstanceState as W;
-                let view = match st {
-                    W::List {
-                        scroll_offset,
-                        selected_index,
-                        ..
-                    } => WidgetInstanceView {
-                        selected_index: Some(*selected_index),
-                        scroll_offset: Some(*scroll_offset),
-                        ..Default::default()
-                    },
-                    W::Tree {
-                        scroll_offset,
-                        selected_index,
-                        expanded_keys,
-                        ..
-                    } => WidgetInstanceView {
-                        selected_index: Some(*selected_index),
-                        scroll_offset: Some(*scroll_offset),
-                        expanded_keys: expanded_keys.iter().cloned().collect(),
-                        ..Default::default()
-                    },
-                    // The host TextEdit is the live editing state — export
-                    // value + caret + selection so a frontend echoes every
-                    // keystroke (the spec's `value` is initial-only and lags
-                    // until the plugin round-trips it), plus the completion
-                    // popup the TUI paints as overlay rows.
-                    W::Text {
-                        editor: te,
-                        completions,
-                        completion_selected_index,
-                        completion_navigated,
-                        ..
-                    } => WidgetInstanceView {
-                        text_value: Some(te.value()),
-                        cursor_byte: Some(te.flat_cursor_byte() as u32),
-                        selection: te.selection_flat_range().map(|(s, e)| (s as u32, e as u32)),
-                        completions: completions.iter().map(|c| c.value.clone()).collect(),
-                        completion_selected: Some(*completion_selected_index as u32),
-                        completion_navigated: Some(*completion_navigated),
-                        ..Default::default()
-                    },
-                    W::Number { value } => WidgetInstanceView {
-                        number_value: Some(*value),
-                        ..Default::default()
-                    },
-                    W::Dropdown {
-                        selected_index,
-                        open,
-                    } => WidgetInstanceView {
-                        selected_index: Some(*selected_index),
-                        dropdown_open: Some(*open),
-                        ..Default::default()
-                    },
-                    W::DualList {
-                        included,
-                        active_included,
-                        available_cursor,
-                        included_cursor,
-                    } => WidgetInstanceView {
-                        included: included.clone(),
-                        active_included: Some(*active_included),
-                        available_cursor: Some(*available_cursor),
-                        included_cursor: Some(*included_cursor),
-                        ..Default::default()
-                    },
-                    W::None => continue,
-                };
-                instances.insert(key.clone(), view);
-            }
-            let hits = panel
-                .hits
-                .iter()
-                .enumerate()
-                // **The identity half, and there is nothing else to send.**
-                // `WidgetHitView` has never carried geometry: the web lays the
-                // spec out itself and sends back an index plus the identity,
-                // which `deliver_widget_hit_by_index` and
-                // `deliver_widget_hit_semantic` resolve. So this projection is
-                // exactly `HitArea::event`, and the row/byte range beside it in
-                // the recorded list is the text projection's, for the buffer
-                // rows only that projection has.
-                .map(|(index, h)| WidgetHitView {
-                    index,
-                    widget_key: h.event.widget_key.clone(),
-                    widget_kind: h.event.widget_kind.to_string(),
-                    event_type: h.event.event_type.to_string(),
-                    payload: h.event.payload.clone(),
-                })
-                .collect();
-            out.push(WidgetSurfaceView {
-                kind,
-                anchored: matches!(fwp.placement, crate::app::PanelPlacement::Anchored { .. }),
-                plugin: fwp.panel_key.plugin.clone(),
-                panel_id: fwp.panel_key.id,
-                rect: RectView::from(rect),
-                focus_key: panel.focus_key.clone(),
-                spec: panel.spec.clone(),
-                instances,
-                hits,
-                title: fwp.title.clone(),
-                closable: fwp.closable,
-                // Read off the tree, like every other rectangle the web
-                // consumes: the `[×]` is a keyed node now, not a rectangle the
-                // painter filed for two consumers to compare against.
-                close_rect: self
-                    .panel_rect(&crate::view::shell::panel::close_key())
-                    .map(RectView::from),
-            });
-        }
-        out
-    }
-}
+// ─────────────────────── plugin widget surfaces: deleted with the web path ───────────────────────
+//
+// **What was here.** `WidgetSurfaceView` / `WidgetInstanceView` /
+// `WidgetHitView` and `Editor::widgets_view`: the dock's and the floating
+// panel's `WidgetSpec`, the registry's instance-state map, the recorded hit
+// list's identity half, the focused key and the panel's rectangle, shipped to
+// the web frontend so it could lay the spec out itself and echo a click back
+// as an index plus an identity.
+//
+// **Why it is gone.** It was the last consumer of `WidgetPanelState::hits` and
+// `boxes` for a *described* panel, and so the last reason the immediate-mode
+// collector had to run for one. Deleting it is what lets the retained tree be
+// the only thing that lays a plugin panel out. See
+// `docs/internal/fresh-editor-retained-mode-plan.md`, "The web's plugin panels,
+// and what bringing them back costs", for what the replacement is: the web
+// consuming the display list the TUI already folds, the way it consumes the
+// status bar, the settings dialog and the file browser.
+//
+// **The web's plugin panels do not render at all until that lands.** Every
+// other surface is unaffected — this deletes one region of the scene, not the
+// bridge.
 
 // ─────────────────────────── context menus (right-click / new-tab) ───────────────────────────
 

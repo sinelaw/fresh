@@ -273,10 +273,11 @@ pub fn fold_band(
             Draw::Scrollbar {
                 offset,
                 content,
-                window: _,
+                window,
             } => {
                 let track = rect.height.max(1);
-                let (top, len) = Draw::scrollbar_thumb(*offset, *content, track);
+                let (top, len) =
+                    Draw::scrollbar_thumb(*offset, *content, u32::from(*window), track);
                 for i in 0..track {
                     let colour = if i >= top && i < top + len {
                         style.fg

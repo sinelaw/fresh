@@ -370,6 +370,10 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
             avail_height: None,
             scrollbar_reveal: None,
             surface: surface.clone(),
+            // No markdown document view in a settings control: the settings
+            // specs are host-built from the schema and never set
+            // `markdown: true`. See `Ctx::markdown`.
+            markdown: None,
         };
         super::widgets::node(&spec, info.constraints.max_w.max(1), &cx)
     })

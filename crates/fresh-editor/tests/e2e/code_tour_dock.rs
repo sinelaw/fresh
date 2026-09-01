@@ -971,16 +971,30 @@ fn test_overflowing_lists_show_scrollbars() {
         .collect();
     assert_eq!(closes.len(), 2, "expected both section borders\n{line}");
 
-    // The scrollbar paints ON the section's border column (where the
-    // `╮` sits), so nothing — not even the selection band — extends
-    // past it.
     for close in closes {
-        let sb_col = close as u16;
+        // The bar is the list's own rightmost column, and a section's content
+        // starts two columns in from its `╮`: the box is a real box — ring,
+        // one column of padding, content — which is the four columns of chrome
+        // `LabeledSection` hands its child (`view::shell::widgets`, and
+        // `emit_completion_overlays` reads the same contract from the other
+        // side). The runtime drew this bar *on* the border column, which it
+        // could do because the border was text in a flat row; a described box
+        // painting there would rub out its own ring.
+        let sb_col = close as u16 - 2;
         assert!(
             harness.is_scrollbar_thumb_at(sb_col, first_row as u16)
                 || harness.is_scrollbar_track_at(sb_col, first_row as u16),
-            "expected a scrollbar cell on the border col {sb_col} row {first_row}, got {:?}\nScreen:\n{}",
+            "expected a scrollbar cell on the list's last column {sb_col} row {first_row}, got {:?}\nScreen:\n{}",
             harness.get_cell_style(sb_col, first_row as u16),
+            harness.screen_to_string()
+        );
+        // And the ring is still there, which is the half the old assertion
+        // was really guarding: nothing — bar or selection band — reaches the
+        // section's border column.
+        assert_eq!(
+            harness.get_cell(close as u16, first_row as u16).as_deref(),
+            Some("│"),
+            "the section's right ring must survive its list's scrollbar\nScreen:\n{}",
             harness.screen_to_string()
         );
     }

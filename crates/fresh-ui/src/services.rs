@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 use crate::element::ElementId;
 use crate::render::geom::{Point, Rect, Size};
+use crate::render::object::Band;
 
 /// Work handed to whatever runs it. The library does not name a runtime.
 pub type Job = Box<dyn FnOnce() + Send>;
@@ -69,9 +70,39 @@ impl<M: 'static> Geometry<'_, M> {
         self.ui.clip(self.id)
     }
 
-    /// A viewport's window, and the size of the content behind it.
+    /// A viewport's offset, and the size of the content behind it.
+    ///
+    /// Both are in the unit that viewport's offset counts — see
+    /// [`Geometry::window`], which is the only thing that says which unit that
+    /// is.
     pub fn scroll(&self) -> (Point, Size) {
         self.ui.scroll(self.id)
+    }
+
+    /// A viewport's window, **in the unit its offset counts**. `None` for an
+    /// element that is not scrolling anything.
+    ///
+    /// The unit is not the rectangle's. A cell-scrolling window's offset is a
+    /// row and its window is its own height, so `window.h == rect().h`; an
+    /// item-scrolling one's offset is an index and `window.h` is *how many
+    /// items* fit, which is that height divided by the band — four, not
+    /// twelve, for three-row cards in a twelve-row box. [`Geometry::band`]
+    /// tells the two apart: `Some(_)` means items, `None` means cells. Reading
+    /// the height for both put a list of three-row cards eleven items down
+    /// inside a "fifteen-row" window, and drew a scrollbar thumb that filled
+    /// its own track.
+    pub fn window(&self) -> Option<Rect> {
+        self.ui.window(self.id)
+    }
+
+    /// The band this viewport's items sit in, when its offset counts items.
+    /// `None` where the offset counts cells — there an item is not a thing.
+    ///
+    /// This is the unit tag for [`Geometry::window`] and [`Geometry::scroll`],
+    /// and for [`Band::Cells`] it is also the number that converts between
+    /// them: one item is that many cells tall.
+    pub fn band(&self) -> Option<Band> {
+        self.ui.band(self.id)
     }
 
     /// Another element's rectangle, addressed by key.
@@ -91,6 +122,14 @@ pub struct GeomSnapshot {
     pub clip: Rect,
     pub scroll: Point,
     pub content: Size,
+    /// The window a scrolling element shows onto its content, `None` for one
+    /// that shows none. **In the unit the offset counts**, which `band` is
+    /// what states — see [`GeomHandle::window`].
+    pub window: Option<Rect>,
+    /// The band, published beside the window by the same walk and travelling
+    /// with it for the same reason: `Some(_)` says `window` and `scroll` count
+    /// items and how many cells one of them is, `None` says they count cells.
+    pub band: Option<Band>,
 }
 
 /// The geometry of the elements somebody is watching. Refreshed once per frame,
@@ -161,9 +200,41 @@ impl GeomHandle {
     }
 
     /// A viewport's offset, and the size of the content behind it.
+    ///
+    /// Both are in the unit that viewport's offset counts — see
+    /// [`GeomHandle::window`], which is the only thing that says which unit
+    /// that is.
     #[track_caller]
     pub fn scroll(&self) -> (Point, Size) {
         let g = self.read();
         (g.scroll, g.content)
+    }
+
+    /// A viewport's window, **in the unit its offset counts**. `None` for an
+    /// element that is not scrolling anything.
+    ///
+    /// The unit is not the rectangle's. A cell-scrolling window's offset is a
+    /// row and its window is its own height, so `window.h == rect().h`; an
+    /// item-scrolling one's offset is an index and `window.h` is *how many
+    /// items* fit, which is that height divided by the band — four, not
+    /// twelve, for three-row cards in a twelve-row box. [`GeomHandle::band`]
+    /// tells the two apart: `Some(_)` means items, `None` means cells. Reading
+    /// the height for both put a list of three-row cards eleven items down
+    /// inside a "fifteen-row" window, and drew a scrollbar thumb that filled
+    /// its own track.
+    #[track_caller]
+    pub fn window(&self) -> Option<Rect> {
+        self.read().window
+    }
+
+    /// The band this viewport's items sit in, when its offset counts items.
+    /// `None` where the offset counts cells — there an item is not a thing.
+    ///
+    /// This is the unit tag for [`GeomHandle::window`] and
+    /// [`GeomHandle::scroll`], and for [`Band::Cells`] it is also the number
+    /// that converts between them: one item is that many cells tall.
+    #[track_caller]
+    pub fn band(&self) -> Option<Band> {
+        self.read().band
     }
 }

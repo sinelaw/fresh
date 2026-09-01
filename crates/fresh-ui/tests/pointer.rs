@@ -484,6 +484,67 @@ fn pressing_and_dragging_the_scrollbar_gutter_scrolls_the_viewport() {
     );
 }
 
+/// **A card list's track is grabbable along its whole length.**
+///
+/// An item-scrolling viewport counts its offset, its content and its window in
+/// *items*, while the bar beside it is measured in cells. The two agree only
+/// when an item is one cell tall, and the hit path read the track's height as
+/// the window — so for a list of five-row cards the thumb it computed was
+/// twice the length of the one painted, and a press in the top two-thirds of
+/// the track read as landing *inside* it. A press inside the thumb picks it up
+/// where it was touched and moves nothing, so clicking the track did nothing
+/// at all.
+#[test]
+fn pressing_the_track_of_an_item_scrolling_viewport_scrolls_it() {
+    // Eight five-cell items in a ten-cell frame: a window of two items, and
+    // six items of travel behind it.
+    let built = || {
+        let rows: Vec<Node<()>> = (0..2).map(|i| text(format!("item {i}"))).collect();
+        viewport(col().children(rows))
+            .items(8)
+            .item_rows(5)
+            .scrollbar()
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(built(), FRAME);
+
+    // The painted thumb is the window's share of the track, not the track.
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find_map(|i| match i.draw {
+            fresh_ui::Draw::Scrollbar {
+                offset,
+                content,
+                window,
+            } => Some((offset, content, u32::from(window), i.rect.h)),
+            _ => None,
+        })
+        .expect("eight items in a window of two overflow");
+    let (_, len) = fresh_ui::Draw::scrollbar_thumb(bar.0, bar.1, bar.2, bar.3);
+    assert!(
+        len < FRAME.h,
+        "a thumb that fills its track cannot be dragged ({len} of {})",
+        FRAME.h
+    );
+
+    // And a press on the bare track below it jumps the window.
+    let vp = ui.root().unwrap();
+    assert_eq!(ui.scroll(vp).0.y, 0);
+    ui.dispatch(Input::press(
+        Point::new(FRAME.w as i32 - 1, len as i32),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    ui.tick();
+    assert!(
+        ui.scroll(vp).0.y > 0,
+        "a press on the track scrolled ({})",
+        ui.scroll(vp).0.y
+    );
+}
+
 /// The chain honours the axis it is given — and the built-in `Viewport` has
 /// nothing to move along `x`.
 ///
@@ -817,12 +878,14 @@ fn pressing_a_track_row_puts_the_thumb_on_that_row() {
             .iter()
             .find_map(|i| match i.draw {
                 fresh_ui::Draw::Scrollbar {
-                    offset, content, ..
-                } => Some((offset, content, i.rect.h)),
+                    offset,
+                    content,
+                    window,
+                } => Some((offset, content, u32::from(window), i.rect.h)),
                 _ => None,
             })
             .expect("an overflowing viewport shows a bar");
-        fresh_ui::Draw::scrollbar_thumb(bar.0, bar.1, bar.2)
+        fresh_ui::Draw::scrollbar_thumb(bar.0, bar.1, bar.2, bar.3)
     };
 
     let (_, len) = thumb(&ui);

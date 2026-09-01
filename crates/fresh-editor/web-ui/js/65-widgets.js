@@ -823,6 +823,21 @@ function contextMenuEl(cm){
   return el;
 }
 
+// ── DEAD SINCE THE WEB'S PLUGIN PANELS WERE DELETED ──────────────────────────
+// The server no longer ships `regions.widgets` (see `view/scene.rs` and
+// `docs/internal/fresh-editor-retained-mode-plan.md` §6d), so nothing calls
+// `widgetSurfaceEls`, `layoutDockOverlays` or `wireDockOverlayDismiss`, and no
+// element these build is ever created. They are kept rather than deleted
+// because the shape of a dock column in DOM is the part worth reading when the
+// web is brought back — but the replacement consumes the display list, so
+// treat this as a reference, not as code to re-point at a new payload.
+// Everything ABOVE this line is still live, but not all of it is reachable:
+// `widgetEl` has exactly one caller left — the overlay prompt toolbar
+// (`50-palette.js`, `{kind:"toolbar"}`) — so `routeWidget`'s toolbar branch is
+// live and its `surface:"panel"` branch, along with all of `routeControl`, is
+// as dead as the functions below. The settings dialog, the keybinding editor
+// and the aux modals build their own elements here and post `sendSettings`,
+// not `sendWidget`; they are unaffected either way.
 // Float the dock's toolbar dropdowns (New Task… / project filter / Move to
 // folder…) over the panel content instead of letting them reflow the session
 // list. Each `overlay()` widget is a flex child of the dock column; flexbox

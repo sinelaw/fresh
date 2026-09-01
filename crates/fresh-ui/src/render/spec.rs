@@ -155,7 +155,11 @@ pub enum Draw {
         /// coordinate, because a million-row list has no cell extent that fits
         /// one.
         content: u32,
-        /// Extent of the window, in cells.
+        /// Extent of the window, in that same unit — *not* in cells. For a
+        /// cell-scrolling viewport the two coincide and the window is the
+        /// track's height; for an item-scrolling one it is a count of items,
+        /// and a bar drawn from the track instead would say a list of
+        /// five-row cards is five times as visible as it is.
         window: u16,
     },
     /// A region whose text the backend may let the user select. The library
@@ -174,19 +178,28 @@ impl Draw {
     /// across `[0, max]` onto the thumb's travel `[0, track - len]`, so a
     /// fully-scrolled thumb sits flush against the bottom.
     ///
+    /// **The window is an argument because it is not the track.** `offset`,
+    /// `content` and `window` are all in the viewport's own unit — cells for a
+    /// cell-scrolling window, items for an item-scrolling one — and `track` is
+    /// the bar's height on screen. They coincide for the first kind and part
+    /// company for the second: a list of 16 five-row cards showing four of
+    /// them in a 22-cell track is a window of *four*, and reading the track as
+    /// the window made `len` come out `⌈22·22/16⌉` — clamped to the whole
+    /// track, a solid stripe that says nothing and cannot be dragged.
+    ///
     /// **The length rounds up.** Flooring under-states the window: 28 rows of
     /// 434 is 6.5% of the track, which floors to a single cell claiming 3.6%
     /// — and a one-cell thumb is the hardest thing on the bar to grab, so the
     /// row the user aims at lands on the track and page-jumps instead. The
     /// thumb should never claim *less* of the track than the window actually
     /// shows, so the division ceils and the result is clamped to the track.
-    pub fn scrollbar_thumb(offset: u32, content: u32, track: u16) -> (u16, u16) {
+    pub fn scrollbar_thumb(offset: u32, content: u32, window: u32, track: u16) -> (u16, u16) {
         let t = track as u32;
         if content == 0 || t == 0 {
             return (0, track);
         }
-        let len = (t * t).div_ceil(content).clamp(1, t);
-        let max_off = content.saturating_sub(t);
+        let len = (t * window.max(1)).div_ceil(content).clamp(1, t);
+        let max_off = content.saturating_sub(window);
         let top = (offset.min(max_off) * (t - len))
             .checked_div(max_off)
             .unwrap_or(0);

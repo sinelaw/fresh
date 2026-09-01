@@ -745,6 +745,491 @@ columns, which is worse than always-zero because it looks tested.
 
 ---
 
+## 6d. The web's plugin panels, deleted — and what bringing them back costs
+
+**Deliberate, and authorised.** The web frontend's plugin-panel support was
+removed so the retained side could stop having a second consumer of the
+immediate-mode collector's output. It will be brought back once the retained
+work is finished, and it must be brought back *differently*. This section exists
+so that is a decision someone makes rather than a gap someone rediscovers.
+
+### What was deleted
+
+| where | what it was |
+|---|---|
+| `view/scene.rs` | `WidgetSurfaceView`, `WidgetInstanceView`, `WidgetHitView`, `Editor::widgets_view` — the dock's and the floating panel's `WidgetSpec`, the registry's instance-state map, the recorded hit list's *identity* half, the focused key and the panel's screen rect, one entry per mounted surface |
+| `webui/mod.rs` | the `regions.widgets` key of the scene payload, and `apply_widget`'s `"panel"` arm |
+| `app/widget_runtime.rs` | `deliver_widget_hit_by_index`, `deliver_widget_hit_semantic`, `synthesize_list_hit`, `synthesize_tree_hit`, `synthesize_control_hit`, `copy_context_anchor_cell`, `set_widget_text_cursor` |
+
+`web-ui/js/65-widgets.js` is **not** deleted, and the reason is narrower than
+"it is shared". `widgetEl` has one live caller left — the overlay prompt
+toolbar (`50-palette.js`, `{kind:"toolbar"}`) — so the file's toolbar routing
+still ships; `routeWidget`'s `surface:"panel"` branch, `routeControl`,
+`widgetSurfaceEls` and the two dock-overlay helpers are all unreachable. The
+settings dialog, the keybinding editor and the aux modals build their elements
+in the same file but post `sendSettings`, so nothing there changed. Every reader
+of the region elsewhere in the JS guards on `regions.widgets || []` and degrades
+to "no dock" with no edit. The dead run is marked at its start.
+
+### What it did, precisely
+
+The web never received geometry for a plugin panel. It received the spec, laid
+it out itself in DOM, and echoed a click back as an *identity* (`widgetKey` +
+`eventType` + `payload`) with the recorded hit's index as a tiebreaker. The
+index existed because the recorded list is windowed to the TUI's visible rows
+while the browser renders the whole list, so a click on a row outside the TUI's
+window matched no recorded hit — which is why the three `synthesize_*_hit`
+functions existed, rebuilding the `HitArea` the renderer *would* have emitted
+from the spec and the instance state.
+
+**Those synthesizers were the most valuable thing in the deleted set**, and it
+is worth being explicit about why: they are the only written instance of the
+derivation §4.1 of `fresh-editor-plugin-widgets-end-state.md` wants everything to
+use — `HitArea`'s identity half as a pure function of `(spec, instance state)`.
+Restoring the web should re-derive, not restore them from git.
+
+### Why it had to go
+
+`WidgetPanelState::hits` had two classes of reader. One reads its *geometry*:
+`hit_test_row_aware`, for a pane-mounted panel that rides the buffer's scroll,
+where the recorded rows really are the rows on screen. That one is correct and
+stays. The other read its *identity* half, and every member of that class was
+the web. While it existed, the immediate-mode collector had to run in full for a
+panel the tree had already laid out, purely so a list nobody in the TUI reads
+could be shipped to a frontend. Deleting it is what makes "the display list is
+the output" reachable at all.
+
+### What the replacement is
+
+**The web should consume the display list**, the way it already consumes the
+status bar, the file browser, the settings dialog and every pane rectangle. A
+described plugin panel is nodes in the same tree those come from; there is no
+plugin-specific projection to write. Concretely:
+
+1. The fold already resolves every item's rect, clip, style and key. A panel's
+   subtree is addressable by the keys the adapter already applies
+   (`widget_focus:<key>`, `panel_interior`, `panel_frame`, `panel_body`).
+2. A click comes back as a *cell*, and is dispatched through the same
+   `fresh_ui` hit path the TUI uses — which means the web stops needing a hit
+   list, an index, an ordering, or a synthesizer.
+3. Text-caret placement comes back as a byte through the same route S0
+   (`Event::text_byte`) gives the TUI, rather than through
+   `set_widget_text_cursor`.
+
+The obligation the deleted code met is real; the *storage* it met it with was
+not, which is exactly what §7.2 of the end-state doc concluded before this was
+authorised.
+
+### Tests knowingly broken
+
+The playwright web-UI suite's dock and plugin-widget coverage now fails: the
+scene ships no `regions.widgets`, so nothing renders and no `/widget` panel
+click is accepted. Those tests are **left failing on purpose** — not deleted,
+not weakened — because a green suite over a deleted feature is worse than a red
+one. They are the specification of what the display-list replacement has to
+satisfy.
+
+**What this section originally missed, found by reading the CI log rather than
+reasoning about it.** "Those tests fail" was wrong about the blast radius. The
+driver is one long top-level script, and the first thing the deletion broke was
+not an assertion but a `locator.click()` on the dock's "Filters" disclosure —
+an uncaught `TimeoutError`, which kills the node process outright. Everything
+after line 185 therefore never ran: the keybinding editor, Settings and its
+three sections, the WebSocket push transport, region diffs, shared-view
+mirroring, per-region DOM patching, zoom, TUI-parity placement, the wave
+animation, Open File, submenu seams, terminal selection, Alt-hold selection,
+the theme system, embedded-terminal hover, dropdown anchoring and touch pan —
+about twenty sections, every one of them testing something the web still does
+correctly. The deletion had quietly taken the *whole* web suite dark, and the
+job's single red X looked the same either way.
+
+The two dock-dependent regions are now guarded by a `webDockPanels` flag
+(`web-ui/test/drive.mjs`): absent, they print a `SKIP` and the suite continues.
+The missing surface is still one recorded `FAIL`, so the job stays red and the
+feature cannot quietly pass — but the twenty sections behind it are guarding
+again. `SKIP` counts as neither pass nor fail for exactly that reason.
+
+**The general point, which is not about the web:** a suite that aborts on the
+first failure reports the same colour whether one thing is broken or a hundred
+are untested. Deleting a feature that other tests interact with *incidentally*
+needs the interaction guarded, or the deletion silently buys a green-looking
+red. Worth checking the next time a surface is removed rather than migrated.
+
+**And the guard itself had the same bug one level down.** With the twenty
+sections running again, four of them failed immediately — the terminal-selection
+checks, which assert on status-bar segment text. Not a discovery: a regression
+from the guard. The section's opening probe toggles the *editor's* dock open to
+make a surface appear; the surface never appears now, but the dock does open,
+and the skip meant nothing closed it again. It ate ~30 columns for the rest of
+the run, and the narrower status bar truncated `"… read only (Ctrl+Space …)"`
+out of existence — the precise failure a comment elsewhere in that file has
+always warned about. The probe now undoes its own toggle when it comes up empty.
+
+So the rule has two halves, and the second is the one that bit: **guard the
+interaction, and undo the probe.** A check that changes state to decide
+something is not read-only, and skipping the work that would have cleaned up
+after it leaves the state behind for every test that follows.
+
+---
+
+## 6e. Why the immediate-mode collector still runs for a described panel
+
+The stated target was that it stop entirely. It cannot yet, and the reason is
+four live outputs rather than an oversight. For a **described dock or floating
+panel** — after the web deletion — `render_floating_spec`'s outputs stand as:
+
+| output | live consumer for a described panel |
+|---|---|
+| `entries` | an *anchored* popup's `content_cols` (`Panel::anchored_width`, §6.6 of the end-state doc). Nothing else: `content_rows` is read only for a `Host` interior, which means no panel at all |
+| `hits` | **none** |
+| `focus_cursor`, `overlays`, `embeds` | **none** — the slot arm returns before the buffer write |
+| `instance_states` | **live.** The collector is the seeder and sanitizer of the state a plugin's re-emitted spec must not lose |
+| `focus_key` | **live** (the clamp onto a key that exists in the spec) |
+| `effective_rows` | **live** — `List`/`Tree`'s `on_key`/`on_wheel` page and bound arithmetic |
+| `boxes`, `tabbable` | **live, narrowly**: `handle_widget_focus_advance`'s arena ring, for a panel that is mounted but does not hold the tree's focus |
+| `popup` | **live** — `UiFact::WidgetPopupDismiss` reads `fwp.popup.widget_key` to find the open dropdown |
+
+Stopping the render therefore needs, in order of size:
+
+1. **`resolve` split out of `collect`** (end-state doc R2 / S7). Not mechanical:
+   `List`'s state resolution runs through `plan_list_layout`, which needs the
+   panel width *and* measures card items to get `item_height`, so the state
+   writer is entangled with the layout. This is the real blocker.
+2. **`effective_rows` delivered rather than stored** (§4.5) — the row window is
+   the viewport's, and the key event must carry it.
+3. `popup` and `focus_key` become derivations over `(spec, instance state)`;
+   both are small once (1) exists.
+4. `entries` stops being read once `rule()` retires `node()`'s width parameter
+   and `anchored_width` becomes `Sizing::Auto` (§6.6).
+
+**What is *already* true and was not before:** for a described panel the
+collector's *pointer and focus* outputs are no longer authoritative anywhere.
+`hits` has no reader, the box arena answers no wheel (`handle_widget_panel_wheel_at`
+declines a described panel outright, and says why), and
+`Interior::has_focus_targets` derives from the spec through the same predicate
+the tree's ring admits by instead of reading the recorded `tabbable`.
+
+**And the per-frame double render is down to one arm.** `render_collected` is
+called inside a description build in exactly one place now
+(`view/shell/widgets.rs`, the markdown text-area's reflow) — S8's markdown half,
+whose replacement is a wrapped viewport with `cursor_byte`. The card-list arm has
+crossed. So "two full rendering pipelines run for every plugin panel" is now true
+only of a panel containing a markdown document view.
+
+---
+
+## 6f. One class, found three times: who decides a key was taken
+
+Three defects on this branch turned out to be the same question with three
+different answers in the code. Each was found by a different route — driving a
+terminal by hand, an unbiased review, and an agent chasing a 180s hang — and
+each looked local until the third one landed.
+
+| where | what it did |
+|---|---|
+| `panel::interior` | called `e.stop()` as it emitted `PanelKey`; `stop()` **is** the claim in `fresh-ui`, so a router that answered `FallThrough` could never hand the key back |
+| `shell_dispatch` | folded the interior's answer as `claimed \|\| took`, so a decline was unrepresentable even once one existed |
+| `on_the_ring` | made `Slot::Pane` widgets *traversable*, so Tab resolved to `move_focus` in a surface that has no keyboard layer and names no scope — claimed by traversal, and the plugin's own binding never ran |
+
+The symptoms were unrelated on the surface: a dialog that would not close on
+Escape, a dock chord that needed two presses, and nine `search_replace` tests
+hanging on a `wait_until` whose condition Tab was supposed to satisfy.
+
+**The gap is that "was this key taken" has no single authority in the tree.** It
+is currently settled by a `stop()` at one seam, a boolean fold at another, and a
+traversal flag at a third — and a described surface can claim a key three
+different ways without any of them consulting the others. Every surface
+described from here on inherits all three.
+
+What would close it, in rough order of cost: a `fresh-ui` flow state meaning
+*stop propagation and intents, but do not claim* (the general answer, and a
+library API change); or, short of that, a single editor-side helper that every
+`Modality::Focus` seam routes its verdict through, so the three sites become one.
+The `Option<bool>` fold is that helper's first half and is already in place.
+
+**Test shape that catches this class:** assert `Dispatch.claimed` at every
+`Modality::Focus` seam, not just which message was produced. The regression that
+started this was shipped by a test that checked the message and dropped
+`got.claimed` on the floor; `view/shell/panel.rs`, `frame.rs` and `prompt.rs` —
+exactly the three `Modality::Focus` surfaces — still contain far fewer `.claimed`
+assertions than the surfaces where declining does not matter.
+
+---
+
+## 6g. A second class, found three times: where a panel's focus actually is
+
+The four `orchestrator_dock` tests that still hung after §6f's six fixes —
+`dock_slash_filters_and_enter_returns_to_list`,
+`dock_filter_clears_when_focus_leaves_so_reentry_shows_all`,
+`dock_enter_on_focused_button_runs_button_action` and
+`picker_space_toggles_focused_checkbox_not_list` — were not four problems.
+They were three, and the three are one question left unanswered: **a described
+plugin panel has two rings — the tree's focus and the widget registry's
+`focus_key` — and nothing said which is authoritative, or when.**
+
+None of the three is §6f's defect. That class is "who decides a key was
+*taken*"; this one is "where the panel's focus *is*", and the two meet only in
+that a described surface answers both from more than one place. The dock's `/`
+was routed correctly and claimed correctly on every keystroke: what was wrong
+was the widget it was routed *to*.
+
+| where | what it did |
+|---|---|
+| `Ui::relink_from_pub` (`fresh-ui`) | assigned the focus parent's **entire** child list from what one relinked subtree contributed. A `layout_reader`'s nearest focus ancestor is almost never its own node — it is whatever focusable encloses it — so the widgets beside the reader, and every *other* reader under the same ancestor, were its siblings in that list. The last reader to rebuild won. A panel whose interior held two readers ended every frame with a scope containing only the second one's contribution: for the orchestrator's picker, nothing. `apply_autofocus` then fell back to focusing the empty scope itself, and Tab moved nothing — while the panel's nine focusables sat in the tree with their focus parent pointing correctly at that same scope. |
+| `shell_dispatch` | drained `Ui::pending_messages` **after** routing the input. A settle's facts describe the frame that produced them, so applied afterwards they overwrote what the key had just decided with where focus was one frame ago. The dock's `/` was exactly that: the applier moved the panel's focus to the filter, the mount frame's pending `WidgetFocus { sessions }` landed on top of it in the same loop, and every character typed after it went to the session list while the filter never filtered. |
+| the focus mirror | had one direction only. `UiFact::WidgetFocus` wrote the registry from what the tree decided; nothing wrote the tree from what the *host* decided. Every host-side move made while the panel was already focused — a plugin's `setFocusKey`, a kind's focus effect, the dock's `/` landing on its filter — left the two rings on different widgets, because `apply_autofocus` deliberately leaves focus alone once it is inside the scope. The description painted its marker where the registry said; the next Tab moved from where the tree said. |
+
+The symptoms were again unrelated on the surface: a picker whose Tab did
+nothing, a dock filter that swallowed its own keystrokes, and a dropdown that
+left traversal one stop off.
+
+**The gap is that the tree/registry mirror was specified in one direction and
+assumed in both.** The landing when focus *enters* a panel is a property of the
+description (`on_the_ring`'s `autofocus`), and that half was right. A move made
+while the panel is already focused cannot be expressed as a description at all —
+there is no frame boundary to settle it against — so it must be an imperative
+write, and until now there was none. `Editor::focus_panel_widget_in_tree` is
+that write, and it is called from both host-side deciders:
+`set_panel_focus_and_notify` (every key-, click- and advance-driven move) and
+the plugin's own `WidgetMutation::SetFocusKey`.
+
+The third writer of that key — the re-clamp `rerender_widget_panel` performs
+when the focused widget is no longer tabbable in a new spec — deliberately does
+*not* push. A widget that left the spec left the tree with it, so the tree's
+focused element is gone and `apply_autofocus` has to settle anyway; the
+description's `autofocus` mark then lands it on the clamped key. That is the
+*entering* half doing its job, not a gap.
+
+**What is worth generalising:** `relink_from_pub`'s defect is the library's, not
+the editor's, and it is live for any consumer that puts two `layout_reader`s
+under one focusable. The fix recomputes the parent's child list over the current
+element tree rather than trusting one subtree's contribution — the same set and
+order a full `relink_node` walk produces. Any future incremental relink needs the
+same treatment: **a subtree may rebuild itself, but it may never author a list it
+can only see part of.**
+
+**Test shape that catches this class:** frame a scope holding two readers where
+only the first contributes focusables, then Tab twice — `fresh-ui`'s
+`a_second_reader_does_not_empty_its_focus_parents_ring`. And on the editor side,
+assert the *tree's* focus after a host-driven `set_panel_focus_and_notify`, not
+just the registry's: the registry agreed with itself throughout every one of
+these failures.
+
+---
+
+## 6h. The `resolve`/`collect` split, designed — and §6e corrected
+
+§6e named "splitting `resolve` out of `collect`" as the blocker to retiring the
+immediate-mode collector, and said the entanglement was that `List`'s state
+resolution runs through `plan_list_layout`, which needs the panel width. A
+design pass over the collector, every kind impl and the `fresh-ui` viewport
+internals says that is **true but much narrower than stated**, and that three of
+§6e's four follow-on items are wrong about what they depend on.
+
+### What §6e got wrong
+
+**The width reaches resolution through exactly one number, on one path.**
+`plan_list_layout` takes `panel_width` only for `render_list_cards`, which
+renders each `item_spec` and takes the tallest as `item_height`. The classic
+path never touches width (`visible_items = avail_rows`). `Tree` is not
+entangled even on its card path — its `item_height` is the spec's own field.
+One field of one variant, not a pervasive coupling.
+
+**And for a described panel that resolution has almost no reader at all.**
+`scroll_offset` is folded only by `List::on_wheel`, and the wheel router
+declines a described panel before reaching any kind; the scrollbar writer is
+likewise painted-only. `item_height` is read only by those same painted paths.
+The described list owns its window in element state
+(`fresh_ui::List::windowed_stateful`). The one field with a live described
+reader is `selected_index`. So `resolve` for `List` needs `clamp(stored, total)`
+and `carry(user_scrolled)` — the shape `kinds::dropdown::resolve` already has.
+
+**`focus_key` is already pure** — `collect_tabbable` is a `box_meta` spec walk
+with no geometry, and the clamp runs *before* collection and is returned
+verbatim. It does not depend on the split; it depends on nobody having lifted it
+out. Ten lines, available today.
+
+**`popup` is independent of the split too.** Its only described reader wants one
+string, and the described `Dropdown` arm already builds its own pop-over and
+never reads `fwp.popup`. It reduces to "which keyed `Dropdown` does `resolve`
+report open", a spec walk.
+
+**§6e also filed `boxes`/`tabbable` as needing the arena.** They do not: the
+arena's only described consumer reads `focusable`, `key`, `focus_trap` and
+`parent` — all `box_meta` facts plus tree shape. No rectangle is consulted. The
+arena's rectangles matter only to wheel routing, the scrollbar pass and the
+text-drag region, all painted-only.
+
+### What §6e got right, in direction but not in unit — and the bug under it
+
+`effective_rows` should indeed be delivered rather than stored. But it is
+written in **rows** and consumed by a pager that moves in **items**:
+`select_move` adds its delta to the selection and clamps against the item count.
+`on_wheel` divides by `item_height` first and says why; `on_key` never did. **A
+list of three-row cards in a twelve-row window paged eleven cards when four were
+on screen** — on the painted and described paths alike, with no test in the
+suite covering widget paging at all.
+
+A second bug sits beside it: `activate_event` reads the stored index with no
+upper clamp, unlike `select_move`. Today the collector's write-back sanitises it
+a frame earlier, so it is latent — and deleting that write-back naively would
+have made Enter on a shrunken list fire an out-of-range `index` with an empty
+`key`. **Both are fixed now**, ahead of the split, each with a test.
+
+### Derivation or fold, field by field
+
+`WidgetInstanceState` is host-internal — no `serde`, not in `fresh_core::api`,
+and the web's projection of it is deleted — so this changes nothing a plugin
+sees.
+
+| field | nature | verdict |
+|---|---|---|
+| `total` | `items.len()` | derivation; never store |
+| `effective_sel` | `clamp(stored, total)` | derivation; delete the write-back. Its *input* `selected_index` is a real fold |
+| `scroll_offset` | follow-selection clamp over its own previous value | fold — but the **painter's**, not the widget's. Move to a paint-output channel |
+| `visible_items` | `avail_rows / item_height` | derivation over geometry; *deliver* |
+| `item_height` | measurement of cards at a width | derivation over geometry; *deliver* |
+| `user_scrolled` | latched by wheel, cleared by selection moves | genuine fold, owned by the handlers; keep, stop the walk writing it |
+
+### Where the width comes from, in a retained world
+
+It does not need to come from anywhere: resolution needed width only because it
+was written inside a painter. The genuinely measured quantity is the card band,
+and **the tree already measures it** — the described card arm declares
+`RowHeight::UniformMeasured`, which the viewport resolves by laying every item
+out at the current width and republishing the answer within the same layout
+pass.
+
+Which surfaces a disagreement worth naming: the runtime re-renders cards one
+column narrower *only when the list overflows*, while the description asks for
+`width - 1` unconditionally. A card that wraps differently at `w` and `w-1` gets
+a different band from the two, and nothing checks that they agree.
+
+### The shape, and the one risky step
+
+`resolve_panel(spec, prev, prev_focus_key, auto_focus_first) -> { instance_states,
+focus_key, tabbable }`, pure and width-free; `collect` keeps everything else
+minus the state writes; and the three fields that leave `WidgetInstanceState`
+become an explicit `PaintedWindow { rows, items, offset, item_height }` — the
+honest statement that they are not the widget's state but the last paint's
+window. `effective_rows` retires in favour of a `Viewport { items }` delivered
+to `on_key`/`on_wheel`, answered by one host-side resolver.
+
+Sequenced: **S0** `list::resolve` and the clamp at every read (done in part —
+the two bugs above); **S1** `PaintedWindow`; **S2** stop writing derivations;
+**S3** `Viewport` as a parameter; **S4** the `fresh-ui` read; **S5** point the
+described branch at the tree; **S6** `resolve_panel`, and stop calling the
+collector.
+
+**S4 is a library change and must not be pinned editor-side.** The number exists
+and is already computed correctly — the viewport publishes its window in items —
+but nothing outside the tree can read it: `GeomSnapshot` carries `scroll` and
+`content` but not `window`/`band`. It needs `GeomSnapshot::{window, band}` and
+`Ui::item_window(&Key)`, both ordinary reads of layout by an outside caller,
+same standing as `rect_of`.
+
+### S4 landed, and it corrected two things this design said
+
+**The window rectangle is mixed-unit, not item-unit.** For `ScrollMode::Items`
+it is `Rect { x: 0, y: <items>, w: <cells>, h: <items> }` — the vertical axis
+counts items, the horizontal counts cells. The text above reads as though "the
+window" were wholly in items. **S5 must take only `.y`/`.h` from it.**
+
+**`content` is not the total the offset runs over, and `scroll()`'s own doc said
+it was.** For an item viewport `content` is `Size::new(inner_w, rows)` — the
+window's own size — while `scroll_max.y` is `n - rows`. So a consumer reaching
+for "how many items are there" through `Geometry::scroll()` gets the window
+back a second time. The hit path already knows this and reconstructs the total
+as `scroll_max + window` (`hit.rs::bar_extents`); §6i exists because that
+reconstruction had the units wrong. Left as-is for now — out of S4's scope —
+but it is a live trap for S5, and `content` deserves the same unit-tagging as
+`window` the moment anything outside the tree reads it.
+
+**`item_window` answers `None` for a cell-scrolling viewport**, rather than its
+height in cells. `Some(rows-in-cells)` from a method with `item` in its name is
+the §6i defect wearing a name that promises it cannot happen; `Ui::window` is
+the unit-tagged way to ask that question. And the descend to the nearest
+viewport is contract, not convenience: `List::focusable(false)` puts the
+viewport one level under the keyed element, focusable puts it two, and a
+breadth-first descend covers both without the caller knowing which.
+
+**S5 is the risky step, and the only one.** It is the first frame on which a
+described panel's paging and scroll bounds come from a different number than
+before — and the two numbers have silently disagreed all along: the collector's
+is the panel's inner height narrowed by the `Col` fill pass, the tree's is the
+list node's `.flex(1)` share. Where a described panel's `Col` has other
+children they differ *today*. The suite renders unconditionally and will not
+show it, so this one gets driven by hand.
+
+**But the blast radius is two surfaces, not "wherever a `Col` has other
+children" — that was too broad.** The described arm is
+`Some(r) => Sizing::Cells(r), None => .flex(1)`, and the collector resolves
+`(Some(v), _) => v` (`kinds/list.rs:529`, `kinds/tree.rs:649`): **an explicit
+`visible_rows` wins unconditionally and is never superseded by the height
+budget**, so with a count named in the spec both sides use the same number and
+cannot disagree. Only the `None` branch can diverge.
+
+In the shipped plugins that branch is exactly two widgets, both Trees, both
+omitting the count deliberately and saying so: `plugins/search_replace.ts:821`
+and `plugins/audit_mode.ts:2135`. **Those two are what to drive by hand — not
+the orchestrator dock**, which passes an explicit count and is the surface one
+would reach for first.
+
+(The comment on `List::on_key`'s pager claimed the opposite — that "even an
+explicit one can be superseded" — and was false against both resolvers.)
+
+**Residual to establish before S6, by tracing emitters rather than by
+inspection:** `handle_widget_text_selection_drag` and `Text::on_wheel` both read
+`boxes`' scroll payloads and neither carries an explicit described-panel
+decline, unlike the wheel router. §1.5 already names "a gate applied at four of
+five sites is not a gate" as this migration's signature failure.
+
+---
+
+## 6i. A third class, found twice: a window and the bar beside it are in different units
+
+Two e2e tests hung on a described plugin panel — `scrollbar_click_scrolls_the_
+session_list` and `completion_popup_scrolls_with_mouse_wheel` — and the guess
+going in was one seam ("the tree owns the scrollbar, the runtime owns the
+scroll window"). They were two defects, and neither is that seam. What they
+share is narrower and more useful: **for a windowed list, the number of things
+in the window, the number of cells the bar is drawn in, and the unit the offset
+counts are three different quantities, and every place that conflates two of
+them is wrong exactly where an item is more than one cell tall.**
+
+| where | what it did |
+|---|---|
+| `Draw::scrollbar_thumb` (`fresh-ui`) | took `(offset, content, track)` and computed the thumb's length as `track²/content` — which is `track × (track/content)`, i.e. it *assumed the window was the track*. True for a cell-scrolling viewport, where they are the same number, and false for an item-scrolling one: sixteen five-row cards showing four of them in a 22-cell track gave `⌈22·22/16⌉ = 31`, clamped to the whole track. Every card list in the editor — the orchestrator's sessions, the dock's — drew a bar that filled its own track: no position, no length, nothing to grab. `Draw::Scrollbar` has carried `window` since the band was measured; both backends threw it away with a `let _ = window`. |
+| `Ui::scrollbar_hit`'s press path (`fresh-ui`) | reconstructed the content as `scroll_max + rect.h` — the offset's ceiling, in items, plus the bar's height, in cells. For the same list that made the *hit-side* thumb 15 of 22 cells while the painted one was 22, so the two disagreed about where the thumb was, and a press anywhere in the top two-thirds of the track read as landing inside it. A press inside the thumb picks it up where it was touched and moves nothing, by design — so clicking the track of a card list did nothing at all, in silence, with the bar under the pointer. |
+| the described `Text`'s candidate list (the editor) | is the one window in a described panel that is *not* a viewport: `completion_popup` slices its rows out of `completion_scroll_offset`, host state the plugin's `SetCompletions` writes, and scrolling it also sets `completion_navigated`, which is what makes Enter accept the highlighted row. Its float claimed the notch, handed it to the modal, and `handle_widget_panel_wheel_at` declined the described panel outright — correctly, on the coordinate-space grounds it states at length — so nothing moved it. The gate was right and there was no other route. |
+
+The first two are the library's and are fixed there: `scrollbar_thumb` takes
+the window, and the hit path derives content and window from `ScrollInfo`
+(`window.h` in the offset's own unit, `scroll_max + window` for the content)
+rather than from the rectangle. For a cell-scrolling viewport `window.h` *is*
+`rect.h`, so every existing bar is arithmetically unchanged — which is what
+made the defect invisible: the whole test suite scrolls cells.
+
+The third is the editor's, and it is closed the way §6g's mirror was — by
+saying imperatively what no description can express. `UiFact::WidgetWheel`
+carries the widget the tree hit-tested the notch onto, and
+`Editor::wheel_widget_by_key` runs the same `kinds::behavior(..).on_wheel` the
+box arena would have run. **The tree names the widget; the runtime moves the
+window.** That is not a hole in the arena's gate: the gate is about a
+*coordinate space* the described panel does not have, and naming the widget is
+precisely what removes the need for one.
+
+**Test shape that catches this class:** never test a windowed list with
+one-cell items only. Both library defects are invisible at `item_rows(1)` and
+both are a single assertion away at `item_rows(5)` —
+`pressing_the_track_of_an_item_scrolling_viewport_scrolls_it` and
+`a_scrollbar_thumb_measures_the_window_not_the_track`. And on the editor side,
+assert the *fact* a float raises for a wheel, not only the one it raises for a
+press: the completion box's press path was covered throughout, and its wheel
+had no test at any layer.
+
+---
+
 ## 7. Merge posture for the current branch
 
 The branch is a large net improvement and should land — but not as-is. Phase 1 is
