@@ -37,6 +37,8 @@ pub(super) struct PostRowAccumulator<'a> {
 /// Read-only inputs threaded from `render_view_lines`.
 pub(super) struct PostRowContext<'a> {
     pub state: &'a EditorState,
+    /// The pane's resolved left margin; see `LineRenderInput::margin`.
+    pub margin: &'a crate::view::margin::MarginConfig,
     pub theme: &'a Theme,
     pub render_area: Rect,
     pub gutter_width: usize,
@@ -104,7 +106,7 @@ fn render_implicit_line_into(
             None
         };
 
-    if ctx.state.margins.left_config.enabled {
+    if ctx.margin.enabled {
         push_left_margin(
             &mut implicit_line_spans,
             ctx,
@@ -116,8 +118,8 @@ fn render_implicit_line_into(
 
     // Fill remaining width with current_line_bg for cursor line.
     if let Some(bg) = implicit_cursor_bg {
-        let gutter_w = if ctx.state.margins.left_config.enabled {
-            ctx.state.margins.left_total_width()
+        let gutter_w = if ctx.margin.enabled {
+            ctx.margin.total_width()
         } else {
             0
         };
@@ -187,7 +189,7 @@ fn push_left_margin(
         format!(
             "{:>width$}",
             implicit_gutter_num,
-            width = ctx.state.margins.left_config.width
+            width = ctx.margin.width
         )
     } else {
         let estimated_lines =
@@ -200,7 +202,7 @@ fn push_left_margin(
             estimated_lines,
             ctx.show_line_numbers,
         );
-        margin_content.render(ctx.state.margins.left_config.width).0
+        margin_content.render(ctx.margin.width).0
     };
     let mut margin_style = Style::default().fg(ctx.theme.line_number_fg);
     if let Some(bg) = implicit_cursor_bg {
@@ -208,13 +210,13 @@ fn push_left_margin(
     }
     spans.push(Span::styled(rendered_text, margin_style));
 
-    if ctx.state.margins.left_config.show_separator {
+    if ctx.margin.show_separator {
         let mut sep_style = Style::default().fg(ctx.theme.line_number_fg);
         if let Some(bg) = implicit_cursor_bg {
             sep_style = sep_style.bg(bg);
         }
         spans.push(Span::styled(
-            ctx.state.margins.left_config.separator.to_string(),
+            ctx.margin.separator.to_string(),
             sep_style,
         ));
     }

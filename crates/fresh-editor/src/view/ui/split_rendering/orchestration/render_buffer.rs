@@ -51,6 +51,69 @@ pub(crate) struct BufferLayoutOutput {
     pub selection: SelectionContext,
 }
 
+/// The gutter one pane draws this frame.
+///
+/// Resolved from the pane's own line-number setting and view mode without
+/// writing the buffer's shared `MarginManager`: the margin state is per
+/// buffer, the setting is per split, and two panes on one buffer can want two
+/// gutters in one frame.
+pub(crate) struct GutterLayout {
+    /// The left margin as the row renderer should draw it.
+    pub margin: crate::view::margin::MarginConfig,
+    /// `margin.total_width()`, after the compose-mode reclaim below.
+    pub width: usize,
+    /// The compose layout, with the desk margin narrowed by the gutter when
+    /// there is room for it.
+    pub compose: ComposeLayout,
+}
+
+/// Resolve [`GutterLayout`] for a pane. Pure: the same inputs give the same
+/// gutter whether this runs in the pre-frame reconcile or in the formatter.
+pub(crate) fn resolve_gutter_layout(
+    margins: &crate::view::margin::MarginManager,
+    show_line_numbers: bool,
+    view_mode: &ViewMode,
+    area: Rect,
+    compose_width: Option<u16>,
+    estimated_lines: usize,
+) -> GutterLayout {
+    let mut margin = margins.resolved_left_config(show_line_numbers, estimated_lines);
+    // The diagnostic/indicator gutter is kept when line numbers are off only in
+    // compose mode, where the render below reclaims its width from the desk
+    // margin (issue #2146). In normal editor mode, line-numbers-off means no
+    // gutter at all — otherwise the 1-col indicator slot would eat into the
+    // text width and shift content right.
+    if !show_line_numbers && !matches!(view_mode, ViewMode::PageView) {
+        margin.enabled = false;
+        margin.width = 0;
+    }
+    let mut width = margin.total_width();
+
+    let mut compose = calculate_compose_layout(area, view_mode, compose_width);
+    // In compose mode the gutter (diagnostic / indicator slot) is drawn in the
+    // reclaimed desk margin so it does not shrink the centered text width
+    // (issue #2146). Only do this when there is enough desk margin to give up;
+    // if the paper already fills the area, drop the gutter instead of eating
+    // into the text so table/wrap layout stays intact.
+    if matches!(view_mode, ViewMode::PageView) && width > 0 {
+        let g = width as u16;
+        if compose.left_pad >= g {
+            compose.left_pad -= g;
+            let ra = compose.render_area;
+            compose.render_area = Rect::new(ra.x - g, ra.y, ra.width + g, ra.height);
+        } else {
+            margin.enabled = false;
+            margin.width = 0;
+            width = 0;
+        }
+    }
+    GutterLayout {
+        margin,
+        width,
+        compose,
+    }
+}
+
 /// Resolve the cursor position for the common "past end of buffer" edge
 /// case. Returns the input `current_cursor` unchanged if it is already
 /// `Some(_)` or the primary cursor isn't at buffer end.
@@ -121,9 +184,6 @@ pub(crate) fn compute_buffer_layout(
 ) -> BufferLayoutOutput {
     let _span = tracing::trace_span!("compute_buffer_layout").entered();
 
-    // Configure shared margin layout for this split's line number setting.
-    state.margins.configure_for_line_numbers(show_line_numbers);
-
     // Compute effective editor background: terminal default or theme-defined
     let effective_editor_bg = if use_terminal_bg {
         Color::Reset
@@ -149,38 +209,23 @@ pub(crate) fn compute_buffer_layout(
     } else {
         state.buffer.line_count().unwrap_or(1)
     };
-    state
-        .margins
-        .update_width_for_buffer(estimated_lines, show_line_numbers);
-    // The diagnostic/indicator gutter is kept when line numbers are off only in
-    // compose mode, where the render below reclaims its width from the desk
-    // margin (issue #2146). In normal editor mode, line-numbers-off means no
-    // gutter at all — otherwise the 1-col indicator slot would eat into the
-    // text width and shift content right.
-    if !show_line_numbers && !matches!(view_mode, ViewMode::PageView) {
-        state.margins.left_config.enabled = false;
-        state.margins.left_config.width = 0;
-    }
-    let mut gutter_width = state.margins.left_total_width();
-
-    let mut compose_layout = calculate_compose_layout(area, &view_mode, compose_width);
-    // In compose mode the gutter (diagnostic / indicator slot) is drawn in the
-    // reclaimed desk margin so it does not shrink the centered text width
-    // (issue #2146). Only do this when there is enough desk margin to give up;
-    // if the paper already fills the area, drop the gutter instead of eating
-    // into the text so table/wrap layout stays intact.
-    if matches!(view_mode, ViewMode::PageView) && gutter_width > 0 {
-        let g = gutter_width as u16;
-        if compose_layout.left_pad >= g {
-            compose_layout.left_pad -= g;
-            let ra = compose_layout.render_area;
-            compose_layout.render_area = Rect::new(ra.x - g, ra.y, ra.width + g, ra.height);
-        } else {
-            state.margins.left_config.enabled = false;
-            state.margins.left_config.width = 0;
-            gutter_width = 0;
-        }
-    }
+    let gutter = resolve_gutter_layout(
+        &state.margins,
+        show_line_numbers,
+        &view_mode,
+        area,
+        compose_width,
+        estimated_lines,
+    );
+    // The buffer's shared margin state is what the readers between frames
+    // (mouse mapping, `left_total_width`) consult; it holds the last pane's
+    // gutter, as it always has.
+    state.margins.left_config = gutter.margin.clone();
+    let GutterLayout {
+        margin,
+        width: gutter_width,
+        compose: compose_layout,
+    } = gutter;
     let render_area = compose_layout.render_area;
 
     // This split's cursor byte positions, for cursor-dependent conceal /
@@ -356,9 +401,9 @@ pub(crate) fn compute_buffer_layout(
         false
     };
 
-    // If the sync adjustment changed top_byte, rebuild view_data before
-    // ensure_visible_in_layout runs (so it sees the correct view lines).
-    let (view_data, may_rebuild) = if sync_scrolled {
+    // If the sync adjustment changed top_byte, rebuild view_data so the
+    // horizontal pass below sees the rows the frame will actually draw.
+    let view_data = if sync_scrolled {
         viewport.set_top_view_line_offset(0);
         let rebuilt = build_view_data(
             state,
@@ -377,68 +422,23 @@ pub(crate) fn compute_buffer_layout(
             None,
         );
         viewport.scroll_to_end_of_view(&rebuilt.lines);
-        (rebuilt, false)
+        rebuilt
     } else {
-        (view_data, true)
+        view_data
     };
 
-    // Ensure cursor is visible using Layout-aware check (handles virtual lines)
+    // Horizontal placement from the rows that were built. Vertical placement
+    // is settled in row space above (`ensure_visible_in_rows`), so this pass
+    // never moves `top_byte` and the rows never need rebuilding after it — the
+    // third build this function used to carry (a "scrolled, so rebuild" retry
+    // guarded by `may_rebuild`) could no longer run and is gone.
     let primary = *cursors.primary();
-    let top_byte_before_scroll = viewport.top_byte();
-    let scrolled = viewport.ensure_visible_in_layout_with_render_width(
+    viewport.ensure_visible_in_layout_with_render_width(
         &view_data.lines,
         &primary,
         render_area.width as usize,
         gutter_width,
     );
-
-    // If we scrolled AND `top_byte` changed, rebuild view_data from the new
-    // top_byte (the old view_data no longer matches what's visible).  We
-    // also reset `top_view_line_offset` to 0 and re-run the layout-aware
-    // check so that the offset is correct for the rebuilt view_data — the
-    // absolute indices from the old view_data don't map directly to the
-    // new one.
-    //
-    // When `top_byte` did NOT change (e.g. `snap_to_logical_line_start`
-    // kept `top_byte` at the current logical line's start and only
-    // shifted `top_view_line_offset` to a wrap-segment offset), the
-    // existing view_data already matches and
-    // `top_view_line_offset` is authoritative — resetting it here would
-    // erase the scroll that `ensure_visible_in_layout` just applied
-    // (issue #1574, Up-arrow jumpy variant: cy 5→7 at step 13 of the
-    // width-sweep).
-    let view_data = if scrolled && viewport.top_byte() != top_byte_before_scroll {
-        if may_rebuild {
-            viewport.set_top_view_line_offset(0);
-            let rebuilt = build_view_data(
-                state,
-                viewport,
-                estimated_line_length,
-                visible_count,
-                line_wrap,
-                render_area.width as usize,
-                gutter_width,
-                &view_mode,
-                folds,
-                theme,
-                &cursor_positions,
-                // Same: the viewport moved, so the old anchor no longer applies.
-                None,
-            );
-            // The rebuild is unanchored, so the layout pass owns the offsets again.
-            let _ = viewport.ensure_visible_in_layout_with_render_width(
-                &rebuilt.lines,
-                &primary,
-                render_area.width as usize,
-                gutter_width,
-            );
-            rebuilt
-        } else {
-            view_data
-        }
-    } else {
-        view_data
-    };
 
     let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte());
 
@@ -557,6 +557,7 @@ pub(crate) fn compute_buffer_layout(
 
     let render_output = render_view_lines(LineRenderInput {
         state,
+        margin: &margin,
         theme,
         view_lines: view_lines_to_render,
         view_anchor: adjusted_view_anchor,
