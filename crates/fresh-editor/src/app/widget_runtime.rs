@@ -510,7 +510,23 @@ impl Editor {
             // and a `divider` ruled across the pane instead of the
             // page. Plugins were left computing their own pads from a
             // width the host already knew.
-            .map(|vs| (vs.compose_width, vs.viewport.width))
+            //
+            // Read it from *this buffer's* state, not from the split's:
+            // `SplitViewState` derefs to whichever buffer is active
+            // there, so `vs.compose_width` was the neighbouring tab's
+            // answer whenever the panel was not the one on screen. A
+            // panel opened behind another buffer therefore laid out to
+            // the whole split and then had its centred rows wrapped
+            // against a compose column it never saw — and it stayed
+            // that way, because nothing repaints a background tab. The
+            // pane width beside it is a property of the split, so that
+            // one is right to read through the deref.
+            .map(|vs| {
+                (
+                    vs.buffer_state(buffer_id).and_then(|b| b.compose_width),
+                    vs.viewport.width,
+                )
+            })
             .unwrap_or((None, self.terminal_width.max(1) as u16));
         match raw {
             // Composing, the compose layout has already flanked the

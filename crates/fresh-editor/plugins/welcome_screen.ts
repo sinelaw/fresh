@@ -1542,14 +1542,7 @@ async function openWelcome(force: boolean): Promise<void> {
     if (foreground) {
       editor.showBuffer(bufferId);
     } else if (restoreTo !== 0 && restoreTo !== bufferId) {
-      // A frame later, not now. The widget layout is sized from the
-      // split the buffer is painted in, and a buffer that has never been
-      // painted has no width to read — the host falls back to the whole
-      // terminal, which centres every row half a pane too far right and
-      // wraps the wordmark against the compose column. So let this
-      // frame paint the page properly, then hand the pane back.
-      handBackTo = restoreTo;
-      editor.setTimeout(0, "welcomeHandBackPane");
+      editor.showBuffer(restoreTo);
     }
     void probeRepoFiles();
     void probeGit();
@@ -1635,16 +1628,6 @@ function layoutKey(): string {
 // it is this buffer's pane, where `getViewport()` is whichever split
 // happens to be active.
 let lastKey = "";
-/** The buffer a background open owes the pane back to; see `openWelcome`. */
-let handBackTo = 0;
-registerHandler("welcomeHandBackPane", () => {
-  const to = handBackTo;
-  handBackTo = 0;
-  // Only if the reader has not moved in the meantime.
-  if (to === 0 || bufferId === null) return;
-  if (editor.getActiveBufferId() !== bufferId) return;
-  editor.showBuffer(to);
-});
 registerHandler(
   "welcomeOnViewportChanged",
   (d: { buffer_id: number; width: number }) => {

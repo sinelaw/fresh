@@ -906,20 +906,28 @@ Eleven things the wireframes did not know:
     (§8) retired the flag with it — there is no longer a question for "I
     closed it" to answer.
 
-32. **A buffer that has never been painted has no width.**
-    `widget_panel_width` sizes a panel from the split its buffer is painted
-    in and falls back to the whole terminal when it finds none — so a page
-    composed while another buffer held the pane centred every row against
-    ~140 columns instead of the 89-column compose measure, and the host then
-    wrapped the wordmark in half against the compose column. (The host says
-    as much in that function's own comment, measured on this page.) Nothing
-    the plugin can do afterwards repairs it: a re-render, a panel remount and
-    a deferred repaint on `buffer_activated` were all tried and all still
-    read the same missing width, and `viewport_changed` never fires for this
-    buffer at all. So a background open is now an ordinary foreground open —
-    `createVirtualBuffer` makes the new buffer active, which is exactly the
-    geometry the layout needs — followed by handing the pane back one tick
-    later, once the frame that measures it has been painted.
+32. **A background tab was laid out to its neighbour's width.** A page
+    opened behind a file painted at a measure its pane could not hold: the
+    wordmark wrapped mid-glyph, the doors broke across two rows, every
+    centred row sat far right. `widget_panel_width` sizes a panel from
+    `compose_width` — correctly, and its own comment says why, measured on
+    this page — but it read `vs.compose_width`, and `SplitViewState` derefs
+    to whichever buffer is *active* in that split. So the panel was sized
+    from the neighbouring tab's answer (`None`, hence the whole split)
+    whenever it was not the one on screen, and nothing repaints a
+    background tab afterwards, so it stayed wrong until a resize. It now
+    reads `vs.buffer_state(buffer_id).compose_width` — this buffer's own.
+    The pane width beside it is a property of the split and still comes
+    through the deref.
+
+    This was worth chasing to the host rather than papering over. The
+    plugin-side workarounds all failed, each for the same reason: a
+    re-render, a panel remount and a repaint armed on `buffer_activated`
+    read the same wrong width, and `viewport_changed` never fires for this
+    buffer at all. Opening in the foreground and handing the pane back a
+    tick later did work — on Linux and macOS, while Windows CI, where a
+    later repaint landed after the hand-back, showed the bug unchanged.
+    A fix that depends on which repaint wins is not a fix.
 
 ### Still aspirational
 
