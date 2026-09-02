@@ -2671,7 +2671,12 @@ impl KeybindingResolver {
             "braceleft" => Some(KeyCode::Char('{')),
             "braceright" => Some(KeyCode::Char('}')),
 
-            s if s.len() == 1 => s.chars().next().map(KeyCode::Char),
+            // Character count, not byte count: `"é"` is two bytes, and
+            // spelling it out as a key name used to fall past this arm
+            // into the function-key arm and out as `None` — a binding on
+            // a non-ASCII character silently did nothing, the same class
+            // of quiet drop as the names above (issue #1128).
+            s if s.chars().count() == 1 => s.chars().next().map(KeyCode::Char),
             // Handle function keys like "f1", "f2", ..., "f12"
             s if s.starts_with('f') && s.len() >= 2 => s[1..].parse::<u8>().ok().map(KeyCode::F),
             _ => None,
@@ -3376,6 +3381,10 @@ mod tests {
         // and unrelated names are still rejected.
         assert_eq!(KeybindingResolver::parse_key("*"), Some(KeyCode::Char('*')));
         assert_eq!(KeybindingResolver::parse_key("asterix"), None);
+        // A single non-ASCII character is one key name, not two bytes'
+        // worth of nothing.
+        assert_eq!(KeybindingResolver::parse_key("é"), Some(KeyCode::Char('é')));
+        assert_eq!(KeybindingResolver::parse_key("ñ"), Some(KeyCode::Char('ñ')));
     }
 
     /// The end of the same issue: a config entry spelled with a symbolic
