@@ -3226,3 +3226,65 @@ fn test_search_replace_long_line_match_is_visible() {
          Row:\n{short_row}"
     );
 }
+
+/// The same windowing, on lines whose prefix is not ASCII.
+///
+/// `SearchMatch.column` is a UTF-8 *byte* column while the plugin slices
+/// its context in UTF-16 units. On an ASCII line the two coincide, so a
+/// test built only from ASCII fixtures passes while the feature is broken
+/// for a whole class of real files: a CJK prefix inflates the column 3x
+/// and a non-BMP one 2x, sliding the window past the match. The row then
+/// renders the region *after* the match — strictly worse than the
+/// head-truncation the windowing replaced.
+#[test]
+fn test_search_replace_multibyte_prefix_match_is_visible() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // Both lines run past the 512-char context cap, so the match-anchored
+    // cap slice is exercised as well as the display window.
+    for (name, lead) in [("cjk.txt", "漢"), ("emoji.txt", "😀")] {
+        let line = format!(
+            "{}{}NEEDLE_MARKER{}",
+            lead.repeat(200),
+            "x".repeat(900),
+            "y".repeat(900)
+        );
+        fs::write(project_root.join(name), format!("{line}\n")).unwrap();
+    }
+    fs::write(project_root.join("plain.txt"), "a NEEDLE_MARKER here\n").unwrap();
+
+    let start_file = project_root.join("plain.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        44,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("NEEDLE_MARKER").unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("emoji.txt:1"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    for name in ["cjk.txt", "emoji.txt"] {
+        let row = screen
+            .lines()
+            .find(|l| l.contains(&format!("{name}:1")))
+            .unwrap_or_else(|| panic!("no row for the {name} match. Screen:\n{screen}"))
+            .to_string();
+        assert!(
+            row.contains("NEEDLE_MARKER"),
+            "the match is not shown on a line with a multibyte prefix — \
+             the byte column has to be converted to the unit the context \
+             is sliced by before it anchors the window. Row:\n{row}\n\
+             Screen:\n{screen}"
+        );
+    }
+}

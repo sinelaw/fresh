@@ -273,6 +273,38 @@ function truncate(s: string, maxLen: number): string {
   return result + "...";
 }
 
+/** Matches a string containing any non-ASCII scalar. Non-global so it
+ *  carries no `lastIndex` state between calls. */
+const NON_ASCII_RE = /[^\x00-\x7F]/;
+
+/** Convert a 0-based UTF-8 *byte* offset into a line to the UTF-16 index
+ *  the same line is sliced by.
+ *
+ *  `SearchMatch.column` is documented as a byte column
+ *  (`fresh-editor-core/src/model/filesystem.rs`), while every `slice`
+ *  here counts UTF-16 units. On an ASCII line the two coincide, which is
+ *  why the mismatch hid: it only bites when the text before the match is
+ *  multibyte, and then it overstates the position by up to 3x (CJK) —
+ *  enough to slide the window clean past the match it was meant to
+ *  centre on.
+ *
+ *  The ASCII fast path is a native regex scan with early exit, so the
+ *  common case (source code, minified assets) costs no per-codepoint
+ *  work. The slow path walks only as far as the match. */
+function byteColumnToIndex(line: string, byteCol: number): number {
+  if (byteCol <= 0) return 0;
+  if (!NON_ASCII_RE.test(line)) return Math.min(byteCol, line.length);
+  let bytes = 0;
+  let index = 0;
+  for (const ch of line) {
+    if (bytes >= byteCol) break;
+    const cp = ch.codePointAt(0)!;
+    bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    index += ch.length;
+  }
+  return index;
+}
+
 /** Codepoint index and length of the `pattern` hit in `text` nearest to
  *  `preferAt`, or `null` when the pattern is empty, invalid, or doesn't
  *  occur. A line with several matches yields one row per match, so the
@@ -791,16 +823,19 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // of a 290-char line rendered as `start xxxx…`, with the matched
   // text nowhere on screen).
   //
-  // `match.column` is a 1-based *byte* column; the slice indices here
-  // are UTF-16 units. They coincide for the ASCII-dominated case, and
-  // a multibyte prefix only pushes the window right — which is why the
-  // window keeps half a cap of slack on the left and `windowAroundMatch`
-  // re-locates the match in the sliced text rather than trusting the
-  // column arithmetic (falling back to head-truncation, the old
-  // behaviour, when the match isn't in the window after all). The
-  // window is still one cap wide, so the per-codepoint work downstream
-  // is bounded exactly as it was.
-  const matchCol = Math.max(0, (result.match.column || 1) - 1);
+  // `match.column` is a 1-based *byte* column and every slice here counts
+  // UTF-16 units, so it is converted before use. Half a cap of slack does
+  // NOT absorb the difference — a CJK prefix inflates the byte column 3x,
+  // so ~128 such characters ahead of the match are enough to put the
+  // window past it entirely; `windowAroundMatch` then finds no match and
+  // falls back to truncating a window centred on the wrong part of the
+  // line, which is worse than the head-truncation it replaced.
+  //
+  // `windowAroundMatch` still re-locates the match in the sliced text
+  // rather than trusting this arithmetic, and still degrades to
+  // head-truncation if it isn't there. The window stays one cap wide, so
+  // the per-codepoint work downstream is bounded as it was.
+  const matchCol = byteColumnToIndex(rawCtx, Math.max(0, (result.match.column || 1) - 1));
   const capStart = rawCtx.length > CONTEXT_HARD_CAP
     ? Math.max(0, Math.min(matchCol - CONTEXT_HARD_CAP / 2, rawCtx.length - CONTEXT_HARD_CAP))
     : 0;
