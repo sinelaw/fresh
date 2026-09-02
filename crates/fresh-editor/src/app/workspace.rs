@@ -2134,7 +2134,7 @@ impl crate::app::window::Window {
     /// Sync this window's active terminal visible screens to their
     /// backing files (so the snapshot captures complete terminal state).
     pub(crate) fn sync_terminal_backing_files(&self) {
-        use std::io::BufWriter;
+        use std::io::{BufWriter, Write};
 
         let terminals_to_sync: Vec<_> = self
             .terminal_buffers
@@ -2150,6 +2150,25 @@ impl crate::app::window::Window {
         for (terminal_id, backing_path) in terminals_to_sync {
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
+                    // Drop a visible-screen tail an earlier checkpoint or
+                    // scroll-back visit left behind: this snapshot writes a
+                    // fresh one below, and scrollback appended past a tail is
+                    // cut away by the truncation that ends the next scroll-back
+                    // visit (fresh#3151).
+                    if state.backing_file_has_tail() {
+                        let history_end = state.backing_file_history_end();
+                        match crate::app::terminal::terminal_backing_fs()
+                            .set_file_length(&backing_path, history_end)
+                        {
+                            Ok(()) => state.set_backing_file_has_tail(false),
+                            Err(e) => tracing::warn!(
+                                "Failed to drop terminal {:?} visible-screen tail: {}",
+                                terminal_id,
+                                e
+                            ),
+                        }
+                    }
+
                     // Persist any scrolled-off lines not yet in the file (e.g.
                     // lines a resize spilled into history on a terminal that was
                     // never viewed before quitting) so a restored workspace keeps
@@ -2167,16 +2186,29 @@ impl crate::app::window::Window {
                         }
                     }
 
+                    // Record the scrollback end before the tail goes in, so
+                    // the next writer knows where to cut it back off.
+                    if let Ok(metadata) =
+                        crate::app::terminal::terminal_backing_fs().metadata(&backing_path)
+                    {
+                        state.set_backing_file_history_end(metadata.size);
+                    }
+
                     if let Ok(mut file) = crate::app::terminal::terminal_backing_fs()
                         .open_file_for_append(&backing_path)
                     {
                         let mut writer = BufWriter::new(&mut *file);
-                        if let Err(e) = state.append_visible_screen(&mut writer) {
-                            tracing::warn!(
+                        let appended = state.append_visible_screen(&mut writer);
+                        // Only claim the tail once its bytes have actually
+                        // reached the file: the flag is what tells the next
+                        // writer there is something there to cut back off.
+                        match appended.and_then(|_| writer.flush()) {
+                            Ok(()) => state.set_backing_file_has_tail(true),
+                            Err(e) => tracing::warn!(
                                 "Failed to sync terminal {:?} to backing file: {}",
                                 terminal_id,
                                 e
-                            );
+                            ),
                         }
                     }
                 }
