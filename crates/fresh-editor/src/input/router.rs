@@ -140,6 +140,10 @@ pub struct WidgetPanelView {
     /// non-modal: unhandled shortcuts blur it and fall through to the
     /// editor; a centered modal swallows them.
     pub is_left_dock: bool,
+    /// The panel is a sidebar section. Non-modal like the dock — Esc blurs
+    /// it and an unbound shortcut blurs it and falls through — without the
+    /// dock's plugin-shaped key conventions.
+    pub is_sidebar: bool,
     /// The panel's currently focused widget key (previous render).
     pub focus_key: Option<String>,
     /// The focused widget is a Text input (clipboard chords belong to it).
@@ -326,6 +330,11 @@ pub fn widget_panel_key(
         if mode_has_binding(code, modifiers) {
             return FallThrough;
         }
+        // A sidebar section stays mounted: Esc leaves it, as it leaves the
+        // dock.
+        if view.is_sidebar {
+            return Blur;
+        }
         return CancelAndUnmount;
     }
 
@@ -349,10 +358,23 @@ pub fn widget_panel_key(
         KeyCode::PageDown => Some("PageDown"),
         _ => None,
     };
+    // **A sidebar section is not the buffer's, so the buffer's mode does not
+    // speak for it.** `editor_mode` is the active *buffer's* plugin mode —
+    // `markdown-source` binds Enter, Tab and Shift+Tab for list continuation
+    // in a Markdown buffer — and letting it pre-empt a focused section's keys
+    // sent Enter on a contents row to the buffer's list-continuation handler
+    // instead of the row's `activate`. The dock and the centred panel keep
+    // the precedence because the plugin that mounts them is the one defining
+    // the mode (the orchestrator's New-Session form relies on it); a section
+    // takes its keys through `widget_event` and never through a mode.
+    let mode_pre_empts = |code: KeyCode, modifiers: KeyModifiers| {
+        !view.is_sidebar && mode_has_binding(code, modifiers)
+    };
+
     if let Some(name) = key_name {
         // The orchestrator New-Session form relies on mode precedence so
         // Enter submits the form regardless of which field is focused.
-        if mode_has_binding(code, modifiers) {
+        if mode_pre_empts(code, modifiers) {
             return FallThrough;
         }
         return SmartKey(name);
@@ -365,7 +387,7 @@ pub fn widget_panel_key(
         // it before the text-input fast path. The trade-off is that a
         // bound bare key can't also be typed as text in that mode, which
         // is what the plugin asked for by binding it.
-        if mode_has_binding(code, modifiers) {
+        if mode_pre_empts(code, modifiers) {
             return FallThrough;
         }
         // Ctrl/Alt-modified chords with no mode binding: a centered
@@ -389,7 +411,7 @@ pub fn widget_panel_key(
                     _ => {}
                 }
             }
-            if view.is_left_dock {
+            if view.is_left_dock || view.is_sidebar {
                 return BlurUnconsumed;
             }
             return Swallow;
@@ -831,6 +853,7 @@ mod tests {
         let kb = resolver();
         let dock = |focus: Option<&str>| WidgetPanelView {
             is_left_dock: true,
+            is_sidebar: false,
             focus_key: focus.map(str::to_string),
             focused_widget_is_text: false,
             editor_mode: None,
@@ -853,6 +876,7 @@ mod tests {
         // On a centered modal, Esc cancels and unmounts.
         let modal = WidgetPanelView {
             is_left_dock: false,
+            is_sidebar: false,
             focus_key: None,
             focused_widget_is_text: false,
             editor_mode: None,
@@ -868,6 +892,7 @@ mod tests {
         let kb = resolver();
         let view = WidgetPanelView {
             is_left_dock: true,
+            is_sidebar: false,
             focus_key: Some("project-pick:2".to_string()),
             focused_widget_is_text: false,
             editor_mode: None,
@@ -887,6 +912,7 @@ mod tests {
         let kb = resolver();
         let mk = |is_left_dock| WidgetPanelView {
             is_left_dock,
+            is_sidebar: false,
             focus_key: None,
             focused_widget_is_text: false,
             editor_mode: None,
@@ -901,6 +927,34 @@ mod tests {
         assert_eq!(
             widget_panel_key(&mk(true), &kb, ctrl_p.0, ctrl_p.1),
             WidgetKeyOutcome::BlurUnconsumed
+        );
+    }
+
+    /// A sidebar section is non-modal like the dock: Esc leaves it mounted
+    /// and blurs it, and an unbound chord blurs it and falls through to the
+    /// editor — without the dock's own key conventions.
+    #[test]
+    fn sidebar_section_blurs_on_esc_and_unbound_chords() {
+        let kb = resolver();
+        let view = WidgetPanelView {
+            is_left_dock: false,
+            is_sidebar: true,
+            focus_key: Some("tree".to_string()),
+            focused_widget_is_text: false,
+            editor_mode: None,
+        };
+        assert_eq!(
+            widget_panel_key(&view, &kb, KeyCode::Esc, KeyModifiers::NONE),
+            WidgetKeyOutcome::Blur
+        );
+        assert_eq!(
+            widget_panel_key(&view, &kb, KeyCode::Char('p'), KeyModifiers::CONTROL),
+            WidgetKeyOutcome::BlurUnconsumed
+        );
+        // Enter is still the widget's.
+        assert_eq!(
+            widget_panel_key(&view, &kb, KeyCode::Enter, KeyModifiers::NONE),
+            WidgetKeyOutcome::SmartKey("Enter")
         );
     }
 
@@ -1130,6 +1184,44 @@ mod tests {
     }
 
     #[test]
+    fn a_sidebar_section_keeps_its_keys_from_the_buffers_mode() {
+        // The active buffer's plugin mode binds Enter (markdown-source's
+        // list continuation). A focused *sidebar section* is not the
+        // buffer, so its Enter is the row's `activate`; the centred panel
+        // keeps the precedence because its own plugin defines the mode.
+        let mut config = config();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "enter".to_string(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:markdown-source".to_string()),
+        });
+        let kb = KeybindingResolver::new(&config);
+        let view = |is_sidebar: bool| WidgetPanelView {
+            is_left_dock: false,
+            is_sidebar,
+            focus_key: Some("toc".to_string()),
+            focused_widget_is_text: false,
+            editor_mode: Some("markdown-source".to_string()),
+        };
+        assert_eq!(
+            widget_panel_key(&view(true), &kb, KeyCode::Enter, KeyModifiers::NONE),
+            WidgetKeyOutcome::SmartKey("Enter")
+        );
+        assert_eq!(
+            widget_panel_key(&view(false), &kb, KeyCode::Enter, KeyModifiers::NONE),
+            WidgetKeyOutcome::FallThrough
+        );
+        // Esc still leaves the section rather than unmounting it.
+        assert_eq!(
+            widget_panel_key(&view(true), &kb, KeyCode::Esc, KeyModifiers::NONE),
+            WidgetKeyOutcome::Blur
+        );
+    }
+
+    #[test]
     fn chord_or_key_walks_a_two_key_sequence() {
         let mut config = config();
         config.keybindings.push(crate::config::Keybinding {
@@ -1234,6 +1326,7 @@ mod tests {
         let kb = resolver();
         let view = WidgetPanelView {
             is_left_dock: false,
+            is_sidebar: false,
             focus_key: Some("path".to_string()),
             focused_widget_is_text: true,
             editor_mode: None,
