@@ -5340,6 +5340,17 @@ fn test_scrollback_survives_output_during_a_scrollback_visit() {
 ///
 /// Only rendered output is inspected, so a marker counts as reachable exactly
 /// when a user scrolling the pane would see it.
+///
+/// Two limits worth knowing before reusing this:
+///
+/// * Entering scroll-back re-appends the current visible screen, so a marker
+///   that survives *only* in that temporary tail still scores as reachable.
+///   Fine for callers whose missing lines are older than the last screenful;
+///   not a way to tell "durably in the scrollback" from "in the volatile tail".
+/// * The sweep stops when a page renders identically to the one before it,
+///   which is end-of-buffer for dense numbered output but would stop early on
+///   a run of blank rows or a repeated frame. That direction is fail-safe — it
+///   reports markers as missing rather than passing vacuously.
 fn missing_markers_in_scrollback(
     harness: &mut EditorTestHarness,
     markers: impl IntoIterator<Item = String>,

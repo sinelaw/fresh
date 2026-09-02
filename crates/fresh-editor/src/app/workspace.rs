@@ -2198,12 +2198,13 @@ impl crate::app::window::Window {
                         .open_file_for_append(&backing_path)
                     {
                         let mut writer = BufWriter::new(&mut *file);
+                        // Claim the tail before writing it: a part-written
+                        // tail still leaves bytes past the history end, and
+                        // the flag is what gets them cut back off later.
+                        state.set_backing_file_has_tail(true);
                         let appended = state.append_visible_screen(&mut writer);
-                        // Only claim the tail once its bytes have actually
-                        // reached the file: the flag is what tells the next
-                        // writer there is something there to cut back off.
                         match appended.and_then(|_| writer.flush()) {
-                            Ok(()) => state.set_backing_file_has_tail(true),
+                            Ok(()) => {}
                             Err(e) => tracing::warn!(
                                 "Failed to sync terminal {:?} to backing file: {}",
                                 terminal_id,

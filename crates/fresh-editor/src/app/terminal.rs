@@ -2471,14 +2471,17 @@ impl Window {
                 // Open backing file in append mode to add visible screen
                 if let Ok(mut file) = terminal_backing_fs().open_file_for_append(&backing_file) {
                     let mut writer = BufWriter::new(&mut *file);
+                    // Claim the tail *before* writing it. `BufWriter` spills
+                    // to the file as soon as its buffer fills, so a failure
+                    // part-way through still leaves bytes past the history
+                    // end; the flag is what tells a later path to cut them
+                    // back off, so it has to err towards "something may be
+                    // there" rather than "the write succeeded".
+                    state.set_backing_file_has_tail(true);
                     let appended = state.append_visible_screen(&mut writer);
-                    // Only claim the tail once its bytes have actually reached
-                    // the file: the flag is what tells the next writer there
-                    // is something there to cut back off.
                     match appended.and_then(|head| writer.flush().map(|()| head)) {
                         Ok(head) => {
                             prepended = head;
-                            state.set_backing_file_has_tail(true);
                         }
                         Err(e) => {
                             tracing::error!(
