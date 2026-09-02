@@ -2624,6 +2624,53 @@ impl KeybindingResolver {
             "pageup" => Some(KeyCode::PageUp),
             "pagedown" => Some(KeyCode::PageDown),
 
+            // Symbolic names for punctuation. A single-character key
+            // name is still the canonical spelling (and what the
+            // keybinding editor writes back), but people reach for the
+            // X11 keysym name they know — `"key": "asterisk"` is what
+            // issue #1128 was actually configured with, and it bound
+            // nothing at all. JSON also makes some of these awkward to
+            // write literally (`"\\"` for backslash, `"\""` for the
+            // double quote), so a name is the friendlier spelling.
+            //
+            // The keypad aliases map onto the same characters their key
+            // transmits: a terminal reports the numeric keypad through
+            // its ASCII byte, so `kp_multiply` *is* `*` by the time the
+            // editor sees it. Naming them separately documents intent
+            // without promising a distinction the terminal doesn't make.
+            "asterisk" | "kp_multiply" | "star" => Some(KeyCode::Char('*')),
+            "plus" | "kp_add" => Some(KeyCode::Char('+')),
+            "minus" | "hyphen" | "kp_subtract" => Some(KeyCode::Char('-')),
+            "slash" | "kp_divide" => Some(KeyCode::Char('/')),
+            "period" | "dot" | "kp_decimal" => Some(KeyCode::Char('.')),
+            "equal" | "equals" => Some(KeyCode::Char('=')),
+            "backslash" => Some(KeyCode::Char('\\')),
+            "comma" => Some(KeyCode::Char(',')),
+            "semicolon" => Some(KeyCode::Char(';')),
+            "colon" => Some(KeyCode::Char(':')),
+            "apostrophe" | "quote" => Some(KeyCode::Char('\'')),
+            "quotedbl" | "doublequote" => Some(KeyCode::Char('"')),
+            "grave" | "backtick" => Some(KeyCode::Char('`')),
+            "tilde" => Some(KeyCode::Char('~')),
+            "exclam" | "exclamation" => Some(KeyCode::Char('!')),
+            "at" => Some(KeyCode::Char('@')),
+            "numbersign" | "hash" => Some(KeyCode::Char('#')),
+            "dollar" => Some(KeyCode::Char('$')),
+            "percent" => Some(KeyCode::Char('%')),
+            "asciicircum" | "caret" => Some(KeyCode::Char('^')),
+            "ampersand" => Some(KeyCode::Char('&')),
+            "underscore" => Some(KeyCode::Char('_')),
+            "bar" | "pipe" => Some(KeyCode::Char('|')),
+            "question" => Some(KeyCode::Char('?')),
+            "less" | "lessthan" => Some(KeyCode::Char('<')),
+            "greater" | "greaterthan" => Some(KeyCode::Char('>')),
+            "parenleft" => Some(KeyCode::Char('(')),
+            "parenright" => Some(KeyCode::Char(')')),
+            "bracketleft" => Some(KeyCode::Char('[')),
+            "bracketright" => Some(KeyCode::Char(']')),
+            "braceleft" => Some(KeyCode::Char('{')),
+            "braceright" => Some(KeyCode::Char('}')),
+
             s if s.len() == 1 => s.chars().next().map(KeyCode::Char),
             // Handle function keys like "f1", "f2", ..., "f12"
             s if s.starts_with('f') && s.len() >= 2 => s[1..].parse::<u8>().ok().map(KeyCode::F),
@@ -3291,6 +3338,67 @@ mod tests {
         assert_eq!(KeybindingResolver::parse_key("a"), Some(KeyCode::Char('a')));
     }
 
+    /// Issue #1128: the reporter wrote `"key": "asterisk"` (the X11
+    /// keysym spelling) and got a binding that did nothing. Symbolic
+    /// punctuation names parse to the character they name, alongside the
+    /// single-character spelling that remains canonical, and the keypad
+    /// aliases land on the same characters their key transmits.
+    #[test]
+    fn test_parse_key_symbolic_names() {
+        for (name, ch) in [
+            ("asterisk", '*'),
+            ("kp_multiply", '*'),
+            ("plus", '+'),
+            ("minus", '-'),
+            ("kp_subtract", '-'),
+            ("slash", '/'),
+            ("backslash", '\\'),
+            ("period", '.'),
+            ("comma", ','),
+            ("underscore", '_'),
+            ("quotedbl", '"'),
+            ("grave", '`'),
+            ("bracketleft", '['),
+            ("bracketright", ']'),
+        ] {
+            assert_eq!(
+                KeybindingResolver::parse_key(name),
+                Some(KeyCode::Char(ch)),
+                "key name {name:?}"
+            );
+        }
+        // Case-insensitive, like every other name in the table.
+        assert_eq!(
+            KeybindingResolver::parse_key("Asterisk"),
+            Some(KeyCode::Char('*'))
+        );
+        // The single-character spelling still wins where the two overlap,
+        // and unrelated names are still rejected.
+        assert_eq!(KeybindingResolver::parse_key("*"), Some(KeyCode::Char('*')));
+        assert_eq!(KeybindingResolver::parse_key("asterix"), None);
+    }
+
+    /// The end of the same issue: a config entry spelled with a symbolic
+    /// name must actually register, not merely parse.
+    #[test]
+    fn test_symbolic_key_name_binds_from_config() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "asterisk".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "duplicate_line".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+        let event = KeyEvent::new(KeyCode::Char('*'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::DuplicateLine
+        );
+    }
+
     #[test]
     fn test_parse_modifiers() {
         let mods = vec!["ctrl".to_string()];
@@ -3427,17 +3535,22 @@ mod tests {
         assert_eq!(action.to_qualified_action_str(), "menu_open:Edit");
     }
 
-    /// Issue #1128: a keybinding whose key name doesn't parse (e.g.
-    /// "asterisk", "kp_multiply") is rejected — the entry must be dropped
-    /// (binding nothing) while a `tracing::warn!` at load time names the key
-    /// and action, and the rest of the config must still load. The warning
-    /// itself is emitted by `warn_invalid_key`; here we assert the
-    /// dropped-but-load-continues behavior.
+    /// Issue #1128: a keybinding whose key name doesn't parse is rejected —
+    /// the entry must be dropped (binding nothing) while a `tracing::warn!`
+    /// at load time names the key and action, and the rest of the config
+    /// must still load. The warning itself is emitted by
+    /// `warn_invalid_key`; here we assert the dropped-but-load-continues
+    /// behavior.
+    ///
+    /// The names that started that issue — "asterisk" / "kp_multiply" —
+    /// are no longer in this group: they parse now (see
+    /// `test_parse_key_symbolic_names`). This test needs a name nothing
+    /// claims, so it uses one.
     #[test]
     fn test_unknown_key_name_entry_is_dropped_but_load_continues() {
         let mut config = Config::default();
         config.keybindings.push(crate::config::Keybinding {
-            key: "asterisk".to_string(),
+            key: "no_such_key_name".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: Vec::new(),
             action: "duplicate_line".to_string(),
@@ -3454,7 +3567,7 @@ mod tests {
                     modifiers: vec!["ctrl".to_string()],
                 },
                 crate::config::KeyPress {
-                    key: "kp_multiply".to_string(),
+                    key: "also_not_a_key".to_string(),
                     modifiers: Vec::new(),
                 },
             ],
