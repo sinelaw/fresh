@@ -2125,20 +2125,24 @@ impl Window {
         }
     }
 
-    /// Send a key event to this window's active terminal. Picks
-    /// "application cursor" vs "normal cursor" escape sequences
-    /// based on the terminal's current state.
+    /// Send a key event to this window's active terminal. Picks the encoding
+    /// from the modes the program inside has set: "application cursor" vs
+    /// "normal cursor" escape sequences, and the kitty keyboard protocol's
+    /// CSI-u form for a modified key when that program asked for it.
     pub fn send_terminal_key(
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) {
-        let app_cursor = self
+        let modes = self
             .get_active_terminal_state()
-            .map(|s| s.is_app_cursor())
-            .unwrap_or(false);
+            .map(|s| crate::services::terminal::pty::PtyKeyModes {
+                app_cursor: s.is_app_cursor(),
+                kitty_keyboard: s.uses_kitty_keyboard(),
+            })
+            .unwrap_or_default();
         if let Some(bytes) =
-            crate::services::terminal::pty::key_to_pty_bytes(code, modifiers, app_cursor)
+            crate::services::terminal::pty::key_to_pty_bytes(code, modifiers, modes)
         {
             self.send_terminal_input(&bytes);
         }
@@ -2816,6 +2820,9 @@ pub mod render {
                 // Apply modifiers
                 if cell.bold {
                     style = style.add_modifier(Modifier::BOLD);
+                }
+                if cell.dim {
+                    style = style.add_modifier(Modifier::DIM);
                 }
                 if cell.italic {
                     style = style.add_modifier(Modifier::ITALIC);

@@ -4,24 +4,52 @@
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
+/// The modes the program inside the terminal has put it in that change how a
+/// key is encoded on its way to that program.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PtyKeyModes {
+    /// DECCKM (application cursor keys): unmodified arrow keys use SS3
+    /// sequences (`\x1bOA`) instead of CSI (`\x1b[A`). Programs like less and
+    /// git log enable this mode.
+    pub app_cursor: bool,
+    /// The kitty keyboard protocol (`CSI > flags u`). A program that asked for
+    /// it can read the CSI-u form, which carries a modifier for keys the
+    /// legacy encoding has nowhere to put one — Enter above all, where
+    /// Shift+Enter and Ctrl+Enter otherwise flatten to a bare `\r`
+    /// (issue #3124).
+    pub kitty_keyboard: bool,
+}
+
+impl PtyKeyModes {
+    /// Neither mode set: the plain legacy xterm encoding.
+    pub const LEGACY: Self = Self {
+        app_cursor: false,
+        kitty_keyboard: false,
+    };
+}
+
 /// Convert a crossterm key event to bytes to send to the PTY
 ///
 /// This handles special keys and modifier combinations that need
 /// to be sent as escape sequences or control characters.
 ///
-/// The encoding is the legacy xterm one: fresh's terminal emulator does not
-/// speak the kitty keyboard protocol to the child, so a modified key is
-/// expressed by the `1 + bits` modifier parameter of its escape sequence
-/// ([`xterm_modifier_param`]) rather than a CSI-u form.
+/// The encoding is the legacy xterm one unless the child asked for the kitty
+/// keyboard protocol: a modified key is expressed by the `1 + bits` modifier
+/// parameter of its escape sequence ([`xterm_modifier_param`]) rather than a
+/// CSI-u form. Keys whose legacy sequence takes no such parameter — Enter
+/// chief among them — can only carry Alt, as an `ESC` prefix; every other
+/// modifier on them is unrepresentable and dropped.
 ///
-/// When `app_cursor` is true (DECCKM mode), unmodified arrow keys use SS3
-/// sequences (`\x1bOA`) instead of CSI (`\x1b[A`). Programs like less and
-/// git log enable this mode.
+/// When [`PtyKeyModes::kitty_keyboard`] is set the child has enabled that
+/// protocol with `CSI > flags u`, so a modified Enter goes out as
+/// `CSI 13 ; <mods> u` — the encoding kitty itself would send — instead of
+/// being flattened.
 pub fn key_to_pty_bytes(
     code: KeyCode,
     modifiers: KeyModifiers,
-    app_cursor: bool,
+    modes: PtyKeyModes,
 ) -> Option<Vec<u8>> {
+    let app_cursor = modes.app_cursor;
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let alt = modifiers.contains(KeyModifiers::ALT);
     let shift = modifiers.contains(KeyModifiers::SHIFT);
@@ -64,7 +92,16 @@ pub fn key_to_pty_bytes(
         // `ESC` prefix (metaSendsEscape). Alt+Backspace as `ESC DEL` is
         // readline's delete-previous-word; before this, Alt was simply dropped
         // and the child saw a bare Backspace.
-        KeyCode::Enter => Some(maybe_esc(alt, vec![b'\r'])),
+        //
+        // A child that enabled the kitty keyboard protocol reads the CSI-u
+        // form, though, so Enter's modifiers survive for it rather than
+        // flattening onto the bare `\r` — Shift+Enter arriving as plain Enter
+        // is what made multi-line input impossible in Claude Code, which reads
+        // Enter as "submit" and Shift+Enter as "insert a newline" (#3124).
+        KeyCode::Enter => Some(match kitty_key_param(modifiers, modes) {
+            Some(param) => csi(&format!("13;{param}"), b'u'),
+            None => maybe_esc(alt, vec![b'\r']),
+        }),
         KeyCode::Tab => {
             if shift {
                 // Shift+Tab (backtab)
@@ -208,6 +245,41 @@ fn xterm_modifier_param(modifiers: KeyModifiers) -> Option<u8> {
     (bits != 0).then_some(1 + bits)
 }
 
+/// The kitty keyboard protocol's modifier parameter (`1 + bits`) for a key
+/// that is about to be encoded as CSI-u, or `None` when the protocol is not in
+/// play or the key carries no modifier — either of which selects the legacy
+/// encoding instead.
+///
+/// The bits differ from [`xterm_modifier_param`] past ctrl: kitty assigns
+/// super = 8, hyper = 16 and meta = 32, where legacy xterm has only its own
+/// meta at 8. Super and Hyper have no legacy encoding at all, so this is the
+/// one path on which they survive.
+fn kitty_key_param(modifiers: KeyModifiers, modes: PtyKeyModes) -> Option<u8> {
+    if !modes.kitty_keyboard {
+        return None;
+    }
+    let mut bits = 0u8;
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        bits |= 1;
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        bits |= 2;
+    }
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        bits |= 4;
+    }
+    if modifiers.contains(KeyModifiers::SUPER) {
+        bits |= 8;
+    }
+    if modifiers.contains(KeyModifiers::HYPER) {
+        bits |= 16;
+    }
+    if modifiers.contains(KeyModifiers::META) {
+        bits |= 32;
+    }
+    (bits != 0).then_some(1 + bits)
+}
+
 /// A cursor-style key: `CSI 1 ; <mods> <final>` when modified, and
 /// `CSI <final>` — or `SS3 <final>` under DECCKM — when not.
 fn cursor_key(final_byte: u8, modifiers: KeyModifiers, app_cursor: bool) -> Vec<u8> {
@@ -257,25 +329,29 @@ mod tests {
 
     #[test]
     fn test_regular_char() {
-        let bytes = key_to_pty_bytes(KeyCode::Char('a'), KeyModifiers::NONE, false);
+        let bytes = key_to_pty_bytes(KeyCode::Char('a'), KeyModifiers::NONE, PtyKeyModes::LEGACY);
         assert_eq!(bytes, Some(vec![b'a']));
     }
 
     #[test]
     fn test_ctrl_c() {
-        let bytes = key_to_pty_bytes(KeyCode::Char('c'), KeyModifiers::CONTROL, false);
+        let bytes = key_to_pty_bytes(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+            PtyKeyModes::LEGACY,
+        );
         assert_eq!(bytes, Some(vec![0x03])); // ETX (Ctrl+C)
     }
 
     #[test]
     fn test_enter() {
-        let bytes = key_to_pty_bytes(KeyCode::Enter, KeyModifiers::NONE, false);
+        let bytes = key_to_pty_bytes(KeyCode::Enter, KeyModifiers::NONE, PtyKeyModes::LEGACY);
         assert_eq!(bytes, Some(vec![b'\r']));
     }
 
     #[test]
     fn test_tab() {
-        let bytes = key_to_pty_bytes(KeyCode::Tab, KeyModifiers::NONE, false);
+        let bytes = key_to_pty_bytes(KeyCode::Tab, KeyModifiers::NONE, PtyKeyModes::LEGACY);
         assert_eq!(bytes, Some(vec![b'\t']));
     }
 
@@ -287,32 +363,32 @@ mod tests {
     /// sub-bug 2.
     #[test]
     fn test_shift_tab_via_tab_variant() {
-        let bytes = key_to_pty_bytes(KeyCode::Tab, KeyModifiers::SHIFT, false);
+        let bytes = key_to_pty_bytes(KeyCode::Tab, KeyModifiers::SHIFT, PtyKeyModes::LEGACY);
         assert_eq!(bytes, Some(vec![0x1b, b'[', b'Z']));
     }
 
     #[test]
     fn test_shift_tab_via_backtab_variant() {
-        let bytes = key_to_pty_bytes(KeyCode::BackTab, KeyModifiers::NONE, false);
+        let bytes = key_to_pty_bytes(KeyCode::BackTab, KeyModifiers::NONE, PtyKeyModes::LEGACY);
         assert_eq!(bytes, Some(vec![0x1b, b'[', b'Z']));
     }
 
     #[test]
     fn test_arrow_keys() {
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Up, KeyModifiers::NONE, false),
+            key_to_pty_bytes(KeyCode::Up, KeyModifiers::NONE, PtyKeyModes::LEGACY),
             Some(vec![0x1b, b'[', b'A'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Down, KeyModifiers::NONE, false),
+            key_to_pty_bytes(KeyCode::Down, KeyModifiers::NONE, PtyKeyModes::LEGACY),
             Some(vec![0x1b, b'[', b'B'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Right, KeyModifiers::NONE, false),
+            key_to_pty_bytes(KeyCode::Right, KeyModifiers::NONE, PtyKeyModes::LEGACY),
             Some(vec![0x1b, b'[', b'C'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Left, KeyModifiers::NONE, false),
+            key_to_pty_bytes(KeyCode::Left, KeyModifiers::NONE, PtyKeyModes::LEGACY),
             Some(vec![0x1b, b'[', b'D'])
         );
     }
@@ -321,39 +397,53 @@ mod tests {
     fn test_arrow_keys_app_cursor() {
         // When DECCKM (application cursor keys) is active, unmodified arrows use SS3
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Up, KeyModifiers::NONE, true),
+            key_to_pty_bytes(KeyCode::Up, KeyModifiers::NONE, APP_CURSOR),
             Some(vec![0x1b, b'O', b'A'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Down, KeyModifiers::NONE, true),
+            key_to_pty_bytes(KeyCode::Down, KeyModifiers::NONE, APP_CURSOR),
             Some(vec![0x1b, b'O', b'B'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Right, KeyModifiers::NONE, true),
+            key_to_pty_bytes(KeyCode::Right, KeyModifiers::NONE, APP_CURSOR),
             Some(vec![0x1b, b'O', b'C'])
         );
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Left, KeyModifiers::NONE, true),
+            key_to_pty_bytes(KeyCode::Left, KeyModifiers::NONE, APP_CURSOR),
             Some(vec![0x1b, b'O', b'D'])
         );
         // Modified arrows still use CSI even with app_cursor
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Up, KeyModifiers::CONTROL, true),
+            key_to_pty_bytes(KeyCode::Up, KeyModifiers::CONTROL, APP_CURSOR),
             Some(vec![0x1b, b'[', b'1', b';', b'5', b'A'])
         );
     }
 
     #[test]
     fn test_alt_key() {
-        let bytes = key_to_pty_bytes(KeyCode::Char('x'), KeyModifiers::ALT, false);
+        let bytes = key_to_pty_bytes(KeyCode::Char('x'), KeyModifiers::ALT, PtyKeyModes::LEGACY);
         assert_eq!(bytes, Some(vec![0x1b, b'x']));
     }
+
+    /// DECCKM on, kitty keyboard protocol off.
+    const APP_CURSOR: PtyKeyModes = PtyKeyModes {
+        app_cursor: true,
+        ..PtyKeyModes::LEGACY
+    };
+
+    /// The child asked for the kitty keyboard protocol with `CSI > 1 u`.
+    const KITTY: PtyKeyModes = PtyKeyModes {
+        kitty_keyboard: true,
+        ..PtyKeyModes::LEGACY
+    };
 
     /// Bytes as a printable string, so a failure reads as `ESC[1;6C` rather
     /// than a list of integers.
     fn seq(code: KeyCode, modifiers: KeyModifiers) -> String {
-        String::from_utf8(key_to_pty_bytes(code, modifiers, false).expect("key was dropped"))
-            .expect("not utf-8")
+        String::from_utf8(
+            key_to_pty_bytes(code, modifiers, PtyKeyModes::LEGACY).expect("key was dropped"),
+        )
+        .expect("not utf-8")
     }
 
     /// Modifiers are additive: each key used to run its own if/else-if chain
@@ -387,7 +477,7 @@ mod tests {
 
         for key in ['/', '_', '7'] {
             assert_eq!(
-                key_to_pty_bytes(KeyCode::Char(key), ctrl, false),
+                key_to_pty_bytes(KeyCode::Char(key), ctrl, PtyKeyModes::LEGACY),
                 Some(vec![0x1f]),
                 "Ctrl+{key} should send 0x1F"
             );
@@ -399,7 +489,11 @@ mod tests {
 
         // Without Ctrl it is still an ordinary slash.
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Char('/'), KeyModifiers::empty(), false),
+            key_to_pty_bytes(
+                KeyCode::Char('/'),
+                KeyModifiers::empty(),
+                PtyKeyModes::LEGACY
+            ),
             Some(vec![b'/'])
         );
     }
@@ -456,7 +550,7 @@ mod tests {
         // Past F20 there is no legacy encoding — still dropped, rather than
         // mis-encoded as some other key.
         assert_eq!(
-            key_to_pty_bytes(KeyCode::F(21), KeyModifiers::NONE, false),
+            key_to_pty_bytes(KeyCode::F(21), KeyModifiers::NONE, PtyKeyModes::LEGACY),
             None
         );
     }
@@ -470,7 +564,7 @@ mod tests {
         assert_eq!(seq(KeyCode::Esc, KeyModifiers::ALT), "\x1b\x1b");
         // readline's delete-previous-word.
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Backspace, KeyModifiers::ALT, false),
+            key_to_pty_bytes(KeyCode::Backspace, KeyModifiers::ALT, PtyKeyModes::LEGACY),
             Some(vec![0x1b, 0x7f])
         );
 
@@ -479,7 +573,7 @@ mod tests {
         assert_eq!(seq(KeyCode::Tab, KeyModifiers::NONE), "\t");
         assert_eq!(seq(KeyCode::Esc, KeyModifiers::NONE), "\x1b");
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Backspace, KeyModifiers::NONE, false),
+            key_to_pty_bytes(KeyCode::Backspace, KeyModifiers::NONE, PtyKeyModes::LEGACY),
             Some(vec![0x7f])
         );
     }
@@ -493,10 +587,68 @@ mod tests {
             key_to_pty_bytes(
                 KeyCode::Char('c'),
                 KeyModifiers::CONTROL | KeyModifiers::ALT,
-                false
+                PtyKeyModes::LEGACY
             ),
             Some(vec![0x1b, 0x03])
         );
+    }
+
+    /// A child that asked for the kitty keyboard protocol gets the CSI-u form
+    /// for a modified Enter, instead of the modifier being dropped onto a bare
+    /// `\r` — issue #3124. Claude Code reads Enter as "submit" and Shift+Enter
+    /// as "insert a newline", so the two must not arrive identical.
+    #[test]
+    fn modified_enter_is_csi_u_under_the_kitty_keyboard_protocol() {
+        let seq = |modifiers| {
+            String::from_utf8(
+                key_to_pty_bytes(KeyCode::Enter, modifiers, KITTY).expect("key was dropped"),
+            )
+            .expect("not utf-8")
+        };
+
+        assert_eq!(seq(KeyModifiers::SHIFT), "\x1b[13;2u");
+        assert_eq!(seq(KeyModifiers::ALT), "\x1b[13;3u");
+        assert_eq!(seq(KeyModifiers::CONTROL), "\x1b[13;5u");
+        // The bits are additive here too.
+        assert_eq!(
+            seq(KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            "\x1b[13;6u"
+        );
+        // Super and Hyper have no legacy encoding at all; CSI-u is where they
+        // survive, on kitty's own bit assignment (super = 8, hyper = 16).
+        assert_eq!(seq(KeyModifiers::SUPER), "\x1b[13;9u");
+        assert_eq!(seq(KeyModifiers::HYPER), "\x1b[13;17u");
+
+        // Unmodified Enter keeps its legacy byte: the protocol only asks for
+        // CSI-u for keys it would otherwise be unable to describe.
+        assert_eq!(seq(KeyModifiers::NONE), "\r");
+    }
+
+    /// Without the protocol the encoding is unchanged: a bare `\r`, with Alt
+    /// as an `ESC` prefix. A child that never asked for CSI-u must not start
+    /// receiving it.
+    #[test]
+    fn modified_enter_stays_legacy_without_the_kitty_keyboard_protocol() {
+        assert_eq!(seq(KeyCode::Enter, KeyModifiers::SHIFT), "\r");
+        assert_eq!(seq(KeyCode::Enter, KeyModifiers::CONTROL), "\r");
+        assert_eq!(seq(KeyCode::Enter, KeyModifiers::ALT), "\x1b\r");
+        assert_eq!(seq(KeyCode::Enter, KeyModifiers::NONE), "\r");
+    }
+
+    /// The protocol changes Enter only. Arrow keys already carried their
+    /// modifiers through the legacy parameter (that they did is what narrowed
+    /// #3124 to Enter), and must keep the same encoding either way.
+    #[test]
+    fn kitty_keyboard_protocol_leaves_other_keys_legacy() {
+        let kitty = |code, modifiers| {
+            String::from_utf8(key_to_pty_bytes(code, modifiers, KITTY).expect("key was dropped"))
+                .expect("not utf-8")
+        };
+
+        assert_eq!(kitty(KeyCode::Right, KeyModifiers::CONTROL), "\x1b[1;5C");
+        assert_eq!(kitty(KeyCode::Right, KeyModifiers::SHIFT), "\x1b[1;2C");
+        assert_eq!(kitty(KeyCode::Char('a'), KeyModifiers::NONE), "a");
+        assert_eq!(kitty(KeyCode::Tab, KeyModifiers::NONE), "\t");
     }
 
     /// A non-ASCII character behind Alt was truncated by an `as u8` cast.
@@ -505,7 +657,7 @@ mod tests {
         let mut expected = vec![0x1b];
         expected.extend_from_slice("é".as_bytes());
         assert_eq!(
-            key_to_pty_bytes(KeyCode::Char('é'), KeyModifiers::ALT, false),
+            key_to_pty_bytes(KeyCode::Char('é'), KeyModifiers::ALT, PtyKeyModes::LEGACY),
             Some(expected)
         );
     }

@@ -513,6 +513,14 @@ impl TerminalState {
             // down to `scrollback_lines` itself so the emulator never evicts a
             // row out from under the sync pointer. See SCROLLBACK_DRAIN_MARGIN.
             scrolling_history: scrollback_lines.saturating_add(SCROLLBACK_DRAIN_MARGIN),
+            // Track the kitty keyboard protocol the program inside asks for.
+            // Off (alacritty's default), `CSI > 1 u` and the `CSI ? u` query
+            // are both discarded unread, so fresh could not tell that the
+            // program wanted CSI-u keys and Shift+Enter went out as a bare
+            // `\r` (issue #3124). What fresh re-encodes on the strength of
+            // this is Enter; every other key keeps its legacy sequence, which
+            // a program that speaks the protocol still reads.
+            kitty_keyboard: true,
             ..Default::default()
         };
         let listener = PtyWriteListener::new();
@@ -804,6 +812,7 @@ impl TerminalState {
             // Check flags
             let flags = cell.flags;
             let bold = flags.contains(Flags::BOLD);
+            let dim = flags.contains(Flags::DIM);
             let italic = flags.contains(Flags::ITALIC);
             let underline = flags.contains(Flags::UNDERLINE);
             let inverse = flags.contains(Flags::INVERSE);
@@ -813,6 +822,7 @@ impl TerminalState {
                 fg,
                 bg,
                 bold,
+                dim,
                 italic,
                 underline,
                 inverse,
@@ -944,6 +954,17 @@ impl TerminalState {
     /// send `\x1bOA` (SS3) instead of `\x1b[A` (CSI).
     pub fn is_app_cursor(&self) -> bool {
         self.term.mode().contains(TermMode::APP_CURSOR)
+    }
+
+    /// Check whether the program inside has enabled the kitty keyboard
+    /// protocol (`CSI > flags u`, e.g. Claude Code's `CSI > 1 u`). Any of its
+    /// flags means the program reads CSI-u key encodings, so a modified key
+    /// can be forwarded with its modifier intact instead of being flattened
+    /// onto the legacy sequence (issue #3124).
+    pub fn uses_kitty_keyboard(&self) -> bool {
+        self.term
+            .mode()
+            .intersects(TermMode::KITTY_KEYBOARD_PROTOCOL)
     }
 
     // =========================================================================
@@ -1241,23 +1262,38 @@ impl TerminalState {
             let bg = color_to_rgb(&cell.bg);
             let flags = cell.flags;
             let bold = flags.contains(Flags::BOLD);
+            let dim = flags.contains(Flags::DIM);
             let italic = flags.contains(Flags::ITALIC);
             let underline = flags.contains(Flags::UNDERLINE);
 
             let fg_changed = fg != sgr.fg;
             let bg_changed = bg != sgr.bg;
             let bold_changed = bold != sgr.bold;
+            let dim_changed = dim != sgr.dim;
             let italic_changed = italic != sgr.italic;
             let underline_changed = underline != sgr.underline;
 
-            if fg_changed || bg_changed || bold_changed || italic_changed || underline_changed {
+            if fg_changed
+                || bg_changed
+                || bold_changed
+                || dim_changed
+                || italic_changed
+                || underline_changed
+            {
                 let mut codes: Vec<String> = Vec::new();
 
                 // A turned-off attribute requires a full reset + reapply.
-                if (sgr.bold && !bold) || (sgr.italic && !italic) || (sgr.underline && !underline) {
+                if (sgr.bold && !bold)
+                    || (sgr.dim && !dim)
+                    || (sgr.italic && !italic)
+                    || (sgr.underline && !underline)
+                {
                     codes.push("0".to_string());
                     if bold {
                         codes.push("1".to_string());
+                    }
+                    if dim {
+                        codes.push("2".to_string());
                     }
                     if italic {
                         codes.push("3".to_string());
@@ -1274,6 +1310,9 @@ impl TerminalState {
                 } else {
                     if bold_changed && bold {
                         codes.push("1".to_string());
+                    }
+                    if dim_changed && dim {
+                        codes.push("2".to_string());
                     }
                     if italic_changed && italic {
                         codes.push("3".to_string());
@@ -1304,6 +1343,7 @@ impl TerminalState {
                 sgr.fg = fg;
                 sgr.bg = bg;
                 sgr.bold = bold;
+                sgr.dim = dim;
                 sgr.italic = italic;
                 sgr.underline = underline;
             }
@@ -1352,6 +1392,8 @@ pub struct TerminalCell {
     pub bg: Option<(u8, u8, u8)>,
     /// Bold flag
     pub bold: bool,
+    /// Dim (faint) flag — SGR 2
+    pub dim: bool,
     /// Italic flag
     pub italic: bool,
     /// Underline flag
@@ -1367,6 +1409,7 @@ impl Default for TerminalCell {
             fg: None,
             bg: None,
             bold: false,
+            dim: false,
             italic: false,
             underline: false,
             inverse: false,
@@ -1381,13 +1424,19 @@ struct SgrState {
     fg: Option<(u8, u8, u8)>,
     bg: Option<(u8, u8, u8)>,
     bold: bool,
+    dim: bool,
     italic: bool,
     underline: bool,
 }
 
 impl SgrState {
     fn has_style(&self) -> bool {
-        self.fg.is_some() || self.bg.is_some() || self.bold || self.italic || self.underline
+        self.fg.is_some()
+            || self.bg.is_some()
+            || self.bold
+            || self.dim
+            || self.italic
+            || self.underline
     }
 }
 
@@ -1474,6 +1523,93 @@ mod tests {
         let state = TerminalState::new(80, 24);
         assert_eq!(state.size(), (80, 24));
         assert!(state.is_dirty());
+    }
+
+    /// SGR 2 must survive the grid: alacritty records it as `Flags::DIM`, and
+    /// both readback paths — the live cell grid and the ANSI serialization
+    /// used for scrollback — have to carry it, or dim text renders at full
+    /// brightness and is indistinguishable from normal text (issue #3123).
+    #[test]
+    fn dim_attribute_survives_the_grid() {
+        let mut state = TerminalState::new(40, 4);
+        state.process_output(b"\x1b[2mDIM\x1b[0m|\x1b[1mBOLD\x1b[0m|PLAIN");
+
+        let cells = state.get_line(0);
+        // "DIM" is dim and not bold; "BOLD" is bold and not dim.
+        for (i, c) in "DIM".chars().enumerate() {
+            assert_eq!(cells[i].c, c);
+            assert!(cells[i].dim, "cell {i} lost its dim attribute");
+            assert!(!cells[i].bold);
+        }
+        assert!(!cells[3].dim, "the reset after DIM was not honoured");
+        for (i, c) in "BOLD".chars().enumerate() {
+            let cell = &cells[4 + i];
+            assert_eq!(cell.c, c);
+            assert!(cell.bold);
+            assert!(!cell.dim);
+        }
+
+        // The serialized form emits `ESC[2m` — the same shape bold already
+        // got, which is what made the loss specific to SGR 2.
+        let mut out = Vec::new();
+        state
+            .append_visible_screen(&mut out)
+            .expect("serialization failed");
+        let text = String::from_utf8(out).expect("not utf-8");
+        let first = text.lines().next().unwrap_or_default();
+        assert!(
+            first.contains("\x1b[2m") && first.contains("DIM"),
+            "dim was dropped on serialization: {first:?}"
+        );
+        assert!(first.contains("\x1b[1m"), "bold regressed: {first:?}");
+    }
+
+    /// A child that asks for the kitty keyboard protocol must be visible as
+    /// such, so a modified key can be re-encoded in the CSI-u form it reads
+    /// rather than flattened onto its legacy sequence (issue #3124).
+    #[test]
+    fn kitty_keyboard_protocol_request_is_visible() {
+        let mut state = TerminalState::new(40, 4);
+        assert!(!state.uses_kitty_keyboard());
+
+        // `CSI > 1 u` — push "disambiguate escape codes", what Claude Code
+        // and the issue's `keydump.py` send.
+        state.process_output(b"\x1b[>1u");
+        assert!(state.uses_kitty_keyboard());
+
+        // `CSI < u` pops it again.
+        state.process_output(b"\x1b[<u");
+        assert!(!state.uses_kitty_keyboard());
+    }
+
+    /// The two halves of #3124 joined: what the child asked for reaches the
+    /// key encoder, which is the seam the bug lived in. The encoding was
+    /// already conditional on the protocol, but the emulator discarded the
+    /// child's request, so the condition was never true and Shift+Enter went
+    /// out as a bare `\r`.
+    #[test]
+    fn a_childs_protocol_request_reaches_the_key_encoder() {
+        use crate::services::terminal::pty::{key_to_pty_bytes, PtyKeyModes};
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut state = TerminalState::new(40, 4);
+        let modes = |state: &TerminalState| PtyKeyModes {
+            app_cursor: state.is_app_cursor(),
+            kitty_keyboard: state.uses_kitty_keyboard(),
+        };
+        let shift_enter = |state: &TerminalState| {
+            key_to_pty_bytes(KeyCode::Enter, KeyModifiers::SHIFT, modes(state))
+        };
+
+        // Before the child asks, Shift+Enter has nowhere to put its modifier.
+        assert_eq!(shift_enter(&state), Some(b"\r".to_vec()));
+
+        state.process_output(b"\x1b[>1u");
+        assert_eq!(shift_enter(&state), Some(b"\x1b[13;2u".to_vec()));
+
+        // ...and stops again once the child pops the mode back off.
+        state.process_output(b"\x1b[<u");
+        assert_eq!(shift_enter(&state), Some(b"\r".to_vec()));
     }
 
     #[test]
