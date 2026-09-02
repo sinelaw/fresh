@@ -111,7 +111,7 @@ fn reference(f: Frame, size: Rect) -> Vec<(u64, Rect)> {
     out.push((id(HostRegion::PromptLine), chunks[4]));
 
     // split_file_explorer_area on the content row.
-    match f.explorer.as_ref().map(|e| (e.cols, e.on_left)) {
+    match f.sidebar.as_ref().map(|s| (s.cols, s.on_left)) {
         Some((cols, on_left)) => {
             let (explorer, editor) = if on_left {
                 let c = Layout::default()
@@ -173,12 +173,12 @@ fn combos() -> Vec<Frame> {
                             search_options: search.then(Default::default),
                             prompt_line: prompt,
                             dock,
-                            explorer: explorer.map(|(cols, on_left)| {
-                                fresh::view::shell::file_explorer::Explorer {
+                            sidebar: explorer.map(|(cols, on_left)| {
+                                fresh::view::shell::sidebar::Sidebar::explorer_only(
                                     cols,
                                     on_left,
-                                    ..Default::default()
-                                }
+                                    Default::default(),
+                                )
                             }),
                             ..Frame::default()
                         });
@@ -326,11 +326,11 @@ fn a_frame_layout_is_cheap_enough_to_ask_for_on_demand() {
         status_bar: true,
         prompt_line: true,
         dock: Some(28),
-        explorer: Some(fresh::view::shell::file_explorer::Explorer {
-            cols: 30,
-            on_left: true,
-            ..Default::default()
-        }),
+        sidebar: Some(fresh::view::shell::sidebar::Sidebar::explorer_only(
+            30,
+            true,
+            Default::default(),
+        )),
         ..Frame::default()
     };
     let size = Size::new(200, 60);

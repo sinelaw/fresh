@@ -6940,6 +6940,66 @@ impl JsEditorApi {
             .is_ok())
     }
 
+    /// Mount a declarative widget panel as a **sidebar section**: a titled,
+    /// collapsible section of the file explorer's column, appended after
+    /// the explorer and any section already there. The sidebar is shown if
+    /// it was hidden.
+    ///
+    /// `rows` is the section's requested body height in rows (`0` shares the
+    /// column with the explorer); a divider the user has dragged overrides
+    /// it. `opts.closable` (default `true`) puts a `×` on the header that
+    /// removes the section and fires the panel's `cancel` `widget_event`;
+    /// `opts.startBlurred` (default `false`) mounts without taking keyboard
+    /// focus.
+    ///
+    /// The section is an ordinary panel: `updateFloatingWidget(panelId, spec)`
+    /// replaces its content, `unmountFloatingWidget(panelId)` removes the
+    /// section, `widgetMutate` / `widgetCommand` apply, and its hits arrive
+    /// through the `widget_event` hook with this `panelId` unchanged.
+    /// `floatingPanelControl(panelId, "sidebar_rows", n)` changes the
+    /// requested rows, `"focus"` / `"blur"` work as for the dock, and
+    /// `"dock"` / `"center"` re-anchor the panel out of the sidebar (with
+    /// `"sidebar"` bringing a dock or centered panel in). Mounting an id that
+    /// is already a section replaces its content in place.
+    #[qjs(rename = "mountSidebarSection")]
+    pub fn mount_sidebar_section<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        panel_id: f64,
+        spec_obj: rquickjs::Value<'js>,
+        title: String,
+        rows: f64,
+        #[plugin_api(ts_type = "{ closable?: boolean; startBlurred?: boolean }")]
+        opts: rquickjs::function::Opt<rquickjs::Value<'js>>,
+    ) -> rquickjs::Result<bool> {
+        let json = js_to_json(&ctx, spec_obj);
+        let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("mountSidebarSection: invalid spec: {}", e);
+                return Ok(false);
+            }
+        };
+        let opts = opts
+            .0
+            .map(|v| js_to_json(&ctx, v))
+            .unwrap_or(serde_json::Value::Null);
+        let flag =
+            |name: &str, default: bool| opts.get(name).and_then(|v| v.as_bool()).unwrap_or(default);
+        Ok(self
+            .command_sender
+            .send(PluginCommand::MountSidebarSection {
+                plugin: self.plugin_name.clone(),
+                panel_id: panel_id as u64,
+                spec,
+                title,
+                rows: rows.clamp(0.0, u16::MAX as f64) as u16,
+                closable: flag("closable", true),
+                start_blurred: flag("startBlurred", false),
+            })
+            .is_ok())
+    }
+
     /// Replace the spec of the currently-mounted floating widget panel.
     #[qjs(rename = "updateFloatingWidget")]
     pub fn update_floating_widget<'js>(
@@ -6980,8 +7040,11 @@ impl JsEditorApi {
     /// Control a mounted floating panel's placement / focus without
     /// re-sending its spec. `op`: "dock" (`arg` = width in columns),
     /// "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-    /// centered panel cover the whole frame over the dock). See
-    /// `PluginCommand::FloatingPanelControl`.
+    /// centered panel cover the whole frame over the dock), "sidebar"
+    /// (`arg` = requested rows; re-anchors the panel as a sidebar section
+    /// under the file explorer — "dock" / "center" re-anchor it back out),
+    /// "sidebar_rows" (`arg` = requested rows for a section; a divider the
+    /// user has dragged wins). See `PluginCommand::FloatingPanelControl`.
     #[qjs(rename = "floatingPanelControl")]
     pub fn floating_panel_control(&self, panel_id: f64, op: String, arg: f64) -> bool {
         self.command_sender

@@ -96,6 +96,9 @@ impl Editor {
     /// terminal keeps its per-split live/scrollback state, so re-focusing it
     /// later restores it.
     pub(super) fn take_focus_for_file_explorer(&mut self) {
+        // Exactly one chrome region wears the accent: a focused plugin
+        // section gives the keyboard up to the tree.
+        self.blur_sidebar_panels();
         let win = self.active_window_mut();
         // Stop routing keys to the PTY while the explorer holds focus:
         // `focused_terminal_live()` is false in any non-editor key context.

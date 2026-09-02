@@ -12,6 +12,18 @@ pub(crate) struct BottomRowFlags {
     pub prompt_row_visible: bool,
 }
 
+/// The explorer as the frame builds it: its content and the chrome its
+/// section wears, before the column it sits in has been assembled.
+struct ExplorerSection {
+    kind: crate::view::shell::file_explorer::Explorer,
+    title: String,
+    title_theme: String,
+    border_theme: String,
+    close_theme: String,
+    rows: u16,
+    focused: bool,
+}
+
 /// How far the `lines_changed` walk will go to close a run of non-blank lines
 /// for a composing buffer, in either direction.
 ///
@@ -480,10 +492,15 @@ impl Editor {
         // Committed at the very end of this draw, with the editor's caret, so
         // overlays painted after the sidebar can suppress it instead of having
         // it blink through them.
-        let explorer_hardware_cursor = shell.explorer.as_ref().and_then(|e| {
-            let area = region(HostRegion::Explorer);
-            Some((area.x + 1, area.y + 1 + e.caret_row? as u16))
-        });
+        let explorer_hardware_cursor =
+            shell
+                .sidebar
+                .as_ref()
+                .and_then(|s| s.explorer())
+                .and_then(|e| {
+                    let area = region(HostRegion::Explorer);
+                    Some((area.x + 1, area.y + 1 + e.caret_row? as u16))
+                });
 
         // Note: Tabs are now rendered within each split by SplitRenderer
 
@@ -3535,16 +3552,16 @@ impl Editor {
     /// `padding`, `trailing_slot_screen_bounds`: all gone, replaced by a flex
     /// spacer with a floor.
     ///
-    /// `height` is the panel's, which the caller derives from the same rule
+    /// `height` is the column's, which the caller derives from the same rule
     /// `Frame::fixed_rows` states — the viewport's row count is model state
     /// (`set_viewport_height` drives scrolling and the web projection), so it
     /// has to be known before the description exists.
-    fn explorer_content(
+    fn sidebar_content(
         &mut self,
-        chrome_width: u16,
+        chrome_area: ratatui::layout::Rect,
         height: u16,
-    ) -> Option<crate::view::shell::file_explorer::Explorer> {
-        use crate::view::shell::file_explorer as fe;
+    ) -> Option<crate::view::shell::sidebar::Sidebar> {
+        use crate::view::shell::sidebar::{Section, SectionKind, Sidebar};
         let should_show = self.file_explorer_visible()
             && (self.file_explorer().is_some()
                 || self.active_window().file_explorer_sync_in_progress);
@@ -3554,11 +3571,96 @@ impl Editor {
         let cols = self
             .active_window()
             .file_explorer_width
-            .to_cols(chrome_width);
+            .to_cols(chrome_area.width);
         let on_left = matches!(
             self.active_window().file_explorer_side,
             FileExplorerSide::Left
         );
+        // Where the column starts, for the blur observer: beside the dock
+        // on the left, or against the frame's edge on the right.
+        let x0 = if on_left {
+            chrome_area.x
+        } else {
+            (chrome_area.x + chrome_area.width).saturating_sub(cols)
+        };
+        let grip_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerBorder));
+        // Squeeze what pressure must and size the rest — app logic keyed on
+        // the column's height, resolved here for the reason
+        // `Frame::resolve_dock` is (see `Editor::resolve_sidebar_sections`).
+        // With one section the explorer's body is the column less its two
+        // border rows, as the panel has always reserved.
+        let rows = self.resolve_sidebar_sections(height);
+        let plan: Vec<(crate::app::sidebar::SidebarSectionKind, bool)> = self
+            .sidebar_sections
+            .iter()
+            .map(|s| (s.kind.clone(), s.collapsed))
+            .collect();
+        let mut sections = Vec::with_capacity(plan.len());
+        for (i, (kind, collapsed)) in plan.into_iter().enumerate() {
+            use crate::app::sidebar::SidebarSectionKind;
+            let rows = rows.get(i).copied().unwrap_or(0);
+            let section = match kind {
+                SidebarSectionKind::Explorer => {
+                    let e = self.explorer_section(rows);
+                    Section {
+                        kind: SectionKind::Explorer(e.kind),
+                        title: e.title,
+                        title_theme: e.title_theme,
+                        border_theme: e.border_theme,
+                        close_theme: e.close_theme,
+                        rows,
+                        collapsed,
+                        focused: e.focused,
+                        closable: true,
+                    }
+                }
+                SidebarSectionKind::Panel {
+                    title, closable, ..
+                } => {
+                    // The same call the dock makes, with the section's slot:
+                    // `None` is a section whose plugin has not mounted it.
+                    let slot = crate::app::PanelSlot::Sidebar(i);
+                    let interior = self.panel_interior(slot);
+                    let focused = interior.is_some() && self.panel(slot).is_some_and(|p| p.focused);
+                    let (title_theme, border_theme) =
+                        crate::view::shell::file_explorer::chrome_themes(false, focused);
+                    let close_hovered = matches!(
+                        self.shell_hover,
+                        Some(HoverTarget::SidebarSectionClose(h)) if h == i
+                    );
+                    Section {
+                        kind: match interior {
+                            Some(p) => SectionKind::Panel(p),
+                            None => SectionKind::Unavailable(
+                                fresh_i18n::t!("explorer.section_unavailable").to_string(),
+                            ),
+                        },
+                        title: format!(" {} ", title.trim()),
+                        title_theme,
+                        border_theme,
+                        close_theme: crate::view::shell::file_explorer::close_theme(close_hovered),
+                        rows,
+                        collapsed,
+                        focused,
+                        closable,
+                    }
+                }
+            };
+            sections.push(section);
+        }
+        Some(Sidebar {
+            cols,
+            on_left,
+            grip_hovered,
+            x0,
+            sections,
+        })
+    }
+
+    /// The explorer as a section: its chrome, and its rows for a body
+    /// `rows` tall.
+    fn explorer_section(&mut self, rows: u16) -> ExplorerSection {
+        use crate::view::shell::file_explorer as fe;
         // The explorer reads as focused only when it actually owns the
         // keyboard — not when a focused orchestrator dock has stolen it out
         // from under the (still-FileExplorer) window context.
@@ -3571,21 +3673,18 @@ impl Editor {
             .unwrap_or(false);
         let (title_theme, border_theme) = fe::chrome_themes(disconnected, focused);
         let close_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerCloseButton));
-        let grip_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerBorder));
         let title = self.explorer_title(remote.as_deref());
-        let body = self.explorer_body(height, focused);
+        let body = self.explorer_body(rows, focused);
         let caret_row = focused.then(|| self.explorer_caret_row()).flatten();
-        Some(fe::Explorer {
-            cols,
-            on_left,
+        ExplorerSection {
+            kind: fe::Explorer { body, caret_row },
             title,
             title_theme,
             border_theme,
             close_theme: fe::close_theme(close_hovered),
-            body,
-            caret_row,
-            grip_hovered,
-        })
+            rows,
+            focused,
+        }
     }
 
     /// The panel's title: the search query while an incremental search is
@@ -3639,12 +3738,12 @@ impl Editor {
     /// anything paints.
     fn explorer_body(
         &mut self,
-        height: u16,
+        rows: u16,
         focused: bool,
     ) -> crate::view::shell::file_explorer::Body {
         use crate::view::shell::file_explorer as fe;
-        // Borders top and bottom, as the panel has always reserved.
-        let viewport_rows = height.saturating_sub(2) as usize;
+        // The body's rows: the section's, borders already taken off.
+        let viewport_rows = rows as usize;
         if let Some(view) = self.file_explorer_mut() {
             view.set_viewport_height(viewport_rows);
         }
@@ -4282,7 +4381,7 @@ impl Editor {
             prompt_row_visible,
         );
         let explorer_h = chrome_area.height.saturating_sub(fixed);
-        let explorer = self.explorer_content(chrome_area.width, explorer_h);
+        let sidebar = self.sidebar_content(chrome_area, explorer_h);
         // The bar's elements, measured from the chrome column it will occupy.
         let status_bar_items = status_row
             .then(|| self.status_bar_description(chrome_area.width))
@@ -4376,7 +4475,7 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|f| f.focused),
             dock: dock_area.map(|d| d.width),
-            explorer,
+            sidebar,
             menu: self.open_context_menu_for_shell(),
             menu_keys,
             menu_bar_items: menu_layout
@@ -8293,8 +8392,10 @@ impl Editor {
                     .unwrap_or(0),
                 content_rows,
             },
-            // The dock panel's frame is the dock column's, not this box's.
-            super::PanelPlacement::LeftDock { .. } => return None,
+            // The dock panel's frame is the dock column's, not this box's —
+            // and a sidebar section's is its column's.
+            super::PanelPlacement::LeftDock { .. }
+            | super::PanelPlacement::SidebarSection { .. } => return None,
         };
         Some(Panel {
             // **`None` means there is no panel mounted in the slot**, and

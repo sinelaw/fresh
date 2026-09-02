@@ -1985,6 +1985,19 @@ impl Editor {
                 );
             }
 
+            PluginCommand::MountSidebarSection {
+                plugin,
+                panel_id,
+                spec,
+                title,
+                rows,
+                closable,
+                start_blurred,
+            } => {
+                let key = crate::widgets::PanelKey::new(plugin, panel_id);
+                self.handle_mount_sidebar_section(key, spec, title, rows, closable, start_blurred);
+            }
+
             PluginCommand::UpdateFloatingWidget {
                 plugin,
                 panel_id,
@@ -5665,12 +5678,20 @@ impl Editor {
         } else {
             super::PanelPlacement::Centered
         };
-        if let Some(existing) = self.panel_opt_mut(slot).take() {
+        if let Some(existing) = self.panel_opt_mut(slot).and_then(|o| o.take()) {
             if existing.panel_key != panel_key {
                 let _ = self.widget_registry.unmount(&existing.panel_key);
             }
         }
-        *self.panel_opt_mut(slot) = Some(FloatingWidgetState {
+        // The same identity mounted as a sidebar section moves here: a
+        // panel is in one slot at a time.
+        if let Some(crate::app::PanelSlot::Sidebar(i)) = self.slot_of_panel(&panel_key) {
+            self.take_panel_from_sidebar(i);
+        }
+        let Some(target) = self.panel_opt_mut(slot) else {
+            return;
+        };
+        *target = Some(FloatingWidgetState {
             panel_key: panel_key.clone(),
             width_pct,
             height_pct,
@@ -5755,6 +5776,104 @@ impl Editor {
         if as_dock {
             self.relayout();
         }
+    }
+
+    /// `MountSidebarSection`: the dock mount with a different placement.
+    ///
+    /// The panel state is the same `FloatingWidgetState`; what differs is
+    /// where it lives (`Editor::sidebar_sections`, see `app::sidebar`) and
+    /// the sentinel buffer its registry entry names (`PanelSlot::Sidebar`).
+    fn handle_mount_sidebar_section(
+        &mut self,
+        panel_key: crate::widgets::PanelKey,
+        spec: fresh_core::api::WidgetSpec,
+        title: String,
+        rows: u16,
+        closable: bool,
+        start_blurred: bool,
+    ) {
+        // One slot per identity: a dock or centred panel with this key
+        // moves into the section.
+        let existing = match self.slot_of_panel(&panel_key) {
+            Some(super::PanelSlot::Sidebar(i)) => self.take_panel_from_sidebar(i),
+            Some(slot) => self.panel_opt_mut(slot).and_then(|o| o.take()),
+            None => None,
+        };
+        let panel = existing.unwrap_or_else(|| FloatingWidgetState {
+            panel_key: panel_key.clone(),
+            width_pct: 100,
+            height_pct: 100,
+            placement: super::PanelPlacement::SidebarSection { rows },
+            focused: false,
+            entries: Vec::new(),
+            last_inner_rect: None,
+            scrollbar_zone_hovered: false,
+            scrollbar_flash_until: None,
+            fullscreen: false,
+            focus_marker: false,
+            title: None,
+            closable: false,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+        });
+        let index = self.place_panel_in_sidebar(panel, title, rows, closable);
+        let slot = super::PanelSlot::Sidebar(index);
+        if let Some(p) = self.panel_mut(slot) {
+            p.focused = false;
+        }
+        let prev = std::collections::HashMap::new();
+        let prev_painted = std::collections::HashMap::new();
+        let prev_focus = String::new();
+        let panel_width = self.floating_panel_inner_width(slot);
+        let out = {
+            let theme_guard = self.theme.read().unwrap();
+            super::widget_runtime::render_floating_spec(
+                false,
+                &spec,
+                &prev,
+                &prev_painted,
+                &prev_focus,
+                panel_width,
+                self.floating_panel_inner_height(slot),
+                "",
+                "",
+                "",
+                Some(crate::widgets::MarkdownCtx {
+                    theme: &theme_guard,
+                    grammars: Some(self.grammar_registry.as_ref()),
+                }),
+                // As the dock: keep the historical focus seeding.
+                true,
+            )
+        };
+        let entries = out.entries;
+        self.widget_registry.mount(
+            panel_key.clone(),
+            slot.buffer_id(),
+            spec,
+            out.hits,
+            out.instance_states,
+            out.focus_key,
+            out.tabbable,
+            out.painted,
+            out.boxes,
+            // As the dock: `render_floating_spec` seeds focus
+            // unconditionally, so record what was rendered under.
+            true,
+        );
+        if let Some(fwp) = self.panel_mut(slot) {
+            fwp.entries = entries;
+        }
+        if !start_blurred {
+            self.focus_sidebar_section(index);
+        }
+        tracing::debug!(
+            "Mounted sidebar section {} for panel {} ({} rows)",
+            index,
+            panel_key,
+            rows
+        );
     }
 
     fn handle_update_floating_widget(
@@ -5856,7 +5975,13 @@ impl Editor {
             );
             return;
         };
-        *self.panel_opt_mut(slot) = None;
+        // A section goes with its panel: an unmount removes the section,
+        // header and all, rather than leaving a placeholder.
+        if let super::PanelSlot::Sidebar(i) = slot {
+            self.take_panel_from_sidebar(i);
+        } else if let Some(o) = self.panel_opt_mut(slot) {
+            *o = None;
+        }
         let _ = self.widget_registry.unmount(panel_key);
         // Hiding the left dock frees its full-height column. The next
         // frame's `compute_dock_split` already lays the chrome back out
@@ -5908,6 +6033,77 @@ impl Editor {
             self.blur_floating_panel(slot);
             return;
         }
+        // **The ops that move a panel between slots**, resolved before the
+        // in-place ones below: a section is a different slot, so "sidebar"
+        // on a dock or centred panel and "dock" / "center" on a section each
+        // change which `Option` holds the state.
+        let slot = match (op, slot) {
+            ("sidebar", super::PanelSlot::Sidebar(_)) => slot,
+            ("sidebar", from) => {
+                let Some(panel) = self.panel_opt_mut(from).and_then(|o| o.take()) else {
+                    return;
+                };
+                let title = panel
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| panel.panel_key.plugin.clone());
+                let closable = panel.closable;
+                let index =
+                    self.place_panel_in_sidebar(panel, title, arg.max(0.0) as u16, closable);
+                if from == super::PanelSlot::Dock {
+                    self.request_full_redraw();
+                }
+                self.relayout();
+                self.focus_sidebar_section(index);
+                return;
+            }
+            // A section's keyboard has invariants the raw flag does not keep
+            // — the explorer's context and every other section give it up
+            // first, so exactly one chrome region wears the accent (§4.1) —
+            // and `focus_sidebar_section` is where they live. It also fires
+            // the `focus` widget_event the plugin tracks its focus by, which
+            // a bare `focused = true` never would.
+            ("focus", super::PanelSlot::Sidebar(i)) => {
+                self.focus_sidebar_section(i);
+                return;
+            }
+            ("sidebar_rows", super::PanelSlot::Sidebar(i)) => {
+                if let Some(sec) = self.sidebar_sections.get_mut(i) {
+                    let rows = arg.max(0.0) as u16;
+                    if let Some(p) = sec.panel.as_mut() {
+                        p.placement = super::PanelPlacement::SidebarSection { rows };
+                    }
+                    // The user's drag wins over the plugin's request — the
+                    // dock's `dock_width` rule.
+                    if !sec.dragged {
+                        sec.rows = rows;
+                    }
+                }
+                return;
+            }
+            ("sidebar_rows", _) => return,
+            ("dock" | "center", super::PanelSlot::Sidebar(i)) => {
+                let Some(panel) = self.take_panel_from_sidebar(i) else {
+                    return;
+                };
+                let to = if op == "dock" {
+                    super::PanelSlot::Dock
+                } else {
+                    super::PanelSlot::Floating
+                };
+                if let Some(existing) = self.panel_opt_mut(to).and_then(|o| o.take()) {
+                    let _ = self.widget_registry.unmount(&existing.panel_key);
+                }
+                if let Some(st) = self.widget_registry.get_mut(&panel.panel_key) {
+                    st.buffer_id = to.buffer_id();
+                }
+                if let Some(o) = self.panel_opt_mut(to) {
+                    *o = Some(panel);
+                }
+                to
+            }
+            _ => slot,
+        };
         // Clamp the dock width relative to the terminal so it can never
         // swallow the whole chrome. Read before the &mut borrow below.
         // A user-dragged width (`dock_width`) overrides the plugin's

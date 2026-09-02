@@ -25,14 +25,11 @@
 //! windowing is a model concern (which ancestors are sticky, what the search
 //! filter admits), not a layout one.
 //!
-//! **The drag itself.** The panel's rightmost column is a native grip — it
-//! answers its own press — but what that press starts is still the legacy
-//! drag: `mouse_state.dragging_file_explorer`, motion routed by
-//! `chrome::pointer_grab`, and `handle_file_explorer_border_drag` doing the
-//! arithmetic. Pointer capture replaces all three, and that is its own change.
-//! The grip is here rather than on a chrome box because it *can* be: an
-//! overlay strip whose spacers pass presses through is exactly what
-//! `pointer_mode` on an ordinary container made expressible.
+//! **The chrome.** The border, the title strip and the width grip are the
+//! sidebar column's (`super::sidebar`), because the explorer is one section
+//! of that column and the border row above its rows is a section header. What
+//! is here is the *content*: the rows, the caret, and the union box that
+//! answers a press no row took.
 //!
 //! # Colour
 //!
@@ -46,8 +43,7 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, layout_reader, row, stack, text, text_runs, Event, GestureKind, Key, LayoutInfo,
-    Node, PointerMode, Run, Sizing,
+    col, gesture, row, stack, text, text_runs, Event, GestureKind, Key, Node, Run, Sizing,
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -108,24 +104,12 @@ impl Default for Body {
     }
 }
 
-/// The sidebar.
+/// The explorer's content: what the sidebar's first section holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Explorer {
-    /// Width in columns, already resolved against the frame.
-    pub cols: u16,
-    pub on_left: bool,
-    /// `" File Explorer (Ctrl+E) "`, `" [host] "`, or `" /query "` while the
-    /// incremental search is open.
-    pub title: String,
-    pub title_theme: String,
-    pub border_theme: String,
-    pub close_theme: String,
     pub body: Body,
     /// The viewport row the caret sits on, when the panel owns the keyboard.
     pub caret_row: Option<usize>,
-    /// Whether the pointer is on the resize grip. The panel draws its own
-    /// highlight from this; see [`grip_ink`].
-    pub grip_hovered: bool,
 }
 
 impl Explorer {
@@ -144,14 +128,6 @@ pub fn slot_key(index: usize) -> Key {
     Key::Pair("explorer_slot".into(), index as u64)
 }
 
-pub fn close_key() -> Key {
-    Key::Str("explorer_close".into())
-}
-
-pub fn grip_key() -> Key {
-    Key::Str("explorer_grip".into())
-}
-
 fn hover_msg(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
     Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::Hover(t.clone()))))
 }
@@ -162,129 +138,38 @@ fn runs_of(runs: &Runs) -> Vec<Run> {
         .collect()
 }
 
-/// The sidebar as a description.
+/// The rows as a description: one per visible tree node, or the loading
+/// placeholder while the tree is still being built.
 ///
-/// A `stack` of two: the bordered panel with its rows, and the title strip that
-/// sits *on* the top border line — which is where a ratatui `Block` draws its
-/// title too. The strip is one cell high, so it covers the border row and
-/// nothing else; the rows below it stay reachable by the pointer.
 /// **Memoised on the explorer's state.** The tree is rebuilt every frame
-/// and changes only when the listing, the cursor, a hover or the width
-/// does. `Explorer` is `PartialEq` and is the whole of what this reads.
-pub fn explorer(e: &Explorer) -> Node<UiMsg> {
-    fresh_ui::memo(e.clone(), build_explorer)
+/// and changes only when the listing, the cursor or a hover does.
+/// `Explorer` is `PartialEq` and is the whole of what this reads.
+pub fn rows(e: &Explorer) -> Node<UiMsg> {
+    fresh_ui::memo(e.clone(), build_rows)
 }
 
-fn build_explorer(e: &Explorer) -> Node<UiMsg> {
-    stack().children([panel(e), overlay(e)])
-}
-
-/// Everything drawn *on* the panel's border: the title, the close button and
-/// the resize grip.
-///
-/// It covers the whole panel, so every part of it that is not a control says
-/// it is not a pointer target — otherwise the strip swallows every click on
-/// the rows beneath. That is one attribute per container rather than a
-/// rectangle each control has to be hit-tested against by hand.
-fn overlay(e: &Explorer) -> Node<UiMsg> {
-    col()
-        .pointer_mode(PointerMode::Transparent)
-        .children([title_strip(e), grip_strip(e)])
-}
-
-/// The one-column drag handle on the panel's right edge, below the title line.
-///
-/// Below, because the title line's rightmost three cells are the close
-/// button's — which is the precedence the old hover walk had (it tested the
-/// close button first), and the opposite of the one its *click* walk had (it
-/// tested the border first). The two disagreed: hovering the top-right corner
-/// lit the close button while clicking it started a resize. They agree now,
-/// and they agree because there is one description instead of two walks.
-/// What the grip paints: nothing at rest, and its own run of `│` when hovered.
-///
-/// **A node that repaints the column it sits on has to know how tall it is**,
-/// and a description is written before layout runs. That is what
-/// `layout_reader` is for: its builder runs *during* layout with the
-/// constraints in hand, so the run is as long as the grip turns out to be. The
-/// description never states a height.
-///
-/// Before this, the highlight was a one-cell `Paragraph` per row in a post-pass
-/// over the folded buffer, walking `0..explorer_area.height` and re-deriving
-/// the column as `area.x + area.width - 1` — the panel's width arriving from
-/// app state to recompute a coordinate the tree had already placed.
-///
-/// At rest it paints nothing at all rather than painting the border's `│` a
-/// second time: the panel's own `border()` already draws that column, and two
-/// nodes painting one cell is how they drift apart.
-fn grip_ink(hovered: bool) -> Node<UiMsg> {
-    if !hovered {
-        return row();
-    }
-    let ink = pair("ui.split_separator_hover_fg", "editor.bg");
-    layout_reader(move |c: LayoutInfo| {
-        col().children(
-            (0..c.constraints.max_h).map(|_| text("│").theme(ink.clone()).h(Sizing::Cells(1))),
-        )
-    })
-}
-
-fn grip_strip(e: &Explorer) -> Node<UiMsg> {
-    let grip = super::grip::draggable(
-        super::msg::Grip::ExplorerWidth,
-        grip_ink(e.grip_hovered),
-        Rc::new(|e: &Event| {
-            Some(UiMsg::Ui(UiFact::ExplorerResizeBegin {
-                x: e.pos.x.max(0) as u16,
-                y: e.pos.y.max(0) as u16,
-            }))
-        }),
-    )
-    // On the outside, on the gesture node: an unconstrained one would cover
-    // the whole panel and take every press in it.
-    .w(Sizing::Cells(1))
-    .key(grip_key())
-    .on_enter(hover_msg(Some(HoverTarget::FileExplorerBorder)))
-    .on_leave(hover_msg(None));
-    // A one-cell tail below the strip, so the grip spans the panel's *wall* and
-    // stops above `┘`. The corners belong to the frame that drew them: the old
-    // post-pass walked `0..explorer_area.height` and recoloured both of them,
-    // so hovering the grip turned `┐` and `┘` into `│`. Settled here rather
-    // than reproduced, like the two disagreements the last commit settled.
-    col().pointer_mode(PointerMode::Transparent).children([
-        row()
-            .flex(1)
-            .pointer_mode(PointerMode::Transparent)
-            .children([row().flex(1).pointer_mode(PointerMode::Transparent), grip]),
-        row()
-            .h(Sizing::Cells(1))
-            .pointer_mode(PointerMode::Transparent),
-    ])
-}
-
-fn panel(e: &Explorer) -> Node<UiMsg> {
-    let mut b = col()
-        .border()
-        // Border ink over the panel's ground: the fill draws spaces, so only
-        // this key's background reaches the eye inside the box.
-        .theme(e.border_theme.clone());
-    b = match &e.body {
-        Body::Loading(text_) => b.child(
+fn build_rows(e: &Explorer) -> Node<UiMsg> {
+    match &e.body {
+        Body::Loading(text_) => col().child(
             text(text_.clone())
                 .theme(pair("editor.line_number_fg", "editor.bg"))
                 .h(Sizing::Cells(1)),
         ),
-        Body::Rows(rows) => b.children(rows.iter().map(|r| node_row(e, r))),
-    };
-    // **The union box.** A right-press anywhere on the panel opens the menu,
-    // which is what the component did ("the union box spans the whole
-    // explorer") and what binding the gesture to rows alone lost: a click on
-    // the empty space below the last file answered nothing, so every test that
-    // right-clicks a row the fixture does not have saw no menu at all.
-    //
-    // Rows `stop()` their own right-press, so this fires only where no row
-    // did. The title row is excluded app-side against the panel's rectangle,
-    // exactly as the component excluded it with `ev.row <= explorer_area.y`.
-    gesture(b)
+        Body::Rows(rows) => col().children(rows.iter().map(|r| node_row(e, r))),
+    }
+}
+
+/// **The union box.** A right-press anywhere on the panel opens the menu,
+/// which is what the component did ("the union box spans the whole
+/// explorer") and what binding the gesture to rows alone lost: a click on
+/// the empty space below the last file answered nothing, so every test that
+/// right-clicks a row the fixture does not have saw no menu at all.
+///
+/// Rows `stop()` their own right-press, so this fires only where no row
+/// did. The title row is excluded app-side against the panel's rectangle,
+/// exactly as the component excluded it with `ev.row <= explorer_area.y`.
+pub fn union_box(n: Node<UiMsg>) -> Node<UiMsg> {
+    gesture(n)
         .on(
             GestureKind::Press,
             Rc::new(|ev: &Event| {
@@ -437,56 +322,6 @@ fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
         )
 }
 
-/// The title line: the title text at the left of the top border, and the close
-/// button's three cells at its right.
-fn title_strip(e: &Explorer) -> Node<UiMsg> {
-    // Three cells of *hit area*, one cell of paint. The old close button was a
-    // one-cell `Paragraph` at `area.width - 3` whose hit test claimed three
-    // columns, and the two cells beside it kept showing the border — including
-    // the `┐` corner. A themed node three cells wide fills all three, which
-    // erases the corner; the theme goes on the glyph and the region around it
-    // stays transparent.
-    let close = gesture(
-        row()
-            .w(Sizing::Cells(3))
-            .child(text("×").theme(e.close_theme.clone())),
-    )
-    .key(close_key())
-    .on(
-        GestureKind::Press,
-        Rc::new(|ev: &Event| {
-            if ev.button != fresh_ui::MouseButton::Left {
-                return None;
-            }
-            ev.stop();
-            Some(UiMsg::Ui(UiFact::ExplorerClose))
-        }),
-    )
-    .on_enter(hover_msg(Some(HoverTarget::FileExplorerCloseButton)))
-    .on_leave(hover_msg(None));
-    let cells: Vec<Node<UiMsg>> = vec![
-        // One cell of border before the title, which is where ratatui's
-        // `Block` starts a left-aligned title.
-        row()
-            .w(Sizing::Cells(1))
-            .pointer_mode(PointerMode::Transparent),
-        text(e.title.clone())
-            .theme(e.title_theme.clone())
-            // The title is decoration. Pressing it used to select the panel's
-            // first row — `row.saturating_sub(area.y + 1)` clamps to 0 on the
-            // title line — while the right-click and double-click paths both
-            // guarded the row out explicitly. Saying it is not a target makes
-            // all three agree.
-            .pointer_mode(PointerMode::Transparent),
-        row().flex(1).pointer_mode(PointerMode::Transparent),
-        close,
-    ];
-    row()
-        .h(Sizing::Cells(1))
-        .pointer_mode(PointerMode::Transparent)
-        .children(cells)
-}
-
 // -- the styles, as names ----------------------------------------------------
 
 /// Title and border for the panel chrome.
@@ -578,6 +413,7 @@ mod tests {
     use super::*;
     use crate::view::shell::fold::{fold_native, Band};
     use crate::view::shell::frame::{frame_tree, Frame};
+    use crate::view::shell::sidebar::{close_key, grip_key, Sidebar};
     use fresh_ui::{Input, Mods, MouseButton, Point, Size, Ui};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -599,19 +435,18 @@ mod tests {
         }
     }
 
-    fn panel_of(rows: Vec<Row>, cols: u16) -> Explorer {
-        let (title_theme, border_theme) = chrome_themes(false, false);
-        Explorer {
+    /// The explorer alone in its column, in the shape the frame builds.
+    fn panel_of(rows: Vec<Row>, cols: u16) -> Sidebar {
+        let mut s = Sidebar::explorer_only(
             cols,
-            on_left: true,
-            title: " Files ".to_string(),
-            title_theme,
-            border_theme,
-            close_theme: close_theme(false),
-            body: Body::Rows(rows),
-            caret_row: None,
-            grip_hovered: false,
-        }
+            true,
+            Explorer {
+                body: Body::Rows(rows),
+                caret_row: None,
+            },
+        );
+        s.sections[0].title = " Files ".to_string();
+        s
     }
 
     /// **A right-press below the last row still opens the menu.**
@@ -677,13 +512,13 @@ mod tests {
         );
     }
 
-    fn laid_out(e: Explorer, w: u16, h: u16) -> Ui<UiMsg> {
+    fn laid_out(s: Sidebar, w: u16, h: u16) -> Ui<UiMsg> {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
             frame_tree(Frame {
                 menu_bar: false,
                 status_bar: false,
-                explorer: Some(e),
+                sidebar: Some(s),
                 ..Frame::default()
             }),
             Size::new(w, h),
@@ -691,7 +526,7 @@ mod tests {
         ui
     }
 
-    fn lines(e: Explorer, w: u16, h: u16) -> Vec<String> {
+    fn lines(e: Sidebar, w: u16, h: u16) -> Vec<String> {
         let ui = laid_out(e, w, h);
         let spec = ui.spec().clone();
         let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
@@ -826,7 +661,7 @@ mod tests {
     #[test]
     fn the_overlay_absorbs_only_its_controls() {
         let mut ui = laid_out(panel_of(vec![row_of(0, "a", None)], 20), 20, 5);
-        let close = ui.rect_of(ui.find_by_key(&close_key()).expect("close"));
+        let close = ui.rect_of(ui.find_by_key(&close_key(0)).expect("close"));
         let got = ui.dispatch(Input::press(
             Point::new(close.x, close.y),
             MouseButton::Left,
@@ -937,26 +772,47 @@ mod tests {
         assert_eq!(col(4), '┘', "and so does the bottom one");
     }
 
-    /// At rest it paints nothing, rather than painting the border's `│` a
+    /// At rest it paints nothing, rather than painting the wall's `│` a
     /// second time — but it still claims its column for input.
+    ///
+    /// The wall itself is painted: it is the section's, drawn as text now
+    /// that the column's border is assembled from shared rows rather than one
+    /// `.border()` box. So what this asserts is *whose* the glyphs in the
+    /// grip's column are — every one of them belongs to a node outside the
+    /// grip's subtree.
     #[test]
     fn the_resting_grip_leaves_the_border_to_the_border() {
         let e = panel_of(vec![row_of(0, "src", None)], 12);
         assert!(!e.grip_hovered, "the default");
         let ui = laid_out(e, 12, 4);
+        let grip_el = ui.find_by_key(&grip_key()).expect("the grip");
         let grip = rect_of(&ui, &grip_key(), Rect::new(0, 0, 12, 4)).expect("the grip");
         assert_eq!(
             (grip.x, grip.width),
             (11, 1),
             "it still claims its column for input"
         );
-        let painted = ui
+        let inside_grip = |mut id: fresh_ui::ElementId| loop {
+            if id == grip_el {
+                return true;
+            }
+            match ui.parent(id) {
+                Some(p) => id = p,
+                None => return false,
+            }
+        };
+        let in_column: Vec<_> = ui
             .spec()
             .items
             .iter()
             .filter(|i| matches!(&i.draw, fresh_ui::Draw::Lines(_)))
-            .any(|i| i.rect.x == 11 && i.rect.y > 0 && i.rect.y < 3);
-        assert!(!painted, "the resting grip paints nothing of its own");
+            .filter(|i| i.rect.x == 11 && i.rect.y > 0 && i.rect.y < 3)
+            .collect();
+        assert!(!in_column.is_empty(), "the wall is painted by someone");
+        assert!(
+            in_column.iter().all(|i| !inside_grip(i.id)),
+            "the resting grip paints nothing of its own"
+        );
     }
 
     /// Hovering changes the grip's ink, not its glyphs — the wall was already

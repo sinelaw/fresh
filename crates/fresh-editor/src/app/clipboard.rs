@@ -1200,6 +1200,8 @@ impl Editor {
             super::PanelSlot::Floating
         } else if self.dock.as_ref().is_some_and(|d| d.focused) {
             super::PanelSlot::Dock
+        } else if let Some(i) = self.focused_sidebar_panel() {
+            super::PanelSlot::Sidebar(i)
         } else {
             return false;
         };

@@ -46,6 +46,20 @@ impl ChromeComponent for Dock {
                 },
             ));
         }
+        // A focused sidebar plugin section is the dock's case with a
+        // different slot (`app::sidebar`): the same non-modal layer, the same
+        // context for the keys its widgets decline.
+        if ed.focused_sidebar_panel().is_some() {
+            out.push((
+                super::layer_rank::DOCK,
+                Layer {
+                    kind: LayerKind::Dock,
+                    owns_keyboard: true,
+                    key_context: Some(crate::input::keybindings::KeyContext::Dock),
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
     }
 }
 

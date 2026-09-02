@@ -714,6 +714,8 @@ impl Editor {
             dock: None,
             dock_width: None,
             dock_resizing: false,
+            sidebar_sections: vec![sidebar::SidebarSection::explorer()],
+            sidebar_drag: None,
             widget_text_drag: None,
             split_widget_scrollbar_tracks: Vec::new(),
             split_widget_scrollbar_mouse: Default::default(),
