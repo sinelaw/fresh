@@ -260,11 +260,33 @@ impl Editor {
             .action_to_events(Action::InsertChar(c))
         {
             if events.len() > 1 {
-                // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²))
                 let description = format!("Insert '{}'", c);
-                if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description.clone())
-                {
-                    self.active_event_log_mut().append(bulk_edit);
+                // Does this keystroke change the text at all? Typing a closing
+                // delimiter that is already there doesn't: the skip-over path
+                // emits *only* MoveCursor events (see `handle_skip_over`), and
+                // the bulk-edit path refuses an event list with no edits in
+                // it. So those moves have to go through a `Batch` instead, or
+                // the keystroke is silently dropped for every cursor and the
+                // next character lands inside the parens (issue #3125).
+                // `apply_action_as_events` already makes the same split.
+                let has_buffer_mods = events
+                    .iter()
+                    .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
+                if has_buffer_mods {
+                    // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²))
+                    if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
+                        self.active_event_log_mut().append(bulk_edit);
+                    }
+                } else {
+                    // Multi-cursor skip-over: no text changed, so one Batch
+                    // keeps every cursor's move atomic for undo, the way the
+                    // bulk edit would have.
+                    let batch = Event::Batch {
+                        events,
+                        description,
+                    };
+                    self.active_event_log_mut().append(batch.clone());
+                    self.apply_event_to_active_buffer(&batch);
                 }
             } else {
                 // Single cursor - apply normally
