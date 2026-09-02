@@ -1516,17 +1516,23 @@ fn absorb_rows(
                 None => *prev_rel,
             }
         };
+        let resumable = *sealed == 1 || row_is_resumable(&row, machine.tokens_so_far());
         new_starts.push(rel);
         new_carries.push(row.carry);
-        new_resumable.push(if *sealed == 1 {
-            true
-        } else {
-            row_is_resumable(&row, machine.tokens_so_far())
-        });
+        new_resumable.push(resumable);
         *prev_rel = rel;
-        if new_starts.len() > 1 {
+        // Resync claims that from here on the old layout is the new one shifted
+        // by `delta`, which holds only if "this byte, this carry" *identifies*
+        // the row — that is, if the row is a resume point on both sides. A row
+        // opening with injected content is not: its start is the first source
+        // byte it happens to contain, while its columns begin with a
+        // decoration's spill-over (a conceal replacement wider than the row's
+        // remaining width leaves its tail at the head of the next row). Two such
+        // rows can share a start byte and a carry and still run out of width at
+        // different bytes, which spliced a tail that was three bytes off.
+        if new_starts.len() > 1 && resumable {
             for k in (resume_idx + 1)..old.row_starts.len() {
-                if old.row_starts[k] < resync_floor {
+                if old.row_starts[k] < resync_floor || !old.resumable[k] {
                     continue;
                 }
                 if (old.row_starts[k] as i64 + delta) == rel as i64 && old.carries[k] == row.carry {
@@ -1947,6 +1953,218 @@ mod tests {
             "maintained index disagrees with a fresh build"
         );
         assert_eq!(maintained.1, fresh.total_rows());
+    }
+
+    /// A row that opens with a decoration's spill-over is not a resync point.
+    ///
+    /// Repair rewraps forward from the damaged row and stops as soon as a new
+    /// row boundary lands on an old one — same start byte once shifted by the
+    /// edit's delta, same carry — then splices the old tail. That claim rests
+    /// on the pair *identifying* the row, which holds only for a row a layout
+    /// can be resumed at: one that opens with the source token at its own start
+    /// byte.
+    ///
+    /// A conceal replacement wider than the width left on its row leaves its
+    /// tail at the head of the next row, and that row's recorded start is the
+    /// first source byte it *contains*, several columns in. Two such rows can
+    /// share a start byte and a carry while running out of width at different
+    /// bytes — so the spliced tail was three bytes off, and every row start
+    /// after it in the line was wrong.
+    #[test]
+    fn a_row_opening_with_a_decoration_spill_is_not_a_resync_point() {
+        use crate::model::cursor::Cursors;
+        use crate::model::event::Event;
+        use fresh_core::overlay::OverlayNamespace;
+
+        let text = format!(
+            "{}\n{}\n{}\n",
+            "a".repeat(60),
+            "b".repeat(60),
+            "c".repeat(60)
+        );
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        let cursor_id = cursors.primary_id();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.clone(),
+                cursor_id,
+            },
+        );
+
+        // Two conceals on the third line, each hiding source bytes behind a
+        // four-column rule. The second one's replacement is what spills.
+        let ns = OverlayNamespace::from_string("test".to_string());
+        for range in [126..133, 148..152] {
+            state.conceals.add(
+                &mut state.marker_list,
+                ns.clone(),
+                range,
+                Some("────".to_string()),
+            );
+        }
+
+        let geom = geometry(20);
+        build_index(&mut state, geom);
+
+        // Type at the second conceal's start: it rides forward with the text,
+        // and the row after it now opens with the tail of its replacement.
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 148,
+                text: "xxx".to_string(),
+                cursor_id,
+            },
+        );
+        build_index(&mut state, geom);
+
+        let maintained = state
+            .wrap_indices
+            .get(&geom)
+            .map(|i| (structure(i), i.total_rows()))
+            .expect("index present");
+        let fresh = fresh_index(&mut state, geom);
+        assert_eq!(
+            maintained.0,
+            structure(&fresh),
+            "the spliced tail must be what a fresh build lays out"
+        );
+        assert_eq!(maintained.1, fresh.total_rows());
+    }
+
+    /// The same spec as `a_maintained_index_answers_like_a_fresh_build`, swept
+    /// over generated conceal sets and edit sequences instead of hand-picked
+    /// ones.
+    ///
+    /// Conceals are where maintenance is hardest: their replacements are not
+    /// the bytes they hide, they can span a line break, they can overlap, and
+    /// they ride the edit like any other marker. Both bugs this net was written
+    /// for were invisible to the hand-written cases — one panicked the editor
+    /// on a keystroke (a resume cutting a replacement at a source byte), the
+    /// other spliced a tail three bytes off (a resync onto a row that opens
+    /// with a replacement's spill-over).
+    ///
+    /// Deterministic: the generator is a fixed-seed LCG, so a failure names the
+    /// seed and reproduces exactly.
+    #[test]
+    fn a_maintained_index_answers_like_a_fresh_build_under_conceals() {
+        use crate::model::cursor::Cursors;
+        use crate::model::event::Event;
+        use fresh_core::overlay::OverlayNamespace;
+
+        const WIDTH: usize = 20;
+        const LINE: usize = 60;
+
+        fn rand(state: &mut u64) -> usize {
+            *state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (*state >> 33) as usize
+        }
+
+        let text = format!(
+            "{}\n{}\n{}\n",
+            "a".repeat(LINE),
+            "b".repeat(LINE),
+            "c".repeat(LINE)
+        );
+
+        for seed in 0..500u64 {
+            let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(12345);
+            let mut state = EditorState::new(
+                80,
+                24,
+                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+                test_fs(),
+            );
+            let mut cursors = Cursors::new();
+            let cursor_id = cursors.primary_id();
+            state.apply(
+                &mut cursors,
+                &Event::Insert {
+                    position: 0,
+                    text: text.clone(),
+                    cursor_id,
+                },
+            );
+
+            // Multi-byte replacements on purpose: a byte-indexed cut into one
+            // is what panicked, and a single-byte glyph would have hidden it.
+            let ns = OverlayNamespace::from_string("test".to_string());
+            let mut conceals = Vec::new();
+            for _ in 0..(1 + rand(&mut rng) % 4) {
+                let start = rand(&mut rng) % (text.len() - 8);
+                let end = start + 1 + rand(&mut rng) % 8;
+                let replacement = match rand(&mut rng) % 3 {
+                    0 => None,
+                    n => Some("─".repeat(n * (1 + rand(&mut rng) % 3))),
+                };
+                conceals.push((start..end, replacement.clone()));
+                state
+                    .conceals
+                    .add(&mut state.marker_list, ns.clone(), start..end, replacement);
+            }
+
+            let geom = geometry(WIDTH);
+            build_index(&mut state, geom);
+
+            let mut edits = Vec::new();
+            for _ in 0..4 {
+                let len = state.buffer.len();
+                let position = rand(&mut rng) % len;
+                if rand(&mut rng).is_multiple_of(2) {
+                    let inserted = "x".repeat(1 + rand(&mut rng) % 4);
+                    edits.push((position, 0, inserted.clone()));
+                    state.apply(
+                        &mut cursors,
+                        &Event::Insert {
+                            position,
+                            text: inserted,
+                            cursor_id,
+                        },
+                    );
+                } else {
+                    let removed = (1 + rand(&mut rng) % 5).min(len - position);
+                    let whole = state.buffer.to_string().expect("buffer is utf-8");
+                    let deleted_text = whole[position..position + removed].to_string();
+                    edits.push((position, removed, String::new()));
+                    state.apply(
+                        &mut cursors,
+                        &Event::Delete {
+                            range: position..position + removed,
+                            deleted_text,
+                            cursor_id,
+                        },
+                    );
+                }
+
+                build_index(&mut state, geom);
+                let maintained = state
+                    .wrap_indices
+                    .get(&geom)
+                    .map(|i| (structure(i), i.total_rows()))
+                    .expect("index present");
+                let fresh = fresh_index(&mut state, geom);
+                assert_eq!(
+                    maintained.0,
+                    structure(&fresh),
+                    "seed {seed}: conceals {conceals:?}, edits {edits:?}"
+                );
+                assert_eq!(
+                    maintained.1,
+                    fresh.total_rows(),
+                    "seed {seed}: conceals {conceals:?}, edits {edits:?}"
+                );
+            }
+        }
     }
 
     /// **The spec, in one sentence: an index that has been maintained across
