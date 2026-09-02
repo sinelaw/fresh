@@ -1010,6 +1010,9 @@ impl Editor {
             Some(super::PanelSlot::Floating) => {
                 ui.find_by_key(&crate::view::shell::panel::interior_key(Slot::Floating))
             }
+            Some(super::PanelSlot::Sidebar(i)) => {
+                ui.find_by_key(&crate::view::shell::panel::interior_key(Slot::Sidebar(i)))
+            }
             None => {
                 let buffer = self.widget_registry.get(panel_key)?.buffer_id;
                 let leaf = self
@@ -1304,6 +1307,7 @@ impl Editor {
         let slot = match self.slot_of_panel(panel_key) {
             Some(super::PanelSlot::Dock) => Slot::Dock,
             Some(super::PanelSlot::Floating) => Slot::Floating,
+            Some(super::PanelSlot::Sidebar(i)) => Slot::Sidebar(i),
             // A pane-mounted panel has no keyboard layer, so it names no
             // scope; its keys arrive by the buffer's route and the arena is
             // its ring.
@@ -1420,6 +1424,7 @@ impl Editor {
         let slot = match self.slot_of_panel(panel_key) {
             Some(super::PanelSlot::Dock) => Slot::Dock,
             Some(super::PanelSlot::Floating) => Slot::Floating,
+            Some(super::PanelSlot::Sidebar(i)) => Slot::Sidebar(i),
             None => return,
         };
         let Some(mut ui) = self.shell_ui.take() else {
@@ -2286,6 +2291,12 @@ impl Editor {
         {
             return (width_cols as u32).saturating_sub(2).max(10);
         }
+        // A sidebar section is the column's width less its two walls — laid
+        // and wrapped at one number, the dock's rule inverted for two
+        // borders (`view::shell::sidebar::body`).
+        if let super::PanelSlot::Sidebar(_) = slot {
+            return (self.sidebar_cols() as u32).saturating_sub(2).max(1);
+        }
         let term_w = self.terminal_width.max(1) as u32;
         let pct = self
             .panel(slot)
@@ -2322,6 +2333,14 @@ impl Editor {
     /// e2e suite's to adjudicate, not a reader's.
     pub(super) fn floating_panel_inner_height(&self, slot: super::PanelSlot) -> Option<u32> {
         let term_h = (self.terminal_height.max(1)) as u32;
+        // A section's budget is the body rows the last frame resolved it
+        // to: its height is the column's to decide, not a share of the
+        // terminal's.
+        if let super::PanelSlot::Sidebar(i) = slot {
+            let sec = self.sidebar_sections.get(i)?;
+            sec.panel.as_ref()?;
+            return Some((sec.resolved as u32).max(1));
+        }
         let panel = self.panel(slot)?;
         let h = match panel.placement {
             super::PanelPlacement::LeftDock { .. } => term_h,
@@ -2740,6 +2759,7 @@ impl Editor {
         let is_dock = matches!(
             self.panel(slot).map(|f| f.placement),
             Some(super::PanelPlacement::LeftDock { .. })
+                | Some(super::PanelPlacement::SidebarSection { .. })
         );
         scrolled || is_dock
     }
@@ -3081,7 +3101,9 @@ impl Editor {
             "cancel".to_string(),
             serde_json::json!({}),
         );
-        *self.panel_opt_mut(slot) = None;
+        if let Some(o) = self.panel_opt_mut(slot) {
+            *o = None;
+        }
         let _ = self.widget_registry.unmount(&panel_key);
     }
 

@@ -84,6 +84,7 @@ mod settings_actions;
 mod settings_prompts;
 mod shell_command;
 pub(crate) mod shell_host;
+pub(crate) mod sidebar;
 mod smart_home;
 mod split_actions;
 mod stdin_stream;
@@ -1461,6 +1462,11 @@ pub struct Editor {
     pub(crate) dock_width: Option<u16>,
     /// True while the user is dragging the dock's right border to resize.
     pub(crate) dock_resizing: bool,
+    /// The sidebar's sections, top to bottom; section 0 is the explorer.
+    /// Editor-global for the same reason the dock is — see `app::sidebar`.
+    pub(crate) sidebar_sections: Vec<sidebar::SidebarSection>,
+    /// The divider drag in progress, if a section header holds the pointer.
+    pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
     /// In-flight mouse drag-to-select on a widget markdown/text document:
     /// armed by the press that placed the caret, extended on every Drag,
     /// cleared on button-up. `anchor_flat` is the press position as a
@@ -1509,6 +1515,14 @@ pub(crate) const FLOATING_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX);
 /// time. See `Editor::dock` and `PanelSlot`.
 pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 
+/// Sentinel `BufferId` of sidebar section 0's panel slot; section `i`'s is
+/// `SIDEBAR_PANEL_BUFFER_BASE - i`, so every section has its own, below the
+/// two above and above anything a real buffer could be allocated. See
+/// `PanelSlot::Sidebar`.
+pub(crate) const SIDEBAR_PANEL_BUFFER_BASE: BufferId = BufferId(usize::MAX - 2);
+/// How many sidebar sections the sentinel range spans.
+pub(crate) const SIDEBAR_PANEL_BUFFER_SPAN: usize = 256;
+
 /// Selects which of the two coexisting widget-panel slots an operation
 /// targets: the centered modal overlay (`Floating`, the picker /
 /// new-session form / plugin modals) or the persistent editor-global
@@ -1517,6 +1531,9 @@ pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 pub(crate) enum PanelSlot {
     Floating,
     Dock,
+    /// A section of the sidebar column, by section index (section 0 is the
+    /// explorer, so a panel's index is at least 1). See `app::sidebar`.
+    Sidebar(usize),
 }
 
 impl PanelSlot {
@@ -1524,6 +1541,7 @@ impl PanelSlot {
         match self {
             PanelSlot::Floating => FLOATING_PANEL_BUFFER_ID,
             PanelSlot::Dock => DOCK_PANEL_BUFFER_ID,
+            PanelSlot::Sidebar(i) => BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - i),
         }
     }
 }
@@ -1558,6 +1576,11 @@ pub(crate) enum PanelPlacement {
     /// Still input-modal via the `FloatingModal` layer: keys route to it
     /// and a click outside dismisses it.
     Anchored { x: u16, y: u16 },
+    /// A section of the sidebar column under the file explorer, `rows`
+    /// body rows tall as the plugin requested it — the user's drag
+    /// overrides that (`sidebar::SidebarSection::dragged`). Non-modal like
+    /// the dock; see `app::sidebar`.
+    SidebarSection { rows: u16 },
 }
 
 #[derive(Debug, Clone)]

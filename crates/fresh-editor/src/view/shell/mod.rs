@@ -44,6 +44,7 @@ pub mod popup;
 pub mod prompt;
 pub mod search_options;
 pub mod settings;
+pub mod sidebar;
 pub mod splits;
 pub mod status_bar;
 pub mod theme_info;

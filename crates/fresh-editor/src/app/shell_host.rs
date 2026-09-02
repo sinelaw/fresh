@@ -1669,6 +1669,9 @@ impl Editor {
                 let slot = match slot {
                     crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
+                    crate::view::shell::widgets::Slot::Sidebar(i) => {
+                        crate::app::PanelSlot::Sidebar(i)
+                    }
                     // Not a plugin panel: the same `WidgetSpec`s, whose hits
                     // are settings actions rather than a plugin's
                     // `widget_event`.
@@ -1727,9 +1730,10 @@ impl Editor {
                     // A pane-mounted panel has no pop-over yet: its dropdown
                     // rows come with the rest of C.5's second step.
                     Slot::Pane(_) => {}
-                    Slot::Dock | Slot::Floating => {
+                    Slot::Dock | Slot::Floating | Slot::Sidebar(_) => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
+                            Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                             _ => crate::app::PanelSlot::Floating,
                         };
                         // **Asked of the spec and the state, not of a field
@@ -1788,6 +1792,7 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     _ => return,
                 };
                 let Some(key) = self.panel(panel).map(|p| p.panel_key.clone()) else {
@@ -1821,6 +1826,7 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     _ => return,
                 };
                 let Some(key) = self.panel(panel).map(|p| p.panel_key.clone()) else {
@@ -1878,6 +1884,7 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     // The settings dialog's rows raise no plugin menu.
                     _ => return,
                 };
@@ -1885,6 +1892,9 @@ impl Editor {
                     && self.dock.as_ref().is_some_and(|f| !f.focused)
                 {
                     self.refocus_floating_panel(crate::app::PanelSlot::Dock);
+                }
+                if let crate::app::PanelSlot::Sidebar(i) = panel {
+                    self.focus_sidebar_section(i);
                 }
                 self.fire_widget_context(panel, &hit, x, y);
             }
@@ -1902,9 +1912,10 @@ impl Editor {
                     }
                     // As above: no pop-over on a pane-mounted panel yet.
                     Slot::Pane(_) => {}
-                    Slot::Dock | Slot::Floating => {
+                    Slot::Dock | Slot::Floating | Slot::Sidebar(_) => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
+                            Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                             _ => crate::app::PanelSlot::Floating,
                         };
                         let panel_key = match self.panel(panel) {
@@ -2305,6 +2316,15 @@ impl Editor {
                 }
             }
             UiFact::ExplorerClose => self.toggle_file_explorer(),
+            // A section header's press, move and release, and the two things
+            // the header does besides dividing. See `app::sidebar`.
+            UiFact::SectionResizeBegin { index, y } => {
+                self.begin_sidebar_section_drag(index, y);
+            }
+            UiFact::SectionToggle { index } => self.toggle_sidebar_section(index),
+            UiFact::SectionClose { index } => self.close_sidebar_section(index),
+            UiFact::SectionFocus { index } => self.focus_sidebar_section(index),
+            UiFact::SidebarBlur => self.blur_sidebar_panels(),
             UiFact::ExplorerResizeBegin { x, y } => {
                 let w = self.active_window().file_explorer_width;
                 let st = &mut self.active_window_mut().mouse_state;
@@ -2376,6 +2396,7 @@ impl Editor {
                             tracing::warn!("explorer width drag failed: {e}");
                         }
                     }
+                    Grip::SectionDivider(_) => self.drag_sidebar_section(y),
                     Grip::DockWidth => {}
                 }
             }
@@ -2403,6 +2424,10 @@ impl Editor {
                         ms.dragging_file_explorer = false;
                         ms.drag_start_explorer_width = None;
                     }
+                    // A release where the press landed is a click, and a click
+                    // on a header toggles the section; either way the drag is
+                    // over and the rows it set stay set.
+                    Grip::SectionDivider(_) => self.end_sidebar_section_drag(),
                 }
             }
             UiFact::DockBlur => {
@@ -2708,6 +2733,7 @@ impl Editor {
                 let slot = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     // The settings surfaces reuse the widget vocabulary but
                     // are not panels and never raise this layer. Neither does
                     // a pane-mounted panel: its keys are the buffer's, and the
@@ -2758,6 +2784,21 @@ impl Editor {
                         {
                             tracing::warn!("dock focus toggle failed: {e}");
                         }
+                        self.shell_interior_took_key = Some(true);
+                        return;
+                    }
+                }
+                // The same for a sidebar section and the cycle that leaves it:
+                // resolved ahead of the panel, or the blur-and-fall-through
+                // would cycle from the editor rather than from the section.
+                if let crate::app::PanelSlot::Sidebar(_) = slot {
+                    let ctx = self.get_key_context();
+                    let resolved = self.keybindings.read().ok().map(|kb| kb.resolve(&ev, ctx));
+                    if matches!(
+                        resolved,
+                        Some(crate::input::keybindings::Action::FocusNextSidebarSection)
+                    ) {
+                        self.focus_next_sidebar_section();
                         self.shell_interior_took_key = Some(true);
                         return;
                     }

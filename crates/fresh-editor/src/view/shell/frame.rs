@@ -211,8 +211,9 @@ pub struct Frame {
     pub dock_focused: bool,
     /// The sidebar's content, or `None` when it is hidden. Like the
     /// search-options row, content rather than a flag: the tree measures the
-    /// panel's rows and reads their rectangles back.
-    pub explorer: Option<super::file_explorer::Explorer>,
+    /// panel's rows and reads their rectangles back. A column of sections,
+    /// of which the explorer is the first — see `super::sidebar`.
+    pub sidebar: Option<super::sidebar::Sidebar>,
     /// The open context menu, if any. An overlay is an ordinary child of the
     /// tree rather than a separately-ranked surface — which is the whole point
     /// of moving them here.
@@ -334,7 +335,7 @@ impl Default for Frame {
             dock_interior: None,
             dock_grip_hovered: false,
             dock_focused: false,
-            explorer: None,
+            sidebar: None,
             menu: None,
             dropdowns: Vec::new(),
             menu_keys: Vec::new(),
@@ -448,11 +449,12 @@ pub fn window_scope(id: u64) -> String {
 /// whatever hangs off it.
 pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     let cells = |on: bool| Sizing::Cells(on as u16);
-    // Native: the panel paints itself and answers its own pointer. It keeps
+    // Native: the column paints itself and answers its own pointer. It keeps
     // the region key, so every caller that asks for `HostRegion::Explorer`'s
-    // rectangle still gets one.
-    let sidebar = |e: &super::file_explorer::Explorer| {
-        named(HostRegion::Explorer, super::file_explorer::explorer(e)).w(Sizing::Cells(e.cols))
+    // rectangle still gets one — the whole column, of which the explorer is
+    // the first section.
+    let sidebar = |s: &super::sidebar::Sidebar| {
+        named(HostRegion::Explorer, super::sidebar::sidebar(s)).w(Sizing::Cells(s.cols))
     };
     // The body: the grid, with a `Host` under it for what belongs to no pane.
     // Each pane carries its own `Host` (see `splits::live_pane`), so the
@@ -469,13 +471,13 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             None => region(HostRegion::Body),
         }
     };
-    let body: Node<UiMsg> = match &f.explorer {
-        Some(e) if e.on_left => row()
+    let body: Node<UiMsg> = match &f.sidebar {
+        Some(s) if s.on_left => row()
             .flex(1)
-            .children([sidebar(e), body_region(&f).flex(1)]),
-        Some(e) => row()
+            .children([sidebar(s), body_region(&f).flex(1)]),
+        Some(s) => row()
             .flex(1)
-            .children([body_region(&f).flex(1), sidebar(e)]),
+            .children([body_region(&f).flex(1), sidebar(s)]),
         // No sidebar: the explorer is still in the tree taking nothing, so it
         // has a rectangle to report and the body's own is unaffected.
         None => row().flex(1).children([
@@ -549,6 +551,28 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             scope_of(f.dock_interior.as_ref(), super::widgets::Slot::Dock),
         )),
         false => chrome,
+    };
+    // A collapsed sidebar section that has the keyboard: its header is the
+    // whole of it, and Enter or Space there re-opens it. Under the centred
+    // panel's layer, which is modal, and over the dock's, which cannot be
+    // focused at the same time as a sidebar section.
+    let chrome = match f.sidebar.as_ref().and_then(|s| {
+        s.sections
+            .iter()
+            .position(|sec| sec.focused && sec.collapsed)
+    }) {
+        Some(i) => chrome.child(super::sidebar::keys_layer(i)),
+        None => chrome,
+    };
+    // A focused plugin section: the dock's case with a different slot, and
+    // raised exactly the way the dock's is. Under the centred panel's layer
+    // for the reason the dock's is.
+    let chrome = match f.sidebar.as_ref().and_then(|s| s.focused_panel()) {
+        Some((i, interior)) => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Sidebar(i),
+            scope_of(Some(interior), super::widgets::Slot::Sidebar(i)),
+        )),
+        None => chrome,
     };
     let chrome = match f.panel_keys {
         true => chrome.child(super::panel::keys_layer(
@@ -745,6 +769,13 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // left-click-only menus and lets the click continue, so it must see the
     // click before the surface it is aimed at claims it.
     let frame = super::splits::tab_menu_guard(frame);
+    // The sidebar's blur observer, only while a plugin section has the
+    // keyboard: it has nothing to do otherwise, and a listener that fires
+    // on every press for nothing is noise in every dispatch's message list.
+    let frame = match f.sidebar.as_ref().filter(|s| s.focused_panel().is_some()) {
+        Some(s) => super::sidebar::blur_observer(s, frame),
+        None => frame,
+    };
     match f.dock {
         Some(w) => super::dock::blur_observer(w, frame),
         None => frame,

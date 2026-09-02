@@ -82,6 +82,7 @@ pub struct PartialConfig {
     pub file_explorer: Option<PartialFileExplorerConfig>,
     pub file_browser: Option<PartialFileBrowserConfig>,
     pub clipboard: Option<PartialClipboardConfig>,
+    pub sidebar: Option<PartialSidebarConfig>,
     pub terminal: Option<PartialTerminalConfig>,
     pub keybindings: Option<Vec<Keybinding>>,
     pub keybinding_maps: Option<HashMap<String, KeymapConfig>>,
@@ -112,6 +113,7 @@ impl Merge for PartialConfig {
         merge_partial(&mut self.file_explorer, &other.file_explorer);
         merge_partial(&mut self.file_browser, &other.file_browser);
         merge_partial(&mut self.clipboard, &other.clipboard);
+        merge_partial(&mut self.sidebar, &other.sidebar);
         merge_partial(&mut self.terminal, &other.terminal);
         merge_partial(&mut self.warnings, &other.warnings);
         merge_partial(&mut self.packages, &other.packages);
@@ -454,6 +456,34 @@ impl Merge for PartialClipboardConfig {
         self.use_osc52.merge_from(&other.use_osc52);
         self.use_system_clipboard
             .merge_from(&other.use_system_clipboard);
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialSidebarConfig {
+    pub accordion: Option<crate::config::SidebarAccordion>,
+}
+
+impl Merge for PartialSidebarConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.accordion.merge_from(&other.accordion);
+    }
+}
+
+impl From<&crate::config::SidebarConfig> for PartialSidebarConfig {
+    fn from(cfg: &crate::config::SidebarConfig) -> Self {
+        Self {
+            accordion: Some(cfg.accordion),
+        }
+    }
+}
+
+impl PartialSidebarConfig {
+    pub fn resolve(self, defaults: &crate::config::SidebarConfig) -> crate::config::SidebarConfig {
+        crate::config::SidebarConfig {
+            accordion: self.accordion.unwrap_or(defaults.accordion),
+        }
     }
 }
 
@@ -1176,6 +1206,7 @@ impl From<&crate::config::Config> for PartialConfig {
             file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
             file_browser: Some(PartialFileBrowserConfig::from(&cfg.file_browser)),
             clipboard: Some(PartialClipboardConfig::from(&cfg.clipboard)),
+            sidebar: Some(PartialSidebarConfig::from(&cfg.sidebar)),
             terminal: Some(PartialTerminalConfig::from(&cfg.terminal)),
             keybindings: Some(cfg.keybindings.clone()),
             keybinding_maps: Some(cfg.keybinding_maps.clone()),
@@ -1380,6 +1411,10 @@ impl PartialConfig {
                 .file_browser
                 .map(|e| e.resolve(&defaults.file_browser))
                 .unwrap_or_else(|| defaults.file_browser.clone()),
+            sidebar: self
+                .sidebar
+                .map(|e| e.resolve(&defaults.sidebar))
+                .unwrap_or_else(|| defaults.sidebar.clone()),
             clipboard: self
                 .clipboard
                 .map(|e| e.resolve(&defaults.clipboard))

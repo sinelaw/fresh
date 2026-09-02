@@ -413,6 +413,32 @@ pub enum UiFact {
         x: u16,
         y: u16,
     },
+    /// A press on a sidebar section's header row: the start of a divider
+    /// drag, or — released where it was pressed — a click that toggles the
+    /// section. The applier tells the two apart on the release.
+    SectionResizeBegin {
+        index: usize,
+        y: u16,
+    },
+    /// Collapse an open sidebar section or open a collapsed one: Enter or
+    /// Space while its header has the keyboard.
+    SectionToggle {
+        index: usize,
+    },
+    /// The `×` on a sidebar section's header row.
+    SectionClose {
+        index: usize,
+    },
+    /// A left press landed on a plugin section's body and nothing in it
+    /// answered: focus that section's panel. The dock's `DockFocus`, per
+    /// section.
+    SectionFocus {
+        index: usize,
+    },
+    /// A left press landed outside the sidebar column. Blurs a focused
+    /// plugin section and does nothing otherwise; either way the press goes
+    /// on. The dock's `DockBlur`, for the column.
+    SidebarBlur,
     /// The wheel over the panel. Positive is down, matching `Input::Wheel`.
     /// Carries the pointer so the plugin `wheel` hook still gets a position.
     ExplorerScroll {
@@ -837,6 +863,9 @@ pub enum Grip {
     Separator,
     /// The file explorer's right edge.
     ExplorerWidth,
+    /// The header row of sidebar section `index`, which divides it from the
+    /// section above.
+    SectionDivider(usize),
 }
 
 /// What a menu-bar navigation step does to the open chain.

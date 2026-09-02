@@ -204,6 +204,7 @@ pub mod markdown_compose_scrollbar_markers;
 pub mod markdown_compose_table_border;
 pub mod markdown_compose_table_structure;
 pub mod markdown_fenced_code_highlighting;
+#[cfg(feature = "plugins")]
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;
@@ -292,6 +293,8 @@ pub mod settings_ui_usability;
 pub mod settings_widget_controls;
 pub mod shell_command;
 pub mod shift_backspace;
+#[cfg(feature = "plugins")]
+pub mod sidebar_sections;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod smart_home;

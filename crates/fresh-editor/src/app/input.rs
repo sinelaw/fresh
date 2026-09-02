@@ -547,6 +547,7 @@ impl Editor {
                 self.panel(slot).map(|f| f.placement),
                 Some(super::PanelPlacement::LeftDock { .. })
             ),
+            is_sidebar: matches!(slot, super::PanelSlot::Sidebar(_)),
             focus_key: self
                 .widget_registry
                 .focus_key(&panel_key)
@@ -599,7 +600,9 @@ impl Editor {
                     "cancel".to_string(),
                     serde_json::json!({}),
                 );
-                *self.panel_opt_mut(slot) = None;
+                if let Some(o) = self.panel_opt_mut(slot) {
+                    *o = None;
+                }
                 let _ = self.widget_registry.unmount(&panel_key);
                 true
             }

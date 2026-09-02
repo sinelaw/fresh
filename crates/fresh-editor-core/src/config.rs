@@ -483,6 +483,10 @@ pub struct Config {
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
 
+    /// The sidebar column the file explorer is the first section of.
+    #[serde(default)]
+    pub sidebar: SidebarConfig,
+
     /// File browser settings (Open File dialog)
     #[serde(default)]
     pub file_browser: FileBrowserConfig,
@@ -2104,6 +2108,29 @@ pub enum FileExplorerSide {
     Right,
 }
 
+/// How the sidebar's sections share the column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarAccordion {
+    /// Any number of sections may be open at once; collapsing one gives its
+    /// rows to the sections still open.
+    #[default]
+    Free,
+    /// One section open at a time: opening a section collapses every other
+    /// one, and the dividers are inert.
+    Exclusive,
+}
+
+/// Sidebar configuration: the column that holds the file explorer and any
+/// plugin sections mounted under it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct SidebarConfig {
+    /// Whether sections open freely (`free`) or one at a time (`exclusive`).
+    /// Default: free
+    #[serde(default)]
+    pub accordion: SidebarAccordion,
+}
+
 /// File explorer configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileExplorerConfig {
@@ -3260,6 +3287,7 @@ impl Default for Config {
             self_update: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
+            sidebar: SidebarConfig::default(),
             file_browser: FileBrowserConfig::default(),
             clipboard: ClipboardConfig::default(),
             terminal: TerminalConfig::default(),
