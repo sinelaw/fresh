@@ -205,6 +205,7 @@ pub mod markdown_compose_table_border;
 pub mod markdown_compose_table_structure;
 pub mod markdown_fenced_code_highlighting;
 #[cfg(feature = "plugins")]
+pub mod markdown_toc;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;
