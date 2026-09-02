@@ -2985,3 +2985,70 @@ fn test_search_results_grow_with_the_panel_on_resize() {
          before the resize, {after} after. Screen:\n{screen}"
     );
 }
+
+/// Issue #1960: a terminal-initiated bracketed paste (right-click /
+/// middle-click / Ctrl+Shift+V) must land in the panel's focused field.
+///
+/// It arrives as a single `Event::Paste`, not as key events, so it never
+/// passes through the widget key routing that makes `Ctrl+V` work here.
+/// Before the fix it fell through to `paste_text`, which targeted the
+/// panel's own read-only widget buffer and refused with "Editing disabled
+/// in this buffer" — nothing reached the field.
+#[test]
+fn test_search_replace_bracketed_paste_reaches_fields() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("gamma.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+
+    // Search field is focused on open: the paste is the whole pattern.
+    // Wait on either outcome — the text landing, or the refusal the bug
+    // produced — so a regression fails with the screen rather than
+    // hanging on a condition that will never come true.
+    harness.send_paste("hello").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello") || s.contains("Editing disabled")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Search: [hello") && !screen.contains("Editing disabled"),
+        "the bracketed paste did not reach the focused search field. \
+         Screen:\n{screen}"
+    );
+    // And it is a real pattern, not just glyphs in a box: the search runs.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("alpha.txt:1"))
+        .unwrap();
+
+    // Same for the Replace field, one Tab away.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.send_paste("goodbye").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Replace: [goodbye") || s.contains("Editing disabled")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Replace: [goodbye") && !screen.contains("Editing disabled"),
+        "the bracketed paste did not reach the focused replace field. \
+         Screen:\n{screen}"
+    );
+}
