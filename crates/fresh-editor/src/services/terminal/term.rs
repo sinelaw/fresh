@@ -473,8 +473,18 @@ pub struct TerminalState {
     /// anchors to, and it is rewritten on every visit. Anything appended
     /// *after* it is therefore living on borrowed time — the truncation that
     /// ends the visit cuts the file back to `backing_file_history_end` and
-    /// takes it along. So every writer checks this flag and removes the tail
-    /// before appending real scrollback (fresh#3151).
+    /// takes it along (fresh#3151).
+    ///
+    /// The two writers handle that differently, so read the flag as "a tail is
+    /// there *unless the PTY read loop got there first*":
+    ///
+    /// * The UI-thread paths (scroll-back entry, session checkpoint) rewrite
+    ///   the tail, so they truncate the old one off first.
+    /// * The read loop cannot truncate — a scroll-back view may be reading the
+    ///   file — so when it streams scrollback while the flag is set it instead
+    ///   *adopts* the tail as scrollback and clears the flag, leaving nothing
+    ///   for a later truncation to cut at. That costs one duplicated screen
+    ///   per overlap, permanently; losing the lines would be worse.
     backing_file_has_tail: bool,
     /// Queue of data to write back to the PTY (for DSR responses, etc.)
     pty_write_queue: Arc<Mutex<Vec<String>>>,
