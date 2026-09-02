@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use fresh_core::api::WidgetSpec;
+use fresh_core::api::{OverlayOptions, WidgetSpec};
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
 use super::WidgetImpl;
@@ -76,10 +76,22 @@ impl WidgetImpl for LabeledSection {
         ctx: RenderContext<'_>,
         panel_width: u32,
     ) -> CollectedOutput {
-        let WidgetSpec::LabeledSection { label, child, .. } = spec else {
+        let WidgetSpec::LabeledSection {
+            label,
+            child,
+            key,
+            hover_style,
+            ..
+        } = spec
+        else {
             return CollectedOutput::default();
         };
-        collect_labeled_section(label, child, prev, next_state, ctx, panel_width)
+        // A section emits no hit of its own, so it is hovered only by
+        // carrying the key of a control inside it.
+        let hover = hover_style
+            .as_ref()
+            .filter(|_| ctx.is_hovered(key.as_deref()));
+        collect_labeled_section(label, child, prev, next_state, ctx, panel_width, hover)
     }
 }
 
@@ -126,11 +138,28 @@ impl WidgetImpl for Overlay {
 /// multi-line Text, Raw) participate in the equal-split path.
 /// Out-of-range (0, > 100, or unset) collapses to `None` so
 /// callers don't have to re-check.
-fn labeled_section_width_pct(spec: &WidgetSpec) -> Option<u32> {
-    let WidgetSpec::LabeledSection { width_pct, .. } = spec else {
+/// The explicit width a section asks for, in columns, resolved against
+/// the row's `panel_width`.
+///
+/// `width_cols` wins over `width_pct`: it is exact, where a percent
+/// rounds — three equal siblings cannot be expressed as integer
+/// percents, and rounding up overflows the panel so the host wraps the
+/// last one onto its own line.
+fn labeled_section_width(spec: &WidgetSpec, panel_width: u32) -> Option<u32> {
+    let WidgetSpec::LabeledSection {
+        width_pct,
+        width_cols,
+        ..
+    } = spec
+    else {
         return None;
     };
-    width_pct.filter(|pct| (1..=100).contains(pct))
+    if let Some(cols) = width_cols.filter(|c| *c > 0) {
+        return Some(cols.min(panel_width.max(1)));
+    }
+    width_pct
+        .filter(|pct| (1..=100).contains(pct))
+        .map(|pct| (panel_width as u64 * pct as u64 / 100) as u32)
 }
 
 pub fn predicts_block(spec: &WidgetSpec) -> bool {
@@ -371,8 +400,7 @@ pub fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> V
     let mut explicit_total: u32 = 0;
     let mut explicit_count: u32 = 0;
     for &idx in &block_indices {
-        if let Some(pct) = labeled_section_width_pct(&children[idx]) {
-            let w = (panel_width as u64 * pct as u64 / 100) as u32;
+        if let Some(w) = labeled_section_width(&children[idx], panel_width) {
             per_child_width[idx] = w.max(1);
             explicit_total = explicit_total.saturating_add(w);
             explicit_count += 1;
@@ -382,7 +410,7 @@ pub fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> V
     let implicit_count = (block_count as u32).saturating_sub(explicit_count).max(1);
     let each_implicit = (remaining / implicit_count).max(1);
     for &idx in &block_indices {
-        if labeled_section_width_pct(&children[idx]).is_none() {
+        if labeled_section_width(&children[idx], panel_width).is_none() {
             per_child_width[idx] = each_implicit;
         }
     }
@@ -662,6 +690,22 @@ fn collect_col(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Paint `style` over a byte range of an entry — the seam the section
+/// uses to light its own chrome under the pointer.
+fn paint_range(entry: &mut TextPropertyEntry, start: usize, end: usize, style: &OverlayOptions) {
+    if start >= end || end > entry.text.len() {
+        return;
+    }
+    entry.inline_overlays.push(InlineOverlay {
+        start,
+        end,
+        style: style.clone(),
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
 fn collect_labeled_section(
     label: &str,
     child: &WidgetSpec,
@@ -669,6 +713,7 @@ fn collect_labeled_section(
     next_state: &mut HashMap<String, WidgetInstanceState>,
     ctx: RenderContext<'_>,
     panel_width: u32,
+    hover: Option<&OverlayOptions>,
 ) -> CollectedOutput {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut hits: Vec<HitArea> = Vec::new();
@@ -721,7 +766,12 @@ fn collect_labeled_section(
     // legend: `╭─ <label> ─...─╮`. When the label is empty,
     // produce a plain `╭─...─╮` bar.
     let total_cols = panel_width.max(2) as usize;
-    entries.push(render_section_top_border(label, total_cols));
+    let mut top = render_section_top_border(label, total_cols);
+    if let Some(style) = hover {
+        let n = top.text.len();
+        paint_range(&mut top, 0, n, style);
+    }
+    entries.push(top);
 
     // Render each child row wrapped with the side borders
     // and one column of padding. Pad/truncate the child
@@ -729,13 +779,21 @@ fn collect_labeled_section(
     // lines up regardless of the child's natural width.
     for mut child_entry in child_out.entries {
         strip_trailing_newline(&mut child_entry);
-        let wrapped = wrap_in_side_border(child_entry, inner_width as usize);
+        let mut wrapped = wrap_in_side_border(child_entry, inner_width as usize);
         let row_offset = entries.len() as u32;
         // Shift hits/focus emitted by the child by 1 row
         // (top border) and by the left-border prefix
         // ("│ " — 4 bytes for the box-drawing char + 1
         // for the space).
         let _ = row_offset;
+        // The side borders only: the child's own rows answer the
+        // pointer through their own widgets, and painting over them
+        // here would fight whatever they already say.
+        if let Some(style) = hover {
+            let n = wrapped.text.len();
+            paint_range(&mut wrapped, 0, LEFT_BORDER_PREFIX.len(), style);
+            paint_range(&mut wrapped, n.saturating_sub(" \u{2502}".len()), n, style);
+        }
         entries.push(wrapped);
     }
 
@@ -749,7 +807,12 @@ fn collect_labeled_section(
     }
     embeds.extend(std::mem::take(&mut child_out.embeds));
 
-    entries.push(render_section_bottom_border(total_cols));
+    let mut bottom = render_section_bottom_border(total_cols);
+    if let Some(style) = hover {
+        let n = bottom.text.len();
+        paint_range(&mut bottom, 0, n, style);
+    }
+    entries.push(bottom);
 
     CollectedOutput {
         entries,
@@ -971,8 +1034,39 @@ fn zip_row_blocks(
     out_boxes: &mut Vec<LayoutBox>,
 ) {
     let starting_row = out_entries.len() as u32;
-    let _ = panel_width;
 
+    // Flex sizing, the block-row counterpart of `assemble_inline_row`.
+    //
+    // These used to be skipped outright, which made `flexSpacer()` a
+    // no-op in any row holding a block — so `row(flexSpacer(), card,
+    // flexSpacer())` rendered the card hard against the left edge and
+    // there was no declarative way to centre a block at all. Callers
+    // worked around it by computing pads from widths the host already
+    // knew, and got them wrong.
+    //
+    // Leftover counts block columns as well as inline text: a block
+    // occupies its full `column_width` in the merged row, so charging
+    // only the inline pieces would hand each flex slot the whole panel
+    // a second time and push the row past its column.
+    let used: usize = pieces
+        .iter()
+        .map(|p| match p {
+            RowPiece::Inline { entry, .. } => {
+                crate::primitives::display_width::str_width(&entry.text)
+            }
+            RowPiece::Block { column_width, .. } => *column_width as usize,
+            RowPiece::Flex => 0,
+        })
+        .sum();
+    let flex_count = pieces
+        .iter()
+        .filter(|p| matches!(p, RowPiece::Flex))
+        .count();
+    let flex_total = (panel_width as usize).saturating_sub(used);
+    let (flex_each, flex_extra) = match flex_total.checked_div(flex_count) {
+        Some(each) => (each, flex_total % flex_count),
+        None => (0, 0),
+    };
     // Compute the merged height = max(block.entries.len()).
     let max_height = pieces
         .iter()
@@ -989,6 +1083,7 @@ fn zip_row_blocks(
     for row_idx in 0..max_height {
         let mut text = String::new();
         let mut overlays: Vec<InlineOverlay> = Vec::new();
+        let mut flex_seen = 0usize;
         for piece in &pieces {
             match piece {
                 RowPiece::Inline {
@@ -1053,7 +1148,13 @@ fn zip_row_blocks(
                     }
                 }
                 RowPiece::Flex => {
-                    // Skipped — see fn doc.
+                    // Materialize as spaces on *every* row, so the
+                    // columns either side stay in line down the block.
+                    let n = flex_each + if flex_seen < flex_extra { 1 } else { 0 };
+                    flex_seen += 1;
+                    for _ in 0..n {
+                        text.push(' ');
+                    }
                 }
                 RowPiece::Block {
                     column_width,
@@ -1219,14 +1320,18 @@ mod tests {
         let left = WidgetSpec::LabeledSection {
             label: "alpha/beta · this project (2)".into(),
             child: Box::new(make_text_input("x", -1, false, false, 4, Some("a"))),
+            width_cols: None,
             width_pct: Some(40),
             key: None,
+            hover_style: None,
         };
         let right = WidgetSpec::LabeledSection {
             label: "preview".into(),
             child: Box::new(make_text_input("y", -1, false, false, 4, Some("b"))),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let spec = WidgetSpec::Row {
             wrap: false,
@@ -1264,14 +1369,18 @@ mod tests {
         let left = WidgetSpec::LabeledSection {
             label: "Steps".into(),
             child: Box::new(make_list(0, 3, 10, Some("rail"))),
+            width_cols: None,
             width_pct: Some(30),
             key: None,
+            hover_style: None,
         };
         let right = WidgetSpec::LabeledSection {
             label: "Prose".into(),
             child: Box::new(make_list(-1, 3, 10, Some("prose"))),
+            width_cols: None,
             width_pct: Some(70),
             key: None,
+            hover_style: None,
         };
         let spec = WidgetSpec::Row {
             wrap: false,

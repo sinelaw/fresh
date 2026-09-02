@@ -311,11 +311,12 @@ impl Editor {
                 // party that knows it happened — see the docstring.
                 needs_render = self.update_lsp_hover_state(col, row) || needs_render;
 
-                // Bare icon buttons inside a panel (the dock's `×`) light up
-                // under the pointer, the way the tab and file explorer `×`
-                // do. Tracked off the same motion events as the dock's
-                // scrollbar reveal (`Dock::on_hover_change`), and likewise
-                // re-rendering only on the enter/leave transition.
+                // A panel mounted into a buffer that the tree does NOT
+                // describe still needs someone to light its controls under
+                // the pointer: the described panes answer their own hover
+                // with nodes, but the flip is gated on panels that own their
+                // scroll, and the welcome screen's scroll is the buffer's.
+                needs_render = self.update_mounted_widget_hover(col, row) || needs_render;
             }
             _ => {
                 // Ignore other mouse events for now

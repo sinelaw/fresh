@@ -1806,6 +1806,70 @@ pub enum MenuPosition {
 // IPC shape.
 // ===========================================================================
 
+/// Where a widget should land when a plugin scrolls to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ScrollAlign {
+    /// Put the widget on the split's top row. A jump: "take me to
+    /// this". The default, and what this command has always done.
+    #[default]
+    Top,
+    /// Scroll only as far as it takes to bring the widget into view —
+    /// the editor's ordinary cursor reveal, which respects the user's
+    /// `scroll_offset` and so leaves that much context around the
+    /// target rather than stopping exactly at the edge.
+    ///
+    /// This is what following focus wants. `Top` moves the view on
+    /// every step, so tabbing between two controls of the same card
+    /// scrolled the page, and the control that gained focus landed on
+    /// the top row with its own card title pushed off above it — a
+    /// button whose label you can no longer read. It also made Tab and
+    /// Shift+Tab stop being inverses, because a jump forgets where it
+    /// came from.
+    Minimal,
+}
+
+/// How the host should treat a mounted panel, beyond rendering its
+/// spec.
+///
+/// Grows by adding fields, so every field is optional in both
+/// directions: `Option<T>` with `#[ts(optional)]`, so adding one is not
+/// a TypeScript break for plugins that already construct the bag; and
+/// no `deny_unknown_fields`, so a plugin written against a newer host
+/// does not fail to deserialize wholesale on an older one and silently
+/// lose the options it *did* set. Each unspecified field reads as what
+/// the host did before that field existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WidgetPanelOptions {
+    /// When the focus key names no tabbable widget, fall back to the
+    /// first one.
+    ///
+    /// True is the historical behaviour and stays the default. A panel
+    /// for which *nothing focused* is a real resting state must say so:
+    /// otherwise clearing focus does not clear it, because the next
+    /// repaint silently re-seeds it onto whatever happens to be first.
+    /// The plugin's own record of focus then disagrees with the host's,
+    /// and a key meant for no one is delivered to that widget — on the
+    /// welcome screen, leaving its file finder put focus on "Show this
+    /// screen on startup", so the next Space turned the page off with
+    /// nothing on screen to say why.
+    ///
+    /// `None` is what every plugin written before this field said, and
+    /// reads as `true`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub auto_focus_first: Option<bool>,
+}
+
+impl WidgetPanelOptions {
+    /// Whether to seed focus onto the first tabbable when the focus key
+    /// names none. Unspecified is the historical `true`.
+    pub fn auto_focus_first(&self) -> bool {
+        self.auto_focus_first.unwrap_or(true)
+    }
+}
+
 /// One entry in a `HintBar` — a key chord plus its label.
 /// Renders as `<keys> <label>` with the key portion styled by the
 /// `ui.help_key_fg` theme key.
@@ -2291,6 +2355,23 @@ pub enum WidgetSpec {
         #[ts(type = "Partial<OverlayOptions>")]
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hover_style: Option<OverlayOptions>,
+        /// How the button looks at rest — not focused, not hovered,
+        /// not disabled. `None` (the default) keeps the look its
+        /// `intent` gives it.
+        ///
+        /// The sibling of `hover_style`, and the answer to the same
+        /// question one state earlier: `hover_style` could say what a
+        /// control looks like under the pointer, but nothing could say
+        /// that it is a control at all. A bare button is just its
+        /// label, so without this the only way to mark a word as
+        /// clickable was to spend a colour on it — and `intent` offers
+        /// three fixed looks, none of them an underline.
+        ///
+        /// Focus, hover and disabled each still win over it, in that
+        /// order of immediacy.
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<OverlayOptions>,
     },
     /// Horizontal whitespace eater. In a `Row`, produces `cols`
     /// spaces (or fills remaining width if `flex: true`); in a
@@ -2688,8 +2769,30 @@ pub enum WidgetSpec {
         /// equal-split path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width_pct: Option<u32>,
+        /// When this section is a Block child of a Row, request exactly
+        /// this many columns. Takes precedence over `width_pct`.
+        ///
+        /// A percent cannot express "a third of the row": the integer
+        /// rounding does not divide, so three equal siblings either
+        /// overflow the panel — and the host wraps the last one onto a
+        /// line of its own — or leave a ragged remainder that all lands
+        /// on one side. Columns are what a caller with a measure in mind
+        /// actually has, and asking in them is exact.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width_cols: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
+        /// How the section's own chrome — its border and its legend —
+        /// looks while `key` is the hovered widget.
+        ///
+        /// A section emits no hit area of its own, so it never becomes
+        /// the hovered widget by being pointed at. Give it the key of
+        /// the control inside it and the frame answers with that
+        /// control: a card whose rows share one key lights as a card
+        /// rather than one row at a time.
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hover_style: Option<OverlayOptions>,
     },
     /// Reserve a rectangle in the widget layout for the host to
     /// natively paint the editor `Window` identified by
@@ -4465,6 +4568,19 @@ pub enum PluginCommand {
     /// Set the scroll position of a specific split
     SetSplitScroll { split_id: SplitId, top_byte: usize },
 
+    /// Scroll a widget-panel buffer to the widget with this key, and
+    /// put the cursor on it. `align` chooses where it lands.
+    ///
+    /// The panel already knows where it painted every keyed widget.
+    /// Without this, a plugin scrolling to its own content has to read
+    /// the painted buffer back and match its own text as strings.
+    ScrollToWidget {
+        buffer_id: BufferId,
+        key: String,
+        #[serde(default)]
+        align: ScrollAlign,
+    },
+
     /// Request syntax highlights for a buffer range
     RequestHighlights {
         buffer_id: BufferId,
@@ -5322,6 +5438,10 @@ pub enum PluginCommand {
         panel_id: u64,
         buffer_id: BufferId,
         spec: WidgetSpec,
+        /// Host behaviours the spec does not describe. Absent in an
+        /// older plugin's payload, which is why it defaults.
+        #[serde(default)]
+        options: WidgetPanelOptions,
     },
 
     /// Replace the spec of a previously-mounted widget panel.
@@ -7111,6 +7231,21 @@ impl PluginApi {
     /// Switch the current split to display a buffer
     pub fn show_buffer(&self, buffer_id: BufferId) -> Result<(), String> {
         self.send_command(PluginCommand::ShowBuffer { buffer_id })
+    }
+
+    /// Scroll to the keyed widget. See [`ScrollAlign`] for where it
+    /// lands; `Top` is the historical behaviour.
+    pub fn scroll_to_widget(
+        &self,
+        buffer_id: BufferId,
+        key: String,
+        align: ScrollAlign,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::ScrollToWidget {
+            buffer_id,
+            key,
+            align,
+        })
     }
 
     /// Set the scroll position of a specific split

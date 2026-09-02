@@ -718,6 +718,13 @@ impl Editor {
             PluginCommand::SetSplitScroll { split_id, top_byte } => {
                 self.handle_set_split_scroll(split_id, top_byte);
             }
+            PluginCommand::ScrollToWidget {
+                buffer_id,
+                key,
+                align,
+            } => {
+                self.handle_scroll_to_widget(buffer_id, &key, align);
+            }
             PluginCommand::RequestHighlights {
                 buffer_id,
                 range,
@@ -1914,9 +1921,10 @@ impl Editor {
                 panel_id,
                 buffer_id,
                 spec,
+                options,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
-                self.handle_mount_widget_panel(key, buffer_id, spec);
+                self.handle_mount_widget_panel(key, buffer_id, spec, options);
             }
 
             PluginCommand::UpdateWidgetPanel {
@@ -5139,6 +5147,7 @@ impl Editor {
         panel_key: crate::widgets::PanelKey,
         buffer_id: BufferId,
         spec: fresh_core::api::WidgetSpec,
+        options: fresh_core::api::WidgetPanelOptions,
     ) {
         // Mount = clean slate. Instance state and focus key reset
         // so a plugin that re-mounts (e.g. reopening a panel with
@@ -5158,6 +5167,7 @@ impl Editor {
             &prev_focus,
             panel_width,
             avail_height,
+            options.auto_focus_first(),
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
         // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
@@ -5180,6 +5190,7 @@ impl Editor {
             out.tabbable,
             out.painted,
             out.boxes,
+            options.auto_focus_first(),
         );
         // Mark the buffer as hosting an interactive widget panel so the
         // focus/click paths keep routing focus to it even when it opts out
@@ -5242,6 +5253,14 @@ impl Editor {
             .unwrap_or(BufferId(0));
         let panel_width = self.widget_panel_width(buffer_id_for_width);
         let avail_height = self.widget_panel_height(buffer_id_for_width);
+        // The policy the mount set, not a fresh default: a repaint that
+        // resolved focus differently from the mount is exactly the drift
+        // `auto_focus_first` exists to prevent.
+        let auto_focus_first = self
+            .widget_registry
+            .get(panel_key)
+            .map(|p| p.auto_focus_first)
+            .unwrap_or(true);
         let out = self.render_panel_spec(
             &spec,
             &prev,
@@ -5249,6 +5268,7 @@ impl Editor {
             &prev_focus,
             panel_width,
             avail_height,
+            auto_focus_first,
         );
         self.record_widget_panel_render_height(panel_key, avail_height);
         let entries = out.entries;
@@ -5696,6 +5716,9 @@ impl Editor {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
                 }),
+                // Floating and dock slots keep the historical seeding;
+                // only a panel that declared otherwise at mount opts out.
+                true,
             )
         };
         let entries = out.entries;
@@ -5709,6 +5732,11 @@ impl Editor {
             out.tabbable,
             out.painted,
             out.boxes,
+            // Floating and dock panels render through
+            // `render_floating_spec`, which seeds focus unconditionally;
+            // record what they actually rendered under rather than a
+            // policy they do not read.
+            true,
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
@@ -5789,6 +5817,9 @@ impl Editor {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
                 }),
+                // Floating and dock slots keep the historical seeding;
+                // only a panel that declared otherwise at mount opts out.
+                true,
             )
         };
         let entries = out.entries;

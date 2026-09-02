@@ -40,6 +40,7 @@ impl Editor {
         prev_focus_key: &str,
         panel_width: u32,
         avail_height: Option<u32>,
+        auto_focus_first: bool,
     ) -> crate::widgets::RenderOutput {
         let theme_guard = self.theme.read().unwrap();
         crate::widgets::render_spec_with_options(
@@ -48,7 +49,11 @@ impl Editor {
             panel_width,
             crate::widgets::RenderOptions {
                 prev_focus_key,
-                auto_focus_first: true,
+                // The panel's own policy: see `WidgetPanelOptions`. A
+                // panel that says "nothing focused" is a real state
+                // must not have that answer overwritten on every
+                // repaint.
+                auto_focus_first,
                 markdown: Some(crate::widgets::MarkdownCtx {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
@@ -84,6 +89,7 @@ pub(super) fn render_floating_spec(
     hover_item_key: &str,
     hover_popup_row: &str,
     markdown: Option<crate::widgets::MarkdownCtx<'_>>,
+    auto_focus_first: bool,
 ) -> crate::widgets::RenderOutput {
     crate::widgets::render_spec_with_options(
         spec,
@@ -95,7 +101,12 @@ pub(super) fn render_floating_spec(
             hover_item_key,
             hover_popup_row,
             marker_gutter: focus_marker,
-            auto_focus_first: true,
+            // The panel's own policy — see `WidgetPanelOptions`. This
+            // is the path a focus change, a hover change and every
+            // host-driven refresh re-render through, mounted panels
+            // included, so seeding here unconditionally undid a panel's
+            // "nothing focused" the moment anything touched it.
+            auto_focus_first,
             markdown,
             avail_height,
             prev_painted: Some(prev_painted),
@@ -488,11 +499,34 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .values()
             .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.width > 0)
-            .map(|vs| vs.viewport.width as u32)
-            .unwrap_or_else(|| self.terminal_width.max(1) as u32);
-        // Reserve 2 cols for gutter/scrollbar/border. Saturate to
-        // avoid 0 width on tiny panels.
-        raw.saturating_sub(2).max(10)
+            // A composed buffer is painted into a narrower column than
+            // its split: `compose_width` is what the renderer clips to,
+            // so it is also what the widget layout has to size rows to.
+            // Laying out against the split width instead let the two
+            // disagree, and every consequence of that disagreement
+            // looked like a widget bug rather than a width bug — a
+            // `flexSpacer` filled to the split and pushed its row past
+            // the column, so the host wrapped a centred row in half,
+            // and a `divider` ruled across the pane instead of the
+            // page. Plugins were left computing their own pads from a
+            // width the host already knew.
+            .map(|vs| (vs.compose_width, vs.viewport.width))
+            .unwrap_or((None, self.terminal_width.max(1) as u16));
+        match raw {
+            // Composing, the compose layout has already flanked the
+            // column with real margins, so the panel *is* the column.
+            // Taking the full gutter here as well left two unused
+            // columns inside the render area, and because both fell on
+            // its right the page rode left of the column it was
+            // supposedly centred in — measured on the welcome screen at
+            // 100, 120 and 150 columns, a left margin four short of the
+            // right one. One column is still held back: a row that
+            // fills the area exactly wraps.
+            (Some(cw), _) => (cw as u32).saturating_sub(1).max(10),
+            // Not composing: reserve 2 cols for gutter/scrollbar/border.
+            // Saturate to avoid 0 width on tiny panels.
+            (None, vw) => (vw as u32).saturating_sub(2).max(10),
+        }
     }
 
     /// Height sibling of [`Self::widget_panel_width`]: the viewport
@@ -636,6 +670,11 @@ impl Editor {
                 .focus_key(panel_key)
                 .map(|s| s.to_string())
                 .unwrap_or_default();
+            let auto_focus_first = self
+                .widget_registry
+                .get(panel_key)
+                .map(|p| p.auto_focus_first)
+                .unwrap_or(true);
             let panel_slot = Self::slot_for_panel_buffer(buffer_id);
             let is_floating = panel_slot.is_some();
             let panel_width = if let Some(slot) = panel_slot {
@@ -655,14 +694,17 @@ impl Editor {
             // This is also the path a hover change re-renders through, so
             // the panel's tracked hover key has to reach the renderer here
             // — otherwise entering a `×` would repaint it unhighlighted.
-            let hover_key = panel_slot
-                .and_then(|slot| self.panel(slot))
-                .map(|f| f.hovered_widget_key.clone())
-                .unwrap_or_default();
-            let hover_item_key = panel_slot
-                .and_then(|slot| self.panel(slot))
-                .map(|f| f.hovered_item_key.clone())
-                .unwrap_or_default();
+            // A buffer-mounted panel has no `FloatingWidgetPanel` to
+            // carry this, so it keeps its hover on its registry state.
+            let (hover_key, hover_item_key) = match panel_slot {
+                Some(slot) => self
+                    .panel(slot)
+                    .map(|f| (f.hovered_widget_key.clone(), f.hovered_item_key.clone()))
+                    .unwrap_or_default(),
+                None => self.widget_registry.hover_keys(panel_key),
+            };
+            // The popup row is a floating-panel affordance; a mounted panel
+            // drops the popup channel at mount, so there is none to carry.
             let hover_popup_row = panel_slot
                 .and_then(|slot| self.panel(slot))
                 .map(|f| f.hovered_popup_row.clone())
@@ -691,6 +733,7 @@ impl Editor {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
                 }),
+                auto_focus_first,
             );
             (buffer_id, is_floating, panel_width, out)
         };
@@ -791,7 +834,12 @@ impl Editor {
             &state.spec,
             &state.instance_states,
             &state.focus_key,
-            true,
+            // The panel's own policy, not a literal: this is the fourth
+            // path that can re-resolve focus, and it is the one the
+            // migration routes described panels through. Seeding here
+            // discarded `autoFocusFirst: false` on every repaint of
+            // exactly the panels the tree has already taken over.
+            state.auto_focus_first,
         );
         // The row budget this panel was resolved against, for the resize
         // bookkeeping that decides when a pane-mounted panel has to be
@@ -1166,10 +1214,25 @@ impl Editor {
         if ring.is_empty() {
             return;
         }
-        let cur_idx = ring.iter().position(|k| k == &panel.focus_key).unwrap_or(0) as i32;
         let n = ring.len() as i32;
-        let new_idx = ((cur_idx + delta) % n + n) % n;
-        let new_key = ring[new_idx as usize].clone();
+        // "Nothing focused" sits *outside* the ring, not on its first
+        // entry — so the first Tab must land on the first widget and the
+        // first Shift+Tab on the last.
+        //
+        // `position()` answering `None` for an unfocused panel used to
+        // fall through to index 0, and the step was applied from there:
+        // Tab went to `ring[1]`, skipping the first tabbable entirely,
+        // and Shift+Tab to `ring[n - 1]`. That could not happen while
+        // focus was always seeded, so `autoFocusFirst: false` is what
+        // made this reachable.
+        let new_key = match ring.iter().position(|k| k == &panel.focus_key) {
+            Some(cur) => {
+                let new_idx = ((cur as i32 + delta) % n + n) % n;
+                ring[new_idx as usize].clone()
+            }
+            None if delta >= 0 => ring[0].clone(),
+            None => ring[(n - 1) as usize].clone(),
+        };
         self.set_panel_focus_and_notify(panel_key, new_key);
         self.rerender_widget_panel(panel_key);
     }
@@ -1847,9 +1910,18 @@ impl Editor {
         if panel.focus_key.is_empty() {
             return false;
         }
+        // A read-only or markdown `Text` is somewhere you *read*, not
+        // somewhere you type — and this predicate now decides whether a
+        // printable key reaches the mode's bindings at all, so calling a
+        // rendered document "focused text input" would divert every
+        // character into a field that discards it.
         matches!(
             crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key),
-            Some(fresh_core::api::WidgetSpec::Text { .. })
+            Some(fresh_core::api::WidgetSpec::Text {
+                read_only: false,
+                markdown: false,
+                ..
+            })
         )
     }
 
@@ -3012,6 +3084,143 @@ impl Editor {
         *self.panel_opt_mut(slot) = None;
         let _ = self.widget_registry.unmount(&panel_key);
     }
+
+    /// Track what the pointer is over inside a panel mounted into a
+    /// BUFFER that the shell tree does not describe, and re-render it
+    /// when the answer changes.
+    ///
+    /// A described pane answers its own hover: its rows are nodes and they
+    /// report enter and leave, which is why the runtime's dock/floating
+    /// probe could be deleted outright. But the flip is gated on panels
+    /// that own their scroll (`pane_panel_owns_its_scroll`), and the pages
+    /// whose selection rides the buffer cursor — the welcome screen, Git
+    /// Log — stay on the painter. Nothing on the tree side reaches them,
+    /// so without this every clickable thing in one stays dark under the
+    /// pointer.
+    ///
+    /// Resolution goes through the same `screen_to_buffer_position` →
+    /// `hit_test_row_aware` pair the mounted click path uses, so hover and
+    /// click can never disagree about what the pointer is on.
+    pub(super) fn update_mounted_widget_hover(&mut self, col: u16, row: u16) -> bool {
+        // Which mounted panel is under the pointer, and on what.
+        //
+        // `pane_content_at` is the one answer to "which pane's content covers
+        // this cell", and it reads the rectangle off the shell tree rather
+        // than a recorded list — the same source the click path resolves
+        // against, which is what keeps hover and click from disagreeing.
+        let mut hit_for: Option<(BufferId, String, String)> = None;
+        let pane = self.pane_content_at(col, row);
+        let panes = self.window_panes();
+        'probe: {
+            let Some((split_id, content_rect)) = pane.as_ref().map(|(l, r)| (l, *r)) else {
+                break 'probe;
+            };
+            let Some(buffer_id) = panes
+                .iter()
+                .find(|(leaf, _)| leaf == split_id)
+                .map(|(_, b)| b)
+            else {
+                break 'probe;
+            };
+            if self
+                .widget_registry
+                .panels_for_buffer(*buffer_id)
+                .is_empty()
+            {
+                break 'probe;
+            }
+            let cached_mappings = self
+                .active_layout()
+                .view_line_mappings
+                .get(split_id)
+                .cloned();
+            let splits = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs);
+            let fallback = splits
+                .and_then(|vs| vs.get(split_id))
+                .map(|vs| vs.viewport.top_byte())
+                .unwrap_or(0);
+            let compose_width = splits
+                .and_then(|vs| vs.get(split_id))
+                .and_then(|vs| vs.compose_width);
+            let gutter_width = self
+                .buffers()
+                .get(buffer_id)
+                .map(|s| s.margins.left_total_width() as u16)
+                .unwrap_or(0);
+            let Some(byte_pos) = super::click_geometry::screen_to_buffer_position(
+                col,
+                row,
+                content_rect,
+                gutter_width,
+                &cached_mappings,
+                fallback,
+                true,
+                compose_width,
+            ) else {
+                break 'probe;
+            };
+            let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .and_then(|b| b.get(buffer_id))
+            else {
+                break 'probe;
+            };
+            let (brow, bcol) = state.buffer.position_to_line_col(byte_pos);
+            // `on_overlay = false`: a mounted panel drops the overlay and
+            // popup channels at mount, so there is no covering surface.
+            if let Some((_, hit)) = self.widget_registry.hit_test_row_aware(
+                *buffer_id,
+                brow.min(u32::MAX as usize) as u32,
+                bcol.min(u32::MAX as usize) as u32,
+                false,
+            ) {
+                let item = hit
+                    .event
+                    .payload
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                hit_for = Some((*buffer_id, hit.event.widget_key.clone(), item));
+            }
+        }
+        // Every other mounted panel resolves to "nothing hovered", which
+        // is what clears a highlight the pointer has left.
+        let mut changed = Vec::new();
+        for panel_key in self.widget_registry.panel_keys() {
+            let Some(buffer_id) = self
+                .widget_registry
+                .buffer_and_spec_ref(&panel_key)
+                .map(|(b, _)| b)
+            else {
+                continue;
+            };
+            if Self::slot_for_panel_buffer(buffer_id).is_some() {
+                continue;
+            }
+            let (widget, item) = match &hit_for {
+                Some((b, w, i)) if *b == buffer_id => (w.clone(), i.clone()),
+                _ => (String::new(), String::new()),
+            };
+            if self
+                .widget_registry
+                .set_hover_keys(&panel_key, widget, item)
+            {
+                changed.push(panel_key);
+            }
+        }
+        let any = !changed.is_empty();
+        for panel_key in changed {
+            self.rerender_widget_panel(&panel_key);
+        }
+        any
+    }
 }
 
 #[cfg(test)]
@@ -3088,6 +3297,7 @@ mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         }
     }
 
@@ -3149,6 +3359,7 @@ mod tests {
             "",
             "",
             None,
+            true,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -3160,6 +3371,7 @@ mod tests {
             out.tabbable,
             out.painted,
             out.boxes,
+            true,
         );
     }
 
@@ -3281,6 +3493,7 @@ mod tests {
             "",
             "",
             None,
+            true,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -3292,6 +3505,7 @@ mod tests {
             out.tabbable,
             out.painted,
             out.boxes,
+            true,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         // Candidates never come from the spec — the plugin pushes them — so
@@ -3372,6 +3586,7 @@ mod tests {
             "",
             "",
             None,
+            true,
         );
         assert_eq!(
             out.tabbable,
@@ -3388,6 +3603,7 @@ mod tests {
             out.tabbable,
             out.painted,
             out.boxes,
+            true,
         );
         assert_eq!(
             editor.widget_registry.focus_key(&panel_key),
@@ -3441,6 +3657,7 @@ mod tests {
             "",
             "",
             None,
+            true,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -3452,6 +3669,7 @@ mod tests {
             out.tabbable,
             out.painted,
             out.boxes,
+            true,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -3507,6 +3725,7 @@ mod tests {
             "",
             "",
             None,
+            true,
         );
         // What the collector resolved for the same list, so the two numbers
         // are visible side by side: with a plain header above it they agree
@@ -3524,6 +3743,7 @@ mod tests {
             out.tabbable,
             out.painted,
             out.boxes,
+            true,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -3750,6 +3970,7 @@ mod tests {
             "",
             "",
             None,
+            true,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -3761,6 +3982,7 @@ mod tests {
             out.tabbable,
             out.painted,
             out.boxes,
+            true,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);

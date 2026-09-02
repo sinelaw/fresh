@@ -302,6 +302,17 @@ pub struct Window {
     /// than the workspace on it.
     pub stable_id: String,
 
+    /// Whether this window ever adopted an on-disk workspace snapshot.
+    ///
+    /// Set by `apply_workspace_layout`, which is the one door every
+    /// restore path goes through. It answers the single question the
+    /// issue-#2027 save guard could not: an all-virtual snapshot from a
+    /// window that *did* restore is the user having closed everything
+    /// and must be written; the same snapshot from a window that never
+    /// restored is a shell that never held the real content and must
+    /// not overwrite it. Both look identical without this.
+    pub workspace_restored: bool,
+
     /// Canonical absolute path of the project root. Read-only after
     /// construction; closing a window and creating a new one is the
     /// way to "rename" the root.
@@ -2266,6 +2277,7 @@ impl Window {
             id,
             label,
             stable_id: crate::workspace::generate_stable_id(),
+            workspace_restored: false,
             root,
             authority,
             file_explorer: None,

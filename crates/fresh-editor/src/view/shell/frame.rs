@@ -1095,6 +1095,7 @@ mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let mut p = crate::view::shell::panel::Panel {
             spot: crate::view::shell::panel::Spot::Centered {

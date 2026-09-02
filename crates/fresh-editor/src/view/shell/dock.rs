@@ -547,6 +547,7 @@ mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let spec = WidgetSpec::Col {
             children: vec![button("one", "one"), button("two", "two")],

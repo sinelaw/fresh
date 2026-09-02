@@ -505,12 +505,41 @@ pub enum ModeKeyDisposition {
     Forward(Action),
     /// Shift+nav extends the focused widget text selection. Always
     /// consumed, even when the move is a no-op at a boundary.
-    WidgetSelection(WidgetSelectionMove),
+    WidgetSelection {
+        mv: WidgetSelectionMove,
+        /// `true` for Shift+nav (extend the selection), `false` for a
+        /// plain move.
+        extend: bool,
+    },
     /// Consumed with no effect (unbound key in a text-input or
     /// read-only mode).
     Block,
     /// No mode claims the key — continue down the pipeline.
     FallThrough,
+}
+
+/// The character this key event types, if it types one.
+///
+/// One definition for both places a mode can capture text, because two
+/// hand-rolled copies of "is this typing" is how they drift. It defers
+/// the modifier question to [`crate::input::keybindings::is_text_input_modifier`],
+/// which is the editor's own answer and knows the case a bare
+/// `!intersects(CONTROL | ALT)` gets wrong: on Windows crossterm reports
+/// AltGr as Ctrl+Alt, so excluding Ctrl+Alt excludes `@ [ ] { }` on
+/// German, French and Italian layouts — the characters those keyboards
+/// need most.
+fn typed_char(event: &KeyEvent) -> Option<char> {
+    let KeyCode::Char(c) = event.code else {
+        return None;
+    };
+    if !crate::input::keybindings::is_text_input_modifier(event.modifiers) {
+        return None;
+    }
+    Some(if event.modifiers.contains(KeyModifiers::SHIFT) {
+        c.to_uppercase().next().unwrap_or(c)
+    } else {
+        c
+    })
 }
 
 /// Decide what a key means while an editor mode is active. Pure: the
@@ -526,6 +555,37 @@ pub fn mode_key_disposition(
     event: &KeyEvent,
 ) -> ModeKeyDisposition {
     use crate::input::keybindings::ChordResolution;
+
+    // A focused text field owns the characters it can accept, ahead of
+    // whatever the mode bound them to.
+    //
+    // Mode bindings resolve first (just below), which is right for every
+    // key the mode means to own. But a mode with `allow_text_input` has
+    // a text widget *in* it, and while that widget has focus a character
+    // key means "type this" — there is nothing else it could mean. The
+    // welcome screen bound `0`-`3`, `/` and Space for its own navigation
+    // and so lost all four out of its file finder: every digit, the one
+    // separator every path contains, and the space. The page could only
+    // get them back by having each handler hand the character to the
+    // panel itself, which works exactly as far as the handlers that
+    // remember to — and the comment asserting the runtime sorted this
+    // out "by owning focus" is why it went unnoticed through a full
+    // manual pass.
+    //
+    // A chord already in flight is the one exception: the reader
+    // deliberately started that sequence, so finishing it beats typing.
+    //
+    // Note what this does *not* say. A chord whose prefix is itself a
+    // printable character can no longer be started while a field has
+    // focus, because this returns before `resolve_chord` ever sees the
+    // prefix. That is the intended reading of the rule — in a focused
+    // field, `g` is the letter g — but it means only chords prefixed by
+    // a named key or a modified one remain reachable here.
+    if chord_state.is_empty() && view.allows_text_input && view.has_focused_text_widget {
+        if let Some(ch) = typed_char(event) {
+            return ModeKeyDisposition::TextInput(ch);
+        }
+    }
 
     if let Some(mode_name) = &view.effective_mode {
         let mode_ctx = KeyContext::Mode(mode_name.clone());
@@ -549,18 +609,8 @@ pub fn mode_key_disposition(
     // fall through to normal keybinding handling so that Ctrl+C, arrows,
     // etc. still work.
     if view.effective_mode.is_some() && view.allows_text_input {
-        if let KeyCode::Char(c) = event.code {
-            let ch = if event.modifiers.contains(KeyModifiers::SHIFT) {
-                c.to_uppercase().next().unwrap_or(c)
-            } else {
-                c
-            };
-            if !event
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            {
-                return ModeKeyDisposition::TextInput(ch);
-            }
+        if let Some(ch) = typed_char(event) {
+            return ModeKeyDisposition::TextInput(ch);
         }
         // Before blocking the key, resolve it against the Normal context
         // and forward if it's one of the clipboard / select-all actions —
@@ -592,9 +642,55 @@ pub fn mode_key_disposition(
                 _ => None,
             };
             if let Some(mv) = mv {
-                return ModeKeyDisposition::WidgetSelection(mv);
+                return ModeKeyDisposition::WidgetSelection { mv, extend: true };
             }
         }
+
+        // Navigation is not the mode's to swallow.
+        //
+        // A mode declaring `allow_text_input` owns the keyboard, and
+        // everything it did not name was blocked here. That made every
+        // such page re-declare the whole navigation set — arrows, page
+        // keys, Home/End — and hand each one back to the host through a
+        // plugin handler, which is a lot of plumbing to arrive at the
+        // behaviour the host already implements. The welcome screen had
+        // nine such handlers; before they were written, Home and End
+        // simply did nothing on it.
+        //
+        // So navigation resolves the way it would anywhere else: to the
+        // focused text widget when there is one, and to the buffer
+        // otherwise. Character keys are still captured above, and every
+        // other unbound key is still blocked — a focused search field
+        // must not let Ctrl+O through.
+        // Plain navigation only. Shift+nav with no focused widget stays
+        // blocked, as it was: extending a *buffer* selection is not what
+        // a page like this is for, and widening that here would be a
+        // behaviour change to every `allow_text_input` mode rather than
+        // a fix to the one thing that was broken.
+        let plain = !event
+            .modifiers
+            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
+        let nav = match event.code {
+            KeyCode::Left => Some(WidgetSelectionMove::Left),
+            KeyCode::Right => Some(WidgetSelectionMove::Right),
+            KeyCode::Up => Some(WidgetSelectionMove::Up),
+            KeyCode::Down => Some(WidgetSelectionMove::Down),
+            KeyCode::Home => Some(WidgetSelectionMove::Home),
+            KeyCode::End => Some(WidgetSelectionMove::End),
+            _ => None,
+        };
+        if let Some(mv) = nav {
+            if plain && view.has_focused_text_widget {
+                return ModeKeyDisposition::WidgetSelection { mv, extend: false };
+            }
+        }
+        if plain && (nav.is_some() || matches!(event.code, KeyCode::PageUp | KeyCode::PageDown)) {
+            let action = kb.resolve(event, KeyContext::Normal);
+            if action != Action::None {
+                return ModeKeyDisposition::Forward(action);
+            }
+        }
+
         return ModeKeyDisposition::Block;
     }
 
@@ -859,6 +955,89 @@ mod tests {
     }
 
     #[test]
+    fn a_focused_field_takes_a_char_the_mode_binds() {
+        // The precedence that cost the welcome screen every digit, `/`
+        // and Space out of its file finder: the mode bound them for its
+        // own navigation, mode bindings resolved first, and the field
+        // never saw them.
+        let mut kb = resolver();
+        kb.load_plugin_default(
+            KeyContext::Mode("welcome".to_string()),
+            KeyCode::Char('1'),
+            KeyModifiers::NONE,
+            Action::PluginAction("welcome_jump_1".to_string()),
+        );
+        let view = |has_widget| ModeKeyView {
+            effective_mode: Some("welcome".to_string()),
+            allows_text_input: true,
+            global_mode_read_only: None,
+            has_focused_text_widget: has_widget,
+        };
+        let one = event(KeyCode::Char('1'), KeyModifiers::NONE);
+
+        // Focused: the character is typed, and the binding does not run.
+        assert_eq!(
+            mode_key_disposition(&view(true), &[], &kb, &one),
+            ModeKeyDisposition::TextInput('1')
+        );
+        // Nothing focused: the mode's binding still owns the key.
+        assert_eq!(
+            mode_key_disposition(&view(false), &[], &kb, &one),
+            ModeKeyDisposition::Run(Action::PluginAction("welcome_jump_1".to_string()))
+        );
+        // A modified key is never "typing", focused or not.
+        assert_eq!(
+            mode_key_disposition(
+                &view(true),
+                &[],
+                &kb,
+                &event(KeyCode::Char('o'), KeyModifiers::CONTROL)
+            ),
+            ModeKeyDisposition::Block
+        );
+        // A chord already in flight beats typing. The prefix has to be a
+        // key this rule does not swallow, which is the point: a chord
+        // prefixed by a printable character can no longer be *started*
+        // while a field has focus, so only a named or modified prefix
+        // can put a chord in flight here.
+        kb.load_plugin_chord_default(
+            KeyContext::Mode("welcome".to_string()),
+            vec![
+                (KeyCode::F(2), KeyModifiers::NONE),
+                (KeyCode::Char('1'), KeyModifiers::NONE),
+            ],
+            Action::PluginAction("welcome_goto_1".to_string()),
+        );
+        assert_eq!(
+            mode_key_disposition(
+                &view(true),
+                &[(KeyCode::F(2), KeyModifiers::NONE)],
+                &kb,
+                &one
+            ),
+            ModeKeyDisposition::Run(Action::PluginAction("welcome_goto_1".to_string()))
+        );
+        // ...and a character-prefixed chord is simply typed instead.
+        kb.load_plugin_chord_default(
+            KeyContext::Mode("welcome".to_string()),
+            vec![
+                (KeyCode::Char('g'), KeyModifiers::NONE),
+                (KeyCode::Char('1'), KeyModifiers::NONE),
+            ],
+            Action::PluginAction("welcome_goto_g1".to_string()),
+        );
+        assert_eq!(
+            mode_key_disposition(
+                &view(true),
+                &[],
+                &kb,
+                &event(KeyCode::Char('g'), KeyModifiers::NONE)
+            ),
+            ModeKeyDisposition::TextInput('g')
+        );
+    }
+
+    #[test]
     fn text_input_mode_routes_shift_nav_to_focused_widget() {
         let kb = resolver();
         let mk = |has_widget| ModeKeyView {
@@ -874,7 +1053,10 @@ mod tests {
                 &kb,
                 &event(KeyCode::Left, KeyModifiers::SHIFT)
             ),
-            ModeKeyDisposition::WidgetSelection(WidgetSelectionMove::Left)
+            ModeKeyDisposition::WidgetSelection {
+                mv: WidgetSelectionMove::Left,
+                extend: true
+            }
         );
         assert_eq!(
             mode_key_disposition(
@@ -883,7 +1065,10 @@ mod tests {
                 &kb,
                 &event(KeyCode::Left, KeyModifiers::SHIFT | KeyModifiers::CONTROL)
             ),
-            ModeKeyDisposition::WidgetSelection(WidgetSelectionMove::WordLeft)
+            ModeKeyDisposition::WidgetSelection {
+                mv: WidgetSelectionMove::WordLeft,
+                extend: true
+            }
         );
         // No focused widget Text → the key is simply blocked.
         assert_eq!(

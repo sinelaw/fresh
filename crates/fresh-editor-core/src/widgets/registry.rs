@@ -461,6 +461,19 @@ pub struct WidgetPanelState {
     /// (`render::focus_ring_scoped_in_spec`) — the same two `box_meta` facts,
     /// asked of the thing that states them.
     pub boxes: Vec<crate::widgets::LayoutBox>,
+    /// This panel's [`WidgetPanelOptions::auto_focus_first`], kept so
+    /// every later repaint resolves focus the same way the mount did.
+    pub auto_focus_first: bool,
+    /// Widget the pointer is over, `""` for none.
+    ///
+    /// Floating and dock panels keep this on their `FloatingWidgetPanel`
+    /// instead; it lives here for panels mounted into a BUFFER, which
+    /// have no such struct — and which, until this field existed, could
+    /// not light anything under the pointer at all.
+    pub hovered_widget_key: String,
+    /// The hovered ROW's own key, for kinds whose rows share one widget
+    /// key (`List`, `Tree`). Empty for everything else.
+    pub hovered_item_key: String,
 }
 
 impl WidgetPanelState {
@@ -633,7 +646,15 @@ impl WidgetRegistry {
         tabbable: Vec<String>,
         painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
+        auto_focus_first: bool,
     ) -> Option<WidgetPanelState> {
+        // A re-mount under a stationary pointer keeps its highlight:
+        // the pointer has not moved, so neither should what it lights.
+        let (hovered_widget_key, hovered_item_key) = self
+            .panels
+            .get(&panel_key)
+            .map(|p| (p.hovered_widget_key.clone(), p.hovered_item_key.clone()))
+            .unwrap_or_default();
         self.panels.insert(
             panel_key,
             WidgetPanelState {
@@ -645,8 +666,34 @@ impl WidgetRegistry {
                 tabbable,
                 painted,
                 boxes,
+                auto_focus_first,
+                hovered_widget_key,
+                hovered_item_key,
             },
         )
+    }
+
+    /// What the pointer is over in this panel: `(widget key, row key)`,
+    /// both empty when nothing is.
+    pub fn hover_keys(&self, panel_key: &PanelKey) -> (String, String) {
+        self.panels
+            .get(panel_key)
+            .map(|p| (p.hovered_widget_key.clone(), p.hovered_item_key.clone()))
+            .unwrap_or_default()
+    }
+
+    /// Record what the pointer is over. Returns true when that changed —
+    /// the caller re-renders only on the enter/leave transition, so
+    /// pointer movement across a panel costs a hit-test and nothing else.
+    pub fn set_hover_keys(&mut self, panel_key: &PanelKey, widget: String, item: String) -> bool {
+        match self.panels.get_mut(panel_key) {
+            Some(p) if p.hovered_widget_key != widget || p.hovered_item_key != item => {
+                p.hovered_widget_key = widget;
+                p.hovered_item_key = item;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Replace the spec and rendered metadata on an already-mounted
@@ -928,6 +975,31 @@ impl WidgetRegistry {
     /// nothing and the caller swallows it, never reaching the rows
     /// the popup covers. Callers must map the click column to
     /// `col_byte` through the text of the surface they name.
+    /// The buffer row a widget landed on, by key.
+    ///
+    /// The panel already knows where every keyed widget was painted —
+    /// that is what the hit areas are. Without a way to ask, a plugin
+    /// that wants to scroll to one of its own widgets has to paint the
+    /// page, read the buffer text back, match its own captions as
+    /// strings and convert line numbers to byte offsets by hand. The
+    /// welcome screen did exactly that, and it broke twice: once when
+    /// its caption text changed, once when a byte-length helper it
+    /// relied on turned out not to exist in the plugin runtime and the
+    /// failure was swallowed by a `catch`.
+    ///
+    /// The first hit wins: a widget occupying several rows (a card
+    /// whose rows share one key) anchors at its top, which is what
+    /// "scroll to it" means.
+    pub fn row_of_widget(&self, buffer_id: BufferId, key: &str) -> Option<u32> {
+        self.panels_for_buffer(buffer_id)
+            .into_iter()
+            .filter_map(|pk| self.get(&pk))
+            .flat_map(|p| p.hits.iter())
+            .filter(|h| h.event.widget_key == key)
+            .map(|h| h.buffer_row)
+            .min()
+    }
+
     pub fn hit_test_row_aware(
         &self,
         buffer_id: BufferId,
@@ -1052,6 +1124,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         let hit = reg.hit_test(BufferId(7), 0, 8).expect("inside b");
         assert_eq!(hit.0, pk(42));
@@ -1071,6 +1144,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         assert!(
             reg.hit_test(BufferId(0), 0, 5).is_none(),
@@ -1116,6 +1190,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         // Byte 10 is the exclusive end, so `hit_test` alone misses...
         assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
@@ -1157,6 +1232,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         let bcol = 27u32;
         let (_, hit) = reg
@@ -1186,6 +1262,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(3), 0, 2, false)
@@ -1209,6 +1286,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         assert!(reg.hit_test_row_aware(BufferId(4), 3, 0, false).is_none());
     }
@@ -1231,6 +1309,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         // On the overlay surface only the popup's own hits resolve…
         let (_, hit) = reg
@@ -1277,6 +1356,7 @@ mod tests {
             Vec::new(),
             painted,
             Vec::new(),
+            true,
         );
     }
 
@@ -1340,6 +1420,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         let evicted = reg.mount(
             PanelKey::new("beta", 1),
@@ -1351,6 +1432,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         assert!(evicted.is_none(), "beta:1 must not evict alpha:1");
 
@@ -1380,6 +1462,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         assert!(reg.hit_test(BufferId(2), 0, 1).is_some());
         reg.unmount(&pk(5));
@@ -1399,6 +1482,7 @@ mod tests {
             Vec::new(),
             HashMap::new(),
             Vec::new(),
+            true,
         );
         reg.update(
             &pk(5),
