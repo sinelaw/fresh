@@ -6358,46 +6358,84 @@ fn poll_with_gpm(
     let gpm_revents = poll_fds[1].revents();
 
     // Check GPM first (mouse events are typically less frequent)
+    //
+    // **Every report GPM has ready, queued through the reader — not the first
+    // one, returned past it.** Returning it directly was the one pointer path
+    // that escaped motion coalescing: the console mouse never touches stdin,
+    // so `push_coalesced` never saw it, and `coalesce_mouse_moves` declines on
+    // unix because the reader owns fd 0. A divider drag on a VT therefore
+    // still arrived one event per cell crossed, each costing a full relayout
+    // and repaint — the very backlog this crate coalesces away everywhere
+    // else. `queue_external` puts them under the same rule.
+    //
+    // Drained in a loop because one `read_event` per wakeup would leave the
+    // rest queued in GPM and hand the flood back a poll at a time. It blocks
+    // when nothing is pending, so the fd is re-polled with a zero timeout
+    // before each further read.
     if gpm_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
-        match gpm.read_event() {
-            Ok(Some(gpm_event)) => {
-                if let Some(mouse_event) = gpm_to_crossterm(&gpm_event) {
-                    return Ok(Some(InputEvent::Mouse(mouse_event)));
-                } else {
-                    tracing::debug!("GPM event could not be converted to crossterm event");
+        loop {
+            match gpm.read_event() {
+                Ok(Some(gpm_event)) => {
+                    if let Some(mouse_event) = gpm_to_crossterm(&gpm_event) {
+                        reader.queue_external(InputEvent::Mouse(mouse_event));
+                    } else {
+                        tracing::debug!("GPM event could not be converted to crossterm event");
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!("GPM poll: read_event error: {}", e);
+                    break;
                 }
             }
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!("GPM poll: read_event error: {}", e);
+            let mut ready_again = [PollFd::new(gpm_borrowed, PollFlags::POLLIN)];
+            if poll(&mut ready_again, PollTimeout::from(0u16)).unwrap_or(0) == 0 {
+                break;
             }
         }
     }
 
-    // Then stdin, parsed by fresh's state machine.
+    // Then stdin, parsed by fresh's state machine. Appended after the GPM
+    // reports above, so the queue keeps the precedence this function has
+    // always had; the single drain below serves whichever came first.
     if stdin_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
         reader.drain_stdin();
-        if let Some(ev) = reader.next_buffered() {
-            return Ok(Some(ev));
-        }
     }
 
-    Ok(reader.take_resize())
+    Ok(reader.next_buffered().or_else(|| reader.take_resize()))
 }
 
-/// Skip stale mouse move events, return the latest one.
-/// If we read a non-move event while draining, return it as pending.
+/// Skip stale mouse motion events, return the latest one.
+/// If we read a non-motion event while draining, return it as pending.
+///
+/// "Motion" is both reports a terminal sends as the pointer travels: `Moved`
+/// with no button down, and `Drag(button)` with one held. Only a run of the
+/// *same* report collapses — see [`TtyReader::push_coalesced`], which this
+/// mirrors for the platforms where crossterm still owns stdin.
 fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<InputEvent>)> {
     use crossterm::event::MouseEventKind;
 
-    // Only coalesce mouse moves
-    if !matches!(&event, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
-        return Ok((event, None));
+    fn motion(ev: &InputEvent) -> Option<(MouseEventKind, crossterm::event::KeyModifiers)> {
+        match ev {
+            InputEvent::Mouse(m)
+                if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) =>
+            {
+                Some((m.kind, m.modifiers))
+            }
+            _ => None,
+        }
     }
 
+    // Only coalesce motion.
+    let Some(run) = motion(&event) else {
+        return Ok((event, None));
+    };
+
     // On Unix, the TtyReader owns stdin and already coalesces motion floods as
-    // it queues them; draining crossterm here would race the reader on fd 0
-    // (and re-introduce crossterm's fragile mouse parsing). Nothing to do.
+    // it queues them — including the Linux console's, which `poll_with_gpm`
+    // hands it via `queue_external` rather than returning past it. Draining
+    // crossterm here would race the reader on fd 0 (and re-introduce
+    // crossterm's fragile mouse parsing). Nothing to do.
     #[cfg(unix)]
     if fresh::services::tty_input::raw_input_active() {
         return Ok((event, None));
@@ -6408,8 +6446,8 @@ fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<I
         let Some(next) = safe_event_read()? else {
             continue;
         };
-        if matches!(&next, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
-            latest = next; // Newer move, skip the old one
+        if motion(&next) == Some(run) {
+            latest = next; // Newer report of the same motion, skip the old one
         } else {
             return Ok((latest, Some(next))); // Hit a click/key, save it
         }
