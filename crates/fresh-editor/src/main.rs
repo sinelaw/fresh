@@ -669,6 +669,10 @@ fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
     let temp_dir = std::env::temp_dir();
     let temp_path = temp_dir.join(format!("fresh-stdin-{}.tmp", std::process::id()));
     File::create(&temp_path)?;
+    // The buffer lazily reads chunks back off this file for as long as it
+    // lives, so it can't be unlinked here — the process deletes it on the
+    // way out instead (#3134).
+    fresh::services::temp_files::register(&temp_path);
 
     // Reopen stdin from /dev/tty so crossterm can use it for keyboard input
     reopen_stdin_from_tty()?;
@@ -763,6 +767,9 @@ fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
     // Create a temp file to store the piped content
     let temp_dir = std::env::temp_dir();
     let temp_path = temp_dir.join(format!("fresh-stdin-{}.txt", std::process::id()));
+    // Deleted when the process exits, not when the buffer closes: the
+    // buffer keeps lazily reading chunks off this file (#3134).
+    fresh::services::temp_files::register(&temp_path);
 
     let temp_path_clone = temp_path.clone();
 
@@ -1714,6 +1721,11 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         terminal_modes::emergency_cleanup();
+        // A crash should not leave the stdin spool file behind either. The
+        // `CleanupOnDrop` guard in `real_main` covers an unwinding panic on
+        // its own, but under `panic = "abort"` (the `min-size` profile)
+        // nothing unwinds, so the hook is the last chance (#3134).
+        fresh::services::temp_files::cleanup_all();
         original_hook(panic);
     }));
 
@@ -5420,6 +5432,13 @@ fn build_localized_cli_command() -> clap::Command {
 }
 
 fn real_main() -> AnyhowResult<()> {
+    // Every scratch file this process registers (today: the stdin spool
+    // file) is deleted when this frame unwinds, on any return path — the
+    // early CLI-command returns and the `?` out of `initialize_app`
+    // included. `main` turns some errors into `process::exit`, which skips
+    // destructors, so the guard belongs here rather than one frame up.
+    let _temp_files = fresh::services::temp_files::CleanupOnDrop;
+
     // Early check, otherwise terminal check would fail.
     #[cfg(all(windows, feature = "gui"))]
     let console_available = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 };

@@ -32,6 +32,7 @@ pub mod signal_handler;
 pub mod status_log;
 pub mod styled_html;
 pub mod telemetry;
+pub mod temp_files;
 pub mod terminal;
 pub mod terminal_modes;
 pub mod terminal_title;
