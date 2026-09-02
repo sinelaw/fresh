@@ -216,6 +216,8 @@ pub const COQ_GRAMMAR: &str = include_str!("../../grammars/coq.sublime-syntax");
 pub const DUNE_GRAMMAR: &str = include_str!("../../grammars/dune.sublime-syntax");
 /// Embedded Dafny verification-language grammar
 pub const DAFNY_GRAMMAR: &str = include_str!("../../grammars/dafny.sublime-syntax");
+/// Embedded Nginx configuration grammar
+pub const NGINX_GRAMMAR: &str = include_str!("../../grammars/nginx.sublime-syntax");
 /// Embedded Nix grammar
 pub const NIX_GRAMMAR: &str = include_str!("../../grammars/nix.sublime-syntax");
 /// Embedded HCL/Terraform grammar
@@ -780,6 +782,7 @@ impl GrammarRegistry {
             (COQ_GRAMMAR, "Coq/Rocq"),
             (DUNE_GRAMMAR, "Dune"),
             (DAFNY_GRAMMAR, "Dafny"),
+            (NGINX_GRAMMAR, "Nginx"),
             (NIX_GRAMMAR, "Nix"),
             (HCL_GRAMMAR, "HCL"),
             (PROTOBUF_GRAMMAR, "Protocol Buffers"),
@@ -2524,6 +2527,30 @@ mod tests {
                 .display_name,
             "Dafny"
         );
+    }
+
+    #[test]
+    fn test_nginx_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(NGINX_GRAMMAR, true, Some("Nginx"))
+            .expect("Nginx grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "nginx"));
+
+        let mut registry = GrammarRegistry::default();
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        for path in [
+            "nginx.conf",
+            "reverse-proxy.nginx",
+            "reverse-proxy.nginx.conf",
+            "/etc/nginx/conf.d/default.conf",
+            "/etc/nginx/sites-enabled/default",
+        ] {
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(entry.display_name, "Nginx", "for {path}");
+            assert!(entry.engines.syntect.is_some(), "for {path}");
+            assert!(entry.engines.tree_sitter.is_none(), "for {path}");
+        }
     }
 
     #[test]

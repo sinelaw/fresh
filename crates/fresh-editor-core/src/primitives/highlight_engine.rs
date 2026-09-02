@@ -2752,6 +2752,55 @@ mod tests {
     }
 
     #[test]
+    fn test_nginx_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let mut engine = HighlightEngine::for_file(Path::new("nginx.conf"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "# TLS reverse proxy\n",
+            "events { worker_connections 1024; }\n",
+            "http {\n",
+            "  upstream backend {\n",
+            "    server 127.0.0.1:8080;\n",
+            "  }\n",
+            "  server {\n",
+            "    listen 443 ssl;\n",
+            "    location ~* \\.(?:css|js)$ {\n",
+            "      proxy_set_header Host $host;\n",
+            "      proxy_pass http://backend;\n",
+            "      add_header X-Trace \"$request_id\";\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for (needle, expected) in [
+            ("TLS reverse proxy", HighlightCategory::Comment),
+            ("events", HighlightCategory::Keyword),
+            ("upstream", HighlightCategory::Keyword),
+            ("listen", HighlightCategory::Function),
+            ("443", HighlightCategory::Number),
+            ("~*", HighlightCategory::Operator),
+            ("\\.(?:css|js)$", HighlightCategory::String),
+            ("$host", HighlightCategory::Variable),
+            ("http://backend", HighlightCategory::String),
+            ("$request_id", HighlightCategory::Variable),
+        ] {
+            assert_eq!(
+                engine.category_at_position(content.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Nginx category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_fish_indented_control_keywords_stay_keywords() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());

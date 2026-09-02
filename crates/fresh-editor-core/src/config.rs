@@ -6078,6 +6078,41 @@ impl Config {
         );
 
         languages.insert(
+            "nginx".to_string(),
+            LanguageConfig {
+                // `.conf` is intentionally not claimed globally. Nginx files
+                // are recognized by their conventional name or directory.
+                extensions: vec!["nginx".to_string()],
+                filenames: vec![
+                    "nginx.conf".to_string(),
+                    "*.nginx.conf".to_string(),
+                    "**/nginx/**/*.conf".to_string(),
+                    "**/nginx/sites-available/*".to_string(),
+                    "**/nginx/sites-enabled/*".to_string(),
+                ],
+                grammar: "Nginx".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
             "clojure".to_string(),
             LanguageConfig {
                 extensions: vec![
@@ -9690,7 +9725,7 @@ mod tests {
 
     #[test]
     fn test_default_languages_map_ocaml_coq_and_dune_files() {
-        use crate::services::lsp::manager::detect_language;
+        use crate::language_detect::detect_language;
         use std::path::Path;
 
         let languages = Config::default_languages();
@@ -9717,12 +9752,38 @@ mod tests {
 
     #[test]
     fn test_default_languages_map_dafny_files() {
-        use crate::services::lsp::manager::detect_language;
+        use crate::language_detect::detect_language;
         use std::path::Path;
 
         assert_eq!(
             detect_language(Path::new("verified.dfy"), &Config::default_languages()),
             Some("dafny".to_string())
+        );
+    }
+
+    #[test]
+    fn test_default_languages_map_nginx_files_without_claiming_all_conf() {
+        use crate::language_detect::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        for path in [
+            "nginx.conf",
+            "reverse-proxy.nginx",
+            "reverse-proxy.nginx.conf",
+            "/etc/nginx/conf.d/default.conf",
+            "/etc/nginx/sites-available/default",
+        ] {
+            assert_eq!(
+                detect_language(Path::new(path), &languages),
+                Some("nginx".to_string()),
+                "expected `{path}` to be detected as nginx"
+            );
+        }
+        assert_ne!(
+            detect_language(Path::new("application.conf"), &languages),
+            Some("nginx".to_string()),
+            "generic .conf files must not be claimed by Nginx"
         );
     }
 
