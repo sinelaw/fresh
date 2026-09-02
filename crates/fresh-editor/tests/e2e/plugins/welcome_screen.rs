@@ -1,0 +1,125 @@
+//! E2E tests for the bundled `welcome_screen` plugin.
+//!
+//! This file exists because green CI observed *none* of the fourteen
+//! rendering and interaction defects found by driving the real binary
+//! by hand. Every one of them was a key going to the wrong place or a
+//! row landing in the wrong column — nothing a compile, a lint or a
+//! unit test in this repo looks at. The plugin e2e harness does look at
+//! exactly that, and this plugin had no tests in it.
+//!
+//! So these assert behaviours that were *observed broken*, not the
+//! happy path: what the finder does with the characters the page also
+//! binds, and where focus goes when the reader leaves it.
+
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crossterm::event::{KeyCode, KeyModifiers};
+use std::fs;
+
+/// A harness rooted in a scratch directory holding the real plugin.
+fn harness_with_welcome() -> (EditorTestHarness, tempfile::TempDir) {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let working_dir = temp.path().join("work");
+    fs::create_dir_all(&working_dir).unwrap();
+    let plugins_dir = working_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "welcome_screen");
+    copy_plugin_lib(&plugins_dir);
+
+    let harness = EditorTestHarness::with_working_dir(120, 40, working_dir).expect("harness");
+    (harness, temp)
+}
+
+/// Bring the page up the way a bare `fresh` does.
+fn open_welcome(harness: &mut EditorTestHarness) {
+    harness.editor_mut().fire_ready_hook();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("JUST EDIT TEXT"))
+        .expect("welcome screen renders its three doors");
+}
+
+/// The page renders, at the width the design is drawn for.
+#[test]
+fn welcome_screen_renders_its_three_doors() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    let screen = harness.screen_to_string();
+    for door in ["JUST EDIT TEXT", "CLASSIC IDE", "ORCHESTRATE"] {
+        assert!(
+            screen.contains(door),
+            "door {door:?} missing from:\n{screen}"
+        );
+    }
+}
+
+/// **The precedence bug.** `0`-`3`, `/` and Space are bound by this
+/// page's mode *and* are ordinary characters. Mode bindings used to
+/// resolve first, so none of them reached the finder: typing `1` jumped
+/// to Level 1, `/` vanished so `src/main` typed as `srcmain`, and Space
+/// opened whichever result was marked. Between them that is every
+/// digit, the one separator every path contains, and the space.
+///
+/// The host now gives a focused text widget the key first. This types a
+/// string containing all three kinds and asserts the field got them.
+#[test]
+fn the_finder_receives_the_characters_the_page_also_binds() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    // `/` focuses the finder — the one use of the key that is not typing.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("find ["))
+        .expect("the finder field takes focus");
+
+    for ch in "src/main1 x".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("src/main1 x"))
+        .expect(
+            "every character reaches the field: the slash (a path separator, \
+             not a re-focus), the digit (not a level jump) and the space \
+             (not an activation)",
+        );
+}
+
+/// **The focus bug.** Leaving the finder clears focus — and the host
+/// used to re-seed it onto the first tabbable widget on the next
+/// repaint, which on this page is the "Show this screen on startup"
+/// switch. It is off screen by then, so the next Space silently turned
+/// the page off: a persisted setting changed with nothing to say why.
+///
+/// `autoFocusFirst: false` makes "nothing focused" a real state. After
+/// Escape, Space must reach no widget at all.
+#[test]
+fn leaving_the_finder_does_not_park_focus_on_the_startup_switch() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("find ["))
+        .expect("the finder field takes focus");
+
+    // Escape leaves the field (it does not close the page from here).
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+
+    // The switch's own confirmation is the tell: it says so when it
+    // changes, precisely because a setting must not change silently.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Welcome: hidden"),
+        "Space after leaving the finder toggled the startup switch — focus \
+         was re-seeded onto it. Screen:\n{screen}"
+    );
+}

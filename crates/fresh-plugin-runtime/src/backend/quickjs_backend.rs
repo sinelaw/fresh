@@ -5418,6 +5418,47 @@ impl JsEditorApi {
             .unwrap_or(1)
     }
 
+    /// Scroll a widget-panel buffer so the widget with `key` sits at the
+    /// top of its split, with the cursor on it.
+    ///
+    /// The panel already knows where it painted every keyed widget, so
+    /// a page navigating to its own content asks rather than derives.
+    /// Deriving means painting, reading the buffer text back, matching
+    /// your own captions as strings and converting line numbers to byte
+    /// offsets — which is what this replaces, and which broke twice in
+    /// the welcome screen before it did.
+    ///
+    /// A widget spanning several rows (a card whose rows share one key)
+    /// anchors at its top. Unknown keys are a no-op.
+    ///
+    /// Queued like every layout mutation: `await editor.flush()` before
+    /// reading back.
+    pub fn scroll_to_widget(
+        &self,
+        buffer_id: u32,
+        key: String,
+        #[plugin_api(ts_type = "ScrollAlign")] align: rquickjs::function::Opt<String>,
+    ) -> bool {
+        // An unrecognised alignment keeps the historical one rather than
+        // dropping the scroll: a page that mistypes it should look
+        // wrong, not stop navigating.
+        let align = match align.0.as_deref() {
+            Some("minimal") => fresh_core::api::ScrollAlign::Minimal,
+            Some("top") | None => fresh_core::api::ScrollAlign::Top,
+            Some(other) => {
+                tracing::warn!("scrollToWidget: unknown align {other:?}, using \"top\"");
+                fresh_core::api::ScrollAlign::Top
+            }
+        };
+        self.command_sender
+            .send(PluginCommand::ScrollToWidget {
+                buffer_id: BufferId(buffer_id as usize),
+                key,
+                align,
+            })
+            .is_ok()
+    }
+
     /// Set the scroll position of a split.
     ///
     /// Queued, like every layout mutation: the returned bool only reports that
@@ -6699,6 +6740,9 @@ impl JsEditorApi {
         panel_id: f64,
         buffer_id: u32,
         spec_obj: rquickjs::Value<'js>,
+        #[plugin_api(ts_type = "WidgetPanelOptions")] options_obj: rquickjs::function::Opt<
+            rquickjs::Value<'js>,
+        >,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -6708,6 +6752,26 @@ impl JsEditorApi {
                 return Ok(false);
             }
         };
+        // A malformed options bag fails the mount, exactly as a
+        // malformed spec does above. Falling back to defaults would be
+        // worse than it sounds: the defaults are the behaviour the
+        // options exist to turn *off*, so a typo would quietly restore
+        // the thing the plugin was trying to prevent, and the call would
+        // still report success. Unknown fields are not malformed — the
+        // struct accepts them, so a plugin built against a newer host
+        // keeps the options this one understands.
+        let options = match options_obj.0 {
+            Some(v) if !v.is_undefined() && !v.is_null() => {
+                match serde_json::from_value(js_to_json(&ctx, v)) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        tracing::error!("mountWidgetPanel: invalid options: {}", e);
+                        return Ok(false);
+                    }
+                }
+            }
+            _ => fresh_core::api::WidgetPanelOptions::default(),
+        };
         Ok(self
             .command_sender
             .send(PluginCommand::MountWidgetPanel {
@@ -6715,6 +6779,7 @@ impl JsEditorApi {
                 panel_id: panel_id as u64,
                 buffer_id: BufferId(buffer_id as usize),
                 spec,
+                options,
             })
             .is_ok())
     }

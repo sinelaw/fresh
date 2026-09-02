@@ -1785,6 +1785,7 @@ mod wave_dismiss_tests {
             vec!["field".to_string()],
             HashMap::new(),
             Vec::new(),
+            true,
         );
         editor.floating_widget_panel = Some(crate::app::FloatingWidgetState {
             panel_key: panel_key.clone(),

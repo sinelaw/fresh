@@ -1284,6 +1284,88 @@ impl Editor {
             .set_buffer_cursor_in_splits(buffer_id, position, &splits);
     }
 
+    /// Handle ScrollToWidget: put the cursor on the keyed widget, and
+    /// move the view to it as `align` asks.
+    ///
+    /// The row comes from the panel's own hit areas, so this asks where
+    /// the widget actually landed rather than deriving it.
+    ///
+    /// `Top` scrolls and moves the cursor together, because they answer
+    /// the same request: "take me to this", not "reveal this somewhere
+    /// on screen".
+    ///
+    /// `Minimal` is that other request, and it is the *cursor move
+    /// alone* — the host's own reveal is already minimal, leaving the
+    /// target just inside an edge and doing nothing at all when it is
+    /// already on screen. Which is right for following focus: a Tab
+    /// between two controls of one card should not move the page, and
+    /// the control that gains focus should not land on the top row with
+    /// its own card title scrolled off above it.
+    pub(super) fn handle_scroll_to_widget(
+        &mut self,
+        buffer_id: BufferId,
+        key: &str,
+        align: fresh_core::api::ScrollAlign,
+    ) {
+        let Some(row) = self.widget_registry.row_of_widget(buffer_id, key) else {
+            tracing::debug!("ScrollToWidget: no widget {key:?} in buffer {buffer_id:?}");
+            return;
+        };
+        let offset = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .and_then(|st| st.buffer.line_start_offset(row as usize));
+        let Some(offset) = offset else {
+            return;
+        };
+        if align == fresh_core::api::ScrollAlign::Minimal {
+            // Un-latch the splits showing this buffer before the cursor
+            // move, or the reveal this alignment *is* may not happen.
+            //
+            // `ensure_visible` returns early while `skip_ensure_visible`
+            // is set, and that latch is set by any wheel or scrollbar
+            // scroll — and by `ScrollAlign::Top` itself. It is otherwise
+            // cleared only at the top of `handle_key`, and only for the
+            // effective active split. So a plugin revealing focus after
+            // the reader had scrolled with the wheel, or in a split that
+            // is not the active one, would have done nothing at all —
+            // silently, because a reveal that declines to scroll looks
+            // exactly like a reveal that had no need to.
+            let splits = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .splits_for_buffer(buffer_id);
+            if let Some(states) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+            {
+                for leaf in splits {
+                    if let Some(view_state) = states.get_mut(&leaf) {
+                        view_state.viewport.clear_skip_ensure_visible();
+                    }
+                }
+            }
+            self.handle_set_buffer_cursor(buffer_id, offset);
+            return;
+        }
+        self.handle_set_buffer_cursor(buffer_id, offset);
+        let splits = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .splits_for_buffer(buffer_id);
+        for leaf in splits {
+            self.handle_set_split_scroll(leaf.0, offset);
+        }
+    }
+
     /// Handle SetSplitScroll command
     pub(super) fn handle_set_split_scroll(&mut self, split_id: SplitId, top_byte: usize) {
         // Plugin sends arbitrary SplitId — convert to LeafId at the boundary

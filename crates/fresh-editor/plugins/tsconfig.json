@@ -56,6 +56,7 @@
     "test_i18n.ts",
     "theme_editor.ts",
     "vi_mode.ts",
-    "welcome.ts"
+    "welcome.ts",
+    "welcome_screen.ts"
   ]
 }

@@ -70,7 +70,7 @@ fn use_macos_symbols() -> bool {
 /// On Windows, the AltGr key is reported as Ctrl+Alt by crossterm, which is needed for
 /// typing characters like @, [, ], {, }, etc. on German, French, and other keyboard layouts.
 /// See: https://github.com/crossterm-rs/crossterm/issues/820
-fn is_text_input_modifier(modifiers: KeyModifiers) -> bool {
+pub(crate) fn is_text_input_modifier(modifiers: KeyModifiers) -> bool {
     if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT {
         return true;
     }
