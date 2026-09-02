@@ -100,7 +100,9 @@ fn thumb_rows(harness: &EditorTestHarness) -> Vec<u16> {
 /// the tree is at its start, to the bottom once it is scrolled to its end.
 #[test]
 fn scrollable_file_explorer_draws_a_thumb_that_tracks_the_viewport() {
-    let mut harness = harness_with_files(80, &[]);
+    let file_count = 80;
+    let last_file = format!("file_{:02}.txt", file_count - 1);
+    let mut harness = harness_with_files(file_count, &[]);
 
     let body = explorer_body_rows(&harness);
     assert!(
@@ -138,24 +140,21 @@ fn scrollable_file_explorer_draws_a_thumb_that_tracks_the_viewport() {
         harness.screen_to_string()
     );
 
-    // Wheel to the end of the tree; the thumb has to follow. Scrolling until
-    // the last entry shows says what we want, and doesn't quietly stop short
-    // if the file count, the panel height or the wheel step ever change. A
-    // notch that moves nothing means we will never get there, so say so
-    // rather than spinning.
-    loop {
-        let before = harness.screen_to_string();
-        if before.contains("file_79.txt") {
+    // Wheel to the end of the tree; the thumb has to follow. A shell event can
+    // legitimately leave the same cells on screen while asynchronous tree
+    // state settles, so bound the attempts by the fixture size instead of
+    // treating one unchanged frame as the end of scrolling.
+    for _ in 0..file_count {
+        if harness.screen_to_string().contains(&last_file) {
             break;
         }
         harness.mouse_scroll_down(3, body[1]).unwrap();
-        assert_ne!(
-            harness.screen_to_string(),
-            before,
-            "the wheel stopped scrolling before the end of the tree was \
-             reached.\nScreen:\n{before}"
-        );
     }
+    assert!(
+        harness.screen_to_string().contains(&last_file),
+        "the wheel should reach the end of the tree.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 
     let at_bottom = thumb_rows(&harness);
     assert!(
@@ -334,7 +333,8 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
         harness
             .screen_to_string()
             .contains("Unsaved changes in editor"),
-        "hovering the status glyph should show its tooltip.\nScreen:\n{}",
+        "hovering the status glyph should show its tooltip (hover: {:?}).\nScreen:\n{}",
+        harness.editor().hovered(),
         harness.screen_to_string()
     );
 
