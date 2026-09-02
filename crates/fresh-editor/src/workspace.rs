@@ -805,6 +805,14 @@ pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
     if encoded == "root" {
         return Some(PathBuf::from("/"));
     }
+    // A name the encoder had to fold to fit `NAME_MAX` keeps only the head of
+    // the path plus a digest, so there is no path to give back. The encoder
+    // can never emit a literal `~` (a real one becomes `%7E`), which is what
+    // makes its presence a reliable answer rather than a guess. Callers
+    // already handle `None` by falling back to the name itself.
+    if encoded.contains('~') {
+        return None;
+    }
 
     let mut result = String::with_capacity(encoded.len() + 1);
     // Re-add leading slash that was stripped during encoding

@@ -5848,6 +5848,41 @@ interface LifecycleResult {
 // discovered on-disk worktrees (the latter have no window to close).
 // Does NOT trigger sync — the caller batches one sync per repo after
 // the whole run.
+// Where a workspace's worktree goes when it is archived.
+//
+// **The name is the worktree's own directory, not the row's label.** A
+// workspace's `label` is a *display* string — `workspaceDisplayName` composes
+// it from the workspace name and the terminal's live tab title — so filing
+// one produced directories like `gamma-…-test · bash — root@vm: ~/…`: spaces,
+// a middle dot, an em dash, a colon, and the `/`s of the title's path, which
+// `git worktree move` read as further directory levels and nested the
+// graveyard under (sinelaw/fresh#1971). The basename of `s.root` is the name
+// git already gave the directory, so it is a valid single component by
+// construction and the archived copy keeps the name it had while it was live.
+//
+// The manifest still records `s.label`, which is what the archive listing
+// shows and what `unarchiveWorkspace` matches a human's name against; it
+// resolves the directory from the recorded `root`, never by rebuilding this
+// path, so what the directory is called is this function's business alone.
+//
+// A repeat archive of the same workspace name would land on a directory that
+// is already there — `git worktree move` refuses that — so an occupied name
+// takes the next free `-2`, `-3`, … instead of failing the archive.
+function archivedPathFor(repoRoot: string, s: AgentSession): string {
+  const graveyard = editor.pathJoin(
+    editor.getDataDir(),
+    "orchestrator",
+    slugify(repoRoot),
+    ".archived",
+  );
+  const name = editor.pathBasename(s.root) || s.hostLabel || "workspace";
+  let candidate = editor.pathJoin(graveyard, name);
+  for (let n = 2; editor.fileExists(editor.localPath(candidate)); n++) {
+    candidate = editor.pathJoin(graveyard, `${name}-${n}`);
+  }
+  return candidate;
+}
+
 async function archiveOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
@@ -5878,13 +5913,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
     // bookkeeping stays consistent and Unarchive can move it back.
     const repoRoot = await worktreeRepoRoot(s);
     if (!repoRoot) return { ok: false, err: editor.t("err.not_git_repo") };
-    const archivedRoot = editor.pathJoin(
-      editor.getDataDir(),
-      "orchestrator",
-      slugify(repoRoot),
-      ".archived",
-      s.label,
-    );
+    const archivedRoot = archivedPathFor(repoRoot, s);
     const parent = editor.pathDirname(archivedRoot);
     if (!editor.createDir(editor.localPath(parent))) {
       return { ok: false, err: editor.t("err.could_not_create", { path: parent }), repoRoot };
