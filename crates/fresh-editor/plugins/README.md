@@ -39,6 +39,7 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 | Plugin | Description |
 |--------|-------------|
 | `markdown_compose.ts` | Semi-WYSIWYG markdown editing with soft breaks |
+| `markdown_toc.ts` | Markdown table of contents as a sidebar section (headings tree, cursor sync, click to jump) |
 | `merge_conflict.ts` | 3-way merge conflict resolution |
 
 ### Development/Testing
