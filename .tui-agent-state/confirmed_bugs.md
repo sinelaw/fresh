@@ -571,3 +571,19 @@ Each bug entry:
 
 ### PC-59b: Terminal scrollback reloads under `--no-restore`
 - Terminal scrollback persists per-workspace at `~/.local/share/fresh/terminals/<enc-root>/fresh-terminal-N.txt`. Launching `fresh --no-restore` and opening a brand-new terminal reloads the PREVIOUS session's scrollback (deterministic). `--no-restore` is documented only as "Don't restore the previous **workspace**"; scrollback persistence is a separate documented feature (like shell history), so surprising-but-plausibly-intended. Escalate only if a user-facing contradiction is confirmed.
+
+## Bug #3136 — Terminal input replay via Run Agent dialog + workspace switch (Run #61, FILED)
+- **Status:** FILED https://github.com/sinelaw/fresh/issues/3136 (tui-agent-auto-bug), v0.4.10 @ 7bcc8ff6c.
+- **Repro (3/3):** command in workspace terminal (`echo BAIT2`+Enter, executes) → Ctrl+P → Run Agent… → Enter (dialog) → Esc → dock (Alt+O) switch to another workspace and back → the command line sits at the prompt as PENDING input; **Enter re-executes it** (real PTY input; C-u clears it).
+- **Controls:** switch-away/back without the dialog → clean (2/2); palette query + Esc without opening the dialog → clean; second bounce without re-opening the dialog → clean (one-shot per dialog interaction).
+- **Family evidence (1×, unreproduced standalone):** palette query text (`Spawn a new editor`) appended into the dialog's Agent Command field at open.
+
+## Bug #3137 — Move-to-Folder popup keyboard fall-through (Run #61, FILED)
+- **Status:** FILED https://github.com/sinelaw/fresh/issues/3137 (tui-agent-auto-bug), v0.4.10 @ 7bcc8ff6c.
+- **Repro (3/3):** visit workspace → palette "Orchestrator: Move to Folder…" → popup `● Top level`/`New Folder…` → press ↓ → dock selection moves (LIVE workspace switch) + popup dismissed; popup highlight never moves (ANSI-verified). Mouse click on popup rows works. Regression vs closed #2694.
+
+## PENDING CANDIDATES (Run #61) — NOT filed; escalate only with a repro
+### PC-61a: Enter on collapsed `[ ▶ Advanced… ]` closed the whole Run Agent dialog (1×)
+- Once: Tab-burst to the collapsed Advanced button, Enter → dialog gone (no workspace created), Advanced state flipped to ▼ for the next open. Two deliberate retries: Enter toggles ▶/▼ correctly in place, dialog stays. Likely an input race in the retained-mode dialog; watch, don't file.
+### PC-61b: first char after a focus transition swallowed (4× organic, 0/9 controlled)
+- First typed char eaten right after click-into-terminal / workspace switch (`at -v`, `cho LEAKED`, `cho EXTRACTED-$PWD`, `cho R3-MARK`). Controlled trials (grid click / tab click / dock switch × 0.6s + 1.5s gaps) all clean. Trigger involves richer preceding palette/dialog state — plausibly #3136's input-routing family. If #3136 gets a fix, re-test this alongside. HARNESS: verify typed line before Enter after any focus transition.
