@@ -123,3 +123,47 @@ fn leaving_the_finder_does_not_park_focus_on_the_startup_switch() {
          was re-seeded onto it. Screen:\n{screen}"
     );
 }
+
+/// **The reopen loop.** The page used to read `buffer_closed` on an
+/// emptied workspace as an invitation, on the reasoning that "launched
+/// with nothing" and "left with nothing" are the same state. They are
+/// not: closing your last file is something you asked for, and getting a
+/// full-page document back instead of an empty pane reads as the editor
+/// undoing the close — with no way left to say "close everything". It is
+/// a startup surface now, and this is the difference.
+#[test]
+fn closing_the_last_buffer_does_not_reopen_the_welcome_screen() {
+    let (mut harness, tmp) = harness_with_welcome();
+
+    // Start with something open, so `ready` finds a non-empty workspace
+    // and the page never auto-opens in the first place.
+    let path = tmp.path().join("work").join("note.txt");
+    fs::write(&path, "the only file\n").unwrap();
+    harness.open_file(&path).unwrap();
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+    assert!(
+        !harness.screen_to_string().contains("JUST EDIT TEXT"),
+        "the page opened over a restored workspace"
+    );
+
+    // Now empty the workspace the way `Ctrl+W` on the last tab does.
+    let id = harness.editor().active_buffer_id();
+    harness.editor_mut().close_buffer(id).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("JUST EDIT TEXT"),
+        "closing the last buffer summoned the welcome screen:\n{screen}"
+    );
+}
+
+/// The startup path is the one that survives: a launch with nothing to
+/// restore still brings the page up. Guards the fix above against being
+/// "fixed" into a page that never opens by itself at all.
+#[test]
+fn an_empty_startup_still_opens_the_welcome_screen() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+}

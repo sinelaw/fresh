@@ -22,8 +22,10 @@ const editor = getEditor();
 // ═════════════════════════════════════════════════════════════════════
 //   WELCOME SCREEN
 //
-//   The empty-workspace surface: a scrollable buffer that onboards
-//   three audiences on one page without overwhelming the simplest.
+//   The startup surface: a scrollable buffer that onboards three
+//   audiences on one page without overwhelming the simplest. It opens
+//   when Fresh launches with nothing to restore, and otherwise only on
+//   request — closing buffers never summons it.
 //   Design note: docs/internal/welcome-screen-design.md.
 //
 //   Structure is a ladder. The first viewport is a zero-anxiety zone
@@ -150,18 +152,6 @@ let opening = false;
  *  auto-opened screen nobody touched steps aside when a real file
  *  opens; one the reader engaged with is theirs to close. */
 let engaged = false;
-/** Set when the reader closes the page — by Escape, by the tab's `×`,
- *  by `Ctrl+W`. It answers one question only: *this* emptying of the
- *  workspace has been answered. Closing the screen must never be undone
- *  by the very `buffer_closed` event the close itself produced.
- *
- *  It is cleared the moment the workspace stops being empty, because
- *  the next time it empties is a new question. It used to hold for the
- *  rest of the session, which read as the screen appearing at random:
- *  close it once and it never came back, however many times you emptied
- *  the workspace afterwards. */
-let dismissed = false;
-
 const folded = new Set<string>();
 
 let finderQuery = "";
@@ -1445,7 +1435,7 @@ function probeWorkspaces(): void {
 
 editor.defineConfigBoolean("showOnStartup", {
   default: true,
-  description: "Open the welcome screen when Fresh starts with nothing to restore, and after the last buffer is closed.",
+  description: "Open the welcome screen when Fresh starts with nothing to restore.",
 });
 
 /** The footer toggle writes plugin global state, which persists across
@@ -1463,10 +1453,9 @@ function showOnStartup(): boolean {
 
 /** Is anything at all open besides this page?
  *
- *  Anything: a file, a terminal, an agent session, another plugin's
- *  panel. This is the *empty workspace* screen, and a workspace with a
- *  shell running in it is not empty — closing the last text buffer
- *  while a terminal is still open used to pop the page up over it.
+ *  Asked once, at startup: the page stands in for an empty workspace, so
+ *  a restored session with anything in it — a file, a terminal, an agent
+ *  session, another plugin's panel — is not one to stand in for.
  *
  *  Two buffers do not count: this page itself, and the host's empty
  *  untitled seed, which is the very thing the page stands in for. */
@@ -1485,8 +1474,7 @@ async function openWelcome(force: boolean): Promise<void> {
     return;
   }
   if (opening) return;
-  if (force) dismissed = false;
-  if (!force && (dismissed || !showOnStartup())) return;
+  if (!force && !showOnStartup()) return;
   opening = true;
   readActiveTheme();
   try {
@@ -1549,13 +1537,9 @@ async function openWelcome(force: boolean): Promise<void> {
   opening = false;
 }
 
-/** `dismiss` distinguishes the reader closing the page (stay away)
- *  from the page stepping aside for a file it had nothing to do with
- *  (stay available). */
-function closeWelcome(dismiss: boolean): void {
+function closeWelcome(): void {
   if (bufferId === null) return;
   const id = bufferId;
-  if (dismiss) dismissed = true;
   panel?.unmount();
   panel = null;
   bufferId = null;
@@ -1574,31 +1558,27 @@ editor.registerCommand(
 registerHandler("welcomeOnReady", async () => {
   if (!hasOtherBuffers()) await openWelcome(false);
 });
-registerHandler("welcomeOnBufferClosed", async (e: { buffer_id: number }) => {
+/** Only ever housekeeping for *this* page's own buffer.
+ *
+ *  Emptying the workspace deliberately does nothing. The page is a
+ *  startup surface, not an empty-workspace surface: it used to reopen
+ *  itself whenever the last buffer went away, which made closing your
+ *  final file feel like the editor undoing the close — and made
+ *  "close everything" impossible to express. Startup is the one moment
+ *  the reader has not just told us what they wanted. */
+registerHandler("welcomeOnBufferClosed", (e: { buffer_id: number }) => {
   // The tab's `×` / `Ctrl+W` route: the buffer is gone and we were not
-  // the ones who asked, so treat it as the reader dismissing the page.
+  // the ones who asked, so drop our handle on it.
   if (bufferId !== null && e.buffer_id === bufferId) {
     panel = null;
     bufferId = null;
-    dismissed = true;
-    return;
   }
-  if (hasOtherBuffers()) {
-    // Still something open: whatever answer the reader gave the last
-    // time the workspace emptied has expired.
-    dismissed = false;
-    return;
-  }
-  await openWelcome(false);
 });
 registerHandler("welcomeOnAfterFileOpen", (_e: { buffer_id: number; path: string }) => {
-  // The workspace is not empty any more, so a previous "I closed it"
-  // no longer answers anything.
-  dismissed = false;
   // An auto-opened screen nobody touched was ambient — step aside. One
   // the reader engaged with is a document they are reading; leave it.
   if (bufferId === null || engaged) return;
-  closeWelcome(false);
+  closeWelcome();
 });
 /** Everything about the page's shape a resize can change: the measure,
  *  the three widths the layout switches on, and whether there is room
@@ -1758,7 +1738,7 @@ registerHandler("welcome_close", () => {
     render();
     return;
   }
-  closeWelcome(true);
+  closeWelcome();
 });
 
 // A mode that declares `allowTextInput` owns the keyboard: the host

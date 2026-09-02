@@ -469,8 +469,9 @@ underline stays an honest affordance.
 }
 ```
 
-`showOnStartup` governs **both** empty-workspace paths — launch with nothing
-to restore, and closing the last buffer — because they are the same state.
+`showOnStartup` governs the one automatic path: launch with nothing to
+restore. Emptying the workspace later is *not* that state — see "When it
+opens" below — so the two older empty states stay exactly as they were.
 The startup toggle on the page writes a plugin *global state* override that
 wins over the config field, so flipping it in the UI persists without
 rewriting `config.json`; the config field is what the Settings UI edits and
@@ -491,8 +492,18 @@ already load-bearing across the test suite.
 **When it opens.**
 
 - At startup, when the session restore produced no buffers.
-- After the last buffer is closed.
 - On demand: `Welcome` in the palette, or **Help ▸ Welcome**.
+
+**Closing buffers never opens it.** It is a *startup* surface, not an
+empty-workspace surface. It used to take the second path too, on the
+reasoning that "launched with nothing" and "left with nothing" are the same
+state. They are not: startup is the one moment the reader has not just told
+us what they want, and every other emptying of the workspace is a close they
+asked for. Reopening the page there read as the editor undoing that close,
+and left no way to say "close everything" — you closed the last file and got
+a full-page document back. The `buffer_closed` handler now does nothing but
+drop this plugin's handle on its own buffer when that buffer is the one that
+went away.
 
 **When it gets out of the way.** This is the ruling that decides whether the
 screen is a good citizen or a nuisance:
@@ -506,9 +517,9 @@ An ambient screen you ignored was ambient; a document you started reading is
 yours. This also means `fresh src/main.rs` never leaves a Welcome tab behind,
 without needing the Dashboard's blunt "close on any file open".
 
-**Closing it never reopens it.** Closing the last tab when the welcome buffer
-was the thing you just closed leaves the plain placeholder for the rest of the
-session. There is no loop, and no way to get trapped.
+**Closing it never reopens it.** Closing the welcome buffer leaves whichever
+empty state the core settings choose. There is no loop, and no way to get
+trapped.
 
 **The startup toggle.** `[✓] Show this screen on startup` sits on its own
 line directly under the chips, at the head of the first viewport. A control
@@ -675,13 +686,13 @@ Eleven things the wireframes did not know:
    are the theme names.
 
 8. **Closing the page reopened it.** `closeBuffer` fires `buffer_closed`,
-   which — with no other buffer left — is exactly the condition the ambient
-   open path watches for. Escape, the tab's `×` and `Ctrl+W` were all
-   unclosable. A `dismissed` flag now records that the *reader* closed it and
-   the ambient paths stay quiet for the session; the `Welcome` command clears
-   it. Stepping aside for a file deliberately does not set it — that is the
-   page being polite, not the reader dismissing it. §8's "closing it never
-   reopens it" was a design rule; it needed code.
+   which — with no other buffer left — was exactly the condition the ambient
+   open path watched for. Escape, the tab's `×` and `Ctrl+W` were all
+   unclosable, and a `dismissed` flag was added to hold the ambient path off
+   for as long as the workspace stayed empty. The flag was a patch on the
+   ambient path, and the ambient path is now gone (§8, "closing buffers never
+   opens it"), so both are: nothing reopens the page but startup and the
+   `Welcome` command.
 
 9. **A `List` inside a `labeledSection` cannot reach the section's right
    border.** Its items are emitted at their natural width, so every finder
@@ -807,8 +818,9 @@ Eleven things the wireframes did not know:
 25. **The empty-workspace screen has to mean empty.** The ambient-open
     condition asked whether any *file* buffer was open, so closing the
     last text buffer with a terminal or an agent still running popped the
-    page up over a workspace that was plainly in use. It now counts every
-    buffer except this page and the host's own untitled seed.
+    page up over a workspace that was plainly in use. It was fixed to count
+    every buffer except this page and the host's own untitled seed — which
+    is still the test the startup path uses, now the only path that asks.
 
 26. **`hoverStyle` had no sibling.** A bare button is just its label, so
     the only way to mark a word as clickable was to spend a colour on
@@ -866,14 +878,14 @@ Eleven things the wireframes did not know:
     dropped from the Tab cycle can never be what focus is on, so it must
     not look like it.
 
-31. **"I closed it" answers one question, not the session.** The
-    dismissal flag was set for good, so closing the page once meant it
-    never returned however many times the workspace emptied afterwards —
-    which reads exactly like a screen that appears at random. It is
-    cleared the moment anything opens: the next emptying is a new
-    question. The flag still does the job it was added for, which is to
-    stop the `buffer_closed` event fired by the close itself from
-    undoing the close.
+31. **"I closed it" answers one question, not the session.** The dismissal
+    flag was set for good, so closing the page once meant it never returned
+    however many times the workspace emptied afterwards — which reads
+    exactly like a screen that appears at random. Scoping it to a single
+    emptying fixed that symptom and kept the cause: a page that comes back
+    when you close things. Dropping the reopen-on-empty behaviour outright
+    (§8) retired the flag with it — there is no longer a question for "I
+    closed it" to answer.
 
 ### Still aspirational
 
