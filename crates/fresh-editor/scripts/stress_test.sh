@@ -12,7 +12,7 @@ PARALLELISM="${3:-16}"
 
 # Build the test binary first
 echo "Building test binary..."
-cargo build --test e2e_tests 2>&1 | tail -3
+cargo build --test all_tests 2>&1 | tail -3
 
 # Find the test binary
 TEST_BIN=$(find target/debug/deps -name 'e2e_tests-*' -type f -executable ! -name '*.d' | head -1)

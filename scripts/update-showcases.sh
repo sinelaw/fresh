@@ -15,7 +15,7 @@ BLOG_DIR="$ROOT_DIR/docs/blog"
 cd "$ROOT_DIR"
 
 echo "=== Running showcase tests (filter: $FILTER) ==="
-cargo test --package fresh-editor --test e2e_tests "$FILTER" -- --ignored --nocapture
+cargo test --package fresh-editor --test all_tests "$FILTER" -- --ignored --nocapture
 
 echo ""
 echo "=== Generating GIFs ==="

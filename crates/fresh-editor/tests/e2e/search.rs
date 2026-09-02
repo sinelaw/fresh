@@ -2700,7 +2700,7 @@ fn test_regex_caret_anchor_matches_every_line() {
 
 /// Reproduce the performance issue where editor_tick takes ~700ms after a large
 /// search completes with many matches. This test uses tracing to identify the
-/// bottleneck. Run with: RUST_LOG=info cargo test -p fresh-editor --test e2e_tests
+/// bottleneck. Run with: RUST_LOG=info cargo test -p fresh-editor --test all_tests
 ///     test_search_large_file_tick_performance -- --nocapture
 #[test]
 fn test_search_large_file_tick_performance() {

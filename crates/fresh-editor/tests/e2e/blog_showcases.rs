@@ -4,7 +4,7 @@
 // Two blog posts: "editing" (text editing features) and "productivity" (broader features).
 //
 // Usage:
-//   cargo test --package fresh-editor --test e2e_tests blog_showcase_ -- --ignored --nocapture
+//   cargo test --package fresh-editor --test all_tests blog_showcase_ -- --ignored --nocapture
 //   # Then for each generated showcase:
 //   scripts/frames-to-gif.sh docs/blog/editing/multi-cursor
 //   scripts/frames-to-gif.sh docs/blog/editing/search-replace

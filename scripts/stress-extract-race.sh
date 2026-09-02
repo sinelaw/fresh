@@ -22,7 +22,7 @@ set -u
 
 N="${1:-16}"
 
-cargo test -p fresh-editor --test semantic_tests --no-run 2>&1 | tail -3
+cargo test -p fresh-editor --test all_tests --no-run 2>&1 | tail -3
 binary=$(find target/debug/deps -maxdepth 1 -name 'semantic_tests-*' -type f -executable -printf '%T@ %p\n' \
     | sort -nr | head -1 | awk '{print $2}')
 if [[ -z "$binary" || ! -x "$binary" ]]; then
