@@ -262,8 +262,8 @@ fn maximize_focused_dock(harness: &mut EditorTestHarness) {
 /// This is the rendered-output repro of the embedded-`fresh` hang: with the
 /// docked panel maximized, forwarding a file open from a nested process (or
 /// any Quick Open — both go through `Editor::open_file`) focuses the buffer
-/// in the editor split, but `get_visible_buffers` only draws the maximized
-/// dock. The buffer renders hidden behind the dock, so the user sees no
+/// in the editor split, but the frame only places the maximized dock. The
+/// buffer renders hidden behind the dock, so the user sees no
 /// change and a blocking `fresh <file>` forward looks like it has hung.
 ///
 /// Fails on the buggy build (the opened file's content never renders) and

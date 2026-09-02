@@ -472,8 +472,9 @@ Editor state ──build──▶ Node tree ──reconcile──▶ Element tre
 **One band.** The fold runs once, in paint order.
 
 **One geometry.** Per frame: one `layout_only` to size the panes, one
-`frame`. `get_leaves_with_rects` remains for non-render callers only. Nothing
-records a rectangle for a later handler; handlers ask `rect_of`.
+`frame`. `get_leaves_with_rects` is gone (Stage 2b): the callers off the
+render path read the pane rects the window retains from the last layout.
+Nothing records a rectangle for a later handler; handlers ask `rect_of`.
 
 **The text pane is a `rows` primitive, not a reader.** A single `fresh-ui`
 element `rows(Rc<[Row]>)` that measures one cell per row, clips to the
@@ -596,6 +597,16 @@ Promote the replay geometry pass to every frame; pane content rects from
 the scratch grid on the render path. *Exit:* `get_leaves_with_rects` has
 no caller in `render.rs` or `split_rendering/orchestration`; the frame-cost
 table shows the cost of the second layout.
+
+**Stage 2b — no scratch grid at all.** `get_leaves_with_rects` and
+`get_visible_buffers` are deleted. Each window retains the `PaneRects` of
+the last layout that placed its panes (`Window::pane_rects`, read through
+`Window::visible_panes`); the layout funnel (`push_layout_geometry`) lays
+the active window's frame out once with `layout_only` and every other
+window's grid offscreen before any window seeds viewports or sizes PTYs, so
+an action that changed the grid reads it as it is. The parity tests keep the
+model's original walk (`reference_leaves_with_rects`, `cfg(test)`) as their
+oracle. See `fresh-editor-ui-migration.md`, "And then removed (Stage 2b)".
 
 ### Stage 3 — buffer content behind a gate (Blocker A.4–A.5)
 

@@ -1110,7 +1110,7 @@ impl crate::app::Editor {
         // Focus changes that bypass the usual tab-click path must restore
         // terminal mode themselves, and the PTY must match its new split.
         self.sync_terminal_mode_to_active_buffer();
-        self.active_window_mut().resize_visible_terminals();
+        self.resize_visible_terminals();
 
         self.set_status_message(
             t!("workspace.extracted_tab", name = name, label = target_label).to_string(),
@@ -1300,15 +1300,16 @@ impl crate::app::Editor {
         // replacement candidates in focus-history (LRU) order — most-recently
         // focused first, then any other open tab — mirroring the real
         // close-tab path (`resolve_close_replacement`) rather than raw tab
-        // order. The rect is a probe; only ids matter here. Owned Vecs so the
-        // `self.windows` borrow is released before the mutating loop.
-        let probe = ratatui::layout::Rect::new(0, 0, 1, 1);
+        // order. Every leaf of the tree, maximized or not: a leaf hidden
+        // behind a maximized sibling still shows the buffer and still needs
+        // retargeting. Owned Vecs so the `self.windows` borrow is released
+        // before the mutating loop.
         let showing: Vec<(crate::model::event::LeafId, Vec<fresh_core::BufferId>)> = mgr
             .root()
-            .get_leaves_with_rects(probe)
+            .visible_leaves()
             .into_iter()
-            .filter(|(_, displayed, _)| *displayed == buffer_id)
-            .map(|(leaf_id, _, _)| {
+            .filter(|(_, displayed)| *displayed == buffer_id)
+            .map(|(leaf_id, _)| {
                 let candidates = view_states
                     .get(&leaf_id)
                     .map(|vs| {

@@ -917,7 +917,7 @@ impl super::Editor {
         // Walk the grouped subtree and update the SplitNode::Leaf's
         // `buffer_id`. The renderer reads this — not the
         // SplitViewState — when collecting which buffer to draw in
-        // each panel rect (see `get_leaves_with_rects`). Without
+        // each panel rect (see `SplitNode::visible_leaves`). Without
         // this, retargeting only updates focus state and the panel
         // keeps drawing the prior (now-empty) buffer.
         for node in self.active_window_mut().grouped_subtrees.values_mut() {

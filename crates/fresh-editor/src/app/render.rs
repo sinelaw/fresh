@@ -397,6 +397,9 @@ impl Editor {
             size,
         );
         self.shell_ui = Some(ui);
+        // Retained for the callers that ask between frames where a pane is —
+        // the same rects this frame paints with. See `Window::pane_rects`.
+        self.active_window_mut().set_pane_rects(pane_rects.clone());
         let region = |r: crate::view::shell::frame::HostRegion| -> ratatui::layout::Rect {
             regions
                 .iter()
@@ -6993,27 +6996,14 @@ impl Editor {
         // which is deliberately not comparable, and a hand-picked subset of it
         // is the same "replica of a layout" this call site already got wrong
         // once.
-        let split = self.compute_dock_split(size);
-        let shell = self.shell_frame(split).resolve_dock(size.width);
-        let mut ui = self
-            .shell_ui
-            .take()
+        //
+        // The panes come off this same layout — the shape every frame reads
+        // them in (`render` does the same after its `frame`). What stood here
+        // read the body's region and handed it to a pass that laid the grid
+        // out a third time to find the panes inside it.
+        let pane_rects = self
+            .layout_panes(size)
             .expect("the shell tree is taken and returned within one call");
-        crate::view::shell::geometry::stats::note_shell_layout();
-        ui.layout_only(
-            crate::view::shell::frame::frame_tree(shell),
-            fresh_ui::Size::new(size.width, size.height),
-        );
-        // The panes, off this same layout — the shape every frame reads them
-        // in (`render` does the same after its `frame`). What stood here read
-        // the body's region and handed it to a pass that laid the grid out a
-        // third time to find the panes inside it.
-        let pane_rects = crate::view::shell::geometry::PaneRects::read(
-            &ui,
-            self.window_panes().into_iter().map(|(leaf, _)| leaf),
-            size,
-        );
-        self.shell_ui = Some(ui);
 
         // Compute layout for all visible splits and update cached view_line_mappings.
         // Take one &mut borrow on the active window's splits; destructure into
@@ -7051,6 +7041,68 @@ impl Editor {
             .expect("active window must have a populated split layout");
 
         self.active_layout_mut().view_line_mappings = view_line_mappings;
+    }
+
+    /// The frame's geometry pass without the frame: build the shell's
+    /// description, lay it out at `size` with `layout_only`, and read the
+    /// panes off it — the same read `render` does after its `frame`.
+    ///
+    /// Retains the rects on the active window (see `Window::pane_rects`) and
+    /// returns them. `None` when the shell tree is not here to lay out — a
+    /// frame, or an event dispatch, is holding it; the caller inside such a
+    /// pass has the tree's own answer, and the window keeps the rects of the
+    /// last layout, which that pass wrote.
+    ///
+    /// **A geometry pass, not a frame.** `layout_only` builds the description
+    /// and lays it out and stops; a frame goes on to move focus, drain a
+    /// reveal, hand a behavior what arrived for it, and repaint a display list
+    /// nobody will draw. This runs on actions — once per relayout, once per
+    /// replayed macro action — and none of that belongs on an action.
+    /// Counted by `geometry::stats` as a shell layout, because it is one.
+    pub(crate) fn layout_panes(
+        &mut self,
+        size: ratatui::layout::Rect,
+    ) -> Option<crate::view::shell::geometry::PaneRects> {
+        let split = self.compute_dock_split(size);
+        let shell = self.shell_frame(split).resolve_dock(size.width);
+        let mut ui = self.shell_ui.take()?;
+        crate::view::shell::geometry::stats::note_shell_layout();
+        ui.layout_only(
+            crate::view::shell::frame::frame_tree(shell),
+            fresh_ui::Size::new(size.width, size.height),
+        );
+        let pane_rects = crate::view::shell::geometry::PaneRects::read(
+            &ui,
+            self.window_panes().into_iter().map(|(leaf, _)| leaf),
+            size,
+        );
+        self.shell_ui = Some(ui);
+        self.active_window_mut().set_pane_rects(pane_rects.clone());
+        Some(pane_rects)
+    }
+
+    /// The shell tree, when no frame or event dispatch is holding it.
+    ///
+    /// For tests that check a record against the tree that wrote it — the
+    /// pane rects a window retains against the frame's own layout. Not for
+    /// the editor: what it needs off the tree it reads where it lays the
+    /// tree out.
+    pub fn shell_ui(&self) -> Option<&fresh_ui::Ui<crate::view::shell::msg::UiMsg>> {
+        self.shell_ui.as_ref()
+    }
+
+    /// Bring the active window's retained pane rects up to date with the
+    /// grid as it is now, at the screen's current size — one `layout_only` of
+    /// the frame ([`Self::layout_panes`]).
+    ///
+    /// For the callers that ask where a pane is right after changing the
+    /// grid, before the frame that would lay it out: the layout funnel
+    /// (`push_layout_geometry`) runs this first, and so does every
+    /// `Editor::resize_visible_terminals`. A no-op while a frame or an event
+    /// dispatch holds the tree; see [`Self::layout_panes`].
+    pub(crate) fn refresh_pane_rects(&mut self) {
+        let size = ratatui::layout::Rect::new(0, 0, self.terminal_width, self.terminal_height);
+        let _ = self.layout_panes(size);
     }
 
     /// Clear the search history

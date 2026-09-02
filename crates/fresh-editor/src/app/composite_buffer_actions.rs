@@ -472,7 +472,7 @@ impl Editor {
     pub fn flush_layout(&mut self) {
         use crate::view::composite_view::CompositeViewState;
 
-        // Which leaves, not where. This asked `get_visible_buffers` for
+        // Which leaves, not where. This used to ask the split manager for
         // rectangles in a box it made up — the whole terminal, which is not
         // the box the grid is laid out in — and then dropped them.
         let visible = self
