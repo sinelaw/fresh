@@ -893,20 +893,40 @@ impl ReaderLoop {
 
         // Incrementally stream new scrollback lines to the backing file.
         if let Some(writer) = self.backing_writer.as_mut() {
+            let mut failed: Option<std::io::Error> = None;
+
             match state.flush_new_scrollback(writer) {
                 Ok(lines_written) => {
                     if lines_written > 0 {
-                        if let Ok(pos) = writer.get_ref().metadata() {
-                            state.set_backing_file_history_end(pos.len());
+                        // Flush *before* measuring. `metadata()` reports what
+                        // is on disk, so reading it while the lines just
+                        // written still sat in the `BufWriter` recorded a
+                        // history end short by exactly this batch — and the
+                        // next truncation then cut them away (fresh#3151).
+                        match writer.flush().and_then(|()| writer.get_ref().metadata()) {
+                            Ok(pos) => {
+                                state.set_backing_file_history_end(pos.len());
+                                // Scrollback now sits *after* whatever
+                                // temporary visible-screen tail was in the
+                                // file, so that tail can no longer be
+                                // truncated off without taking these lines
+                                // with it. Adopt it as scrollback instead: a
+                                // duplicated screen is bounded, losing the
+                                // lines is not — the same trade
+                                // `flush_new_scrollback` makes when the grid
+                                // overruns.
+                                state.set_backing_file_has_tail(false);
+                            }
+                            Err(e) => failed = Some(e),
                         }
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = writer.flush();
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Terminal backing file write error: {}", e);
-                    self.backing_writer = None;
-                }
+                Err(e) => failed = Some(e),
+            }
+
+            if let Some(e) = failed {
+                tracing::warn!("Terminal backing file write error: {}", e);
+                self.backing_writer = None;
             }
         }
     }

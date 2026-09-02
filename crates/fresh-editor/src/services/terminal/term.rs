@@ -466,6 +466,16 @@ pub struct TerminalState {
     pending_reflow_resync: bool,
     /// Byte offset in backing file where scrollback ends (for truncation)
     backing_file_history_end: u64,
+    /// A temporary visible-screen tail (written by `append_visible_screen`)
+    /// currently sits in the backing file past `backing_file_history_end`.
+    ///
+    /// The tail is not scrollback: it is the exit frame the scroll-back view
+    /// anchors to, and it is rewritten on every visit. Anything appended
+    /// *after* it is therefore living on borrowed time — the truncation that
+    /// ends the visit cuts the file back to `backing_file_history_end` and
+    /// takes it along. So every writer checks this flag and removes the tail
+    /// before appending real scrollback (fresh#3151).
+    backing_file_has_tail: bool,
     /// Queue of data to write back to the PTY (for DSR responses, etc.)
     pty_write_queue: Arc<Mutex<Vec<String>>>,
     /// Pending title set by the program via OSC 0/1/2 (shared with the
@@ -533,6 +543,7 @@ impl TerminalState {
             history_overrun: false,
             pending_reflow_resync: false,
             backing_file_history_end: 0,
+            backing_file_has_tail: false,
             pty_write_queue,
             pending_title,
             cwd: None,
@@ -1327,6 +1338,24 @@ impl TerminalState {
         self.backing_file_history_end = offset;
     }
 
+    /// Whether the backing file currently carries a temporary visible-screen
+    /// tail past [`Self::backing_file_history_end`].
+    ///
+    /// A writer that appends scrollback must clear the tail first (truncate
+    /// the file back to the history end), or its lines land past the
+    /// truncation point and are lost when the scroll-back visit ends.
+    pub fn backing_file_has_tail(&self) -> bool {
+        self.backing_file_has_tail
+    }
+
+    /// Record whether a temporary visible-screen tail is present in the
+    /// backing file: `true` right after [`Self::append_visible_screen`] was
+    /// written to it, `false` right after it was truncated back to
+    /// [`Self::backing_file_history_end`].
+    pub fn set_backing_file_has_tail(&mut self, present: bool) {
+        self.backing_file_has_tail = present;
+    }
+
     /// Get the number of scrollback lines that have been synced to the backing file.
     pub fn synced_history_lines(&self) -> usize {
         self.synced_history_lines
@@ -1338,6 +1367,7 @@ impl TerminalState {
         self.synced_logical_lines = 0;
         self.pending_reflow_resync = false;
         self.backing_file_history_end = 0;
+        self.backing_file_has_tail = false;
     }
 }
 

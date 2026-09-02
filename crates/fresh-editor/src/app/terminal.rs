@@ -2039,14 +2039,25 @@ impl Editor {
                     .get(&terminal_id)
                 {
                     if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
-                        if let Ok(state) = handle.state.lock() {
-                            let truncate_pos = state.backing_file_history_end();
-                            // Always truncate to remove appended visible screen
-                            // (even if truncate_pos is 0, meaning no scrollback yet)
-                            if let Err(e) =
-                                terminal_backing_fs().set_file_length(backing_path, truncate_pos)
-                            {
-                                tracing::warn!("Failed to truncate terminal backing file: {}", e);
+                        if let Ok(mut state) = handle.state.lock() {
+                            // Truncate only when a visible-screen tail is
+                            // actually there. Truncating unconditionally used
+                            // to be harmless because the tail was assumed to
+                            // be the only thing past the history end — but the
+                            // PTY read loop appends there too, and cutting at
+                            // a history end that predates its writes deleted
+                            // live scrollback for good (fresh#3151).
+                            if state.backing_file_has_tail() {
+                                let truncate_pos = state.backing_file_history_end();
+                                match terminal_backing_fs()
+                                    .set_file_length(backing_path, truncate_pos)
+                                {
+                                    Ok(()) => state.set_backing_file_has_tail(false),
+                                    Err(e) => tracing::warn!(
+                                        "Failed to truncate terminal backing file: {}",
+                                        e
+                                    ),
+                                }
                             }
                         }
                     }
@@ -2415,10 +2426,28 @@ impl Window {
         let mut grid_cols: Option<usize> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
-                use std::io::BufWriter;
+                use std::io::{BufWriter, Write};
 
                 let (cols, _) = state.size();
                 grid_cols = Some(cols as usize);
+
+                // An earlier visit (or a session checkpoint) may have left its
+                // visible-screen tail in the file. It is rewritten below, so
+                // remove it first: leaving it in place would bake a stale
+                // screen into the scrollback prefix, and — since the tail is
+                // what the truncation on the way back to live mode cuts at —
+                // would also leave real scrollback stranded past that point
+                // (fresh#3151).
+                if state.backing_file_has_tail() {
+                    let history_end = state.backing_file_history_end();
+                    match terminal_backing_fs().set_file_length(&backing_file, history_end) {
+                        Ok(()) => state.set_backing_file_has_tail(false),
+                        Err(e) => tracing::error!(
+                            "Failed to drop stale terminal visible-screen tail: {}",
+                            e
+                        ),
+                    }
+                }
 
                 // Flush any scrollback that has scrolled off but isn't in the
                 // file yet — in particular the lines a resize spilled from the
@@ -2442,8 +2471,15 @@ impl Window {
                 // Open backing file in append mode to add visible screen
                 if let Ok(mut file) = terminal_backing_fs().open_file_for_append(&backing_file) {
                     let mut writer = BufWriter::new(&mut *file);
-                    match state.append_visible_screen(&mut writer) {
-                        Ok(head) => prepended = head,
+                    let appended = state.append_visible_screen(&mut writer);
+                    // Only claim the tail once its bytes have actually reached
+                    // the file: the flag is what tells the next writer there
+                    // is something there to cut back off.
+                    match appended.and_then(|head| writer.flush().map(|()| head)) {
+                        Ok(head) => {
+                            prepended = head;
+                            state.set_backing_file_has_tail(true);
+                        }
                         Err(e) => {
                             tracing::error!(
                                 "Failed to append visible screen to backing file: {}",
