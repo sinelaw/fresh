@@ -727,3 +727,47 @@ fn test_column_survives_through_short_line() {
     let (cx, cy) = harness.screen_cursor_position();
     assert_eq!((cx, cy), (x0 + 5, y0 + 2), "column 5 restored on line 3");
 }
+
+/// The #3125 defect at a second dispatch site. Backspace in virtual space has
+/// nothing to delete yet, so it emits only `MoveCursor` — and a keystroke whose
+/// whole effect is cursor movement used to be discarded once more than one
+/// cursor was live, leaving both cursors parked where they were.
+#[test]
+fn test_backspace_in_virtual_space_steps_back_with_multiple_cursors() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut config = Config::default();
+    config.editor.virtual_space = VirtualSpaceMode::On;
+    // Wide enough that the status bar still spells out the cursor count.
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    // A third line below, so `Right` past the end of line 2 steps into
+    // virtual space rather than being clamped at the buffer end.
+    harness.load_buffer_from_text("ab\nxy\nzz").unwrap();
+
+    let (x1, y1) = harness
+        .find_text_on_screen("xy")
+        .expect("second line visible");
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
+
+    // Two columns out past the end of the line.
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x1 + 4, y1));
+
+    // Deletes nothing, moves one column left — and must actually happen.
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_buffer_content("ab\nxy\nzz");
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x1 + 3, y1));
+}

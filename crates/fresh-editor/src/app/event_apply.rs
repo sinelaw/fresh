@@ -264,8 +264,28 @@ impl Editor {
             .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
 
         if !has_buffer_mods {
-            // No buffer modifications - use regular Batch
-            return None;
+            // A cursor-only event list is not nothing to do. Every cursor
+            // skipping over an existing closing delimiter, or a backspace in
+            // virtual space with nothing yet to delete, produces `MoveCursor`
+            // and no edits — the bulk machinery below has nothing to apply,
+            // but the moves still have to land. Apply them as one `Batch` so
+            // undo treats them atomically, and hand it back to be logged the
+            // same way a bulk edit is.
+            //
+            // Returning `None` and leaving this to the caller is what made
+            // typing `)` over an auto-closed `)` do nothing at all with more
+            // than one cursor: only two of this function's callers remembered
+            // to special-case it, so the rest dropped the keystroke outright
+            // (#3125).
+            if events.is_empty() {
+                return None;
+            }
+            let batch = Event::Batch {
+                events,
+                description,
+            };
+            self.apply_event_to_active_buffer(&batch);
+            return Some(batch);
         }
 
         // Multi-cursor edits and code-action rewrites go through this path
