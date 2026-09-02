@@ -44,6 +44,21 @@ pub enum ChildStdin {
     Piped(Vec<u8>),
 }
 
+/// Whether this environment can hand out a pty at all.
+///
+/// Mirrors `tests/terminal_restore_live.rs`: a sandbox without `/dev/ptmx`
+/// should skip these tests rather than fail them, since what they cover is
+/// the editor's behaviour, not the runner's.
+pub fn pty_available() -> bool {
+    match open_pty() {
+        Ok((master, _)) => {
+            drop(master);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Spawn `command` with the pty's slave as its controlling terminal.
 ///
 /// `rows`/`cols` size both the pty and the `vt100` screen the output is
@@ -166,9 +181,22 @@ impl PtyChild {
         self.master.flush()
     }
 
-    /// Wait for the child to exit and report its status.
-    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+    /// Drain the pty until the child closes it, then reap the child.
+    ///
+    /// Reaping without draining risks a deadlock: the child's teardown
+    /// output (leaving the alt screen, mode resets, a last repaint) goes
+    /// into a pty buffer — a few KB on Linux — and a child that fills it
+    /// blocks in `write` forever while we block in `wait`.
+    pub fn drain_and_wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        // A predicate that is never satisfied reads to EOF, which is what
+        // the child closing the pty on exit produces.
+        let _ = self.wait_for_screen(|_| false);
         self.child.wait()
+    }
+
+    /// This child's pid, for a test that needs to signal it.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
     }
 
     /// Kill the child and reap it. Safe to call after it already exited.
@@ -202,7 +230,10 @@ fn open_pty() -> std::io::Result<(File, PathBuf)> {
             return Err(std::io::Error::last_os_error());
         }
 
-        let mut name = [0i8; 128];
+        // `c_char`, not `i8`: it is unsigned on aarch64/arm Linux (and
+        // ppc64le, s390x, riscv64), where a `[i8; N]` would not coerce to
+        // the `*mut c_char` `ptsname_r` wants. aarch64 is a shipped target.
+        let mut name = [0 as libc::c_char; 128];
         if libc::ptsname_r(master_fd, name.as_mut_ptr(), name.len()) != 0 {
             return Err(std::io::Error::last_os_error());
         }

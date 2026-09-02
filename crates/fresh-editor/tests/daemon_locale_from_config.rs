@@ -20,7 +20,7 @@
 //! only on Linux. `common::pty` is Linux-only for the same kind of reason.
 #![cfg(target_os = "linux")]
 
-use crate::common::pty::{spawn_on_pty, ChildStdin};
+use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin};
 use std::path::Path;
 use std::process::Command;
 
@@ -113,6 +113,10 @@ fn daemon_screen(home: &Path, session: &str, extra_args: &[&str]) -> String {
 /// line, nothing in the environment.
 #[test]
 fn daemon_takes_its_locale_from_the_config_file() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
     let home = tempfile::tempdir().unwrap();
     setup(home.path(), Some("ja"));
 
@@ -129,6 +133,10 @@ fn daemon_takes_its_locale_from_the_config_file() {
 /// command line.
 #[test]
 fn daemon_takes_its_locale_from_the_clients_flag() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
     let home = tempfile::tempdir().unwrap();
     setup(home.path(), None);
 
@@ -145,6 +153,10 @@ fn daemon_takes_its_locale_from_the_clients_flag() {
 /// locale that was actually applied, not one the environment supplied.
 #[test]
 fn daemon_is_english_without_a_locale_anywhere() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
     let home = tempfile::tempdir().unwrap();
     setup(home.path(), None);
 

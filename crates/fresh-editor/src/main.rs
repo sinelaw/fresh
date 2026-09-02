@@ -764,9 +764,15 @@ fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
         );
     }
 
-    // Create a temp file to store the piped content
+    // Create a temp file to store the piped content.
+    //
+    // Created here rather than in the worker thread below so that it exists
+    // by the time it is registered: a sweep that ran in between would find
+    // nothing and the thread would then create the file behind it, which is
+    // the leak this is meant to close.
     let temp_dir = std::env::temp_dir();
     let temp_path = temp_dir.join(format!("fresh-stdin-{}.txt", std::process::id()));
+    File::create(&temp_path)?;
     // Deleted when the process exits, not when the buffer closes: the
     // buffer keeps lazily reading chunks off this file (#3134).
     fresh::services::temp_files::register(&temp_path);
@@ -1699,6 +1705,20 @@ fn connect_remote(
     })
 }
 
+/// Which locale the UI should use: CLI `--locale` first, then `locale` from
+/// the config, then `None` — which leaves `i18n::init_with_config` to detect
+/// from `LC_ALL`/`LC_MESSAGES`/`LANG`.
+///
+/// One function rather than the expression written out per entry point.
+/// Every process that renders the UI has to make this decision — the
+/// standalone editor in `initialize_app`, the daemon in
+/// `run_server_command` — and #3149 was precisely a path that reached the
+/// UI without making it. Anything new that boots an editor should call this
+/// rather than re-derive the precedence.
+fn resolve_locale_override<'a>(args: &'a Args, config: &'a config::Config) -> Option<&'a str> {
+    args.locale.as_deref().or(config.locale.as_option())
+}
+
 fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let log_file = args
         .log_file
@@ -1721,10 +1741,20 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         terminal_modes::emergency_cleanup();
-        // A crash should not leave the stdin spool file behind either. The
-        // `CleanupOnDrop` guard in `real_main` covers an unwinding panic on
-        // its own, but under `panic = "abort"` (the `min-size` profile)
-        // nothing unwinds, so the hook is the last chance (#3134).
+        // Under `panic = "abort"` (the `min-size` profile) this hook is the
+        // only chance to remove the stdin spool file: nothing unwinds, so the
+        // `CleanupOnDrop` guard in `real_main` never runs (#3134).
+        //
+        // Deliberately NOT done when unwinding. A panic hook fires for a
+        // panic on *any* thread, and a panicking thread is not a dying
+        // process: the stdin drain thread in particular is expected to
+        // panic and be survived (`ThreadOutcome::Panic` becomes a status
+        // message and the editor carries on). Sweeping here would delete
+        // the file out from under a live buffer that is still lazily
+        // reading chunks off it — worse than the leak this fixes. The
+        // unwinding case is already covered, because a *fatal* panic
+        // unwinds `real_main` and drops the guard.
+        #[cfg(panic = "abort")]
         fresh::services::temp_files::cleanup_all();
         original_hook(panic);
     }));
@@ -1933,8 +1963,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Initialize i18n with locale: CLI arg > config > environment
     // This ensures menu defaults are created with the correct translations
-    let locale_override = args.locale.as_deref().or(config.locale.as_option());
-    fresh::i18n::init_with_config(locale_override);
+    fresh::i18n::init_with_config(resolve_locale_override(args, &config));
 
     // Enable terminal modes (raw mode, alternate screen, mouse capture, etc.)
     // This checks support for each mode and tracks what was enabled
@@ -3067,13 +3096,12 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     };
     boot!("[server] Editor config loaded");
 
-    // Re-init i18n now that the config is known, mirroring `initialize_app`
-    // (CLI > config > env). The only init that has run so far is the
-    // pre-clap one, which consults argv and the environment but never the
-    // config file — so without this the daemon renders its whole UI in the
-    // environment's language and silently ignores `locale` from
-    // `config.json` (#3149).
-    fresh::i18n::init_with_config(args.locale.as_deref().or(editor_config.locale.as_option()));
+    // Re-init i18n now that the config is known. The only init that has run
+    // so far is the pre-clap one, which consults argv and the environment
+    // but never the config file — so without this the daemon renders its
+    // whole UI in the environment's language and silently ignores `locale`
+    // from `config.json` (#3149).
+    fresh::i18n::init_with_config(resolve_locale_override(args, &editor_config));
 
     // Cell-level (TUI) animations would stream to the browser as bursts of
     // frame diffs, on top of the CSS-level motion the web frontend does for

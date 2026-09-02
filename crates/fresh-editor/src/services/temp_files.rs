@@ -11,19 +11,25 @@
 //! Registration is deliberately by path rather than by handle for the same
 //! reason: nothing here owns the file, it just knows what to delete.
 //!
-//! Two things drive the deletion:
+//! Three things drive the deletion, because a process leaves by more routes
+//! than one:
 //!
 //!   * [`CleanupOnDrop`], parked in `real_main`, covers every normal exit
 //!     and every error return — including the ones that never reach the
 //!     editor loop, such as a failure in `initialize_app` *after* the spool
-//!     file was created.
-//!   * the panic hook calls [`cleanup_all`] directly, so an abnormal exit
-//!     does not leak the file either. That matters most under
-//!     `panic = "abort"` (the `min-size` profile), where nothing unwinds and
-//!     `CleanupOnDrop` never runs.
+//!     file was created. A fatal panic is covered here too, by unwinding.
+//!   * the signal handlers (`services::signal_handler`) call [`cleanup_all`]
+//!     before the process goes. SIGTERM/SIGINT `exit()` without unwinding,
+//!     and SIGHUP — closing the terminal window — had no handler at all, so
+//!     the two most ordinary ways an editor dies both bypassed the guard.
+//!   * the panic hook, but *only* under `panic = "abort"` (the `min-size`
+//!     profile), where nothing unwinds. Deliberately not under unwinding:
+//!     the hook fires for a panic on any thread, and a panicking thread is
+//!     not a dying process — sweeping there would delete the file out from
+//!     under a live buffer still reading chunks off it.
 //!
 //! The 24h sweep in `log_dirs::cleanup_stale_logs` stays as the backstop for
-//! what neither path can catch — a `SIGKILL`, a power loss.
+//! what none of them can catch — a `SIGKILL`, a segfault, a power loss.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -34,10 +40,12 @@ static REGISTERED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Register `path` for deletion when the process exits.
 pub fn register(path: &Path) {
-    if let Ok(mut paths) = REGISTERED.lock() {
-        if !paths.iter().any(|p| p == path) {
-            paths.push(path.to_path_buf());
-        }
+    // Recover from poisoning rather than dropping the path: a lost
+    // registration is the one failure here with no second chance, since
+    // nothing else knows the file exists.
+    let mut paths = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
+    if !paths.iter().any(|p| p == path) {
+        paths.push(path.to_path_buf());
     }
 }
 

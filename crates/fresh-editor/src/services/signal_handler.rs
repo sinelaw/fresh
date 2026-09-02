@@ -57,15 +57,66 @@ pub fn dump_js_state() {
     }
 }
 
-/// Initialize signal handlers for SIGTERM and SIGINT.
+/// Initialize signal handlers for SIGTERM, SIGINT and SIGHUP.
 /// On Linux, dumps thread backtraces before terminating.
 /// On other Unix platforms (macOS), dumps JS state and current thread backtrace.
+///
+/// All of them also remove this process's scratch files on the way out
+/// (`services::temp_files`). Without that, the two most ordinary ways a
+/// terminal editor dies — `pkill`/a container stop, and closing the
+/// terminal window — leaked the stdin spool file, because both leave the
+/// process by a route that never unwinds `real_main` (#3134).
 pub fn install_signal_handlers() {
     #[cfg(target_os = "linux")]
     linux::install_signal_handlers_with_backtrace();
 
     #[cfg(all(unix, not(target_os = "linux")))]
     unix_fallback::install_signal_handlers_basic();
+}
+
+/// Handle SIGHUP purely to drop this process's scratch files.
+///
+/// SIGHUP is what a terminal sends when its window closes or an ssh session
+/// drops, and it had no handler at all: the default action terminated the
+/// editor outright, leaking the stdin spool file every time (#3134). This is
+/// deliberately *not* folded into the termination handler above — that one
+/// dumps every thread's backtrace and exits 130, which would turn closing a
+/// terminal into a diagnostic dump and quietly rewrite the exit status a
+/// parent sees.
+///
+/// `SA_RESETHAND` restores the default disposition before the handler runs,
+/// so the `raise` below terminates the process *by SIGHUP*, exactly as it
+/// would have with no handler installed. The only added behaviour is the
+/// cleanup.
+#[cfg(unix)]
+fn install_hangup_handler() {
+    use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
+
+    extern "C" fn hangup_handler(_: libc::c_int) {
+        // The terminal is already gone, so there is nothing to restore and
+        // nowhere to print; just drop the scratch files.
+        crate::services::temp_files::cleanup_all();
+        // SAFETY: `raise` is async-signal-safe. SIGHUP is blocked for the
+        // duration of the handler, so this leaves it pending and it is
+        // delivered — to the default action, thanks to `SA_RESETHAND` — as
+        // soon as the handler returns.
+        unsafe { libc::raise(libc::SIGHUP) };
+    }
+
+    let action = SigAction::new(
+        SigHandler::Handler(hangup_handler),
+        SaFlags::SA_RESETHAND,
+        SigSet::empty(),
+    );
+
+    // SAFETY: installing a signal handler; the handler itself only calls
+    // async-signal-safe `raise` plus the cleanup sweep, which is the same
+    // latitude the termination handler above already takes.
+    unsafe {
+        if let Err(e) = sigaction(Signal::SIGHUP, &action) {
+            tracing::error!("Failed to set SIGHUP handler: {}", e);
+        }
+    }
 }
 
 /// Linux-specific implementation with thread backtrace dumping
@@ -110,6 +161,12 @@ mod linux {
             dump_all_thread_backtraces();
             tracing::error!("=== Debug dump complete, terminating process ===");
 
+            // This process is about to go without unwinding, so the
+            // `CleanupOnDrop` guard in `real_main` will not run. Remove the
+            // scratch files here instead (#3134). Not async-signal-safe, but
+            // neither is anything else this handler already does.
+            crate::services::temp_files::cleanup_all();
+
             // Terminate the process
             std::process::exit(130); // Standard exit code for Ctrl+C
         }
@@ -125,6 +182,8 @@ mod linux {
                 tracing::error!("Failed to set SIGTERM handler: {}", e);
             }
         }
+
+        super::install_hangup_handler();
     }
 
     /// Install SIGUSR1 handler that captures backtrace for the receiving thread
@@ -265,6 +324,11 @@ mod unix_fallback {
             tracing::error!("Backtrace:\n{}", bt);
 
             tracing::error!("=== Debug dump complete, terminating process ===");
+
+            // See the Linux handler: nothing unwinds from here, so the
+            // scratch files have to go now (#3134).
+            crate::services::temp_files::cleanup_all();
+
             std::process::exit(130);
         }
 
@@ -279,5 +343,7 @@ mod unix_fallback {
                 tracing::error!("Failed to set SIGTERM handler: {}", e);
             }
         }
+
+        super::install_hangup_handler();
     }
 }

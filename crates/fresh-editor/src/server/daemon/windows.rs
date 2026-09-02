@@ -43,19 +43,7 @@ pub fn spawn_server_detached(
     let exe = std::env::current_exe()?;
 
     let mut cmd = std::process::Command::new(&exe);
-    cmd.arg("--server");
-
-    if let Some(name) = session_name {
-        cmd.arg("--session-name").arg(name);
-    }
-
-    if let Some(url) = ssh_url {
-        cmd.arg("--ssh-url").arg(url);
-    }
-
-    if let Some(locale) = locale {
-        cmd.arg("--locale").arg(locale);
-    }
+    cmd.args(server_args(session_name, ssh_url, locale));
 
     cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     cmd.stdin(std::process::Stdio::null());
@@ -79,6 +67,39 @@ pub fn spawn_server_detached(
     Ok(child.id())
 }
 
+/// The argv the detached daemon is started with.
+///
+/// Kept as its own function, mirroring the Unix side, so the forwarding is
+/// testable rather than asserted: everything the daemon cannot rediscover
+/// for itself has to be listed here. It re-reads the config file and the
+/// environment on its own, but a flag the user typed on the *client's*
+/// command line exists nowhere the daemon can see it — `--locale` is one of
+/// those (#3149).
+fn server_args(
+    session_name: Option<&str>,
+    ssh_url: Option<&str>,
+    locale: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec!["--server".to_string()];
+
+    if let Some(name) = session_name {
+        args.push("--session-name".to_string());
+        args.push(name.to_string());
+    }
+
+    if let Some(url) = ssh_url {
+        args.push("--ssh-url".to_string());
+        args.push(url.to_string());
+    }
+
+    if let Some(locale) = locale {
+        args.push("--locale".to_string());
+        args.push(locale.to_string());
+    }
+
+    args
+}
+
 /// Check if a process with the given PID is still running
 pub fn is_process_running(pid: u32) -> bool {
     unsafe {
@@ -92,5 +113,41 @@ pub fn is_process_running(pid: u32) -> bool {
         CloseHandle(handle);
 
         result != 0 && exit_code == STILL_ACTIVE as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The client's `--locale` has to ride along in the daemon's argv: the
+    /// daemon renders the UI, and a flag typed on the client's command line
+    /// reaches it by no other route (#3149).
+    #[test]
+    fn server_args_forwards_the_clients_locale() {
+        assert_eq!(
+            server_args(Some("mysession"), None, Some("ja")),
+            vec!["--server", "--session-name", "mysession", "--locale", "ja"]
+        );
+    }
+
+    /// No `--locale` on the client means "let the daemon decide" — it reads
+    /// the config file and the environment itself, and an empty `--locale`
+    /// would override both.
+    #[test]
+    fn server_args_omits_locale_when_the_client_had_none() {
+        let args = server_args(Some("mysession"), None, None);
+        assert!(
+            !args.iter().any(|a| a == "--locale"),
+            "unexpected --locale in {args:?}"
+        );
+    }
+
+    #[test]
+    fn server_args_carries_the_ssh_url_alongside_the_locale() {
+        assert_eq!(
+            server_args(None, Some("ssh://host/srv"), Some("fr")),
+            vec!["--server", "--ssh-url", "ssh://host/srv", "--locale", "fr"]
+        );
     }
 }

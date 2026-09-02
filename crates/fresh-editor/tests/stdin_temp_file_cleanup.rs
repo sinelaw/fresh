@@ -9,15 +9,16 @@
 //! copy of it sitting in `/tmp` for a day.
 //!
 //! This drives the real binary, because the property belongs to the
-//! process: registration happens where the file is created and the
-//! deletion happens on the way out of `real_main`. Both paths out are
-//! covered — a clean quit, and an early failure that never reaches the
-//! editor.
+//! process. Every way out that a user can actually hit is covered: a clean
+//! quit, an early failure that never reaches the editor, and the signals —
+//! `pkill`/a container stop (SIGTERM) and closing the terminal window
+//! (SIGHUP), neither of which unwinds `real_main` and so neither of which
+//! the exit guard alone can catch.
 //!
 //! Linux-gated with `common::pty`, which needs `ptsname_r`.
 #![cfg(target_os = "linux")]
 
-use crate::common::pty::{spawn_on_pty, ChildStdin};
+use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin, PtyChild};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -50,13 +51,11 @@ fn isolated_fresh(home: &Path) -> Command {
     cmd
 }
 
-/// The reported case: pipe something in, quit with Ctrl+Q, and the spool
-/// file is gone.
-#[test]
-fn quitting_deletes_the_stdin_spool_file() {
-    let home = tempfile::tempdir().unwrap();
-
-    let mut cmd = isolated_fresh(home.path());
+/// Launch `fresh -` with something on stdin and wait until it has drawn,
+/// then assert it really did spool to a file — so a later "the file is
+/// gone" assertion cannot pass vacuously.
+fn running_editor_with_piped_stdin(home: &Path) -> PtyChild {
+    let mut cmd = isolated_fresh(home);
     cmd.args(["--no-session", "--no-init", "--no-upgrade-check", "-"]);
 
     let mut editor = spawn_on_pty(
@@ -72,26 +71,109 @@ fn quitting_deletes_the_stdin_spool_file() {
         .wait_for_screen(|screen| screen.contains("File") && screen.contains("Help"))
         .expect("editor should render");
 
-    // It really did spool stdin to a file — otherwise the assertion after
-    // the quit would pass without testing anything.
     assert!(
-        !spool_files(home.path()).is_empty(),
+        !spool_files(home).is_empty(),
         "expected a fresh-stdin-* file while the editor is running; \
          temp dir held: {:?}",
-        std::fs::read_dir(home.path())
+        std::fs::read_dir(home)
             .unwrap()
             .filter_map(|e| Some(e.ok()?.file_name()))
             .collect::<Vec<_>>()
     );
 
+    editor
+}
+
+/// The reported case: pipe something in, quit with Ctrl+Q, and the spool
+/// file is gone.
+#[test]
+fn quitting_deletes_the_stdin_spool_file() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut editor = running_editor_with_piped_stdin(home.path());
+
     editor.send(CTRL_Q).expect("send Ctrl+Q");
-    let status = editor.wait().expect("wait for fresh to exit");
+    let status = editor.drain_and_wait().expect("wait for fresh to exit");
     assert!(status.success(), "fresh exited abnormally: {status:?}");
 
     assert_eq!(
         spool_files(home.path()),
         Vec::<PathBuf>::new(),
         "the stdin spool file should be gone once fresh has exited"
+    );
+}
+
+/// Signal the running editor and wait for it to actually be reaped.
+///
+/// Reaping matters twice over: the spool file can only be checked once the
+/// process is really gone, and polling `kill(pid, 0)` would not tell us
+/// that — it keeps succeeding for a zombie, which is exactly what a
+/// signalled child of this test becomes until it is waited on.
+fn signal_and_reap(editor: &mut PtyChild, signal: libc::c_int) -> std::process::ExitStatus {
+    // SAFETY: signalling a child this test owns and has not yet reaped.
+    assert_eq!(unsafe { libc::kill(editor.pid() as i32, signal) }, 0);
+    editor.drain_and_wait().expect("wait for fresh to exit")
+}
+
+/// `pkill fresh`, a container stop, `tmux kill-session`. SIGTERM leaves by
+/// a route that never unwinds `real_main`, so the exit guard alone does not
+/// catch it — the signal handler has to sweep.
+#[test]
+fn sigterm_deletes_the_stdin_spool_file() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut editor = running_editor_with_piped_stdin(home.path());
+
+    let status = signal_and_reap(&mut editor, libc::SIGTERM);
+    // The pre-existing handler reports Ctrl+C's 130 for both signals it
+    // takes; asserted so a change to that path shows up here rather than
+    // silently turning this into a test of some other exit.
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "expected the termination handler's exit, got {status:?}"
+    );
+
+    assert_eq!(
+        spool_files(home.path()),
+        Vec::<PathBuf>::new(),
+        "SIGTERM should not leave a stdin spool file behind"
+    );
+}
+
+/// Closing the terminal window, or an ssh session dropping. SIGHUP had no
+/// handler at all, so this was the most ordinary leak of the lot.
+#[test]
+fn sighup_deletes_the_stdin_spool_file() {
+    use std::os::unix::process::ExitStatusExt;
+
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut editor = running_editor_with_piped_stdin(home.path());
+
+    let status = signal_and_reap(&mut editor, libc::SIGHUP);
+    // Still *killed by* SIGHUP, not exited: the handler exists only to
+    // sweep, and re-raises under `SA_RESETHAND` so the status a parent sees
+    // is the one it would have seen with no handler at all.
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGHUP),
+        "SIGHUP should still terminate by SIGHUP, got {status:?}"
+    );
+
+    assert_eq!(
+        spool_files(home.path()),
+        Vec::<PathBuf>::new(),
+        "SIGHUP should not leave a stdin spool file behind"
     );
 }
 
