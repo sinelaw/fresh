@@ -22,6 +22,8 @@ mod editorconfig_tests;
 mod focused_bug_test;
 #[path = "format_on_save_undo_view_test.rs"]
 mod format_on_save_undo_view_test;
+#[path = "geometry_pass.rs"]
+mod geometry_pass;
 #[path = "harness_test.rs"]
 mod harness_test;
 #[path = "init_script_dashboard_suppress.rs"]
@@ -122,6 +124,8 @@ mod test_save_all;
 mod test_theme_schema_i18n;
 #[path = "ui_shell_frame_parity.rs"]
 mod ui_shell_frame_parity;
+#[path = "ui_tree_dump.rs"]
+mod ui_tree_dump;
 #[path = "undo_redo_marker_roundtrip_tests.rs"]
 mod undo_redo_marker_roundtrip_tests;
 #[path = "workspace_persistence_gates.rs"]
