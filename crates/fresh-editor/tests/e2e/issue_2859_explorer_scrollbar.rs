@@ -87,11 +87,14 @@ fn an_overflowing_tree_draws_a_scrollbar_that_follows_the_scroll() {
         "unscrolled, the thumb is at the top of the track\nthumb {thumb:?} track {track:?}"
     );
 
-    // Scroll to the end of the tree: the thumb follows.
-    harness.editor_mut().focus_file_explorer();
-    if let Some(view) = harness.editor_mut().file_explorer_mut() {
-        view.select_last();
-        view.update_scroll_for_selection();
+    // Scroll the tree with the wheel, over the panel: the thumb follows.
+    // Far more notches than the tree is long, so this lands at the end.
+    let body_row = harness
+        .find_text_on_screen("file_00.txt")
+        .expect("a tree row on screen")
+        .1;
+    for _ in 0..80 {
+        harness.mouse_scroll_down(column / 2, body_row).unwrap();
     }
     harness.render().unwrap();
 

@@ -1026,8 +1026,12 @@ mod tests {
         let (output, _, _, _) =
             render_output_for_with_indentation_guide("\tchild\n\t\tgrand\n", 0, 0);
 
-        assert_eq!(rendered_line_text(&output, 0), "▏   child");
-        assert_eq!(rendered_line_text(&output, 1), "▏   ▏   grand");
+        // The guide keeps the tab stop and the tab's marker takes the next
+        // column of the expansion. This used to read `▏   child`: the guide
+        // simply overwrote the marker, and with guides on there was then no
+        // way to tell a tab indent from a space indent (issue #3079).
+        assert_eq!(rendered_line_text(&output, 0), "▏→  child");
+        assert_eq!(rendered_line_text(&output, 1), "▏→  ▏→  grand");
     }
 
     #[test]
@@ -1162,10 +1166,12 @@ mod tests {
             IndentationGuideMode::Active,
         );
 
-        // Tab cells that are not replaced by the active guide retain the
-        // existing leading-tab whitespace indicator.
+        // Tab cells the active guide does not claim keep their marker where
+        // it is; the one it does claim hands the marker the next column of
+        // the expansion rather than swallowing it (issue #3079) — this line
+        // used to read `→   ▏   grand`.
         assert_eq!(rendered_line_text(&output, 0), "→   child");
-        assert_eq!(rendered_line_text(&output, 1), "→   ▏   grand");
+        assert_eq!(rendered_line_text(&output, 1), "→   ▏→  grand");
     }
 
     #[test]

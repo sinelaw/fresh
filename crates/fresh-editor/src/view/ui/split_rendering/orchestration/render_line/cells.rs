@@ -341,12 +341,17 @@ impl CellPass<'_, '_, '_> {
         // guide's column is still marked by every other row.
         let guide_cell = self.is_indentation_guide_cell(ch, byte_pos);
         let marker_due = self.tab_marker_due(is_selected);
+        // A marker this expansion's first column handed to this one.
+        let shifted_marker = marker_due && self.tab_marker_shifted_here(ch, byte_pos);
         // The guide yields the column when the marker has nowhere to shift to.
         let marker_needs_column = is_tab_start && marker_due && !self.tab_run_continues();
-        let guide_here = guide_cell && !marker_needs_column;
+        // A guide column can be *inside* an expansion (guide columns follow
+        // the enclosing block's indent, not only tab stops), so the column a
+        // marker was shifted onto can want a guide too. The marker wins there
+        // for the same reason it wins a one-column expansion.
+        let guide_here = guide_cell && !marker_needs_column && !shifted_marker;
         let is_indentation_guide = !is_lsp_cursor && guide_here;
-        let draw_tab_marker = marker_due
-            && ((is_tab_start && !guide_here) || self.tab_marker_shifted_here(ch, byte_pos));
+        let draw_tab_marker = shifted_marker || (marker_due && is_tab_start && !guide_here);
 
         let (display_char, is_whitespace_indicator) = if is_indentation_guide {
             let guide_char = self
