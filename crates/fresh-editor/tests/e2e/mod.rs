@@ -110,6 +110,7 @@ pub mod issue_2797_selection_visibility;
 #[cfg(feature = "plugins")]
 pub mod issue_2810_session_escape_flush;
 pub mod issue_2843_single_line_viewport;
+pub mod issue_2859_explorer_scrollbar;
 pub mod issue_2876_prompt_input_hscroll;
 pub mod issue_2878_split_cursor_independence;
 pub mod issue_2893_replace_all_many_matches;

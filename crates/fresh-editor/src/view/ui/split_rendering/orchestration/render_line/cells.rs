@@ -341,11 +341,12 @@ impl CellPass<'_, '_, '_> {
         // guide's column is still marked by every other row.
         let guide_cell = self.is_indentation_guide_cell(ch, byte_pos);
         let marker_due = self.tab_marker_due(is_selected);
+        // The guide yields the column when the marker has nowhere to shift to.
         let marker_needs_column = is_tab_start && marker_due && !self.tab_run_continues();
-        let is_indentation_guide = !is_lsp_cursor && guide_cell && !marker_needs_column;
+        let guide_here = guide_cell && !marker_needs_column;
+        let is_indentation_guide = !is_lsp_cursor && guide_here;
         let draw_tab_marker = marker_due
-            && ((is_tab_start && !(guide_cell && !marker_needs_column))
-                || self.tab_marker_shifted_here(ch, byte_pos));
+            && ((is_tab_start && !guide_here) || self.tab_marker_shifted_here(ch, byte_pos));
 
         let (display_char, is_whitespace_indicator) = if is_indentation_guide {
             let guide_char = self

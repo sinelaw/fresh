@@ -3674,10 +3674,14 @@ impl Editor {
         let (title_theme, border_theme) = fe::chrome_themes(disconnected, focused);
         let close_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerCloseButton));
         let title = self.explorer_title(remote.as_deref());
-        let body = self.explorer_body(rows, focused);
+        let (body, scroll) = self.explorer_body(rows, focused);
         let caret_row = focused.then(|| self.explorer_caret_row()).flatten();
         ExplorerSection {
-            kind: fe::Explorer { body, caret_row },
+            kind: fe::Explorer {
+                body,
+                caret_row,
+                scroll,
+            },
             title,
             title_theme,
             border_theme,
@@ -3736,11 +3740,15 @@ impl Editor {
     /// The viewport height is set here because it is model state: scrolling and
     /// the web projection both read it, and it must be current whether or not
     /// anything paints.
+    #[allow(clippy::type_complexity)]
     fn explorer_body(
         &mut self,
         rows: u16,
         focused: bool,
-    ) -> crate::view::shell::file_explorer::Body {
+    ) -> (
+        crate::view::shell::file_explorer::Body,
+        Option<crate::view::shell::file_explorer::Scroll>,
+    ) {
         use crate::view::shell::file_explorer as fe;
         // The body's rows: the section's, borders already taken off.
         let viewport_rows = rows as usize;
@@ -3748,7 +3756,10 @@ impl Editor {
             view.set_viewport_height(viewport_rows);
         }
         if self.file_explorer().is_none() {
-            return fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string());
+            return (
+                fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string()),
+                None,
+            );
         }
         let unsaved = self.explorer_unsaved_paths();
         let cut: Vec<std::path::PathBuf> = self
@@ -3799,7 +3810,17 @@ impl Editor {
                 )
             })
             .collect();
-        fe::Body::Rows(rows)
+        // The bar's three numbers, in tree rows: what the tree holds, what the
+        // panel shows, and where the window sits. `None` when the whole tree
+        // fits, which is the whole of "should there be a bar" (issue #2859).
+        let scroll = (viewport_rows > 0 && display.len() > viewport_rows).then(|| fe::Scroll {
+            offset: view
+                .get_scroll_offset()
+                .min(display.len().saturating_sub(1)),
+            total: display.len(),
+            window: viewport_rows,
+        });
+        (fe::Body::Rows(rows), scroll)
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.

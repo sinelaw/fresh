@@ -525,6 +525,7 @@ impl BracketHighlightOverlay {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_colorization(
         &mut self,
         buffer: &Buffer,
@@ -853,13 +854,22 @@ mod tests {
         let overlay = BracketHighlightOverlay::new();
 
         // Outermost opening bracket: depth 0
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 0, true, &[], false), 0);
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 0, true, &[], false),
+            0
+        );
 
         // Second level opening bracket: depth 1
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 1, true, &[], false), 1);
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 1, true, &[], false),
+            1
+        );
 
         // Third level opening bracket: depth 2
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 2, true, &[], false), 2);
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 2, true, &[], false),
+            2
+        );
     }
 
     #[test]
@@ -867,12 +877,30 @@ mod tests {
         let buffer = Buffer::from_str_test("({[]})");
         let overlay = BracketHighlightOverlay::new();
 
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 0, true, &[], false), 0);
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 1, true, &[], false), 1);
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 2, true, &[], false), 2);
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 3, false, &[], false), 2);
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 4, false, &[], false), 1);
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 5, false, &[], false), 0);
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 0, true, &[], false),
+            0
+        );
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 1, true, &[], false),
+            1
+        );
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 2, true, &[], false),
+            2
+        );
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 3, false, &[], false),
+            2
+        );
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 4, false, &[], false),
+            1
+        );
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 5, false, &[], false),
+            0
+        );
     }
 
     #[test]
@@ -916,7 +944,10 @@ mod tests {
         let overlay = BracketHighlightOverlay::new();
 
         // Normally the bracket at byte 2 would be depth 2.
-        assert_eq!(overlay.calculate_nesting_depth(&buffer, 2, true, &[], false), 2);
+        assert_eq!(
+            overlay.calculate_nesting_depth(&buffer, 2, true, &[], false),
+            2
+        );
 
         // With byte 1 skipped, only the outer `(` counts -> depth 1.
         assert_eq!(

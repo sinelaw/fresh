@@ -58,12 +58,14 @@ fn a_comparison_does_not_recolour_the_brackets_around_it() {
     assert_eq!((open.as_str(), close.as_str()), ("(", ")"));
     assert_eq!(angle, "<");
     assert_eq!(
-        open_fg, close_fg,
+        open_fg,
+        close_fg,
         "the `)` closing `(a < b` must share its opening bracket's colour\n{}",
         harness.screen_to_string()
     );
     assert_ne!(
-        angle_fg, open_fg,
+        angle_fg,
+        open_fg,
         "the comparison operator is not a bracket\n{}",
         harness.screen_to_string()
     );
@@ -109,7 +111,8 @@ fn markup_keeps_its_angle_brackets() {
         harness.screen_to_string()
     );
     assert_eq!(
-        open_fg, close_fg,
+        open_fg,
+        close_fg,
         "`<` and `>` of one tag share a nesting level\n{}",
         harness.screen_to_string()
     );
