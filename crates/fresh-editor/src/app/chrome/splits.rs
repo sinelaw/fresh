@@ -1417,15 +1417,29 @@ impl Editor {
             // split tree or inside a stashed Grouped subtree (buffer group
             // panels like the theme editor); try the main tree first and
             // fall back to the grouped subtrees.
-            if self
+            let main_ratio = self
                 .windows
                 .get(&self.active_window)
                 .and_then(|w| w.buffers.splits())
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
-                .get_ratio(split_id.into())
-                .is_some()
-            {
+                .get_ratio(split_id.into());
+            // **A ratio that did not move does not reflow.** The grip holds
+            // the pointer capture for the whole drag, so its `Move` fires for
+            // every motion report — including the ones that travel *along*
+            // the divider rather than across it, where `delta` is unchanged
+            // and this recomputes the ratio it already has. `relayout` is a
+            // full geometry pass (every window's panes placed, every visible
+            // PTY resized) and it was being paid for each of those.
+            let current = main_ratio.or_else(|| {
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.grouped_split_ratio(split_id))
+            });
+            if current == Some(new_ratio) {
+                return Ok(());
+            }
+            if main_ratio.is_some() {
                 // Guarded by the `get_ratio(..).is_some()` check above, so
                 // this id resolves to a resizable Split; the bool result is
                 // not actionable here (the drag can only target a container).
