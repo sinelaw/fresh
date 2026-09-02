@@ -2106,7 +2106,9 @@ impl Editor {
         // created via `create_terminal_buffer_detached` (empty scrollback set),
         // so it is live in this split; focus the terminal pane.
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
-        self.active_window_mut().resize_visible_terminals();
+        // The dock leaf was just split off; size its PTY to the pane the
+        // grid gives it now, not the pane list of the last frame.
+        self.resize_visible_terminals();
 
         let exit_key = self
             .keybindings

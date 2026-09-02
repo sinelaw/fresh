@@ -238,8 +238,9 @@ impl Editor {
     /// Restore the split layout when the just-focused buffer would be
     /// hidden behind a maximized split.
     ///
-    /// `SplitManager::get_visible_buffers` renders *only* the maximized
-    /// split. A file open focuses its buffer in the active split, which —
+    /// A maximized split is the only one the frame places
+    /// (`SplitManager::visible_leaves` reports it alone). A file open
+    /// focuses its buffer in the active split, which —
     /// after `redirect_active_split_away_from_dock_if_needed` — is a
     /// regular editor leaf, not the maximized dock. With nothing reset, the
     /// new buffer renders behind the maximized terminal: the user sees no

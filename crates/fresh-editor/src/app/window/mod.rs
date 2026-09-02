@@ -633,6 +633,25 @@ pub struct Window {
     /// real placement and `relayout` recomputes this from it.
     pub(crate) dock_cols: u16,
 
+    /// Where the last layout put this window's panes.
+    ///
+    /// **A record from layout, not of a paint.** The painter records nothing
+    /// a layout could answer (the E.1 rule); this is the layout's own answer,
+    /// kept for the callers that ask *between* frames — a terminal's PTY
+    /// sized to its pane, a tab strip's width, the plugin snapshot, the pane
+    /// beside this one — which cannot read the shell tree themselves: it is
+    /// the editor's, it describes only the active window, and a frame may be
+    /// holding it. Every layout that places this window's panes writes it:
+    /// `Editor::render`, `Editor::recompute_layout`,
+    /// `Editor::refresh_pane_rects`, and the layout funnel
+    /// (`Editor::push_layout_geometry`), which lays the active window's frame
+    /// out and every other window's grid offscreen before anything reads
+    /// them. Read through [`Self::visible_panes`] or [`Self::pane_rects`].
+    ///
+    /// Empty until the first layout. `Editor::with_options` runs one, so a
+    /// window that exists has been laid out at least once.
+    pub(crate) pane_rects: crate::view::shell::geometry::PaneRects,
+
     /// Editor-global resources shared by `Arc` clone (config, theme
     /// registry, keybindings, command registry, filesystem authority,
     /// the buffer-id allocator, …). See [`WindowResources`] for the
@@ -2310,6 +2329,7 @@ impl Window {
             terminal_width: 80,
             terminal_height: 24,
             dock_cols: 0,
+            pane_rects: Default::default(),
             preview: None,
             terminal_link_hover: None,
             seen_byte_ranges: HashMap::new(),
@@ -2584,7 +2604,7 @@ impl Window {
     pub fn split_tabs_width(&self, split_id: LeafId) -> u16 {
         match self.buffers.splits() {
             Some((mgr, _)) => {
-                let visible = mgr.get_visible_buffers(self.editor_content_area());
+                let visible = self.visible_panes();
                 let Some((_, _, area)) = visible.iter().find(|(id, _, _)| *id == split_id) else {
                     return self.effective_tabs_width();
                 };
@@ -2603,6 +2623,77 @@ impl Window {
             }
             None => self.effective_tabs_width(),
         }
+    }
+
+    /// Where the last layout put this window's panes. See the field.
+    pub fn pane_rects(&self) -> &crate::view::shell::geometry::PaneRects {
+        &self.pane_rects
+    }
+
+    /// Retain `rects` as where this window's panes are. Called by every
+    /// layout that placed them; see the field.
+    pub(crate) fn set_pane_rects(&mut self, rects: crate::view::shell::geometry::PaneRects) {
+        self.pane_rects = rects;
+    }
+
+    /// The visible leaves, each with the box the last layout gave it, in the
+    /// tree's order — first child before second, so left to right and top to
+    /// bottom.
+    ///
+    /// The shape `SplitManager::get_visible_buffers` used to answer in, which
+    /// laid the grid out again to say so: only the maximized pane when one is
+    /// maximized, at the whole body; a leaf the layout did not place gets a
+    /// zero rectangle. Which leaves is the model's answer
+    /// (`SplitManager::visible_leaves`); where they are is the retained
+    /// layout's ([`Self::pane_rects`]).
+    pub fn visible_panes(&self) -> Vec<(LeafId, BufferId, ratatui::layout::Rect)> {
+        match self.buffers.splits() {
+            Some((mgr, _)) => self.pane_rects.visible(&mgr.visible_leaves()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Lay this window's grid out offscreen, at the body this window's
+    /// chrome leaves it, and retain where its panes are.
+    ///
+    /// For a window the retained tree does not hold: the shell describes the
+    /// active window's frame only, and the layout funnel sizes every other
+    /// window's terminals too, so their panes come off one offscreen layout
+    /// of the same description the frame would mount (`PaneRects::offscreen`,
+    /// as the session preview does). The body is `editor_content_area`, the
+    /// window's own derivation of the frame's body from its chrome flags —
+    /// the box the scratch grid was laid out in, for every window.
+    ///
+    /// The pane *boxes* are what is read off this. The content slots come
+    /// out too, but without the plugin panel interiors the editor would mount
+    /// (those are the editor's, not the window's), so they are the slots of
+    /// a pane showing a buffer; nothing reads a non-active window's content
+    /// slots.
+    pub(crate) fn layout_panes_offscreen(&mut self) {
+        use crate::view::shell::splits::{PaneChrome, PaneControls, Splits};
+        let Some((mgr, _)) = self.buffers.splits() else {
+            self.pane_rects = Default::default();
+            return;
+        };
+        let is_maximized = mgr.is_maximized();
+        let several = mgr.visible_leaves().len() > 1;
+        let splits = Splits {
+            root: mgr.root().clone(),
+            maximized: mgr.maximized_split().map(LeafId),
+            chrome: self.pane_chrome(PaneChrome {
+                tabs: self.tab_bar_visible,
+                vscroll: self.resources.config.editor.show_vertical_scrollbar,
+                hscroll: self.resources.config.editor.show_horizontal_scrollbar,
+            }),
+            controls: PaneControls {
+                maximize: several || is_maximized,
+                close: several && !is_maximized,
+            },
+            groups: self.pane_groups(),
+            interiors: Default::default(),
+        };
+        self.pane_rects =
+            crate::view::shell::geometry::PaneRects::offscreen(&splits, self.editor_content_area());
     }
 
     /// The split id whose `SplitViewState` owns the currently-focused

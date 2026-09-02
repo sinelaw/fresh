@@ -647,7 +647,7 @@ impl Editor {
         // in its split (so a window resize never reached it). Refresh visible
         // terminal sizes so its PTY child sees the pane it now occupies —
         // mirrors `set_active_buffer` (issue #1795).
-        self.active_window_mut().resize_visible_terminals();
+        self.resize_visible_terminals();
 
         // Keep the newly active tab scrolled into view within its split,
         // matching `switch_split` and `set_active_buffer`.
@@ -758,25 +758,23 @@ impl Editor {
             .expect("active window must have a populated split layout")
     }
 
-    /// Where a pane currently sits on screen, in editor-area cells.
-    /// `None` once the leaf is gone (closed, or collapsed by its last tab).
+    /// Where a pane currently sits on screen, as the last layout placed it.
+    /// `None` once the leaf is gone (closed, or collapsed by its last tab) or
+    /// hidden behind a maximized sibling.
+    ///
+    /// Read off the window's retained pane rects, which the layout funnel
+    /// refreshes before any caller of this runs (`split_pane_impl` ends in
+    /// `relayout`).
     pub(crate) fn split_rect(
         &self,
         leaf: crate::model::event::LeafId,
     ) -> Option<ratatui::layout::Rect> {
-        let area = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| w.editor_content_area())?;
         self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .and_then(|(mgr, _)| {
-                mgr.get_visible_buffers(area)
-                    .into_iter()
-                    .find(|(id, _, _)| *id == leaf)
-                    .map(|(_, _, rect)| rect)
-            })
+            .get(&self.active_window)?
+            .visible_panes()
+            .into_iter()
+            .find(|(id, _, _)| *id == leaf)
+            .map(|(_, _, rect)| rect)
     }
 
     /// Resolve a caller-supplied path against the window's root, so a script
@@ -1069,11 +1067,14 @@ impl Editor {
             .windows
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())?;
+        // Which leaves show, not where: a labeled leaf hidden behind a
+        // maximized sibling is not a destination.
+        let visible = mgr.visible_leaves();
         mgr.labels()
             .iter()
             .find(|(_, l)| l.as_str() == label)
             .map(|(id, _)| crate::model::event::LeafId(*id))
-            .filter(|leaf| self.split_rect(*leaf).is_some())
+            .filter(|leaf| visible.iter().any(|(id, _)| id == leaf))
     }
 
     /// The pane to open a target in when no label named one: the nearest
@@ -1086,14 +1087,13 @@ impl Editor {
     /// the destination is where a reader would look for it and does not depend
     /// on where focus happened to be.
     #[cfg(feature = "plugins")]
-    fn pane_beside(
+    pub(super) fn pane_beside(
         &self,
         this_one: crate::model::event::LeafId,
     ) -> Option<crate::model::event::LeafId> {
         let window = self.windows.get(&self.active_window)?;
-        let area = window.editor_content_area();
-        let (mgr, _) = window.buffers.splits()?;
-        let panes = mgr.get_visible_buffers(area);
+        // The panes as the last layout placed them, in the tree's order.
+        let panes = window.visible_panes();
         let here = panes.iter().find(|(id, _, _)| *id == this_one)?.2;
 
         let usable: Vec<_> = panes
