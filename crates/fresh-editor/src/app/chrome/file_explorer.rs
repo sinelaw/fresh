@@ -446,7 +446,7 @@ impl Editor {
         // just because they grabbed the divider.
         if total_width > 0 {
             use crate::config::ExplorerWidth;
-            self.active_window_mut().file_explorer_width = match start_width {
+            let new_width = match start_width {
                 ExplorerWidth::Percent(start_pct) => {
                     let percent_delta = (delta * 100) / total_width;
                     let new_pct = (start_pct as i32 + percent_delta).clamp(0, 100) as u8;
@@ -457,6 +457,18 @@ impl Editor {
                     ExplorerWidth::Columns(new_cols)
                 }
             };
+            // **Only a width that actually moved reflows**, the way the dock's
+            // grip has always guarded its own drag. A grip's `Move` fires for
+            // every motion report the pointer produces while it holds the
+            // capture — including the ones that only travel *along* the
+            // divider, and the ones a percent width rounds back to the column
+            // it was already at. `relayout` is a full geometry pass (every
+            // window's panes placed, every visible PTY resized) and it was
+            // being paid for each of those, for no visible change.
+            if self.active_window().file_explorer_width == new_width {
+                return Ok(());
+            }
+            self.active_window_mut().file_explorer_width = new_width;
             // The sidebar width changed: reflow terminals/viewports/panels
             // through the single layout funnel.
             self.relayout();
