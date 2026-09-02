@@ -6,6 +6,14 @@
 
 use once_cell::sync::Lazy;
 
+/// Absolute path of the directory these catalogs are embedded from.
+///
+/// Baked in from this crate's manifest directory, so tests that read the
+/// locale files off disk do not hard-code a hop from wherever they happen to
+/// live. Three of them did, and all three broke the moment `locales/` moved
+/// into this crate.
+pub const LOCALES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/locales");
+
 /// Every locale Fresh ships, as `(code, JSON source)`.
 const EMBEDDED_LOCALES: &[(&str, &str)] = &[
     (

@@ -15,10 +15,13 @@ name = "fresh_editor_core"
 path = "src/lib.rs"
 
 [features]
-# `runtime` by default so `cargo check -p fresh-editor-core` on its own is a
-# working configuration; `fresh-editor` depends on this crate with
-# `default-features = false` and forwards its own flags instead.
-default = ["runtime"]
+# The subset of `fresh-editor`'s own defaults that applies here, so
+# `cargo test -p fresh-editor-core` on its own is a working configuration --
+# without `tree-sitter` a dozen highlighter and indent tests fail, because
+# they assert the tree-sitter path that `fresh-editor`'s defaults always gave
+# them. `fresh-editor` depends on this crate with `default-features = false`
+# and forwards its own flags instead, so its minimal builds are unaffected.
+default = ["runtime", "tree-sitter"]
 # Mirrors `fresh-editor`'s features of the same name so the two crates gate
 # the same code the same way; `fresh-editor` forwards its own flags here.
 runtime = [
