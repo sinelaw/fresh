@@ -19,6 +19,7 @@ pub mod capslock_shortcuts;
 pub mod cargo_config_editing;
 pub mod code_tour_dock;
 pub mod command_palette;
+pub mod conceal_spanning_line_break;
 pub mod config_language_selector;
 pub mod copy_buffer_path;
 pub mod crash_repro;
