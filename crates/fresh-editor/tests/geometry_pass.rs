@@ -16,9 +16,7 @@
 //! with debug assertions on, which is what `cargo test` builds with.
 #![cfg(debug_assertions)]
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use fresh::input::keybindings::Action;
 use fresh::view::shell::geometry::stats::{self, LayoutCounts};
 
