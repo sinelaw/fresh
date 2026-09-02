@@ -133,23 +133,21 @@ fn leaving_the_finder_does_not_park_focus_on_the_startup_switch() {
 /// a startup surface now, and this is the difference.
 #[test]
 fn closing_the_last_buffer_does_not_reopen_the_welcome_screen() {
-    let (mut harness, tmp) = harness_with_welcome();
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
 
-    // Start with something open, so `ready` finds a non-empty workspace
-    // and the page never auto-opens in the first place.
-    let path = tmp.path().join("work").join("note.txt");
-    fs::write(&path, "the only file\n").unwrap();
-    harness.open_file(&path).unwrap();
-    harness.editor_mut().fire_ready_hook();
+    // Escape closes the page: the reader's own dismissal.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
     assert!(
         !harness.screen_to_string().contains("JUST EDIT TEXT"),
-        "the page opened over a restored workspace"
+        "precondition: Escape closes the page"
     );
 
     // Now empty the workspace the way `Ctrl+W` on the last tab does.
-    let id = harness.editor().active_buffer_id();
-    harness.editor_mut().close_buffer(id).unwrap();
+    for id in harness.editor().all_buffer_ids_for_tests() {
+        let _ = harness.editor_mut().close_buffer(id);
+    }
     harness.wait_for_async_quiescence(4).unwrap();
 
     let screen = harness.screen_to_string();
@@ -166,4 +164,127 @@ fn closing_the_last_buffer_does_not_reopen_the_welcome_screen() {
 fn an_empty_startup_still_opens_the_welcome_screen() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
+}
+
+/// **Startup means startup — not "startup that found an empty
+/// workspace".** The page asked whether anything else was open and gave
+/// up if anything was, so restoring a session, or plain `fresh
+/// note.txt`, meant never seeing it again: the only way back was to
+/// close every buffer and relaunch. Opening is now unconditional. What a
+/// non-empty workspace changes is only whether the page comes to the
+/// front, which is the next test.
+#[test]
+fn startup_with_a_file_already_open_still_gets_a_welcome_tab() {
+    let (mut harness, tmp) = harness_with_welcome();
+    let path = tmp.path().join("work").join("note.txt");
+    fs::write(&path, "alpha\nbeta\n").unwrap();
+    harness.open_file(&path).unwrap();
+
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Welcome"),
+        "no Welcome tab: the page skipped startup because the workspace \
+         was not empty. Screen:\n{screen}"
+    );
+}
+
+/// The other half of the same rule: a workspace that already has
+/// something in it keeps looking at it. The page is a tab you can turn
+/// to, not a thing that lands on top of the file you asked for.
+#[test]
+fn a_welcome_tab_beside_a_file_does_not_take_the_foreground() {
+    let (mut harness, tmp) = harness_with_welcome();
+    let path = tmp.path().join("work").join("note.txt");
+    fs::write(&path, "alpha\nbeta\n").unwrap();
+    harness.open_file(&path).unwrap();
+
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("alpha"),
+        "the file the reader asked for is no longer on screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("JUST EDIT TEXT"),
+        "the welcome page took the foreground from a buffer that was \
+         already open:\n{screen}"
+    );
+}
+
+/// **It opens; it does not clear the table first.** The page used to
+/// reap the host's empty `[No Name]` seed on the way up, on the reasoning
+/// that the seed was the placeholder it replaces. But the reaping loop's
+/// test — unnamed, unmodified, not virtual — is also every scratch buffer
+/// anyone ever opened with `Ctrl+N` and had not yet typed into, and a
+/// plugin buffer closing the reader's buffers is a plugin exceeding its
+/// brief either way.
+#[test]
+fn opening_the_welcome_screen_closes_no_other_buffer() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    let before = harness.editor().all_buffer_ids_for_tests();
+    assert!(
+        !before.is_empty(),
+        "precondition: the host seeds a buffer to open into"
+    );
+
+    open_welcome(&mut harness);
+
+    let after = harness.editor().all_buffer_ids_for_tests();
+    for id in &before {
+        assert!(
+            after.contains(id),
+            "the welcome screen closed buffer {id:?} to make room for \
+             itself: {before:?} became {after:?}"
+        );
+    }
+}
+
+/// **A page composed off screen composed against the wrong pane.** The
+/// layout is measured from `getViewport()`, which reports the *active*
+/// split — so a page opened behind a file took that file's pane geometry
+/// and, once the reader switched to it, painted at a measure the pane
+/// could not hold: the wordmark wrapped mid-glyph and every centred row
+/// sat far right. `viewport_changed` could not save it either, because
+/// the stale key it recorded while hidden equals the key it computes
+/// when shown. Bringing the page to the front repaints it once.
+#[test]
+fn a_welcome_tab_opened_behind_a_file_paints_correctly_when_shown() {
+    let (mut harness, tmp) = harness_with_welcome();
+    let path = tmp.path().join("work").join("note.txt");
+    fs::write(&path, "alpha\nbeta\n").unwrap();
+    harness.open_file(&path).unwrap();
+
+    let before = harness.editor().all_buffer_ids_for_tests();
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    // Switch to the Welcome tab, the way `Ctrl+PageDown` does. It is the
+    // one buffer startup added.
+    let welcome = harness
+        .editor()
+        .all_buffer_ids_for_tests()
+        .into_iter()
+        .find(|id| !before.contains(id))
+        .expect("startup opened a Welcome buffer");
+    harness.editor_mut().switch_buffer(welcome);
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    // The three doors sit side by side on one row at this width. If the
+    // page composed against a wider pane they wrap and the row breaks up.
+    let screen = harness.screen_to_string();
+    let doors = screen
+        .lines()
+        .find(|l| l.contains("JUST EDIT TEXT"))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        doors.contains("CLASSIC IDE") && doors.contains("ORCHESTRATE"),
+        "the page painted at a measure its pane cannot hold — the three \
+         doors are no longer one row. Screen:\n{screen}"
+    );
 }

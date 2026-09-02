@@ -24,8 +24,9 @@ const editor = getEditor();
 //
 //   The startup surface: a scrollable buffer that onboards three
 //   audiences on one page without overwhelming the simplest. It opens
-//   when Fresh launches with nothing to restore, and otherwise only on
-//   request — closing buffers never summons it.
+//   once, when Fresh launches, and takes the foreground only when there
+//   is nothing else to look at — otherwise it waits in a tab. Closing
+//   buffers never summons it, and it closes nothing to make room.
 //   Design note: docs/internal/welcome-screen-design.md.
 //
 //   Structure is a ladder. The first viewport is a zero-anxiety zone
@@ -1435,7 +1436,7 @@ function probeWorkspaces(): void {
 
 editor.defineConfigBoolean("showOnStartup", {
   default: true,
-  description: "Open the welcome screen when Fresh starts with nothing to restore.",
+  description: "Open the welcome screen when Fresh starts. It takes the foreground only when there is nothing else open.",
 });
 
 /** The footer toggle writes plugin global state, which persists across
@@ -1453,12 +1454,15 @@ function showOnStartup(): boolean {
 
 /** Is anything at all open besides this page?
  *
- *  Asked once, at startup: the page stands in for an empty workspace, so
- *  a restored session with anything in it — a file, a terminal, an agent
- *  session, another plugin's panel — is not one to stand in for.
+ *  Asked once, at startup, and it decides one thing only: whether the
+ *  page comes to the front. It used to decide whether the page opened at
+ *  all, which meant restoring a session — or plain `fresh note.txt` —
+ *  hid it until you closed every buffer and relaunched.
  *
- *  Two buffers do not count: this page itself, and the host's empty
- *  untitled seed, which is the very thing the page stands in for. */
+ *  Anything counts: a file, a terminal, an agent session, another
+ *  plugin's panel. Two buffers do not: this page itself, and the host's
+ *  empty untitled seed, which is the very thing the page stands in
+ *  for — a workspace holding only that is an empty one. */
 function hasOtherBuffers(): boolean {
   return editor.listBuffers().some((b) => {
     if (bufferId !== null && b.id === bufferId) return false;
@@ -1468,6 +1472,11 @@ function hasOtherBuffers(): boolean {
   });
 }
 
+/** `force` is the reader asking for the page by name — the `Welcome`
+ *  command — which both overrides `showOnStartup` and brings the page to
+ *  the front. Startup passes `false` and lets `hasOtherBuffers` decide
+ *  the second half: an empty workspace lands on the page, a workspace
+ *  with work in it gets a tab and keeps looking at the work. */
 async function openWelcome(force: boolean): Promise<void> {
   if (bufferId !== null) {
     editor.showBuffer(bufferId);
@@ -1475,6 +1484,12 @@ async function openWelcome(force: boolean): Promise<void> {
   }
   if (opening) return;
   if (!force && !showOnStartup()) return;
+  const foreground = force || !hasOtherBuffers();
+
+  // `createVirtualBuffer` tabs the new buffer into the focused pane and
+  // makes it active — there is no "open it quietly" option — so a
+  // background open is an open followed by putting the reader back.
+  const restoreTo = foreground ? 0 : editor.getActiveBufferId();
   opening = true;
   readActiveTheme();
   try {
@@ -1512,23 +1527,30 @@ async function openWelcome(force: boolean): Promise<void> {
     // cursor reached the viewport edge and the page finally scrolled.
     // This is the order `setBufferShowCursors`'s own docs prescribe.
     editor.setBufferShowCursors(bufferId, true);
-    // Fresh seeds an empty untitled buffer when it has nothing else to
-    // show. The welcome screen is what that seed was standing in for, so
-    // retire it rather than leaving a `[No Name]` tab beside this one.
-    for (const b of editor.listBuffers()) {
-      if (
-        b.id !== bufferId && !b.is_virtual && !b.modified &&
-        (!b.path || b.path.length === 0)
-      ) {
-        editor.closeBuffer(b.id);
-      }
-    }
+    // Nothing else is closed to make room. Retiring the host's empty
+    // `[No Name]` seed here looked tidy — the page is what that seed
+    // stands in for — but the test it selected on (unnamed, unmodified,
+    // not virtual) is also every scratch buffer anyone ever opened with
+    // `Ctrl+N` and had not yet typed into, and a plugin buffer closing
+    // the reader's buffers is a plugin exceeding its brief either way.
+    // The page opens; it does not clear the table first.
     engaged = force;
     applyComposeWidth();
     probeThemes();
     probeWorkspaces();
     render();
-    editor.showBuffer(bufferId);
+    if (foreground) {
+      editor.showBuffer(bufferId);
+    } else if (restoreTo !== 0 && restoreTo !== bufferId) {
+      // A frame later, not now. The widget layout is sized from the
+      // split the buffer is painted in, and a buffer that has never been
+      // painted has no width to read — the host falls back to the whole
+      // terminal, which centres every row half a pane too far right and
+      // wraps the wordmark against the compose column. So let this
+      // frame paint the page properly, then hand the pane back.
+      handBackTo = restoreTo;
+      editor.setTimeout(0, "welcomeHandBackPane");
+    }
     void probeRepoFiles();
     void probeGit();
   } catch (e) {
@@ -1556,7 +1578,7 @@ editor.registerCommand(
 );
 
 registerHandler("welcomeOnReady", async () => {
-  if (!hasOtherBuffers()) await openWelcome(false);
+  await openWelcome(false);
 });
 /** Only ever housekeeping for *this* page's own buffer.
  *
@@ -1613,6 +1635,16 @@ function layoutKey(): string {
 // it is this buffer's pane, where `getViewport()` is whichever split
 // happens to be active.
 let lastKey = "";
+/** The buffer a background open owes the pane back to; see `openWelcome`. */
+let handBackTo = 0;
+registerHandler("welcomeHandBackPane", () => {
+  const to = handBackTo;
+  handBackTo = 0;
+  // Only if the reader has not moved in the meantime.
+  if (to === 0 || bufferId === null) return;
+  if (editor.getActiveBufferId() !== bufferId) return;
+  editor.showBuffer(to);
+});
 registerHandler(
   "welcomeOnViewportChanged",
   (d: { buffer_id: number; width: number }) => {

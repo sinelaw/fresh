@@ -469,9 +469,11 @@ underline stays an honest affordance.
 }
 ```
 
-`showOnStartup` governs the one automatic path: launch with nothing to
-restore. Emptying the workspace later is *not* that state — see "When it
-opens" below — so the two older empty states stay exactly as they were.
+`showOnStartup` governs the one automatic path: launch. Not "launch with
+nothing to restore" — the page opens either way, and what an already-busy
+workspace changes is only whether it comes to the front. Emptying the
+workspace later is not a path at all; see "When it opens" below, so the two
+older empty states stay exactly as they were.
 The startup toggle on the page writes a plugin *global state* override that
 wins over the config field, so flipping it in the UI persists without
 rewriting `config.json`; the config field is what the Settings UI edits and
@@ -491,8 +493,25 @@ already load-bearing across the test suite.
 
 **When it opens.**
 
-- At startup, when the session restore produced no buffers.
+- At startup, always — as the foreground buffer when the session restore
+  produced nothing, and as a tab beside the work when it produced anything.
 - On demand: `Welcome` in the palette, or **Help ▸ Welcome**.
+
+**Startup means startup, not "startup that found an empty workspace".** The
+page used to ask whether anything else was open and give up if anything was,
+so restoring a session — or plain `fresh note.txt` — meant never seeing it
+again: the only way back was to close every buffer and relaunch, which is
+not a thing anyone does on purpose. Opening is unconditional now.
+`hasOtherBuffers` survives, demoted: it decides the foreground, so
+`fresh note.txt` still lands on `note.txt`.
+
+**It closes nothing to make room.** The page used to reap the host's empty
+`[No Name]` seed on the way up, on the reasoning that the seed is the
+placeholder the page replaces. But the test it selected on — unnamed,
+unmodified, not virtual — is also every scratch buffer anyone ever opened
+with `Ctrl+N` and had not yet typed into, and a plugin buffer closing the
+reader's buffers is a plugin exceeding its brief either way. A bare `fresh`
+now shows `[No Name]` and `Welcome` side by side.
 
 **Closing buffers never opens it.** It is a *startup* surface, not an
 empty-workspace surface. It used to take the second path too, on the
@@ -886,6 +905,21 @@ Eleven things the wireframes did not know:
     when you close things. Dropping the reopen-on-empty behaviour outright
     (§8) retired the flag with it — there is no longer a question for "I
     closed it" to answer.
+
+32. **A buffer that has never been painted has no width.**
+    `widget_panel_width` sizes a panel from the split its buffer is painted
+    in and falls back to the whole terminal when it finds none — so a page
+    composed while another buffer held the pane centred every row against
+    ~140 columns instead of the 89-column compose measure, and the host then
+    wrapped the wordmark in half against the compose column. (The host says
+    as much in that function's own comment, measured on this page.) Nothing
+    the plugin can do afterwards repairs it: a re-render, a panel remount and
+    a deferred repaint on `buffer_activated` were all tried and all still
+    read the same missing width, and `viewport_changed` never fires for this
+    buffer at all. So a background open is now an ordinary foreground open —
+    `createVirtualBuffer` makes the new buffer active, which is exactly the
+    geometry the layout needs — followed by handing the pane back one tick
+    later, once the frame that measures it has been painted.
 
 ### Still aspirational
 
