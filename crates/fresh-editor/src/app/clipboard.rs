@@ -1216,10 +1216,27 @@ impl Editor {
             // ("Editing disabled in this buffer" — issue #1960). Route
             // it to the same widget the key path targets.
             //
-            // An open prompt still wins, as it does in `paste_text`: the
-            // Ctrl+F prompt floats over whatever buffer is active and owns
-            // the keyboard while it is up.
-            if self.active_window().prompt.is_some() {
+            // Only when the editor pane itself owns the keyboard. A panel
+            // mounted into a buffer owns the paste only while nothing is
+            // layered over that buffer: with the menu open (or a prompt,
+            // modal, context menu or key-capturing popup up) the paste is
+            // that layer's, and letting it through to the panel underneath
+            // would be the very bug the doc comment above says this
+            // function exists to prevent — text landing in a field the
+            // user cannot see. Ask the overlay stack rather than naming
+            // the layers here, so a new overlay is covered by declaring
+            // itself and not by being added to a list.
+            if !self.editor_base_owns_keyboard() {
+                return false;
+            }
+            // The file explorer is inside the editor's own layer, so the
+            // check above does not speak for it. `Action::Paste` routes it
+            // to `file_explorer_paste`; a bracketed paste there has never
+            // been wired up, and this is not the change that should wire
+            // it — decline and leave that path exactly as it was.
+            if self.active_window().key_context
+                == crate::input::keybindings::KeyContext::FileExplorer
+            {
                 return false;
             }
             let buffer_id = self.active_buffer();

@@ -3053,6 +3053,59 @@ fn test_search_replace_bracketed_paste_reaches_fields() {
     );
 }
 
+/// The other half of #1960's routing: a bracketed paste belongs to
+/// whatever owns the keyboard, so a panel mounted into a buffer must NOT
+/// take one while a menu (or any other layer) is open over it.
+///
+/// Routing the paste to the panel without asking who owns the keyboard
+/// reintroduces, in mirror image, the bug
+/// `paste_bracketed_into_focused_panel` exists to prevent: text landing
+/// in a field the user cannot see.
+#[test]
+fn test_search_replace_bracketed_paste_declines_under_an_open_menu() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("gamma.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("hello").unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("Search: [hello"))
+        .unwrap();
+
+    // Alt+F opens the File menu over the panel.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("New File"))
+        .unwrap();
+
+    harness.send_paste("LEAKED").unwrap();
+    // Give the paste every chance to land in the field before asserting
+    // it didn't: drive the plugin round trip the accepting path needs.
+    for _ in 0..8 {
+        harness.tick_and_render().unwrap();
+    }
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("LEAKED"),
+        "the paste reached the search field behind an open menu. \
+         Screen:\n{screen}"
+    );
+}
+
 /// Issue #1580: a match far along a long line must still be visible in
 /// its result row.
 ///

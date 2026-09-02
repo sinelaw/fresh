@@ -120,6 +120,23 @@ pub(crate) fn any_layer_blocks_terminal_input(layers: impl IntoIterator<Item = L
     layers.into_iter().any(|l| l.blocks_terminal_input)
 }
 
+/// True iff some layer other than the editor base owns the keyboard — a
+/// menu, prompt, modal, context menu, dock, floating panel or a popup
+/// that captures keys.
+///
+/// A membership question, and takes an iterator for the reason the gate
+/// above does: the editor base is the owner of last resort and ranks
+/// below every other layer, so "some other layer owns the keyboard" and
+/// "the topmost owner is not the editor" are the same statement — this
+/// one needs no order to say it.
+pub(crate) fn any_layer_above_editor_owns_keyboard(
+    layers: impl IntoIterator<Item = Layer>,
+) -> bool {
+    layers
+        .into_iter()
+        .any(|l| l.owns_keyboard && l.kind != LayerKind::Editor)
+}
+
 /// True iff a layer ranked *above* the popup layer currently owns the
 /// keyboard. Used by the unfocused-popup key interception: while one of those
 /// owns the keyboard the popup must not intercept keys. Callers guarantee a
@@ -294,6 +311,17 @@ impl Editor {
     /// blocks the PTY without being modal.
     pub(crate) fn presents_blocking_overlay(&self) -> bool {
         crate::app::overlay::any_layer_blocks_terminal_input(self.overlay_layer_set())
+    }
+
+    /// True iff the editor pane itself owns the keyboard — nothing above
+    /// it (menu, prompt, modal, context menu, dock, floating panel, a
+    /// key-capturing popup) has claimed it.
+    ///
+    /// Asked by the bracketed-paste routing: a paste belongs to whatever
+    /// owns the keyboard, and a panel mounted *into a buffer* only owns it
+    /// when nothing is layered over that buffer.
+    pub(crate) fn editor_base_owns_keyboard(&self) -> bool {
+        !crate::app::overlay::any_layer_above_editor_owns_keyboard(self.overlay_layer_set())
     }
 
     /// True iff a modal overlay — a prompt (Open File dialog, command
