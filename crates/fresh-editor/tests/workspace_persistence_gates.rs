@@ -9,9 +9,7 @@
 //! test (CONTRIBUTING.md Testing §2). The user-visible halves live in
 //! `e2e/issue_2761_git_commit_msg_state.rs`.
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use fresh::config::Config;
 use fresh::workspace::{find_workspace_file_by_root, Workspace};
 use std::fs;

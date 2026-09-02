@@ -1,7 +1,5 @@
 // Integration tests - testing how modules work together
 
-mod common;
-
 use fresh::model::filesystem::StdFileSystem;
 use fresh::{
     model::cursor::Cursors,
@@ -768,7 +766,7 @@ fn test_overlay_priority_layering() {
 /// E2E test: Verify diagnostic overlays are visually rendered with correct colors
 #[test]
 fn test_diagnostic_overlay_visual_rendering() {
-    use common::harness::EditorTestHarness;
+    use crate::common::harness::EditorTestHarness;
     use fresh::model::event::{OverlayFace, UnderlineStyle};
     use ratatui::style::{Color, Modifier};
 
@@ -1263,8 +1261,8 @@ mod event_inverse_tests {
 /// so line 1 is correct, line 2 is off by 1, line 3 is off by 2, etc.
 #[test]
 fn test_crlf_syntax_highlighting_offset() {
-    use common::fixtures::TestFixture;
-    use common::harness::EditorTestHarness;
+    use crate::common::fixtures::TestFixture;
+    use crate::common::harness::EditorTestHarness;
     use ratatui::style::Color;
 
     // Create a Rust file with CRLF line endings.
@@ -1290,7 +1288,7 @@ fn test_crlf_syntax_highlighting_offset() {
     let mut harness = EditorTestHarness::create(
         80,
         24,
-        common::harness::HarnessOptions::new().with_full_grammar_registry(),
+        crate::common::harness::HarnessOptions::new().with_full_grammar_registry(),
     )
     .unwrap();
     harness.open_file(&fixture.path).unwrap();

@@ -7,20 +7,40 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    // Embed git commit hash (gracefully falls back to "unknown" outside git)
-    let git_hash = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    // Embed git commit hash (gracefully falls back to "unknown" outside git).
+    //
+    // Release builds only. Declaring `.git/HEAD` and `.git/refs` as build
+    // inputs means *any* git write -- a commit, a branch switch, a rebase, a
+    // `git pull` -- invalidates this build script, which recompiles
+    // `fresh-editor` and relinks every one of its 59 integration-test
+    // binaries. Measured on a warm `target/` with 10 of those tests built:
+    // a genuine no-op rebuild is 0.44s, but one `touch .git/refs/heads/*`
+    // turns it into 24.26s, and that is the state you are in after every
+    // single commit. At the full 59 targets it is several minutes of
+    // relinking for a hash that only ever reaches a `tracing::info!` line.
+    //
+    // So debug builds report "dev" and register no git dependency; release
+    // builds are unchanged and still embed the real short hash.
+    let git_hash = if std::env::var("PROFILE").as_deref() == Ok("debug") {
+        "dev".to_string()
+    } else {
+        if Path::new("../../.git/HEAD").exists() {
+            println!("cargo::rerun-if-changed=../../.git/HEAD");
+            println!("cargo::rerun-if-changed=../../.git/refs");
+        }
+        std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    };
     println!("cargo::rustc-env=FRESH_GIT_HASH={}", git_hash);
-    if Path::new("../../.git/HEAD").exists() {
-        println!("cargo::rerun-if-changed=../../.git/HEAD");
-        println!("cargo::rerun-if-changed=../../.git/refs");
-    }
+
+    // Discover the integration-test roots (see generate_test_roots).
+    generate_test_roots();
 
     // ---- Assemble the self-contained web-ui page --------------------------
     // Sources live in web-ui/ split by concern: shell.html (the document
@@ -37,12 +57,6 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_WEB").is_some() {
         assemble_webui();
     }
-
-    // Rerun if locales change
-    println!("cargo::rerun-if-changed=locales");
-
-    // Rerun if themes change
-    println!("cargo::rerun-if-changed=themes");
 
     // On Windows, embed the application icon, version info, and (for GUI
     // builds) the application manifest into the .exe.  All payload files
@@ -86,25 +100,6 @@ fn main() {
                 eprintln!("Warning: Failed to embed Windows resources: {}", e);
             }
         }
-    }
-
-    // Always generate locale_options.rs - it's required by config.rs at compile time
-    // This must run even during publish verification since the include!() macro needs it
-    if let Err(e) = generate_locale_options() {
-        eprintln!("Warning: Failed to generate locale options: {}", e);
-    }
-
-    // Always generate builtin_themes.rs - embeds all themes from themes/ directory
-    if let Err(e) = generate_builtin_themes() {
-        eprintln!("Warning: Failed to generate builtin themes: {}", e);
-    }
-
-    // Pre-compile syntect defaults + embedded grammars into a binary packdump.
-    // At runtime this replaces the expensive into_builder() + build() cycle (~12s)
-    // with a simple deserialization (~300ms).
-    println!("cargo::rerun-if-changed=src/grammars");
-    if let Err(e) = generate_syntax_packdump() {
-        eprintln!("Warning: Failed to generate syntax packdump: {}", e);
     }
 
     // Generate plugins content hash for cache invalidation
@@ -168,280 +163,79 @@ fn hash_directory(dir: &Path, hasher: &mut impl std::hash::Hasher) -> std::io::R
     Ok(())
 }
 
-/// Generate a Rust file with all theme files embedded from themes/ directory recursively
-fn generate_builtin_themes() -> Result<(), Box<dyn std::error::Error>> {
-    let themes_dir = Path::new("themes");
-    let mut themes: Vec<(String, String, String)> = Vec::new(); // (name, pack, relative_path)
+/// Emit the `mod` declarations for every integration-test root under `tests/`.
+///
+/// `autotests = false` stops cargo building one binary per `tests/*.rs` -- the
+/// change that collapsed 59 near-identical link steps into one. But it is
+/// all-or-nothing: with discovery off, a new root is not a target and, unless
+/// something names it, compiles into nothing. No error, no warning, its tests
+/// simply never run. That silence caught real files twice on this branch.
+///
+/// So discovery moves here. `tests/all_tests.rs` includes the file this
+/// writes, and a new `tests/whatever.rs` is picked up with nothing to edit.
+///
+/// The paths have to be absolute: `#[path]` inside an `include!`d file
+/// resolves against *that* file's directory, which is `$OUT_DIR`, not against
+/// the file doing the including. A relative hop back to `tests/` is not an
+/// option either -- `$OUT_DIR`'s depth moves with the profile and with
+/// `CARGO_TARGET_DIR`. The cost is that `file!()` reports an absolute path for
+/// these roots. Nothing depends on it being relative: the insta snapshots live
+/// under `tests/common/`, which `all_tests.rs` reaches by a plain `mod
+/// common;`, and `include_str!` inside a root resolves against the root's own
+/// directory either way.
+fn generate_test_roots() {
+    // Adding or removing a file changes the directory, which is what has to
+    // retrigger this. The script itself is one `read_dir`, and cargo only
+    // rebuilds the test binary when the bytes below actually change -- so an
+    // ordinary edit to a test file costs nothing extra.
+    println!("cargo::rerun-if-changed=tests");
 
-    // Recursively collect all .json files
-    collect_theme_files(themes_dir, "", &mut themes)?;
+    // Declared in Cargo.toml as their own targets instead, because they are
+    // feature-gated; pulling them in here would build them unconditionally.
+    const SEPARATE_TARGETS: &[&str] = &["scene_parity"];
 
-    // Sort by pack then name for consistent output
-    themes.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
+    // Forward slashes, even on Windows: this path is about to be written into
+    // a Rust string literal, and `D:\a\fresh\...` makes `\a` and `\f` look
+    // like character escapes -- 245 of them, which is how this first failed.
+    // Windows accepts `/` as a separator, so normalising is enough, and the
+    // literal is emitted with `{:?}` below so anything else that needs
+    // escaping still is.
+    let manifest = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+    let tests_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
 
-    // Generate Rust code
-    let out_dir = std::env::var("OUT_DIR")?;
-    let dest_path = Path::new(&out_dir).join("builtin_themes.rs");
-
-    let theme_entries: Vec<String> = themes
-        .iter()
-        .map(|(name, pack, rel_path)| {
-            format!(
-                r#"    BuiltinTheme {{
-        name: "{}",
-        pack: "{}",
-        json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/themes/{}")),
-    }}"#,
-                name, pack, rel_path
-            )
-        })
-        .collect();
-
-    let content = format!(
-        r#"// Auto-generated by build.rs from themes/**/*.json files
-// DO NOT EDIT MANUALLY
-
-/// All builtin themes embedded at compile time.
-pub const BUILTIN_THEMES: &[BuiltinTheme] = &[
-{}
-];
-"#,
-        theme_entries.join(",\n")
-    );
-
-    fs::write(&dest_path, content)?;
-
-    println!("cargo::warning=Generated {} builtin themes", themes.len());
-
-    Ok(())
-}
-
-/// Recursively collect theme files from a directory
-fn collect_theme_files(
-    dir: &Path,
-    pack: &str,
-    themes: &mut Vec<(String, String, String)>,
-) -> std::io::Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-
-    let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
-    // Sort for deterministic ordering
-    entries.sort_by_key(|e| e.path());
-
-    for entry in entries {
-        let path = entry.path();
-
-        if path.is_dir() {
-            // Recurse into subdirectory, updating pack name
-            let dir_name = path.file_name().unwrap().to_string_lossy();
-            let new_pack = if pack.is_empty() {
-                dir_name.to_string()
-            } else {
-                format!("{}/{}", pack, dir_name)
-            };
-            collect_theme_files(&path, &new_pack, themes)?;
-        } else if path.extension().is_some_and(|ext| ext == "json") {
-            // Found a theme file
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            // Build path with forward slashes for cross-platform include_str!
-            let rel_path = path
-                .strip_prefix("themes")
-                .unwrap()
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
-            themes.push((name, pack.to_string(), rel_path));
-        }
-    }
-
-    Ok(())
-}
-
-/// Generate a Rust file with the list of available locales from the locales directory
-fn generate_locale_options() -> Result<(), Box<dyn std::error::Error>> {
-    let locales_dir = Path::new("locales");
-
-    // Read all .json files in the locales directory
-    let mut locales: Vec<String> = fs::read_dir(locales_dir)?
+    let mut roots: Vec<String> = fs::read_dir(&tests_dir)
+        .expect("read tests/")
         .filter_map(|entry| {
             let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension()? == "json" {
-                path.file_stem()?.to_str().map(|s| s.to_string())
-            } else {
-                None
+            if !entry.path().is_file() {
+                return None;
             }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let stem = name.strip_suffix(".rs")?.to_string();
+            if stem == "all_tests" || SEPARATE_TARGETS.contains(&stem.as_str()) {
+                return None;
+            }
+            Some(stem)
         })
         .collect();
+    // Sorted so the generated bytes are stable and the file does not churn.
+    roots.sort();
 
-    // Sort alphabetically for consistent output
-    locales.sort();
-
-    // Generate Rust code
-    let out_dir = std::env::var("OUT_DIR")?;
-    let dest_path = Path::new(&out_dir).join("locale_options.rs");
-
-    let locale_entries: Vec<String> = locales.iter().map(|l| format!("Some(\"{}\")", l)).collect();
-
-    let content = format!(
-        r#"// Auto-generated by build.rs from locales/*.json files
-// DO NOT EDIT MANUALLY
-
-/// Available locale options for the settings dropdown
-/// None (null) means auto-detect from environment
-pub const GENERATED_LOCALE_OPTIONS: &[Option<&str>] = &[
-    None, // Auto-detect
-    {}
-];
-"#,
-        locale_entries.join(",\n    ")
-    );
-
-    // Note: OUT_DIR files don't need write_if_changed since cargo handles them specially,
-    // but it doesn't hurt to use it for consistency
-    fs::write(&dest_path, content)?;
-
-    println!(
-        "cargo::warning=Generated locale options with {} locales",
-        locales.len()
-    );
-
-    Ok(())
-}
-
-/// Pre-compile syntect defaults + all embedded grammars into a single binary packdump.
-///
-/// This moves the expensive `SyntaxSetBuilder::build()` + grammar parsing from
-/// runtime to build time, reducing startup from ~12s to ~300ms.
-fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
-    use syntect::dumps::dump_to_uncompressed_file;
-    use syntect::parsing::{SyntaxDefinition, SyntaxSet};
-
-    let out_dir = std::env::var("OUT_DIR")?;
-    let dest_path = Path::new(&out_dir).join("default_syntaxes.packdump");
-
-    // Start with syntect's built-in defaults
-    let defaults = SyntaxSet::load_defaults_newlines();
-    let mut builder = defaults.into_builder();
-
-    // Add all embedded grammars — must match the list in types.rs add_embedded_grammars()
-    let grammar_files: &[(&str, &str)] = &[
-        ("src/grammars/toml.sublime-syntax", "TOML"),
-        ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
-        ("src/grammars/zig.sublime-syntax", "Zig"),
-        ("src/grammars/gdscript.sublime-syntax", "GDScript"),
-        ("src/grammars/git-rebase.sublime-syntax", "Git Rebase Todo"),
-        (
-            "src/grammars/git-commit.sublime-syntax",
-            "Git Commit Message",
-        ),
-        ("src/grammars/gitignore.sublime-syntax", "Gitignore"),
-        ("src/grammars/gitconfig.sublime-syntax", "Git Config"),
-        (
-            "src/grammars/gitattributes.sublime-syntax",
-            "Git Attributes",
-        ),
-        ("src/grammars/typst.sublime-syntax", "Typst"),
-        ("src/grammars/dockerfile.sublime-syntax", "Dockerfile"),
-        ("src/grammars/ini.sublime-syntax", "INI"),
-        ("src/grammars/cmake.sublime-syntax", "CMake"),
-        ("src/grammars/cmake-cache.sublime-syntax", "CMake Cache"),
-        ("src/grammars/pkg-config.sublime-syntax", "pkg-config"),
-        ("src/grammars/wavefront-obj.sublime-syntax", "Wavefront OBJ"),
-        ("src/grammars/doxygen.sublime-syntax", "Doxygen"),
-        (
-            "src/grammars/doxygen-config.sublime-syntax",
-            "Doxygen Config",
-        ),
-        ("src/grammars/bibtex-style.sublime-syntax", "BibTeX Style"),
-        (
-            "src/grammars/windows-resource.sublime-syntax",
-            "Windows Resource Script",
-        ),
-        ("src/grammars/scss.sublime-syntax", "SCSS"),
-        ("src/grammars/less.sublime-syntax", "LESS"),
-        ("src/grammars/powershell.sublime-syntax", "PowerShell"),
-        ("src/grammars/kotlin.sublime-syntax", "Kotlin"),
-        ("src/grammars/swift.sublime-syntax", "Swift"),
-        ("src/grammars/dart.sublime-syntax", "Dart"),
-        ("src/grammars/elixir.sublime-syntax", "Elixir"),
-        ("src/grammars/fsharp.sublime-syntax", "FSharp"),
-        ("src/grammars/nix.sublime-syntax", "Nix"),
-        ("src/grammars/hcl.sublime-syntax", "HCL"),
-        ("src/grammars/protobuf.sublime-syntax", "Protocol Buffers"),
-        ("src/grammars/thrift.sublime-syntax", "Thrift"),
-        ("src/grammars/graphql.sublime-syntax", "GraphQL"),
-        ("src/grammars/julia.sublime-syntax", "Julia"),
-        ("src/grammars/nim.sublime-syntax", "Nim"),
-        ("src/grammars/gleam.sublime-syntax", "Gleam"),
-        ("src/grammars/vlang.sublime-syntax", "V"),
-        ("src/grammars/solidity.sublime-syntax", "Solidity"),
-        ("src/grammars/kdl.sublime-syntax", "KDL"),
-        ("src/grammars/nushell.sublime-syntax", "Nushell"),
-        ("src/grammars/smali.sublime-syntax", "Smali"),
-        ("src/grammars/gettext.sublime-syntax", "Gettext PO"),
-        ("src/grammars/m4.sublime-syntax", "M4"),
-        ("src/grammars/pbxproj.sublime-syntax", "Xcode Project"),
-        ("src/grammars/fish.sublime-syntax", "Fish"),
-        ("src/grammars/starlark.sublime-syntax", "Starlark"),
-        ("src/grammars/justfile.sublime-syntax", "Justfile"),
-        ("src/grammars/earthfile.sublime-syntax", "Earthfile"),
-        ("src/grammars/gomod.sublime-syntax", "Go Module"),
-        ("src/grammars/vue.sublime-syntax", "Vue"),
-        ("src/grammars/typescript.sublime-syntax", "TypeScript"),
-        ("src/grammars/svelte.sublime-syntax", "Svelte"),
-        ("src/grammars/astro.sublime-syntax", "Astro"),
-        ("src/grammars/hyprlang.sublime-syntax", "Hyprlang"),
-        (
-            "src/grammars/autohotkey/AutoHotkey.sublime-syntax",
-            "AutoHotkey",
-        ),
-        ("src/grammars/racket.sublime-syntax", "Racket"),
-        ("src/grammars/verilog.sublime-syntax", "Verilog"),
-        ("src/grammars/systemverilog.sublime-syntax", "SystemVerilog"),
-        ("src/grammars/vhdl.sublime-syntax", "VHDL"),
-        ("src/grammars/c3.sublime-syntax", "C3"),
-        ("src/grammars/asm.sublime-syntax", "Assembly"),
-        ("src/grammars/slang.sublime-syntax", "Slang"),
-        ("src/grammars/glsl.sublime-syntax", "GLSL"),
-        ("src/grammars/hlsl.sublime-syntax", "HLSL"),
-        ("src/grammars/wgsl.sublime-syntax", "WGSL"),
-        ("src/grammars/metal.sublime-syntax", "Metal"),
-        ("src/grammars/cuda.sublime-syntax", "CUDA"),
-        ("src/grammars/hip.sublime-syntax", "HIP"),
-        ("src/grammars/fortran.sublime-syntax", "Fortran"),
-        ("src/grammars/mlir.sublime-syntax", "MLIR"),
-        ("src/grammars/llvm-ir.sublime-syntax", "LLVM IR"),
-    ];
-
-    let mut loaded = 0;
-    for (path, name) in grammar_files {
-        let content = fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("Failed to read grammar {}: {}", path, e));
-        match SyntaxDefinition::load_from_str(&content, true, Some(name)) {
-            Ok(syntax) => {
-                builder.add(syntax);
-                loaded += 1;
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to parse grammar {}: {}", name, e);
-            }
-        }
+    let mut out = String::from("// Generated by build.rs from tests/*.rs. Do not edit.\n");
+    for root in &roots {
+        let path = format!("{manifest}/tests/{root}.rs");
+        out.push_str(&format!("#[path = {path:?}]\nmod {root};\n"));
     }
+    // Also emitted as data, so a test can check this list against the
+    // directory and catch a build script that did not re-run.
+    out.push_str("\n#[allow(dead_code)]\npub const GENERATED_ROOTS: &[&str] = &[\n");
+    for root in &roots {
+        out.push_str(&format!("    \"{root}\",\n"));
+    }
+    out.push_str("];\n");
 
-    let syntax_set = builder.build();
-    dump_to_uncompressed_file(&syntax_set, &dest_path)?;
-
-    println!(
-        "cargo::warning=Generated syntax packdump: {} syntaxes ({} embedded)",
-        syntax_set.syntaxes().len(),
-        loaded
-    );
-
-    Ok(())
+    let dest = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("test_roots.rs");
+    fs::write(&dest, out).expect("write test_roots.rs");
 }
 
 /// Build the single self-contained web-ui page from its split sources.

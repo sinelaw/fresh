@@ -4985,8 +4985,14 @@ mod tests {
         use std::collections::HashMap;
 
         let keymaps: &[(&str, &str)] = &[
-            ("default", include_str!("../../keymaps/default.json")),
-            ("macos", include_str!("../../keymaps/macos.json")),
+            (
+                "default",
+                crate::config::builtin_keymap_json("default").unwrap(),
+            ),
+            (
+                "macos",
+                crate::config::builtin_keymap_json("macos").unwrap(),
+            ),
         ];
 
         for (keymap_name, json_content) in keymaps {

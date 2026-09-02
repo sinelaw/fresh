@@ -14,10 +14,8 @@
 //! `XDG_DATA_HOME`, keeping all persistence inside the per-test temp tree.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
-use common::dormant_ssh::isolated_dir_context;
-use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::dormant_ssh::isolated_dir_context;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use fresh_core::api::PluginCommand;
 use serde_json::json;
 

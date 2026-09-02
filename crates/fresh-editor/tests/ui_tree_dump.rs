@@ -1,6 +1,5 @@
 //! `Action::DumpUiTree` opens the retained shell tree in a read-only buffer.
-mod common;
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use fresh::input::keybindings::Action;
 
 #[test]

@@ -10,10 +10,8 @@
 //! per-test temp tree, never the real user data dir.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
-use common::dormant_ssh::isolated_dir_context;
-use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::dormant_ssh::isolated_dir_context;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 #[test]

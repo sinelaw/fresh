@@ -15,18 +15,16 @@
 //! `isolated_dir_context`'s process-global `XDG_DATA_HOME` must not leak.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
-mod common;
-
-use common::dormant_ssh::{
+use crate::common::dormant_ssh::{
     canonical_mkdir, ensure_hanging_fake_ssh_on_path, isolated_dir_context,
     persist_previous_session,
 };
-use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 #[test]
 fn arrow_nav_into_disconnected_remote_is_non_blocking() {
-    common::tracing::init_tracing_from_env();
+    crate::common::tracing::init_tracing_from_env();
     ensure_hanging_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 

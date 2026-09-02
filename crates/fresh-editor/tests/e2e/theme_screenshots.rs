@@ -5,7 +5,7 @@
 // the FRESH_THEME env var (defaults to "dark").
 //
 // Usage:
-//   FRESH_THEME=dracula cargo nextest run --package fresh-editor --test e2e_tests theme_screenshot_gallery -- --ignored --nocapture
+//   FRESH_THEME=dracula cargo nextest run --package fresh-editor --test all_tests theme_screenshot_gallery -- --ignored --nocapture
 //   # Then:
 //   scripts/generate-theme-screenshots.sh dracula
 
@@ -781,7 +781,7 @@ fn theme_screenshot_gallery() {
 //
 // Usage:
 //   FRESH_THEME_BASE_REF=origin/master \
-//     cargo nextest run --package fresh-editor --test e2e_tests \
+//     cargo nextest run --package fresh-editor --test all_tests \
 //     -E 'test(theme_diff_gallery)' --run-ignored ignored-only --no-capture
 // ===========================================================================
 
@@ -795,13 +795,29 @@ fn workspace_root() -> PathBuf {
 }
 
 /// Directory holding the built-in theme JSON files.
+///
+/// They ship from `fresh-editor-core`, which owns the theme types and the
+/// build script that embeds them.
 fn themes_src_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("themes")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates dir")
+        .join("fresh-editor-core")
+        .join("themes")
 }
 
-/// Git-tracked path of a theme file, used in `git show <ref>:<path>`.
-fn theme_relpath(file: &str) -> String {
-    format!("crates/fresh-editor/themes/{}", file)
+/// Git-tracked paths of a theme file for `git show <ref>:<path>`, current
+/// layout first.
+///
+/// The themes moved out of `crates/fresh-editor/themes/` when the data layer
+/// became its own crate. A base ref from before that move still holds them at
+/// the old path, and looking only at the new one would make every theme read
+/// as newly added -- rendering the whole gallery instead of the diff.
+fn theme_relpaths(file: &str) -> [String; 2] {
+    [
+        format!("crates/fresh-editor-core/themes/{}", file),
+        format!("crates/fresh-editor/themes/{}", file),
+    ]
 }
 
 /// Same normalization the theme registry applies to names, so our activation
@@ -1306,9 +1322,11 @@ fn theme_diff_gallery() {
             Ok(c) => c,
             Err(_) => continue,
         };
-        let before = base_ref
-            .as_deref()
-            .and_then(|r| git_show(&root, r, &theme_relpath(file)));
+        let before = base_ref.as_deref().and_then(|r| {
+            theme_relpaths(file)
+                .iter()
+                .find_map(|path| git_show(&root, r, path))
+        });
 
         let changed = match &before {
             Some(b) => b.as_str() != after.as_str(),

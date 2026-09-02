@@ -108,7 +108,7 @@ plugins both render through.
 
 - **Core types:** `fresh_core::api::WidgetSpec` (tagged enum), plus
   `WidgetAction`, `WidgetMutation`, `HintEntry`, `TextPropertyEntry`.
-- **Runtime:** `crates/fresh-editor/src/widgets/` — a registry keyed by
+- **Runtime:** `crates/fresh-editor-core/src/widgets/` — a registry keyed by
   `(plugin, panel id)`, a reconciler that renders a spec to
   text-property entries + hit areas + host-owned instance state, and pure
   action/mutation helpers.

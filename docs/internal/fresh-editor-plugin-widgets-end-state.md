@@ -1,7 +1,7 @@
 # The plugin widgets' end state
 
 **Status:** a design, not a plan phase. It argues a target architecture for
-`crates/fresh-editor/src/widgets/` and the surfaces that consume it, and then
+`crates/fresh-editor-core/src/widgets/` and the surfaces that consume it, and then
 an ordering to reach it. It is a companion to
 [`fresh-editor-retained-mode-plan.md`](./fresh-editor-retained-mode-plan.md),
 not a section of it; where the two disagree, §1.6 below says so and says why.

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/fresh-editor",
+    "crates/fresh-editor-core",
     "crates/fresh-ui",
     "crates/fresh-gui",
     "crates/fresh-core",
@@ -16,6 +17,7 @@ members = [
 ]
 default-members = [
     "crates/fresh-editor",
+    "crates/fresh-editor-core",
     "crates/fresh-ui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
@@ -40,6 +42,12 @@ documentation = "https://docs.rs/fresh-editor"
 [workspace.dependencies]
 # Local crates
 fresh-core = { version = "0.4.10", path = "crates/fresh-core" }
+# `default-features = false` has to be stated here, not just at the use site:
+# cargo ignores a member's `default-features = false` unless the workspace
+# entry sets it too (it warns, and calls it a future hard error). Without this,
+# `fresh-editor --no-default-features` still pulled in this crate's defaults,
+# and with them the whole bundled tree-sitter grammar set.
+fresh-editor-core = { version = "0.4.10", path = "crates/fresh-editor-core", default-features = false }
 fresh-gui = { version = "0.4.10", path = "crates/fresh-gui" }
 fresh-parser-js = { version = "0.4.10", path = "crates/fresh-parser-js" }
 fresh-languages = { version = "0.4.10", path = "crates/fresh-languages" }
@@ -79,6 +87,42 @@ wgpu = "28.0"
 lsp-types = "0.97"
 ts-rs = { version = "12.0", features = ["serde_json", "no-serde-warnings"] }
 # Add more as needed during refactor
+
+# Default (dev/test) profile, tuned for build speed.
+#
+# `debug = 0` is the single biggest lever in this workspace, because the
+# tests are the expensive part of a build: `crates/fresh-editor/tests`
+# alone is 59 integration-test files, and every one of them is a separate
+# binary that statically links the whole editor and its dependency graph.
+# At cargo's default `debug = true` each of those binaries carries a full
+# copy of the DWARF for everything it links.
+#
+# Measured on a 4-core Linux box, `fresh-editor` + 10 of its integration
+# tests, cold `target/` (debug = 2 -> debug = 0):
+#
+#   deps + lib compile         208s -> 153s   (-26%)
+#   compile + link 10 tests    168s -> 126s   (-25%)
+#   10 test binaries          5586MB -> 1236MB (-78%)
+#   whole target/            12868MB -> 4879MB (-62%)
+#   touch lib.rs, rebuild      33.2s -> 23.6s  (-29%)
+#
+# The disk figure is not a side note: extrapolated over all 78 test
+# targets in the workspace, the default profile needs well over 40GB of
+# `target/`, and `cargo build --tests` fails outright with "No space left
+# on device" on a machine with 29GB free.
+#
+# The cost is that debug builds no longer carry line tables, so panics and
+# `lldb`/`gdb` give function names but not file:line. When you need that
+# for a debugging session, ask for it on the command line rather than
+# putting it back here for everyone:
+#
+#   CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p fresh-editor ...
+#   CARGO_PROFILE_DEV_DEBUG=2               cargo build          # full DWARF
+#
+# `debug-assertions` and `overflow-checks` are unaffected and stay on --
+# this changes what the compiler *records*, not what it *checks*.
+[profile.dev]
+debug = 0
 
 [profile.release]
 debug = 0

@@ -30,7 +30,7 @@ echo ""
 
 cargo nextest run \
     --package fresh-editor \
-    --test e2e_tests \
+    --test all_tests \
     -E 'test(theme_diff_gallery)' \
     --run-ignored ignored-only \
     --no-capture

@@ -20,6 +20,20 @@
 
 use crate::common::harness::EditorTestHarness;
 
+/// The server's most recent `PUBLISH` line, or `None` before it publishes one.
+///
+/// Read fresh on every call: the fake server appends to this file as it drains
+/// its backlog, so a value read earlier says nothing about where it has got to.
+fn last_publish(log_file: &std::path::Path) -> Option<String> {
+    Some(
+        std::fs::read_to_string(log_file)
+            .ok()?
+            .lines()
+            .rfind(|line| line.starts_with("PUBLISH"))?
+            .to_string(),
+    )
+}
+
 /// Buffer contents the file starts and ends at. The fake server reports an
 /// error whenever its copy of the document differs from this.
 const CLEAN_TEXT: &str = "ok";
@@ -290,7 +304,20 @@ fn dropped_did_change_recovers_once_server_drains() -> anyhow::Result<()> {
             .contains("PUBLISH errors=1")
     })?;
 
-    // The editor must repair the server's copy, so the error clears.
+    // Wait for the server to finish draining, and take its own last word for
+    // it. Everything before this point can be satisfied without the server
+    // having got anywhere: the `PUBLISH errors=1` above is already in the log
+    // from the change that preceded the stall, and "the indicator is not
+    // showing E:1" is true before the error is rendered as well as after it
+    // clears. CI hit exactly that -- the assertions below were reached with
+    // the server 139 changes into a 1200-change backlog and its copy 278
+    // bytes long, and the run failed on a log sampled mid-drain.
+    let converged = format!("PUBLISH errors=0 len={}", CLEAN_TEXT.len());
+    harness.wait_until(|_| last_publish(&log_file).as_deref() == Some(converged.as_str()))?;
+
+    // Only now does the indicator mean anything: the server has published a
+    // clean document, so an absent E:1 is an error that cleared rather than
+    // one that had yet to appear.
     harness.wait_until(|h| !h.screen_to_string().contains("E:1"))?;
 
     let log = std::fs::read_to_string(&log_file)?;
@@ -311,15 +338,14 @@ fn dropped_did_change_recovers_once_server_drains() -> anyhow::Result<()> {
     );
 
     // The screen clearing is the symptom; the invariant is that the server
-    // ends up holding the buffer's text. Assert that directly, so this cannot
-    // pass on a mechanism that merely hides the server's diagnostics.
-    let last_publish = log
-        .lines()
-        .rfind(|line| line.starts_with("PUBLISH"))
-        .unwrap_or("<none>");
+    // ends up holding the buffer's text. The wait above is what enforces it --
+    // a server that never converges leaves this test pending until nextest
+    // kills it, which is how this suite waits for anything. Restating it here
+    // keeps the invariant readable at the end of the test, and catches a
+    // server that converged and then diverged again.
     assert_eq!(
-        last_publish,
-        format!("PUBLISH errors=0 len={}", CLEAN_TEXT.len()),
+        last_publish(&log_file).as_deref(),
+        Some(converged.as_str()),
         "the server's copy of the document must converge on the buffer.\n\
          Log:\n{log}"
     );
