@@ -3052,3 +3052,124 @@ fn test_search_replace_bracketed_paste_reaches_fields() {
          Screen:\n{screen}"
     );
 }
+
+/// Issue #1580: a match far along a long line must still be visible in
+/// its result row.
+///
+/// The row used to render the head of the line and truncate, so a match
+/// past the panel's width was never shown — and there is no horizontal
+/// scroll in the results tree to go find it. The window now slides to
+/// bring the match in, marking the elided head with a leading ellipsis.
+#[test]
+fn test_search_replace_long_line_match_is_visible() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // The match sits at column 257 of a 290-column line — well past
+    // anything a 120-column panel can show from the start of the line.
+    let long_line = format!("{}NEEDLE_MARKER{}", "x".repeat(256), "y".repeat(21));
+    assert_eq!(long_line.chars().count(), 290);
+    fs::write(
+        project_root.join("long.txt"),
+        format!("start {long_line}\n"),
+    )
+    .unwrap();
+    // And one past the 512-char cap the plugin applies before any
+    // per-codepoint work: that cap used to be anchored at the start of
+    // the line, so a match beyond it was discarded before the row was
+    // even laid out.
+    let huge_line = format!("{}NEEDLE_MARKER{}", "x".repeat(2000), "y".repeat(1000));
+    fs::write(project_root.join("huge.txt"), format!("{huge_line}\n")).unwrap();
+    // Two matches far apart on one long line: each gets its own row, and
+    // each row must window onto *its own* match rather than both landing
+    // on the first one.
+    let multi_line = format!(
+        "{}NEEDLE_MARKER{}NEEDLE_MARKER{}",
+        "a".repeat(40),
+        "b".repeat(300),
+        "c".repeat(40),
+    );
+    fs::write(project_root.join("multi.txt"), format!("{multi_line}\n")).unwrap();
+    // A short match too, so the ordinary (unwindowed) row is covered by
+    // the same assertion pass.
+    fs::write(project_root.join("short.txt"), "a NEEDLE_MARKER here\n").unwrap();
+
+    let start_file = project_root.join("short.txt");
+    // Tall enough that every file's rows are on screen at once — this
+    // test reads the rows, so none of them may be scrolled off.
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        44,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("NEEDLE_MARKER").unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("long.txt:1"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let long_row = screen
+        .lines()
+        .find(|l| l.contains("long.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the long-line match. Screen:\n{screen}"))
+        .to_string();
+    assert!(
+        long_row.contains("NEEDLE_MARKER"),
+        "the matched text is not in its own result row — the row shows \
+         the head of the line and truncates before reaching the match, \
+         and nothing scrolls the row horizontally. Row:\n{long_row}\n\
+         Screen:\n{screen}"
+    );
+    let huge_row = screen
+        .lines()
+        .find(|l| l.contains("huge.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the past-the-cap match. Screen:\n{screen}"))
+        .to_string();
+    assert!(
+        huge_row.contains("NEEDLE_MARKER"),
+        "a match past the 512-char context cap is still not shown — the \
+         cap must be anchored on the match, not on the start of the \
+         line. Row:\n{huge_row}\nScreen:\n{screen}"
+    );
+    let multi_rows: Vec<String> = screen
+        .lines()
+        .filter(|l| l.contains("multi.txt:1"))
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        multi_rows.len(),
+        2,
+        "expected one row per match on the shared line. Screen:\n{screen}"
+    );
+    assert!(
+        multi_rows.iter().all(|r| r.contains("NEEDLE_MARKER")),
+        "both rows on the shared line must show their match. \
+         Rows:\n{multi_rows:#?}"
+    );
+    assert_ne!(
+        multi_rows[0].trim(),
+        multi_rows[1].trim(),
+        "the two matches on one line must window onto different parts of \
+         it, not both onto the first hit. Rows:\n{multi_rows:#?}"
+    );
+
+    // The short match still renders from the start of its line: the
+    // window only slides when it has to.
+    let short_row = screen
+        .lines()
+        .find(|l| l.contains("short.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the short match. Screen:\n{screen}"))
+        .to_string();
+    assert!(
+        short_row.contains("a NEEDLE_MARKER here"),
+        "a match that already fits must render its line unwindowed. \
+         Row:\n{short_row}"
+    );
+}
