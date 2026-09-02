@@ -119,18 +119,19 @@ if (dash) {
     .expect("harness");
     harness.editor_mut().fire_ready_hook();
     let started = Instant::now();
+    let modified = fresh_core::file_explorer::FileExplorerDecoration {
+        path: root.join("src/gen_0.rs"),
+        symbol: "M".to_string(),
+        color: fresh_core::api::OverlayColorSpec::ThemeKey(
+            "ui.file_status_modified_fg".to_string(),
+        ),
+        priority: 50,
+    };
     harness
         .editor_mut()
         .handle_plugin_command(fresh_core::api::PluginCommand::SetFileExplorerDecorations {
             namespace: "hostile".to_string(),
-            decorations: vec![fresh_core::file_explorer::FileExplorerDecoration {
-                path: root.join("src/gen_0.rs"),
-                symbol: "M".to_string(),
-                color: fresh_core::api::OverlayColorSpec::ThemeKey(
-                    "ui.file_status_modified_fg".to_string(),
-                ),
-                priority: 50,
-            }; 25_000],
+            decorations: vec![modified; 25_000],
         })
         .unwrap();
     assert!(started.elapsed() < Duration::from_millis(500));
