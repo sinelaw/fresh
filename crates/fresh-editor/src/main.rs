@@ -6385,15 +6385,31 @@ fn poll_with_gpm(
     Ok(reader.take_resize())
 }
 
-/// Skip stale mouse move events, return the latest one.
-/// If we read a non-move event while draining, return it as pending.
+/// Skip stale mouse motion events, return the latest one.
+/// If we read a non-motion event while draining, return it as pending.
+///
+/// "Motion" is both reports a terminal sends as the pointer travels: `Moved`
+/// with no button down, and `Drag(button)` with one held. Only a run of the
+/// *same* report collapses — see [`TtyReader::push_coalesced`], which this
+/// mirrors for the platforms where crossterm still owns stdin.
 fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<InputEvent>)> {
     use crossterm::event::MouseEventKind;
 
-    // Only coalesce mouse moves
-    if !matches!(&event, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
-        return Ok((event, None));
+    fn motion(ev: &InputEvent) -> Option<(MouseEventKind, crossterm::event::KeyModifiers)> {
+        match ev {
+            InputEvent::Mouse(m)
+                if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) =>
+            {
+                Some((m.kind, m.modifiers))
+            }
+            _ => None,
+        }
     }
+
+    // Only coalesce motion.
+    let Some(run) = motion(&event) else {
+        return Ok((event, None));
+    };
 
     // On Unix, the TtyReader owns stdin and already coalesces motion floods as
     // it queues them; draining crossterm here would race the reader on fd 0
@@ -6408,8 +6424,8 @@ fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<I
         let Some(next) = safe_event_read()? else {
             continue;
         };
-        if matches!(&next, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
-            latest = next; // Newer move, skip the old one
+        if motion(&next) == Some(run) {
+            latest = next; // Newer report of the same motion, skip the old one
         } else {
             return Ok((latest, Some(next))); // Hit a click/key, save it
         }

@@ -191,14 +191,34 @@ impl TtyReader {
         true
     }
 
-    /// Queue an event, collapsing a run of mouse-move events down to the latest
-    /// one (a motion flood produces one Moved event per read batch), matching
+    /// Queue an event, collapsing a run of mouse *motion* events down to the
+    /// latest one (a motion flood produces one event per read batch), matching
     /// the coalescing the crossterm path did in `coalesce_mouse_moves`.
+    ///
+    /// **A held button is motion too.** This used to collapse only `Moved`,
+    /// which is the report a terminal sends with no button down — so a *drag*
+    /// (`Drag(button)`, the report it sends with one held) was exempt, and
+    /// every cell the pointer crossed while dragging arrived as its own event.
+    /// Each of those costs a full relayout and a full repaint, and a repaint
+    /// costs more than the 16ms frame budget, so the loop rendered once per
+    /// intermediate cell instead of once per frame: a 60-column pull on a
+    /// split divider, the file explorer's edge or the dock's spent ~30 frames
+    /// catching up and the divider crawled a second behind the pointer.
+    /// Collapsing them here is what makes the backlog impossible — a burst
+    /// that lands while the editor is busy painting comes back out as the one
+    /// report that is still true.
+    ///
+    /// Only a run of the *same* kind collapses: `Drag(Left)` never swallows a
+    /// `Drag(Right)`, and a modifier change (Shift starting a block selection
+    /// mid-drag) ends the run, because those are different intents rather
+    /// than the same one restated at a new cell. Nothing else is touched —
+    /// presses, releases and wheel notches each mean something at the moment
+    /// they happened, so they always queue.
     fn push_coalesced(&mut self, ev: InputEvent) {
         if let InputEvent::Mouse(m) = &ev {
-            if m.kind == MouseEventKind::Moved {
+            if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
                 if let Some(InputEvent::Mouse(last)) = self.queue.back() {
-                    if last.kind == MouseEventKind::Moved {
+                    if last.kind == m.kind && last.modifiers == m.modifiers {
                         *self.queue.back_mut().expect("back() was Some") = ev;
                         return;
                     }
@@ -416,6 +436,85 @@ mod tests {
                 "expected literal 'x', got {events:?}",
             );
         }
+    }
+
+    /// A drag is motion, and a motion flood collapses to the report that is
+    /// still true. Before this, only `Moved` (no button down) collapsed, so
+    /// every cell crossed while dragging a divider arrived as its own event
+    /// and cost a full relayout plus a full repaint — a repaint being dearer
+    /// than the frame budget, the editor rendered once per intermediate cell
+    /// and the divider crawled a second behind the pointer.
+    #[test]
+    fn a_drag_flood_collapses_to_its_latest_report() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        // Sixty SGR left-drag reports walking one column at a time, as a
+        // pull on a split divider produces.
+        let mut burst = Vec::new();
+        for col in 60..120 {
+            burst.extend_from_slice(format!("\x1b[<32;{col};5M").as_bytes());
+        }
+        pipe.write(&burst);
+        reader.drain_stdin();
+
+        let events = drain_events(&mut reader);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [InputEvent::Mouse(m)]
+                    if m.kind == MouseEventKind::Drag(MouseButton::Left) && m.column == 118,
+            ),
+            "expected one drag at the last column, got {events:?}",
+        );
+    }
+
+    /// Coalescing collapses a *run*, never two different intents. A press and
+    /// a release each mean something at the moment they happened, and a drag
+    /// with a different button or a different modifier is a different run —
+    /// so none of them may swallow, or be swallowed by, its neighbour.
+    #[test]
+    fn coalescing_keeps_presses_releases_and_distinct_drag_runs() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        // press, two left drags, a Shift+left drag, two right drags, release
+        for report in [
+            "\x1b[<0;10;5M",
+            "\x1b[<32;11;5M",
+            "\x1b[<32;12;5M",
+            "\x1b[<36;13;5M",
+            "\x1b[<34;14;5M",
+            "\x1b[<34;15;5M",
+            "\x1b[<0;15;5m",
+        ] {
+            pipe.write(report.as_bytes());
+        }
+        reader.drain_stdin();
+
+        let kinds: Vec<_> = drain_events(&mut reader)
+            .into_iter()
+            .map(|e| match e {
+                InputEvent::Mouse(m) => (m.kind, m.column),
+                other => panic!("expected a mouse event, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (MouseEventKind::Down(MouseButton::Left), 9),
+                // the two bare left drags collapsed to the later one
+                (MouseEventKind::Drag(MouseButton::Left), 11),
+                // Shift is a different run, so it did not join them
+                (MouseEventKind::Drag(MouseButton::Left), 12),
+                // and neither did the right-button drags, which collapsed
+                // among themselves
+                (MouseEventKind::Drag(MouseButton::Right), 14),
+                (MouseEventKind::Up(MouseButton::Left), 14),
+            ],
+        );
     }
 
     /// The counterpart guard: an OSC reply whose payload arrives on a later
