@@ -13,10 +13,10 @@
 //!   columns in per-line byte indices. Sorted by `start_line`. We
 //!   maintain an active set of rects whose `[start_line, end_line]`
 //!   includes the current visible line, refreshed once per row as
-//!   `gutter_num` advances; each cell tests `byte_index` against
-//!   the rect's column span.
+//!   `gutter_num` advances; each cell tests its own byte column in the
+//!   line against the rect's column span.
 //!
-//! Net: the cell loop just calls `contains(byte_pos, byte_index)`.
+//! Net: the cell loop just calls `contains(byte_pos, line_column)`.
 
 use std::ops::Range;
 
@@ -109,17 +109,31 @@ impl<'a> SelectionActiveSet<'a> {
     /// (ANSI / virtual cells) — those still get block-rect checks
     /// but no linear-range coverage, matching the existing logic.
     ///
-    /// `cell_byte_index` is the cell's per-line byte index (used by
-    /// the block-rect column-span check, matching how
-    /// `block_rects` stores its column bounds).
-    pub(super) fn contains(&mut self, buffer_byte: Option<usize>, cell_byte_index: usize) -> bool {
+    /// `line_column` is the cell's byte offset **within its logical
+    /// source line** — the unit `block_rects` states its column bounds
+    /// in (`cursor.position - line_start`). `None` for a cell that maps
+    /// to no source byte, which no rectangle can cover.
+    ///
+    /// It used to be the cell's index into the *view* row, which counts a
+    /// tab as its whole expansion: with one leading tab and `tab_size 4`
+    /// the rectangle painted four cells where the cursor stood at column
+    /// 3, i.e. `tab_size - 1` cells to its left (issue #3148). The cursor
+    /// is the one telling the truth about what a block copy takes, and a
+    /// column in the line is what both of them now count.
+    pub(super) fn contains(
+        &mut self,
+        buffer_byte: Option<usize>,
+        line_column: Option<usize>,
+    ) -> bool {
         let linear = match buffer_byte {
             Some(bp) => self.contains_linear(bp),
             None => false,
         };
-        let block = self.active_block.iter().any(|&i| {
-            let (_, start_col, _, end_col) = self.blocks[i];
-            cell_byte_index >= start_col && cell_byte_index <= end_col
+        let block = line_column.is_some_and(|col| {
+            self.active_block.iter().any(|&i| {
+                let (_, start_col, _, end_col) = self.blocks[i];
+                col >= start_col && col <= end_col
+            })
         });
         linear || block
     }

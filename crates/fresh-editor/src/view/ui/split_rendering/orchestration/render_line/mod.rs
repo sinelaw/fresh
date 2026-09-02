@@ -810,6 +810,24 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         let active_guide_col =
             active_indentation_guide.and_then(|guide| guide.column_for_line(current_view_line_idx));
 
+        // Byte offset of the logical line this row belongs to. Block-selection
+        // rectangles state their columns as byte offsets within a line
+        // (`cursor.position - line_start`), so the cell pass converts each
+        // cell's source byte into that same unit — see
+        // `SelectionActiveSet::contains`. Read from the row's own first source
+        // byte so a soft-wrapped continuation resolves to its logical line
+        // rather than to the row it starts. Only paid when a block rect
+        // exists, which is nearly never.
+        let block_line_start_byte: Option<usize> = if selection.block_rects.is_empty() {
+            None
+        } else {
+            current_view_line.source_start_byte.and_then(|byte| {
+                state
+                    .buffer
+                    .line_start_offset(state.buffer.get_line_number(byte))
+            })
+        };
+
         // Per-cell pass: walk the line's characters and emit styled spans
         let cells = render_line_cells(
             CellPassInput {
@@ -819,6 +837,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 selection,
                 decorations,
                 gutter_num,
+                block_line_start_byte,
                 current_row,
                 render_area,
                 gutter_width,

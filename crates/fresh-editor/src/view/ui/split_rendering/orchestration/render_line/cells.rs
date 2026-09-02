@@ -43,6 +43,12 @@ pub(super) struct CellPassInput<'a, 'c> {
     pub decorations: &'a DecorationContext,
     /// Gutter display number for this line (for the block-selection sweep).
     pub gutter_num: usize,
+    /// Byte offset of the logical source line this row belongs to, when a
+    /// block selection is on screen. Cells convert their source byte into a
+    /// column in that line for the block-rect test — the unit the rectangle
+    /// is stated in (issue #3148). `None` when no block rect exists, or when
+    /// the row carries no source bytes to measure from.
+    pub block_line_start_byte: Option<usize>,
     /// Screen row this line will occupy (rows already pushed).
     pub current_row: u16,
     pub render_area: Rect,
@@ -285,6 +291,9 @@ impl CellPass<'_, '_, '_> {
     fn render_visible_cell(&mut self, ch: char, byte_pos: Option<usize>, ansi_style: Style) {
         // Is this view position the START of a tab expansion?
         let is_tab_start = self.input.view_line.tab_starts.contains(&self.col_offset);
+        // A padding column of a tab expansion — a space the file does not
+        // contain (issue #3077).
+        let is_tab_padding = self.is_tab_padding(ch, byte_pos);
         let is_cursor = self.cursor_hits_cell(byte_pos);
 
         // Refresh the block-rect active set for this row.
@@ -299,8 +308,10 @@ impl CellPass<'_, '_, '_> {
         let is_primary_cursor =
             is_cursor && byte_pos == Some(self.input.selection.primary_cursor_position);
         let exclude_from_selection = is_cursor && !(self.input.is_active && is_primary_cursor);
-        let is_selected =
-            !exclude_from_selection && self.selection_sweep.contains(byte_pos, self.byte_index);
+        let is_selected = !exclude_from_selection
+            && self
+                .selection_sweep
+                .contains(byte_pos, self.block_line_column(byte_pos));
 
         // A virtual-space cursor "at" the newline byte sits visually past the
         // content end — its indicator is drawn at the virtual column by
@@ -318,7 +329,24 @@ impl CellPass<'_, '_, '_> {
         // char on the stack — no heap allocation per cell.
         let mut indicator_buf = [0u8; 4];
         let is_lsp_cursor = is_cursor && self.input.lsp_waiting && self.input.is_active;
-        let is_indentation_guide = !is_lsp_cursor && self.is_indentation_guide_cell(ch, byte_pos);
+
+        // A guide and a tab marker both want the tab's first column, and the
+        // guide used to simply overwrite the marker — with guides on there was
+        // then no way to tell tab indentation from space indentation at any
+        // level (issue #3079). They share the expansion instead: the guide
+        // keeps the tab stop it belongs to and the marker moves one column
+        // right, onto the expansion's second column. A one-column expansion
+        // has nowhere to shift to, so there the marker keeps the column: the
+        // tab is the fact that would otherwise be unrecoverable, while the
+        // guide's column is still marked by every other row.
+        let guide_cell = self.is_indentation_guide_cell(ch, byte_pos);
+        let marker_due = self.tab_marker_due(is_selected);
+        let marker_needs_column = is_tab_start && marker_due && !self.tab_run_continues();
+        let is_indentation_guide = !is_lsp_cursor && guide_cell && !marker_needs_column;
+        let draw_tab_marker = marker_due
+            && ((is_tab_start && !(guide_cell && !marker_needs_column))
+                || self.tab_marker_shifted_here(ch, byte_pos));
+
         let (display_char, is_whitespace_indicator) = if is_indentation_guide {
             let guide_char = self
                 .input
@@ -339,6 +367,8 @@ impl CellPass<'_, '_, '_> {
                 byte_pos,
                 is_cursor,
                 is_tab_start,
+                is_tab_padding,
+                draw_tab_marker,
                 is_selected,
                 &mut indicator_buf,
             )
@@ -408,6 +438,96 @@ impl CellPass<'_, '_, '_> {
         self.place_cell_cursor(ch, byte_pos, is_cursor, is_secondary_cursor);
     }
 
+    /// This cell's byte column within its logical source line, for the
+    /// block-rect test. `None` when the cell maps to no source byte (ANSI,
+    /// wrap padding, injected content) or the row has no line start to
+    /// measure from — nothing a rectangle can cover.
+    fn block_line_column(&self, byte_pos: Option<usize>) -> Option<usize> {
+        let start = self.input.block_line_start_byte?;
+        byte_pos?.checked_sub(start)
+    }
+
+    /// Whether this cell is a padding column of an expanded tab — a space
+    /// the file does not contain.
+    ///
+    /// The view pipeline expands a tab into `tab_size` spaces that all map to
+    /// the tab's single source byte, so a space sharing its byte with the cell
+    /// before it is padding rather than a real space. Nothing else maps two
+    /// cells to one byte and renders as a space (the `<XX>` escapes do, but
+    /// none of their glyphs is a space), which makes the byte the reliable
+    /// test — more so than the column, since `tab_starts` is keyed by
+    /// character index.
+    ///
+    /// Painting the space marker on these columns is issue #3077: a line
+    /// indented with one tab rendered `→···`, three dots for columns holding
+    /// no spaces, and `\t    ` rendered `→·······`, which is exactly the
+    /// tab/space mix the reporter turned the markers on to find.
+    fn is_tab_padding(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        if ch != ' ' || self.display_char_idx == 0 {
+            return false;
+        }
+        let Some(bp) = byte_pos else {
+            return false;
+        };
+        self.source_byte_at(self.display_char_idx - 1) == Some(bp)
+    }
+
+    /// Source byte of a character index in this view line.
+    fn source_byte_at(&self, char_idx: usize) -> Option<usize> {
+        self.input
+            .view_line
+            .char_source_bytes
+            .get(char_idx)
+            .copied()
+            .flatten()
+    }
+
+    /// Whether the tab expansion starting at this cell has a second column to
+    /// hand a displaced marker (issue #3079). A tab landing one column short
+    /// of its tab stop expands to a single cell and has none.
+    fn tab_run_continues(&self) -> bool {
+        let Some(bp) = self.source_byte_at(self.display_char_idx) else {
+            return false;
+        };
+        self.source_byte_at(self.display_char_idx + 1) == Some(bp)
+    }
+
+    /// Whether this cell is the *second* column of a tab expansion — the one
+    /// a marker displaced by an indentation guide lands on.
+    fn is_second_tab_column(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        if !self.is_tab_padding(ch, byte_pos) {
+            return false;
+        }
+        // The cell before this one is the expansion's first column exactly
+        // when it does not itself share a byte with its predecessor.
+        self.display_char_idx < 2 || self.source_byte_at(self.display_char_idx - 2) != byte_pos
+    }
+
+    /// Whether the tab marker for this cell's expansion was displaced onto it
+    /// by an indentation guide holding the expansion's first column.
+    fn tab_marker_shifted_here(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        self.is_second_tab_column(ch, byte_pos)
+            && self.indentation_guide_eligible(ch, byte_pos)
+            && self.guide_at_column(self.col_offset.saturating_sub(1))
+    }
+
+    /// Whether the whitespace settings ask for a tab marker at this position.
+    ///
+    /// Independent of *which* column of the expansion is being drawn, so the
+    /// answer is the same for the tab's first column and for the second one a
+    /// displaced marker moves to.
+    fn tab_marker_due(&self, is_selected: bool) -> bool {
+        let ws = &self.input.state.buffer_settings.whitespace;
+        (is_selected && self.input.state.buffer_settings.whitespace_in_selection)
+            || ws_indicator_visible(
+                self.display_char_idx,
+                self.non_ws,
+                ws.tabs_leading,
+                ws.tabs_inner,
+                ws.tabs_trailing,
+            )
+    }
+
     /// Whether the current leading-whitespace cell should render as an
     /// indentation guide. Guides are visual-only replacements for leading
     /// whitespace cells, so they preserve byte mappings and do not draw through
@@ -416,6 +536,14 @@ impl CellPass<'_, '_, '_> {
     /// padding (which maps to no source byte), so guides keep running through the
     /// padding and the staircase stays unbroken across the wrap.
     fn is_indentation_guide_cell(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        self.indentation_guide_eligible(ch, byte_pos) && self.guide_at_column(self.col_offset)
+    }
+
+    /// Everything [`is_indentation_guide_cell`](Self::is_indentation_guide_cell)
+    /// asks that does not depend on *which* column is being tested. Split out
+    /// so a tab marker displaced onto the next column can ask the same
+    /// questions about the guide column it yielded to (issue #3079).
+    fn indentation_guide_eligible(&self, ch: char, byte_pos: Option<usize>) -> bool {
         if matches!(self.input.indentation_guide, IndentationGuideMode::None) || ch != ' ' {
             return false;
         }
@@ -441,19 +569,15 @@ impl CellPass<'_, '_, '_> {
             return false;
         }
 
-        if !self.is_leading_indent_cell() {
-            return false;
-        }
+        self.is_leading_indent_cell()
+    }
 
+    /// Whether a guide is drawn at `col` on this row.
+    fn guide_at_column(&self, col: usize) -> bool {
         match self.input.indentation_guide {
             IndentationGuideMode::None => false,
-            IndentationGuideMode::All => self
-                .input
-                .indentation_guide_columns
-                .contains(&self.col_offset),
-            IndentationGuideMode::Active => {
-                self.input.active_indentation_guide_col == Some(self.col_offset)
-            }
+            IndentationGuideMode::All => self.input.indentation_guide_columns.contains(&col),
+            IndentationGuideMode::Active => self.input.active_indentation_guide_col == Some(col),
         }
     }
 
@@ -631,12 +755,15 @@ impl CellPass<'_, '_, '_> {
     /// indicator (→ / · / ↵ / ␍), an LSP-waiting marker, a debug escape,
     /// or nothing (newline with line-ending indicators disabled). Tabs are
     /// already expanded by ViewLineIterator.
+    #[allow(clippy::too_many_arguments)]
     fn display_cell_text<'buf>(
         &self,
         ch: char,
         byte_pos: Option<usize>,
         is_cursor: bool,
         is_tab_start: bool,
+        is_tab_padding: bool,
+        ws_show_tab: bool,
         is_selected: bool,
         indicator_buf: &'buf mut [u8; 4],
     ) -> (&'buf str, bool) {
@@ -648,17 +775,15 @@ impl CellPass<'_, '_, '_> {
         // `render_visible_cell`.
         let ws_in_selection =
             is_selected && self.input.state.buffer_settings.whitespace_in_selection;
-        let ws_show_tab = is_tab_start
-            && (ws_in_selection
-                || ws_indicator_visible(
-                    self.display_char_idx,
-                    self.non_ws,
-                    ws.tabs_leading,
-                    ws.tabs_inner,
-                    ws.tabs_trailing,
-                ));
+        // A tab's padding columns are not spaces (issue #3077): the file holds
+        // one tab there, so they carry no space marker — under the leading /
+        // inner / trailing settings or inside a selection. What is left is a
+        // marker per whitespace *character*, which is what makes a tab
+        // followed by four real spaces read as `→   ····` rather than as eight
+        // indistinguishable dots.
         let ws_show_space = ch == ' '
             && !is_tab_start
+            && !is_tab_padding
             && (ws_in_selection
                 || ws_indicator_visible(
                     self.display_char_idx,
