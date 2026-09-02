@@ -228,6 +228,19 @@ impl TtyReader {
         self.queue.push_back(ev);
     }
 
+    /// Queue an event that did not come from stdin, through the same motion
+    /// coalescing [`push_coalesced`](Self::push_coalesced) applies to parsed
+    /// input.
+    ///
+    /// The Linux console mouse arrives over GPM's own fd rather than stdin, so
+    /// its reports never reach `parse` — `poll_with_gpm` used to convert one
+    /// and return it directly, which put console motion outside the one rule
+    /// every other pointer report obeys. Handing it here instead is what makes
+    /// a divider drag on a VT collapse the way it does under a terminal.
+    pub fn queue_external(&mut self, ev: InputEvent) {
+        self.push_coalesced(ev);
+    }
+
     /// Blocking (up to `timeout`) read of the next event, or `None` on timeout.
     pub fn poll(&mut self, timeout: Duration) -> anyhow::Result<Option<InputEvent>> {
         if let Some(ev) = self.next_buffered() {
@@ -515,6 +528,47 @@ mod tests {
                 (MouseEventKind::Up(MouseButton::Left), 14),
             ],
         );
+    }
+
+    /// An event handed in from off-stdin — the Linux console mouse, which
+    /// arrives over GPM's own fd — collapses on the same rule as a parsed one,
+    /// and interleaves with parsed input in the order it was queued.
+    #[test]
+    fn an_externally_queued_motion_flood_collapses_too() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        let drag = |col| {
+            InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: col,
+                row: 5,
+                modifiers: KeyModifiers::empty(),
+            })
+        };
+        // A console drag sweeping ten columns between two stdin keystrokes.
+        pipe.write(b"a");
+        reader.drain_stdin();
+        for col in 20..30 {
+            reader.queue_external(drag(col));
+        }
+        pipe.write(b"b");
+        reader.drain_stdin();
+
+        let events = drain_events(&mut reader);
+        assert_eq!(
+            events.len(),
+            3,
+            "expected key, one collapsed drag, key — got {events:?}",
+        );
+        assert!(matches!(events[0], InputEvent::Key(k) if k.code == KeyCode::Char('a')));
+        assert!(
+            matches!(&events[1], InputEvent::Mouse(m) if m.column == 29),
+            "the ten console drags should collapse to the last, got {:?}",
+            events[1],
+        );
+        assert!(matches!(events[2], InputEvent::Key(k) if k.code == KeyCode::Char('b')));
     }
 
     /// The counterpart guard: an OSC reply whose payload arrives on a later
