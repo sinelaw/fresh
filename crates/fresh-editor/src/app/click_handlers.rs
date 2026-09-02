@@ -600,13 +600,15 @@ impl Editor {
             return Ok(());
         }
 
-        // Move cursor to clicked position (respect shift for selection)
-        // Both modifiers supported since some terminals intercept shift+click.
-        let extend_selection =
-            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
+        // Move cursor to clicked position (Shift extends selection).
+        // Ctrl+LeftClick is reserved for "Go to Definition" (issue #1713) and
+        // is dispatched after the cursor move below.
+        let ctrl_only =
+            modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::SHIFT);
+        let extend_selection = modifiers.contains(KeyModifiers::SHIFT);
         let new_anchor = if extend_selection {
             Some(old_anchor.unwrap_or(old_position))
-        } else if deselect_on_move {
+        } else if deselect_on_move || ctrl_only {
             None
         } else {
             old_anchor
@@ -671,6 +673,10 @@ impl Editor {
         self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
         self.active_window_mut().mouse_state.drag_selection_anchor =
             Some(new_anchor.unwrap_or(target_position));
+
+        if ctrl_only {
+            self.handle_action(Action::LspGotoDefinition)?;
+        }
 
         Ok(())
     }

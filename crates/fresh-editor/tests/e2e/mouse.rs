@@ -2429,3 +2429,54 @@ fn test_scrollbar_track_hover_then_click_clears_highlight() {
         click_row, post_click_style.bg
     );
 }
+
+/// Issue #1713: Ctrl+LeftClick should move the cursor to the clicked position
+/// (and trigger Go-to-Definition). It must not extend the selection — that
+/// would be the previous "Ctrl is a Shift fallback" behavior we replaced.
+#[test]
+fn test_ctrl_click_moves_cursor_without_extending_selection() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
+    let content = "hello world test content\n";
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+
+    // Anchor cursor at position 0 (start of "hello").
+    harness.mouse_click(gutter_width, row).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Cursor should be at start after initial click"
+    );
+    assert!(
+        !harness.has_selection(),
+        "No selection should exist after a plain click"
+    );
+
+    std::thread::sleep(double_click_delay);
+
+    // Ctrl+click 12 columns over (around "world"). With the old
+    // "Ctrl == Shift" semantics this would have created a selection
+    // spanning bytes 0..12. With the new semantics the cursor should
+    // jump there without leaving any selection behind.
+    harness.mouse_ctrl_click(gutter_width + 12, row).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.has_selection(),
+        "Ctrl+click must not extend selection (issue #1713)"
+    );
+    assert_eq!(
+        harness.cursor_position(),
+        12,
+        "Cursor should have moved to the Ctrl+clicked position"
+    );
+}

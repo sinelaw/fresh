@@ -993,6 +993,8 @@ In the future I plan to add a way for plugins to register custom config sections
 
 * **Rust Toolchain Update**: Updated to Rust 1.95 in `rust-toolchain.toml` to fix compatibility issues with newer LLVM/clang versions on systems like Arch Linux (#1782).
 
+* **Ctrl+LeftClick → Go to Definition** (#1713): Matches the standard IDE convention from VS Code / IntelliJ. Click a symbol with Ctrl held to jump to its definition (when an LSP is configured). Use Shift+LeftClick to extend a selection — Ctrl no longer doubles as a Shift fallback.
+
 ### Improvements
 
 * **Plugin loading deferred off the boot critical path** — another ~225 ms saved. Same load order, same hooks, just async.
