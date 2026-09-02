@@ -21,7 +21,8 @@ A **massive** refactoring is included in this release, hopefully without any reg
 * **Smooth wheel scrolling**, a line at a time instead of jumpy notches (`editor.smooth_scroll`, #3091)
 * **Git Blame readability** - better contrast, and blame keeps your place on `b`/`q` (#3088)
 * **Dafny highlighting** - `.dfy` files now get built-in syntax highlighting for declarations, verification clauses, nested comments, attributes, strings, types, constants, numbers, calls, and operators.
-* **OCaml ecosystem highlighting** - new built-in grammars highlight Coq/Rocq (`.coq`, `_CoqProject`, `_RocqProject`) and Dune files (`dune`, `dune-project`, `dune-workspace*`, `*.dune`), and `.ocamlinit` is now detected as OCaml. The shared `.v` extension remains mapped to the V language for compatibility; conventional Coq/Rocq `.v` files can use manual language selection.
+* **Nginx highlighting** - `nginx.conf`, `*.nginx`, and configuration files under an `nginx/` directory now get built-in highlighting for directives, contexts, variables, strings, regular expressions, addresses, values, and comments, without claiming every `.conf` file.
+* **OCaml ecosystem highlighting** - new built-in grammars highlight Coq/Rocq (`.coq`, `_CoqProject`, `_RocqProject`) and Dune files (`dune`, `dune-project`, `dune-workspace*`, `*.dune`), and `.ocamlinit` is now detected as OCaml. The shared `.v` extension remains mapped to the V language for compatibility, but `.v` files are automatically promoted to Coq/Rocq inside a project containing `_CoqProject` or `_RocqProject`.
 
 ### Bug Fixes
 
