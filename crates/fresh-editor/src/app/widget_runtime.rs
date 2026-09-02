@@ -1433,9 +1433,18 @@ impl Editor {
         let holds = ui
             .find_by_key(&crate::view::shell::panel::interior_key(slot))
             .is_some_and(|el| ui.has_focus_within(el));
+        // **The one case that is not "nothing to move": the element is not
+        // there yet.** A plugin that opens an in-panel dropdown writes the
+        // spec carrying its rows and then `setFocusKey` onto one of them, and
+        // both land before the next frame describes either. So this lookup
+        // asks the tree for a widget the *previous* spec had no row for, and
+        // the move it wanted has to wait exactly one frame. See
+        // `Editor::pending_panel_tree_focus`.
+        let mut found = false;
         if holds {
             if let Some(el) = ui.find_by_key(&crate::view::shell::widgets::widget_focus_key(widget))
             {
+                found = true;
                 // `SelectAll` is what the ring's own moves ask for
                 // (`Ui::move_focus`), and a host-driven landing is not a
                 // different kind of landing.
@@ -1443,6 +1452,39 @@ impl Editor {
             }
         }
         self.shell_ui = Some(ui);
+        // A move that landed retires any request still waiting; one that could
+        // not find its element becomes the request. `!holds` is neither — the
+        // tree does not hold this panel's focus, so `autofocus` settles the
+        // landing the next time focus enters it, and a pending write would
+        // fight that.
+        self.pending_panel_tree_focus = match (holds, found) {
+            (true, false) => Some((panel_key.clone(), widget.to_string())),
+            _ => None,
+        };
+    }
+
+    /// Replay the focus move [`Editor::focus_panel_widget_in_tree`] could not
+    /// make, now that the frame has built the element it names.
+    ///
+    /// Called once per frame, immediately after the tree is rebuilt. The
+    /// request is dropped whether or not it lands: the frame just built is the
+    /// one describing the spec the write was aimed at, so a widget missing
+    /// from it is missing for good, and a standing request would keep pulling
+    /// focus back on every later frame.
+    ///
+    /// A request whose widget the registry no longer names has been overtaken
+    /// by a newer focus decision — a Tab, a click, another `setFocusKey` — and
+    /// is dropped without acting, so replaying it cannot undo the newer one.
+    pub(super) fn retry_pending_panel_tree_focus(&mut self) {
+        let Some((panel_key, widget)) = self.pending_panel_tree_focus.take() else {
+            return;
+        };
+        if self.widget_registry.focus_key(&panel_key) != Some(widget.as_str()) {
+            return;
+        }
+        self.focus_panel_widget_in_tree(&panel_key, &widget);
+        // One replay only — see the doc comment.
+        self.pending_panel_tree_focus = None;
     }
 
     /// Update the panel's focused widget AND fire a
@@ -4020,6 +4062,123 @@ mod tests {
             ui.focused(),
             ui.find_by_key(&crate::view::shell::widgets::widget_focus_key("two")),
             "the tree followed the host's write, so the next Tab starts here"
+        );
+    }
+
+    /// **A focus onto a widget the spec has only just grown (#3137).**
+    ///
+    /// The dock's "Move to Folder…" dropdown is two plugin writes: a spec
+    /// carrying the option rows, then `setFocusKey` onto the first of them.
+    /// Both are applied before the frame that describes either, so the
+    /// imperative half of the focus mirror asked the tree for an element the
+    /// tree could not have yet and quietly did nothing. The tree kept the
+    /// focus the dropdown was supposed to take, and its `FocusGained` fact
+    /// then wrote *that* back over the registry — so ↓ was routed to the
+    /// session list underneath, which dismissed the popup, moved the
+    /// selection and live-switched the workspace.
+    ///
+    /// The move is held for the one frame it takes the element to exist.
+    #[test]
+    fn a_focus_onto_a_widget_the_next_frame_builds_lands_on_that_frame() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        // Rendering a spec into the registry exactly as mount/update do.
+        let render = |spec: &WidgetSpec, prev_focus: &str| {
+            super::render_floating_spec(
+                false,
+                spec,
+                &Default::default(),
+                &Default::default(),
+                prev_focus,
+                30,
+                None,
+                "",
+                "",
+                "",
+                None,
+                true,
+            )
+        };
+        // The dock before the dropdown: a list, and nothing else to focus.
+        let closed = WidgetSpec::Col {
+            children: vec![button("sessions")],
+            key: None,
+        };
+        let out = render(&closed, "");
+        editor.widget_registry.mount(
+            panel_key.clone(),
+            crate::app::PanelSlot::Dock.buffer_id(),
+            closed,
+            out.hits,
+            out.instance_states,
+            out.focus_key,
+            out.tabbable,
+            out.painted,
+            out.boxes,
+            true,
+        );
+        editor.dock = Some(dock_panel(panel_key.clone()));
+        frame_the_shell(&mut editor);
+        let ui = editor.shell_ui.as_ref().expect("the tree");
+        assert_eq!(
+            ui.focused(),
+            ui.find_by_key(&crate::view::shell::widgets::widget_focus_key("sessions")),
+            "the frame settled on the list, which is all there was"
+        );
+
+        // The dropdown opens: the spec grows an option row, and the plugin
+        // hands it the keyboard. Both land before the next frame.
+        let open = WidgetSpec::Col {
+            children: vec![
+                button("sessions"),
+                WidgetSpec::Overlay {
+                    child: Box::new(WidgetSpec::Col {
+                        children: vec![button("menu-pick:move:root")],
+                        key: None,
+                    }),
+                    key: Some("move-menu".into()),
+                },
+            ],
+            key: None,
+        };
+        let out = render(&open, "sessions");
+        editor
+            .widget_registry
+            .update(
+                &panel_key,
+                open,
+                out.hits,
+                out.instance_states,
+                out.focus_key,
+                out.tabbable,
+                out.painted,
+                out.boxes,
+            )
+            .expect("the panel is mounted");
+        editor.set_panel_focus_and_notify(&panel_key, "menu-pick:move:root".to_string());
+
+        // The tree cannot carry it yet — the option row is not in the frame
+        // that is currently built — so the move is held rather than dropped.
+        assert_eq!(
+            editor.pending_panel_tree_focus,
+            Some((panel_key.clone(), "menu-pick:move:root".to_string())),
+            "a move with no element to land on is held for the next frame"
+        );
+
+        frame_the_shell(&mut editor);
+        editor.retry_pending_panel_tree_focus();
+
+        let ui = editor.shell_ui.as_ref().expect("the tree");
+        assert_eq!(
+            ui.focused(),
+            ui.find_by_key(&crate::view::shell::widgets::widget_focus_key(
+                "menu-pick:move:root"
+            )),
+            "the dropdown owns the keyboard, so ↑/↓ drive it and not the list"
+        );
+        assert_eq!(
+            editor.pending_panel_tree_focus, None,
+            "and the request retires — one replay, never a standing pull"
         );
     }
 }

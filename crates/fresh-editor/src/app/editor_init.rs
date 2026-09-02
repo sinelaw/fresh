@@ -682,6 +682,7 @@ impl Editor {
                 ui.set_store(shell_store);
                 ui
             }),
+            pending_panel_tree_focus: None,
             shell_pointer_event: None,
             shell_key_event: None,
             shell_interior_took_key: None,

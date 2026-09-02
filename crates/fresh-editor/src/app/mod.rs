@@ -1184,6 +1184,34 @@ pub struct Editor {
     /// keeping `app` and `ui` side by side in `main`.
     pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
 
+    /// A panel focus move the host decided **before the tree could carry it**,
+    /// held for the one frame it takes the description to catch up.
+    ///
+    /// `Editor::focus_panel_widget_in_tree` is the imperative half of the
+    /// focus mirror: it moves the tree's focus to the widget the registry has
+    /// just been told holds the panel's. It can only move focus to an element
+    /// that *exists*, and the two writes a plugin makes when it opens an
+    /// in-panel dropdown — a new spec, then `setFocusKey` onto a row of it —
+    /// are both applied before the next frame describes that spec. So the
+    /// element the second write names is one the tree will not have until the
+    /// frame after, and the move found nothing to do.
+    ///
+    /// Nothing then re-tried it, and the mirror's *other* direction wrote the
+    /// disagreement back: the tree still held the widget focus never left, so
+    /// its `FocusGained` fact re-pointed the registry at that one and the
+    /// dropdown lost the keyboard it had just been handed. That is #3137 — the
+    /// dock's "Move to Folder…" popup, whose first ↓ dismissed it, moved the
+    /// session list underneath and live-switched the workspace.
+    ///
+    /// Recorded here instead, and replayed by
+    /// `Editor::retry_pending_panel_tree_focus` immediately after the frame
+    /// that builds the element, where the gain it raises is queued *after* the
+    /// stale one and so is the one the next dispatch settles on. One replay,
+    /// never a standing request: the frame that follows the write is built
+    /// from the very spec the write was aimed at, so a widget still absent
+    /// there is not coming.
+    pub(crate) pending_panel_tree_focus: Option<(crate::widgets::PanelKey, String)>,
+
     /// Where the shell tree's `Persisted` values live, and the handle that can
     /// drop a window's.
     ///

@@ -409,6 +409,13 @@ impl Editor {
             size,
         );
         self.shell_ui = Some(ui);
+        // **A focus the host decided one frame before the tree could carry
+        // it.** The frame above is the first to describe the spec that write
+        // was aimed at, so this is the earliest moment its element exists. The
+        // gain it raises is queued behind the one the stale holder already
+        // left, and `apply_settled_shell_messages` settles on the last —
+        // which is why the replay belongs here and not at the drain.
+        self.retry_pending_panel_tree_focus();
         // Retained for the callers that ask between frames where a pane is —
         // the same rects this frame paints with. See `Window::pane_rects`.
         self.active_window_mut().set_pane_rects(pane_rects.clone());
