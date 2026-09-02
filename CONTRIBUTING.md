@@ -123,10 +123,8 @@ for one-to-one. The old total of 5264 counted the 15 helper tests inside
 `tests/common/` once per binary that declared `mod common;` -- 15 x 37
 redundant copies = the 555 difference. They now compile and run once.
 
-Two consequences to know about:
+One consequence to know about:
 
-- **Adding a test file means adding a line to `tests/all_tests.rs`.** Cargo
-  no longer discovers `tests/*.rs` on its own.
 - **`cargo test --test <name>` is now a filter, not a target.** Use
   `cargo nextest run -E 'test(/^orchestrator_pending_local::/)'` or
   `cargo test --test all_tests -- orchestrator_pending_local::`.
@@ -134,6 +132,28 @@ Two consequences to know about:
 Under `cargo nextest` each test still gets its own process, so isolation is
 unchanged; under plain `cargo test` they share one process, which is what
 `tests/common/global_state.rs` already exists to handle.
+
+**Adding a test file needs no bookkeeping.** `autotests = false` turns off
+cargo's own discovery, and it is all-or-nothing: a root that nothing names
+compiles into nothing, and its tests never run -- no error, no warning. So
+discovery moved into `build.rs`, which scans `tests/` and generates the `mod`
+declarations that `all_tests.rs` includes. Drop a file in `tests/` and it is
+picked up.
+
+Two things that follow from how that is wired:
+
+- The generated `#[path]`s are absolute, because `#[path]` inside an
+  `include!`d file resolves against *that* file's directory (`$OUT_DIR`), not
+  against the file including it. So `file!()` is an absolute path for these
+  roots. Nothing depends on it being relative -- the insta snapshots live under
+  `tests/common/`, reached by a plain `mod common;`.
+- A root that must be its own target (feature-gated, like `scene_parity`) is
+  excluded in two places that have to stay in step: `SEPARATE_TARGETS` in
+  `build.rs` and the same constant in `all_tests.rs`.
+
+`generated_root_list_matches_the_directory` compares the generated list
+against `tests/` at run time, so a build script that failed to re-run still
+fails loudly rather than quietly dropping coverage.
 
 **The data layer is its own crate.** `fresh-editor` was 409k lines in one
 compilation unit. `fresh-editor-core` holds the bottom 85k (20.8%) --
