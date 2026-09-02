@@ -1011,6 +1011,7 @@ mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let mut p = panel(Spot::Centered {
             width_pct: 60,

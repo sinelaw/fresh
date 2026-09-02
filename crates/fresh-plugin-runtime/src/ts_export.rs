@@ -173,6 +173,8 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Widget library types — declarative plugin UI.
         // See docs/internal/plugin-widget-library-design.md.
         "WidgetSpec" => Some(fresh_core::api::WidgetSpec::decl(&cfg)),
+        "WidgetPanelOptions" => Some(fresh_core::api::WidgetPanelOptions::decl(&cfg)),
+        "ScrollAlign" => Some(fresh_core::api::ScrollAlign::decl(&cfg)),
         "HintEntry" => Some(fresh_core::api::HintEntry::decl(&cfg)),
         "ButtonKind" => Some(fresh_core::api::ButtonKind::decl(&cfg)),
         "WidgetAction" => Some(fresh_core::api::WidgetAction::decl(&cfg)),
@@ -397,12 +399,14 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "PluginAnimationEdge",             // Used by PluginAnimationKind
     "PluginAnimationKind",             // Used by animateArea/animateVirtualBuffer
     // Widget library types (see docs/internal/plugin-widget-library-design.md)
-    "HintEntry",      // Used by WidgetSpec::HintBar
-    "ButtonKind",     // Used by WidgetSpec::Button.intent
-    "TreeNode",       // Used by WidgetSpec::Tree.nodes
-    "WidgetSpec",     // Used by mountWidgetPanel/updateWidgetPanel
-    "WidgetAction",   // Used by widgetCommand
-    "WidgetMutation", // Used by widgetMutate
+    "HintEntry",          // Used by WidgetSpec::HintBar
+    "ButtonKind",         // Used by WidgetSpec::Button.intent
+    "TreeNode",           // Used by WidgetSpec::Tree.nodes
+    "WidgetSpec",         // Used by mountWidgetPanel/updateWidgetPanel
+    "WidgetPanelOptions", // Used by mountWidgetPanel
+    "ScrollAlign",        // Used by scrollToWidget
+    "WidgetAction",       // Used by widgetCommand
+    "WidgetMutation",     // Used by widgetMutate
     // Streaming-search pull handle (referenced via ts_raw on beginSearch)
     "SearchTakeResult",
     "SearchHandle",
@@ -1527,6 +1531,7 @@ mod tests {
             "setSplitBuffer",
             "focusSplit",
             "setSplitScroll",
+            "scrollToWidget",
             "setSplitRatio",
             "setSplitLabel",
             "clearSplitLabel",

@@ -1003,10 +1003,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             bare,
             full_width,
             hover_style,
+            focusable,
+            style,
             ..
         } => {
             let key = key.as_deref();
+            // `focusable: false` drops the button from the Tab cycle, so it
+            // can never be what focus is on — and must not render as though
+            // it were. Several buttons sharing one key act as a single
+            // control: the focus clamp lands on the one tabbable member, and
+            // without this gate every other member paints itself focused too.
             let is_focused = !disabled
+                && *focusable
                 && match key.is_some_and(|k| !k.is_empty()) {
                     true => cx.is_focused(key),
                     false => *focused,
@@ -1025,7 +1033,13 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let label = filled.as_deref().unwrap_or(label);
             let entry = match bare {
                 true => crate::widgets::render_bare_button(
-                    label, is_focused, *intent, *disabled, hover, hovered,
+                    label,
+                    is_focused,
+                    *intent,
+                    *disabled,
+                    hover,
+                    hovered,
+                    style.as_ref(),
                 ),
                 false => crate::widgets::render_button(
                     label,
@@ -1035,6 +1049,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     cx.marker_gutter,
                     hover,
                     hovered,
+                    style.as_ref(),
                 ),
             };
             let n = entry_row(&entry, &cx.surface);
@@ -3653,6 +3668,7 @@ mod tests {
                     bare: true,
                     full_width: false,
                     hover_style: None,
+                    style: None,
                 },
             ],
             key: None,
@@ -3837,6 +3853,8 @@ mod tests {
             }),
             width_pct: None,
             key: None,
+            hover_style: None,
+            width_cols: None,
         };
         let cases: Vec<(&str, WidgetSpec)> = vec![
             (
@@ -4055,6 +4073,7 @@ mod tests {
             bare,
             full_width: false,
             hover_style: None,
+            style: None,
         }
     }
 
@@ -5207,6 +5226,8 @@ mod tests {
                 }),
                 width_pct: None,
                 key: None,
+                hover_style: None,
+                width_cols: None,
             };
             let mut ui: Ui<UiMsg> = Ui::new();
             ui.frame(
@@ -5247,6 +5268,8 @@ mod tests {
             }),
             width_pct: None,
             key: None,
+            hover_style: None,
+            width_cols: None,
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
@@ -5579,6 +5602,8 @@ mod tests {
             }),
             width_pct: None,
             key: None,
+            hover_style: None,
+            width_cols: None,
         }
     }
 
@@ -5625,6 +5650,8 @@ mod tests {
             }),
             width_pct: None,
             key: None,
+            hover_style: None,
+            width_cols: None,
         }
     }
 
@@ -6466,6 +6493,8 @@ mod tests {
             child: Box::new(text_field("he", 2, true)),
             width_pct: None,
             key: None,
+            hover_style: None,
+            width_cols: None,
         }
     }
 
@@ -6747,6 +6776,7 @@ mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let col = |children: Vec<WidgetSpec>| WidgetSpec::Col {
             children,

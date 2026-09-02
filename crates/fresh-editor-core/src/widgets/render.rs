@@ -130,10 +130,20 @@ pub fn apply_hover_band(entry: &mut TextPropertyEntry) {
 // renders invisible against the panel bg. The diagnostic.error_fg
 // key is the canonical "red text" theme slot.
 pub const KEY_DANGER_FG: &str = "diagnostic.error_fg";
-pub const KEY_INPUT_BG: &str = "ui.prompt_bg";
+/// Background of an input's bracketed region — what makes it look
+/// editable.
+///
+/// Not `ui.prompt_bg`, which is what this was: several shipped themes
+/// set that key to a *foreground* colour (bright green on dracula,
+/// olive on nord, yellow on solarized), so a focused field on those
+/// themes lit up rather than reading as a well. This is the theme's own
+/// "a subtle band lies over the editor background", present everywhere
+/// and correct in both polarities — it lifts on the dark themes and
+/// recesses on the light one.
+pub const KEY_INPUT_BG: &str = "editor.current_line_bg";
 // Background tint for the selection span inside a widget Text
 // input. Distinct from the buffer's `ui.selection_bg` because
-// widget inputs sit on top of the `ui.prompt_bg` field-bg overlay
+// widget inputs sit on top of the `KEY_INPUT_BG` field-bg overlay
 // and the contrast needs to read against that tint, not the
 // editor surface.
 pub const KEY_TEXT_INPUT_SELECTION_BG: &str = "ui.text_input_selection_bg";
@@ -2520,6 +2530,7 @@ pub fn dual_cursor_marker(on_cursor: bool, column_active: bool) -> &'static str 
 /// `hover` style it paints the shared [`KEY_HOVER_BG`] band under the
 /// button's own colours — every framed button answers the pointer, with
 /// no per-call-site opt-in. An explicit `hover` still wins outright.
+#[allow(clippy::too_many_arguments)]
 pub fn render_button(
     label: &str,
     focused: bool,
@@ -2528,6 +2539,7 @@ pub fn render_button(
     marker_gutter: bool,
     hover: Option<&OverlayOptions>,
     hovered: bool,
+    resting: Option<&OverlayOptions>,
 ) -> TextPropertyEntry {
     // In a marker-gutter panel, focused buttons lead with `▸ ` and
     // every other button with two spaces. This is the cue that
@@ -2554,6 +2566,10 @@ pub fn render_button(
             fg: Some(OverlayColorSpec::theme_key("ui.menu_disabled_fg")),
             ..Default::default()
         }
+    } else if let Some(resting) = resting {
+        // A spec-declared resting style replaces the intent look
+        // outright, the same way `hover_style` replaces the hover one.
+        resting.clone()
     } else {
         match kind {
             ButtonKind::Normal => OverlayOptions::default(),
@@ -2637,6 +2653,7 @@ pub fn render_button(
 /// immediate signal, and the one the user is actively driving. `hovered`
 /// without a declared style falls back to the shared hover band, so even
 /// a glyph affordance lights up under the pointer.
+#[allow(clippy::too_many_arguments)]
 pub fn render_bare_button(
     label: &str,
     focused: bool,
@@ -2644,6 +2661,7 @@ pub fn render_bare_button(
     disabled: bool,
     hover: Option<&OverlayOptions>,
     hovered: bool,
+    resting: Option<&OverlayOptions>,
 ) -> TextPropertyEntry {
     let base = match kind {
         ButtonKind::Normal => OverlayOptions::default(),
@@ -2658,6 +2676,7 @@ pub fn render_bare_button(
             ..Default::default()
         },
     };
+    let base = resting.cloned().unwrap_or(base);
     let style = if disabled {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key("ui.menu_disabled_fg")),
@@ -3415,17 +3434,66 @@ pub fn render_text_input(
         });
     }
 
+    // A field looks like a field whether or not it is focused.
+    //
+    // This overlay used to be gated on `focused`, which meant an input
+    // nobody had clicked yet was drawn on the panel's own background —
+    // and brackets alone are a weak signal, plenty of read-only labels
+    // carry them. So the welcome screen's finder, Settings (Terminal ->
+    // Command) and the New Agent dialog all opened showing fields that
+    // gave no sign they could be typed into. What marks focus instead is
+    // the bracket band below — the caret cannot, on a panel mounted into
+    // a buffer.
+    overlays.push(InlineOverlay {
+        start: bracket_open_byte,
+        end: bracket_close_byte,
+        style: OverlayOptions {
+            bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+
+    // ...and a focused field says so on its frame.
+    //
+    // The field background above is deliberately ungated, so it can no
+    // longer be what marks focus. That left the caret as the only mark,
+    // which is enough in a floating panel — and nothing at all on a
+    // panel mounted into a buffer, where the hardware caret belongs to
+    // the *document* and stays in its margin. The welcome screen's
+    // finder was the case in point: its focused and unfocused rows came
+    // back byte-identical, so the only way to discover you were in the
+    // field was to type into it.
+    //
+    // The brackets are the field's own frame and nothing else on the
+    // row is load-bearing, so marking exactly those two cells says
+    // "this field has the keys" without touching the well or the value.
+    //
+    // It takes the `KEY_FOCUSED_FG`/`BG` pair the rest of the widget
+    // system already uses for the focused thing, not a foreground alone:
+    // the brackets are drawn in an accent at rest, so a fg change is a
+    // shade against a shade. The band is a different *kind* of mark, and
+    // reads at a glance in either polarity. Pushed after the field
+    // background so it layers over it.
     if focused {
-        overlays.push(InlineOverlay {
-            start: bracket_open_byte,
-            end: bracket_close_byte,
-            style: OverlayOptions {
-                bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
-                ..Default::default()
-            },
-            properties: Default::default(),
-            unit: OffsetUnit::Byte,
-        });
+        for (start, end) in [
+            (bracket_open_byte, bracket_open_byte + 1),
+            (bracket_close_byte - 1, bracket_close_byte),
+        ] {
+            overlays.push(InlineOverlay {
+                start,
+                end,
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                    bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                    bold: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
     }
 
     // Selection overlay: paint `ui.text_input_selection_bg` over the
@@ -4228,6 +4296,7 @@ pub mod tests {
             false,
             None,
             false,
+            None,
         );
         assert_eq!(entry.text, "[ Replace All ]");
         assert!(entry.inline_overlays.is_empty());
@@ -4247,6 +4316,7 @@ pub mod tests {
             false,
             None,
             false,
+            None,
         );
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
@@ -4268,6 +4338,7 @@ pub mod tests {
             false,
             None,
             false,
+            None,
         );
         assert_eq!(entry.inline_overlays.len(), 1);
         let fg = entry.inline_overlays[0].style.fg.as_ref().unwrap();
@@ -4283,7 +4354,16 @@ pub mod tests {
         // former has ~6× the perceptual contrast against the popup
         // bg and is the same key the prompt already uses. See the
         // `KEY_FOCUSED_FG/BG` const comment.
-        let entry = render_button("OK", true, ButtonKind::Normal, false, false, None, false);
+        let entry = render_button(
+            "OK",
+            true,
+            ButtonKind::Normal,
+            false,
+            false,
+            None,
+            false,
+            None,
+        );
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
             style.fg.as_ref().and_then(|c| c.as_theme_key()),
@@ -4325,6 +4405,7 @@ pub mod tests {
                     bare: false,
                     full_width: false,
                     hover_style: None,
+                    style: None,
                 },
             ],
             key: None,
@@ -4412,6 +4493,7 @@ pub mod tests {
                     bare: false,
                     full_width: false,
                     hover_style: None,
+                    style: None,
                 },
             ],
             key: None,
@@ -4491,6 +4573,7 @@ pub mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 1);
@@ -4517,6 +4600,7 @@ pub mod tests {
                     bare: false,
                     full_width: false,
                     hover_style: None,
+                    style: None,
                 },
                 WidgetSpec::Button {
                     label: "Cancel".into(),
@@ -4528,6 +4612,7 @@ pub mod tests {
                     bare: false,
                     full_width: false,
                     hover_style: None,
+                    style: None,
                 },
             ],
             key: None,
@@ -4558,6 +4643,7 @@ pub mod tests {
             false,
             None,
             false,
+            None,
         );
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
@@ -4583,6 +4669,7 @@ pub mod tests {
             false,
             None,
             true,
+            None,
         );
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
@@ -4607,6 +4694,7 @@ pub mod tests {
             false,
             None,
             true,
+            None,
         );
         let style = &entry.inline_overlays[0].style;
         assert!(
@@ -4777,6 +4865,7 @@ pub mod tests {
                             bare: false,
                             full_width: false,
                             hover_style: None,
+                            style: None,
                         },
                     ],
                     key: None,
@@ -5009,8 +5098,10 @@ pub mod tests {
                 entries: vec![TextPropertyEntry::text(body)],
                 key: None,
             }),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let spec = WidgetSpec::List {
             items: vec![],
@@ -5086,8 +5177,10 @@ pub mod tests {
                 entries: vec![TextPropertyEntry::text(body)],
                 key: None,
             }),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let spec = WidgetSpec::List {
             items: vec![],
@@ -5390,7 +5483,12 @@ pub mod tests {
     fn text_input_renders_value_in_brackets() {
         let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false, 0).entry;
         assert_eq!(entry.text, "[hello]");
-        assert!(entry.inline_overlays.is_empty());
+        // Unfocused still carries the field background — that is the
+        // whole point of it: an input has to look editable before
+        // anyone has clicked it. The only overlay is that background.
+        assert_eq!(entry.inline_overlays.len(), 1);
+        let bg = entry.inline_overlays[0].style.bg.as_ref().unwrap();
+        assert_eq!(bg.as_theme_key(), Some("editor.current_line_bg"));
     }
 
     #[test]
@@ -5400,13 +5498,60 @@ pub mod tests {
         assert_eq!(entry.text, "Search: [foo]");
     }
 
+    /// Overlays on `entry` whose background is `key`.
+    fn overlays_with_bg<'e>(entry: &'e TextPropertyEntry, key: &str) -> Vec<&'e InlineOverlay> {
+        entry
+            .inline_overlays
+            .iter()
+            .filter(|o| o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some(key))
+            .collect()
+    }
+
     #[test]
-    fn text_input_focused_adds_input_bg_overlay() {
+    fn text_input_adds_input_bg_overlay_regardless_of_focus() {
+        // The field background is not a focus indicator — it is what
+        // makes an input look editable before anyone has clicked it —
+        // so it is present either way. It was focus-gated, which left
+        // every unfocused input looking like inert text.
+        //
+        // Counted by theme key rather than by total overlay count: a
+        // focused field carries the bracket band too, and asserting
+        // `len() == 1` for both made this test a tripwire on the very
+        // fix that put the band there.
+        for focused in [true, false] {
+            let entry = render_text_input("x", -1, None, focused, "", None, 0, 0, false, 0).entry;
+            assert_eq!(
+                overlays_with_bg(&entry, KEY_INPUT_BG).len(),
+                1,
+                "field background, focused={focused}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_input_focused_bands_its_brackets() {
+        // ...and because that background is ungated it can no longer be
+        // what marks focus. The caret cannot stand in on a panel mounted
+        // into a buffer — the hardware cursor belongs to the document
+        // and stays in its margin — so a focused field marks its own
+        // frame: the two bracket cells, and nothing else on the row.
         let entry = render_text_input("x", -1, None, true, "", None, 0, 0, false, 0).entry;
-        // Focused → input-bg overlay (no cursor since cursor_byte < 0).
-        assert_eq!(entry.inline_overlays.len(), 1);
-        let bg = entry.inline_overlays[0].style.bg.as_ref().unwrap();
-        assert_eq!(bg.as_theme_key(), Some("ui.prompt_bg"));
+        let bands = overlays_with_bg(&entry, KEY_FOCUSED_BG);
+        assert_eq!(bands.len(), 2, "one band per bracket");
+        let n = entry.text.len();
+        assert!(entry.text.starts_with('[') && entry.text.ends_with(']'));
+        assert_eq!((bands[0].start, bands[0].end), (0, 1), "opening bracket");
+        assert_eq!(
+            (bands[1].start, bands[1].end),
+            (n - 1, n),
+            "closing bracket"
+        );
+
+        let unfocused = render_text_input("x", -1, None, false, "", None, 0, 0, false, 0).entry;
+        assert!(
+            overlays_with_bg(&unfocused, KEY_FOCUSED_BG).is_empty(),
+            "an unfocused field carries no band"
+        );
     }
 
     #[test]
@@ -6684,7 +6829,7 @@ pub mod tests {
                     .bg
                     .as_ref()
                     .and_then(|c| c.as_theme_key())
-                    .map(|k| k == "ui.prompt_bg")
+                    .map(|k| k == "editor.current_line_bg")
                     .unwrap_or(false)
             });
             assert!(has_bg, "every focused row gets input-bg");
@@ -6945,8 +7090,10 @@ pub mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "Name".into(),
             child: Box::new(make_text_input("hi", -1, false, false, 4, Some("n"))),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let prev = HashMap::new();
         let out = render_spec(&spec, &prev, "", 20);
@@ -7096,8 +7243,10 @@ pub mod tests {
                 entries: vec![wide, narrow],
                 key: None,
             }),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let out = render_spec(&spec, &HashMap::new(), "", 30);
         let widths: Vec<usize> = out
@@ -7116,8 +7265,10 @@ pub mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "".into(),
             child: Box::new(make_text_input("hi", -1, false, false, 4, Some("n"))),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let prev = HashMap::new();
         // panel_width = 16 → inner_width = 12 → middle row is
@@ -7138,8 +7289,10 @@ pub mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "".into(),
             child: Box::new(make_text_input("ab", -1, false, true, 0, Some("n"))),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let prev = HashMap::new();
         let out = render_spec(&spec, &prev, "", 16);
@@ -7160,8 +7313,10 @@ pub mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "".into(),
             child: Box::new(make_text_input("abc", 3, true, false, 4, Some("n"))),
+            width_cols: None,
             width_pct: None,
             key: None,
+            hover_style: None,
         };
         let prev = HashMap::new();
         let out = render_spec(&spec, &prev, "n", 20);
@@ -7182,14 +7337,18 @@ pub mod tests {
                 WidgetSpec::LabeledSection {
                     label: "Name".into(),
                     child: Box::new(make_text_input("", -1, false, false, 0, Some("n"))),
+                    width_cols: None,
                     width_pct: None,
                     key: None,
+                    hover_style: None,
                 },
                 WidgetSpec::LabeledSection {
                     label: "Cmd".into(),
                     child: Box::new(make_text_input("", -1, false, false, 0, Some("c"))),
+                    width_cols: None,
                     width_pct: None,
                     key: None,
+                    hover_style: None,
                 },
             ],
             key: None,
@@ -7705,6 +7864,7 @@ pub mod tests {
                     bare: false,
                     full_width: false,
                     hover_style: None,
+                    style: None,
                 },
                 make_dropdown(&["a", "b"], 0, Some("dd")),
                 WidgetSpec::List {
@@ -8066,12 +8226,15 @@ pub mod tests {
                     bare: false,
                     full_width: false,
                     hover_style: None,
+                    style: None,
                 },
                 WidgetSpec::LabeledSection {
                     label: "Files".into(),
                     child: Box::new(boxed_list("l", 3, 5)),
+                    width_cols: None,
                     width_pct: None,
                     key: None,
+                    hover_style: None,
                 },
             ],
         };
@@ -8213,6 +8376,9 @@ pub mod tests {
             tabbable: out.tabbable,
             painted: out.painted,
             boxes: out.boxes,
+            auto_focus_first: true,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
         }
     }
 
@@ -8279,6 +8445,8 @@ pub mod tests {
             }),
             width_pct: None,
             key: None,
+            hover_style: None,
+            width_cols: None,
         };
         // 8 cards, a 12-row window ⇒ 4 cards visible, so a page is 3.
         let spec = WidgetSpec::List {
@@ -8518,6 +8686,7 @@ pub mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let spec = WidgetSpec::Col {
             key: None,
@@ -8586,6 +8755,7 @@ pub mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let spec = WidgetSpec::Col {
             key: None,

@@ -486,7 +486,21 @@ impl Editor {
         // all-virtual snapshot (issue #2027). The protection is for
         // FILE/unnamed content only — terminals are live runtime state, so
         // a terminal-only on-disk workspace must NOT block this save.
-        if workspace.has_no_real_content() && win.has_any_virtual_buffer() {
+        //
+        // Only for a window that never restored. The guard exists for an
+        // instance that boots straight to a virtual surface without ever
+        // reading the workspace — it must not wipe content it never held.
+        // A window that *did* restore and is now all-virtual is the user
+        // having closed their files, and refusing that save resurrected
+        // them on the next launch: the welcome screen is a virtual
+        // buffer, so closing the last file left exactly the shape this
+        // guard rejects, and the stale snapshot survived every save and
+        // every checkpoint for the rest of the session (issue #2027's
+        // guard also sits on `checkpoint_window_workspace`).
+        if !win.workspace_restored
+            && workspace.has_no_real_content()
+            && win.has_any_virtual_buffer()
+        {
             let root = win.root.clone();
             let on_disk = Workspace::load(&root).ok().flatten();
             if let Some(existing) = on_disk {
@@ -2490,6 +2504,10 @@ impl crate::app::window::Window {
             "Applying workspace layout with {} split states",
             workspace.split_states.len()
         );
+
+        // This window now continues an on-disk workspace, which is what
+        // licenses a later all-virtual save to overwrite it.
+        self.workspace_restored = true;
 
         // Adopt the snapshot's durable identity: the window continues the
         // persisted workspace rather than starting a new one, so saves keep
