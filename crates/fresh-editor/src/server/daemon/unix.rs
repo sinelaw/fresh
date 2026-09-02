@@ -62,6 +62,10 @@ pub fn daemonize() -> io::Result<()> {
 /// `ssh_url`, when set, is forwarded as `--ssh-url <URL>` so the
 /// spawned daemon boots into an SSH authority instead of the default
 /// `Authority::local()` (see `EditorServerConfig.startup_authority`).
+/// `locale`, when set, is forwarded as `--locale <L>` so the client's
+/// `--locale` reaches the daemon that renders the UI — the daemon has no
+/// other way to see a flag that was typed on the client's command line
+/// (#3149).
 /// Returns the PID of the spawned server (intermediate, not final daemon PID).
 ///
 /// The child calls `setsid()` before exec so the daemon leads its own session
@@ -75,9 +79,34 @@ pub fn daemonize() -> io::Result<()> {
 /// `setsid()` rather than [`daemonize`] because the daemon must keep the
 /// inherited working directory (it serves that project); `daemonize` chdirs
 /// to `/`.
-pub fn spawn_server_detached(session_name: Option<&str>, ssh_url: Option<&str>) -> io::Result<u32> {
+pub fn spawn_server_detached(
+    session_name: Option<&str>,
+    ssh_url: Option<&str>,
+    locale: Option<&str>,
+) -> io::Result<u32> {
     let exe = std::env::current_exe()?;
 
+    // Use Command to spawn, which properly handles the process
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(server_args(session_name, ssh_url, locale));
+    detach_from_terminal(&mut cmd);
+
+    let child = cmd.spawn()?;
+
+    Ok(child.id())
+}
+
+/// The argv the detached daemon is exec'd with.
+///
+/// Everything the daemon cannot rediscover for itself has to be listed here:
+/// it re-reads the config file and the environment on its own, but a flag the
+/// user typed on the *client's* command line exists nowhere the daemon can see
+/// it. `--locale` is one of those (#3149).
+fn server_args(
+    session_name: Option<&str>,
+    ssh_url: Option<&str>,
+    locale: Option<&str>,
+) -> Vec<String> {
     let mut args = vec!["--server".to_string()];
 
     if let Some(name) = session_name {
@@ -90,14 +119,12 @@ pub fn spawn_server_detached(session_name: Option<&str>, ssh_url: Option<&str>) 
         args.push(url.to_string());
     }
 
-    // Use Command to spawn, which properly handles the process
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.args(&args);
-    detach_from_terminal(&mut cmd);
+    if let Some(locale) = locale {
+        args.push("--locale".to_string());
+        args.push(locale.to_string());
+    }
 
-    let child = cmd.spawn()?;
-
-    Ok(child.id())
+    args
 }
 
 /// Configure `cmd` so the spawned child outlives this process's terminal:
@@ -138,6 +165,37 @@ pub fn is_process_running(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The client's `--locale` has to ride along in the daemon's argv: the
+    /// daemon renders the UI, and a flag typed on the client's command line
+    /// reaches it by no other route (#3149).
+    #[test]
+    fn server_args_forwards_the_clients_locale() {
+        assert_eq!(
+            server_args(Some("mysession"), None, Some("ja")),
+            vec!["--server", "--session-name", "mysession", "--locale", "ja"]
+        );
+    }
+
+    /// No `--locale` on the client means "let the daemon decide" — it reads
+    /// the config file and the environment itself, and an empty `--locale`
+    /// would override both.
+    #[test]
+    fn server_args_omits_locale_when_the_client_had_none() {
+        let args = server_args(Some("mysession"), None, None);
+        assert!(
+            !args.iter().any(|a| a == "--locale"),
+            "unexpected --locale in {args:?}"
+        );
+    }
+
+    #[test]
+    fn server_args_carries_the_ssh_url_alongside_the_locale() {
+        assert_eq!(
+            server_args(None, Some("ssh://host/srv"), Some("fr")),
+            vec!["--server", "--ssh-url", "ssh://host/srv", "--locale", "fr"]
+        );
+    }
 
     fn session_of(pid: u32) -> i32 {
         let sid = unsafe { libc::getsid(pid as i32) };

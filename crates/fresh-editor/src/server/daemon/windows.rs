@@ -30,8 +30,16 @@ pub fn daemonize() -> io::Result<()> {
 /// `ssh_url`, when set, is forwarded as `--ssh-url <URL>` so the
 /// spawned daemon boots into an SSH authority instead of the default
 /// `Authority::local()` (see `EditorServerConfig.startup_authority`).
+/// `locale`, when set, is forwarded as `--locale <L>` so the client's
+/// `--locale` reaches the daemon that renders the UI — the daemon has no
+/// other way to see a flag that was typed on the client's command line
+/// (#3149).
 /// Returns the PID of the spawned server.
-pub fn spawn_server_detached(session_name: Option<&str>, ssh_url: Option<&str>) -> io::Result<u32> {
+pub fn spawn_server_detached(
+    session_name: Option<&str>,
+    ssh_url: Option<&str>,
+    locale: Option<&str>,
+) -> io::Result<u32> {
     let exe = std::env::current_exe()?;
 
     let mut cmd = std::process::Command::new(&exe);
@@ -43,6 +51,10 @@ pub fn spawn_server_detached(session_name: Option<&str>, ssh_url: Option<&str>) 
 
     if let Some(url) = ssh_url {
         cmd.arg("--ssh-url").arg(url);
+    }
+
+    if let Some(locale) = locale {
+        cmd.arg("--locale").arg(locale);
     }
 
     cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);

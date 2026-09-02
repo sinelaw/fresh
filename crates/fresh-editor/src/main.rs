@@ -3054,6 +3054,15 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         config::Config::load_with_layers(&dir_context, &config_dir)
     };
     boot!("[server] Editor config loaded");
+
+    // Re-init i18n now that the config is known, mirroring `initialize_app`
+    // (CLI > config > env). The only init that has run so far is the
+    // pre-clap one, which consults argv and the environment but never the
+    // config file — so without this the daemon renders its whole UI in the
+    // environment's language and silently ignores `locale` from
+    // `config.json` (#3149).
+    fresh::i18n::init_with_config(args.locale.as_deref().or(editor_config.locale.as_option()));
+
     // Cell-level (TUI) animations would stream to the browser as bursts of
     // frame diffs, on top of the CSS-level motion the web frontend does for
     // itself — the same reason the standalone bridge forces them off. One
@@ -3201,6 +3210,7 @@ fn run_open_files_command(
     session_name: Option<&str>,
     files: &[String],
     wait: bool,
+    locale: Option<&str>,
 ) -> AnyhowResult<()> {
     use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{ClientControl, ServerControl};
@@ -3247,7 +3257,7 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref())?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale)?;
 
         // Wait for server to be ready
         loop {
@@ -3286,7 +3296,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[]);
+            return run_attach(session_name, &[], locale);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -4683,10 +4693,22 @@ fn read_script_source(from: &[&str]) -> AnyhowResult<String> {
 
 /// Attach to an existing daemon, starting one if needed
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
-    run_attach(args.session_name.as_deref(), &args.files)
+    run_attach(
+        args.session_name.as_deref(),
+        &args.files,
+        args.locale.as_deref(),
+    )
 }
 
-fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> {
+/// `locale` is the client's own `--locale`, forwarded to a daemon we
+/// *start* here so the flag survives the hop into the process that
+/// actually renders the UI. Attaching to an already-running daemon leaves
+/// its locale alone — the same way an existing daemon keeps its authority.
+fn run_attach(
+    session_name: Option<&str>,
+    files: &[String],
+    locale: Option<&str>,
+) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
         ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
@@ -4731,7 +4753,7 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref())?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale)?;
         true
     } else {
         false
@@ -5090,6 +5112,7 @@ fn run_if_subcommand(
             session_name.as_deref(),
             files,
             *wait,
+            args.locale.as_deref(),
         ));
     }
     if args.attach {
