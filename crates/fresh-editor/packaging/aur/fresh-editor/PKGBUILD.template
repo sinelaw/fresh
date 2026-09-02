@@ -62,7 +62,7 @@ EOF
     cp -r crates/fresh-editor/plugins "$pkgdir/usr/share/$pkgname/"
 
     # Keymaps
-    cp -r crates/fresh-editor/keymaps "$pkgdir/usr/share/$pkgname/"
+    cp -r crates/fresh-editor-core/keymaps "$pkgdir/usr/share/$pkgname/"
 
     # Desktop file
     install -Dm644 crates/fresh-editor/resources/fresh.desktop "$pkgdir/usr/share/applications/fresh.desktop"

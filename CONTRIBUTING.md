@@ -79,7 +79,7 @@ gives you function names but not `file:line`. Ask for it per-invocation
 instead of putting it back for everyone:
 
 ```sh
-CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p fresh-editor --test e2e_tests
+CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p fresh-editor --test all_tests
 CARGO_PROFILE_DEV_DEBUG=2 cargo build     # full DWARF
 ```
 
@@ -219,7 +219,7 @@ Two rules follow from the boundary:
 
 9. **Narrow recovery paths**: When you add a fallback or retry, trigger it on the *specific* error it was designed for, not on `Err(_)` or catch-all branches. Broad recovery silently hides correctness bugs.
 
-10. **Locale keys go in every locale**: i18n `t!()` keys - update *all* files under `crates/fresh-editor/locales/` with real translations. Don't commit English placeholders.
+10. **Locale keys go in every locale**: i18n `t!()` keys - update *all* files under `crates/fresh-editor-core/locales/` with real translations. Don't commit English placeholders.
 
 11. **Re-read through the owner, not a stale snapshot**: After changing state others cache (config, layout, cursor-derived values), it's usually safest to refresh it through the path that owns it before reading the effect. If a test can't see the change on screen, treat it as suspect.
 
