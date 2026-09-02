@@ -42,7 +42,12 @@ documentation = "https://docs.rs/fresh-editor"
 [workspace.dependencies]
 # Local crates
 fresh-core = { version = "0.4.10", path = "crates/fresh-core" }
-fresh-editor-core = { version = "0.4.10", path = "crates/fresh-editor-core" }
+# `default-features = false` has to be stated here, not just at the use site:
+# cargo ignores a member's `default-features = false` unless the workspace
+# entry sets it too (it warns, and calls it a future hard error). Without this,
+# `fresh-editor --no-default-features` still pulled in this crate's defaults,
+# and with them the whole bundled tree-sitter grammar set.
+fresh-editor-core = { version = "0.4.10", path = "crates/fresh-editor-core", default-features = false }
 fresh-gui = { version = "0.4.10", path = "crates/fresh-gui" }
 fresh-parser-js = { version = "0.4.10", path = "crates/fresh-parser-js" }
 fresh-languages = { version = "0.4.10", path = "crates/fresh-languages" }
