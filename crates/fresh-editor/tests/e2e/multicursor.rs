@@ -2211,3 +2211,50 @@ fn test_add_cursors_to_line_ends_keeps_existing_multi_cursors() {
     harness.render().unwrap();
     harness.assert_buffer_content("alpha!\nbeta!\ngamma!");
 }
+
+/// A cursor stepping over an auto-closed `)` must land past it even when
+/// another cursor, on an earlier line, has no `)` to step over and inserts
+/// one instead (#3166).
+///
+/// The skip-over's `MoveCursor` was emitted in pre-edit coordinates while
+/// the bulk applier took it as post-edit (the cursor owns no `Insert`), so
+/// the earlier cursor's inserted byte left the skipping cursor one short:
+/// `a(;)`. The reverse ordering — the skipping cursor on the earlier line —
+/// already worked and must keep working.
+#[test]
+fn test_type_over_auto_closed_paren_when_earlier_cursor_inserts() {
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+
+    for (fixture, expected) in [("xx\na()\n", "xx);\na();\n"), ("a()\nxx\n", "a();\nxx);\n")] {
+        let mut config = Config::default();
+        config.editor.auto_indent = true;
+        config.editor.auto_close = true;
+        let mut harness =
+            EditorTestHarness::create(100, 24, HarnessOptions::new().with_config(config)).unwrap();
+        harness
+            .load_buffer_from_text_named("mix.cpp", fixture)
+            .unwrap();
+
+        // End of line 1, then a second cursor on line 2 at the same column,
+        // which is between `(` and `)` on the `a()` line.
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+            .unwrap();
+        harness.assert_screen_contains("2 cursors");
+
+        // One cursor inserts the `)`, the other steps over its own.
+        harness.type_text(")").unwrap();
+        let after_paren = fixture.replacen("xx", "xx)", 1);
+        harness.assert_buffer_content(&after_paren);
+
+        // Which only shows once the next character lands: after the parens
+        // on both lines, not inside them on one.
+        harness.type_text(";").unwrap();
+        harness.assert_buffer_content(expected);
+        harness.assert_screen_contains("a();");
+        harness.assert_screen_contains("xx);");
+    }
+}
