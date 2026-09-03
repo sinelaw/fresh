@@ -917,7 +917,7 @@ fn shift_skip_over_moves(events: &mut [Event], skip_over_moves: &[usize]) {
         };
         let shift: isize = edits
             .iter()
-            .filter(|(id, position, _)| id != cursor_id && position < old_position)
+            .filter(|(id, position, _)| *id != *cursor_id && *position < *old_position)
             .map(|(_, _, delta)| delta)
             .sum();
         *new_position = (*new_position as isize + shift).max(0) as usize;
