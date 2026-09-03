@@ -2257,3 +2257,61 @@ fn test_type_over_auto_closed_paren_with_multiple_cursors() {
     harness.assert_buffer_content("a.open();\na.open();\n");
     harness.assert_screen_contains("a.open();");
 }
+
+/// The status bar's line number must follow the primary cursor when cursors
+/// are added or removed, not only when one is moved (#3167).
+///
+/// `primary_cursor_line_number` is a cache that `MoveCursor` refreshed but
+/// `AddCursor` / `RemoveCursor` and the multi-cursor bulk-edit path did not,
+/// so after `Ctrl+Alt+Down` the bar kept the old cursor's line next to the
+/// new cursor's column, and the first arrow key appeared to jump two lines.
+#[test]
+fn test_status_bar_line_follows_added_and_removed_cursors() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // ≥100 columns so the status bar has room for "N cursors".
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.load_buffer_from_text("abcd\nabcd\nabcd\n").unwrap();
+    harness.assert_screen_contains("Ln 1, Col 1");
+
+    // Each added cursor becomes the primary: the bar must report its line
+    // before any real cursor movement.
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
+    harness.assert_screen_contains("Ln 2, Col 1");
+
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("3 cursors");
+    harness.assert_screen_contains("Ln 3, Col 1");
+
+    // A real move still tracks.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 3, Col 2");
+
+    // A multi-cursor edit goes through the bulk path, which writes cursor
+    // positions directly: Enter at all three cursors puts the primary (the
+    // one that was on line 3) on line 6.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_buffer_content("abcd\n\nabcd\n\nabcd\n\n");
+    harness.assert_screen_contains("3 cursors");
+    harness.assert_screen_contains("Ln 6, Col 1");
+
+    // Collapsing back to one cursor hands the primary role to the original
+    // cursor, which is on line 2 now.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("cursors"),
+        "expected a single cursor after Esc, got:\n{screen}"
+    );
+    harness.assert_screen_contains("Ln 2, Col 1");
+}
