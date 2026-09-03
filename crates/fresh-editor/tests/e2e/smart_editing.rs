@@ -1620,3 +1620,56 @@ fn test_surround_selection_disabled() {
         "With auto_surround disabled, typing ( should replace selection and auto-close"
     );
 }
+
+// =============================================================================
+// Auto-Surround Independence Tests
+// =============================================================================
+
+/// Return the rendered row containing `needle`, or the whole screen on miss so
+/// a failure shows what was actually drawn.
+fn rendered_row_with(harness: &EditorTestHarness, needle: &str) -> String {
+    let screen = harness.screen_to_string();
+    match screen.lines().find(|line| line.contains(needle)) {
+        Some(row) => row.to_string(),
+        None => screen,
+    }
+}
+
+/// The two settings are independent: a language with `auto_close` off and
+/// `auto_surround` on still wraps a selection.
+#[test]
+fn test_surround_selection_independent_of_auto_close() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.md");
+    std::fs::write(&file_path, "code").unwrap();
+
+    let mut config = Config::default();
+    let markdown = config
+        .languages
+        .get_mut("markdown")
+        .expect("markdown language config");
+    markdown.auto_close = Some(false);
+    markdown.auto_surround = Some(true);
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.enable_shadow_validation();
+    harness.open_file(&file_path).unwrap();
+
+    // Select "code"
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    harness.type_text("`").unwrap();
+    harness.render().unwrap();
+
+    let row = rendered_row_with(&harness, "`code`");
+    assert!(
+        row.contains("`code`"),
+        "auto_surround should wrap the selection even with auto_close off; row was {row:?}"
+    );
+}

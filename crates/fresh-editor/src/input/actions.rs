@@ -1180,6 +1180,10 @@ fn insert_char_events(
 ) {
     let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
     let auto_close_char = get_auto_close_char(ch, auto_close, &state.language);
+    // Surrounding a selection is governed by `auto_surround` alone: a language
+    // (or user) that turns auto-close off — Markdown, say — still gets
+    // select-then-type-a-delimiter wrapping.
+    let surround_char = get_auto_close_char(ch, auto_surround, &state.language);
     let cursor_data = collect_insert_cursor_data(state, cursors);
 
     for data in cursor_data {
@@ -1212,7 +1216,7 @@ fn insert_char_events(
         // Surround selection: when text is selected and the typed character has a
         // matching close pair, wrap the selection instead of replacing it.
         if auto_surround {
-            if let Some(close_char) = auto_close_char {
+            if let Some(close_char) = surround_char {
                 if let (Some(range), Some(_)) = (&data.selection, &data.deleted_text) {
                     let sel_start = range.start;
                     let sel_end = range.end;
