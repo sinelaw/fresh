@@ -389,6 +389,13 @@ impl InputHistory {
 // path keeps working.
 pub use fresh_editor_core::data_dir::get_data_dir;
 
+/// Test-only hook that redirects [`get_data_dir`] on the calling thread;
+/// re-exported alongside it so integration tests (which cannot name
+/// `fresh_editor_core`) can reach it. See
+/// `fresh_editor_core::data_dir::set_data_dir_override`.
+#[doc(hidden)]
+pub use fresh_editor_core::data_dir::set_data_dir_override;
+
 /// Get the path for search history file
 pub fn get_search_history_path() -> std::io::Result<std::path::PathBuf> {
     Ok(get_data_dir()?.join("search_history.json"))
