@@ -56,6 +56,7 @@ fn centered(s: &str) -> String {
 ///                       — "LSP (n/a)",              state = OffDismissed
 ///     1. Progress       — detailed progress string, state = On
 ///     2. Error          — "LSP (error)",            state = Error
+///     2b. Unresponsive  — "LSP (stuck)",            state = Warning
 ///     3. Running        — "LSP (on)",               state = On
 ///     4. Configured-but-not-running (either auto_start or opt-in dormant)
 ///                       — "LSP (off)",              state = Off / OffDismissed
@@ -128,6 +129,16 @@ pub(crate) fn compose_lsp_status(
         .any(|((lang, _), status)| lang == current_language && *status == LspServerStatus::Error);
     if has_error {
         return (centered("LSP (error)"), LspIndicatorState::Error);
+    }
+
+    // 2b. A server that is alive but not answering: "ready" would be a
+    //     lie while every request expires after 30s (issue #2197), so the
+    //     indicator says so and takes a warning colour.
+    let has_unresponsive = lsp_server_statuses.iter().any(|((lang, _), status)| {
+        lang == current_language && *status == LspServerStatus::Unresponsive
+    });
+    if has_unresponsive {
+        return (centered("LSP (stuck)"), LspIndicatorState::Warning);
     }
 
     // 3. At least one running (non-Shutdown) server for this language.
@@ -252,6 +263,77 @@ mod tests {
         );
         assert!(text.contains("LSP (off)"));
         assert_eq!(state, LspIndicatorState::Off);
+    }
+
+    /// Issue #2197: a server that stopped answering requests must not keep
+    /// claiming to be on. Requests expire after 30s and are cancelled; the
+    /// status bar used to keep reading "ready" throughout.
+    #[test]
+    fn stuck_when_server_is_unresponsive() {
+        let (text, state) = compose_lsp_status(
+            "python",
+            None,
+            &HashMap::new(),
+            &status(
+                "python",
+                "pyright-langserver",
+                LspServerStatus::Unresponsive,
+            ),
+            &configured_for("python", "pyright-langserver"),
+            &HashSet::new(),
+            true,
+        );
+        assert!(text.contains("LSP (stuck)"), "got {text:?}");
+        assert_eq!(state, LspIndicatorState::Warning);
+    }
+
+    /// An outright error still wins over "not answering" — a dead server is
+    /// the more urgent of the two.
+    #[test]
+    fn error_outranks_unresponsive() {
+        let mut statuses = status(
+            "python",
+            "pyright-langserver",
+            LspServerStatus::Unresponsive,
+        );
+        statuses.insert(
+            ("python".to_string(), "ruff".to_string()),
+            LspServerStatus::Error,
+        );
+        let (text, state) = compose_lsp_status(
+            "python",
+            None,
+            &HashMap::new(),
+            &statuses,
+            &configured_for("python", "pyright-langserver"),
+            &HashSet::new(),
+            true,
+        );
+        assert!(text.contains("LSP (error)"), "got {text:?}");
+        assert_eq!(state, LspIndicatorState::Error);
+    }
+
+    /// The pill is a fixed width so nothing else on the status bar shifts
+    /// when the LSP state changes.
+    #[test]
+    fn stuck_pill_matches_the_indicator_width() {
+        let (text, _) = compose_lsp_status(
+            "python",
+            None,
+            &HashMap::new(),
+            &status(
+                "python",
+                "pyright-langserver",
+                LspServerStatus::Unresponsive,
+            ),
+            &configured_for("python", "pyright-langserver"),
+            &HashSet::new(),
+            true,
+        );
+        assert_eq!(
+            unicode_width::UnicodeWidthStr::width(text.as_str()),
+            INDICATOR_WIDTH,
+        );
     }
 
     #[test]

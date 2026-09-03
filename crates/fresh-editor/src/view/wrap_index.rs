@@ -123,14 +123,19 @@ impl IndexDecorations {
     ///
     /// * **Deletion** collapses the removed span onto its start — a position
     ///   inside it clamps to `start`, one after it moves back by `removed`.
-    /// * **Insertion** is *right gravity*: a position sitting exactly at the
-    ///   insertion point is pushed forward. Every decoration anchor in the
-    ///   editor is right-gravity, because that is all `MarkerList::create`
-    ///   makes. (It used to take a `left_affinity` flag that never reached
-    ///   the tree, and call sites labelled their markers by that flag rather
-    ///   than by what the tree did — which is how this was written backwards
-    ///   in the first place. The flag is gone; `create_left_gravity` is the
-    ///   real thing.)
+    /// * **Insertion** is *right gravity* by default: a position sitting
+    ///   exactly at the insertion point is pushed forward. That is what
+    ///   `MarkerList::create` does, and what every decoration anchor here is,
+    ///   with one exception: an inline hint carries its own
+    ///   [`MarkerGravity`](crate::view::virtual_text::MarkerGravity), because
+    ///   inlay hints ask for left-gravity markers so an edit at a hint's
+    ///   anchor cannot drag the hint off its line (issue #722). A left-gravity
+    ///   anchor stays where it is when text is inserted exactly at it. (This
+    ///   rule used to take a `left_affinity` flag that never reached the tree,
+    ///   and call sites labelled their markers by that flag rather than by
+    ///   what the tree did — which is how this was written backwards in the
+    ///   first place. The flag is gone; `create_left_gravity` is the real
+    ///   thing, and gravity now travels with the decoration.)
     ///
     /// Getting the insertion rule backwards is not a boundary nicety: typing
     /// one character immediately before a conceal left the snapshot's copy of
@@ -171,7 +176,18 @@ impl IndexDecorations {
             *p = shift(*p);
         }
         for h in &mut self.inline_hints {
-            h.anchor = shift(h.anchor);
+            // A left-gravity hint anchored exactly at the insertion point
+            // stays put, matching what the marker tree does to the live
+            // anchor; everything else follows the default right-gravity
+            // rule above.
+            h.anchor = if h.gravity == crate::view::virtual_text::MarkerGravity::Left
+                && removed == 0
+                && h.anchor == start
+            {
+                h.anchor
+            } else {
+                shift(h.anchor)
+            };
         }
         for (r, _) in &mut self.conceals {
             let s = shift(r.start);
@@ -1580,6 +1596,54 @@ fn absorb_finished(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The index keeps its own copy of the decoration anchors and shifts them
+    /// itself, so it has to model each anchor the way the marker tree does.
+    /// Inlay hints ask for left-gravity markers (issue #722); if the snapshot
+    /// kept assuming right gravity, an insertion at a hint's anchor would move
+    /// the index's copy onto the next line while the renderer drew it on this
+    /// one — the same wrong-until-the-server-answers window the fix closed,
+    /// just moved from the renderer into the coordinate service.
+    #[test]
+    fn inline_hint_anchors_shift_by_their_own_gravity() {
+        use crate::view::ui::split_rendering::transforms::InlineHint;
+        use crate::view::virtual_text::{MarkerGravity, VirtualTextPosition};
+
+        let hint = |anchor: usize, gravity: MarkerGravity| InlineHint {
+            anchor,
+            text: ": Duration".to_string(),
+            position: VirtualTextPosition::BeforeChar,
+            style: None,
+            gravity,
+        };
+
+        let mut decorations = IndexDecorations {
+            inline_hints: vec![hint(5, MarkerGravity::Left), hint(5, MarkerGravity::Right)],
+            ..Default::default()
+        };
+
+        // One byte inserted at exactly byte 5 — the anchor of both hints.
+        decorations.shift_for_edit(5, 0, 1);
+
+        assert_eq!(
+            decorations.inline_hints[0].anchor, 5,
+            "a left-gravity hint stays put, as its marker does",
+        );
+        assert_eq!(
+            decorations.inline_hints[1].anchor, 6,
+            "a right-gravity hint is pushed along, as its marker is",
+        );
+
+        // A deletion covering the anchor collapses both onto its start,
+        // gravity being an insertion-time rule only.
+        let mut decorations = IndexDecorations {
+            inline_hints: vec![hint(7, MarkerGravity::Left), hint(7, MarkerGravity::Right)],
+            ..Default::default()
+        };
+        decorations.shift_for_edit(5, 4, 0);
+        assert_eq!(decorations.inline_hints[0].anchor, 5);
+        assert_eq!(decorations.inline_hints[1].anchor, 5);
+    }
     use crate::model::filesystem::StdFileSystem;
     use crate::state::EditorState;
     use std::sync::Arc;

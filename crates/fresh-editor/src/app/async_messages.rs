@@ -1185,9 +1185,25 @@ impl Editor {
         // that language so the server can start providing diagnostics, etc.
         // without waiting for the next user edit.
         if status == LspServerStatus::Running {
-            let was_already_running = old_status
-                .as_ref()
-                .is_some_and(|s| matches!(s, LspServerStatus::Running));
+            // `Unresponsive` counts as already-running: the server never
+            // stopped, it just went quiet, so recovering from it must not
+            // re-`didOpen` every buffer.
+            let was_already_running = old_status.as_ref().is_some_and(|s| {
+                matches!(s, LspServerStatus::Running | LspServerStatus::Unresponsive)
+            });
+
+            // A server that is answering again must not have its old
+            // expiries explaining results it now produces correctly
+            // (issue #2197). Matched on the server as well as the language,
+            // because a universal server records its expiries under the
+            // label `"universal"` rather than under any language.
+            let recovered_language = language.clone();
+            let recovered_server = server_name_ref.clone();
+            self.active_window_mut()
+                .lsp_request_timeouts
+                .retain(|(lang, _), record| {
+                    lang != &recovered_language && record.server_name != recovered_server
+                });
             if !was_already_running {
                 let scope = self
                     .lsp()
@@ -1216,9 +1232,22 @@ impl Editor {
 
         // Handle server crash - trigger auto-restart
         if status == LspServerStatus::Error {
+            // `Unresponsive` is a live server that stopped answering, and it
+            // is the state most likely to *precede* a death — wedged, then
+            // OOM-killed or its stdout reader errors. Leaving it out would
+            // cost that server its auto-restart and leave its diagnostics on
+            // screen, which is exactly what used to happen when the same
+            // sequence passed through `Running`.
             let was_running = old_status
                 .as_ref()
-                .map(|s| matches!(s, LspServerStatus::Running | LspServerStatus::Initializing))
+                .map(|s| {
+                    matches!(
+                        s,
+                        LspServerStatus::Running
+                            | LspServerStatus::Initializing
+                            | LspServerStatus::Unresponsive
+                    )
+                })
                 .unwrap_or(false);
 
             if was_running {
@@ -1243,6 +1272,18 @@ impl Editor {
         // (and the status popup keeps showing "Indexing …") even
         // though the process is gone — that's the "popup still says
         // indexing after external kill" user report.
+        // The popup is a snapshot, so a server going quiet (or answering
+        // again) has to re-render it: otherwise an open popup keeps saying
+        // `(ready)` while the status bar reads `LSP (stuck)`, or keeps
+        // saying `(not responding)` after the server recovered.
+        if matches!(
+            status,
+            LspServerStatus::Unresponsive | LspServerStatus::Running
+        ) && old_status != Some(status)
+        {
+            self.refresh_lsp_status_popup_if_open();
+        }
+
         if matches!(status, LspServerStatus::Error | LspServerStatus::Shutdown) {
             let any_running_for_lang =
                 self.active_window()
@@ -1268,6 +1309,7 @@ impl Editor {
             LspServerStatus::Starting => "starting",
             LspServerStatus::Initializing => "initializing",
             LspServerStatus::Running => "running",
+            LspServerStatus::Unresponsive => "unresponsive",
             LspServerStatus::Error => "error",
             LspServerStatus::Shutdown => "shutdown",
         };
@@ -1276,6 +1318,7 @@ impl Editor {
                 LspServerStatus::Starting => "starting",
                 LspServerStatus::Initializing => "initializing",
                 LspServerStatus::Running => "running",
+                LspServerStatus::Unresponsive => "unresponsive",
                 LspServerStatus::Error => "error",
                 LspServerStatus::Shutdown => "shutdown",
             })

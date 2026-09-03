@@ -420,6 +420,7 @@ impl Editor {
             // start attempt would clearly fail.
             let (icon, label) = match status {
                 Some(LspServerStatus::Running) => ("●", "ready"),
+                Some(LspServerStatus::Unresponsive) => ("◍", "not responding"),
                 Some(LspServerStatus::Error) => ("✗", "error"),
                 Some(LspServerStatus::Starting) => ("◌", "starting"),
                 Some(LspServerStatus::Initializing) => ("◌", "initializing"),

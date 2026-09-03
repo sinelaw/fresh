@@ -4151,7 +4151,11 @@ impl Editor {
                                 level = WarningLevel::Error;
                                 break;
                             }
-                            LspServerStatus::Starting | LspServerStatus::Initializing
+                            LspServerStatus::Starting
+                            | LspServerStatus::Initializing
+                            // A server that stopped answering requests is
+                            // a warning, not a healthy "on" (issue #2197).
+                            | LspServerStatus::Unresponsive
                                 if level != WarningLevel::Error =>
                             {
                                 level = WarningLevel::Warning;
