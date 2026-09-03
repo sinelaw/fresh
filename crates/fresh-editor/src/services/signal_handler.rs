@@ -157,6 +157,10 @@ mod unix {
     /// so: a `pkill`, a container stop or a Ctrl+C gets a prompt exit and a
     /// short log, and a developer chasing a hang sets this and gets the
     /// full picture.
+    ///
+    /// Linux-only, like the sweep it gates: reading another thread's stack
+    /// needs `/proc/self/task` to enumerate them and `tgkill` to ask.
+    #[cfg(target_os = "linux")]
     const BACKTRACES_ENV: &str = "FRESH_SIGNAL_BACKTRACES";
 
     pub fn install() {
