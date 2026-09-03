@@ -2212,6 +2212,52 @@ fn test_add_cursors_to_line_ends_keeps_existing_multi_cursors() {
     harness.assert_buffer_content("alpha!\nbeta!\ngamma!");
 }
 
+/// Issue #3125: typing a closing delimiter over an auto-closed one is a
+/// *skip-over* — the cursor steps past the `)` that auto-close already put
+/// there rather than inserting a second one. That worked with a single cursor
+/// but was dropped entirely once a second cursor was live: the keystroke did
+/// nothing at all, leaving every cursor inside the parens, so the next
+/// character landed there too (`a.open(;)` instead of `a.open();`).
+#[test]
+fn test_type_over_auto_closed_paren_with_multiple_cursors() {
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+
+    // The harness disables auto-indent/auto-close unless it is handed a
+    // config, and this is a test about what auto-close does.
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    config.editor.auto_close = true;
+    let mut harness =
+        EditorTestHarness::create(100, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness
+        .load_buffer_from_text_named("mc.cpp", "a\na\n")
+        .unwrap();
+
+    // End of line 1, then a second cursor on line 2 (Ctrl+Alt+Down).
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    // Guard against the test passing vacuously with a single cursor.
+    harness.assert_screen_contains("2 cursors");
+
+    // `(` auto-closes at both cursors.
+    harness.type_text(".open(").unwrap();
+    harness.assert_buffer_content("a.open()\na.open()\n");
+
+    // The `)` is already there, so this must move both cursors past it and
+    // leave the text alone — not be ignored.
+    harness.type_text(")").unwrap();
+    harness.assert_buffer_content("a.open()\na.open()\n");
+
+    // Which is what puts the `;` after the parens rather than inside them.
+    harness.type_text(";").unwrap();
+    harness.assert_buffer_content("a.open();\na.open();\n");
+    harness.assert_screen_contains("a.open();");
+}
+
 /// A cursor stepping over an auto-closed `)` must land past it even when
 /// another cursor, on an earlier line, has no `)` to step over and inserts
 /// one instead (#3166).
@@ -2223,14 +2269,6 @@ fn test_add_cursors_to_line_ends_keeps_existing_multi_cursors() {
 /// already worked and must keep working.
 #[test]
 fn test_type_over_auto_closed_paren_when_earlier_cursor_inserts() {
-/// Issue #3125: typing a closing delimiter over an auto-closed one is a
-/// *skip-over* — the cursor steps past the `)` that auto-close already put
-/// there rather than inserting a second one. That worked with a single cursor
-/// but was dropped entirely once a second cursor was live: the keystroke did
-/// nothing at all, leaving every cursor inside the parens, so the next
-/// character landed there too (`a.open(;)` instead of `a.open();`).
-#[test]
-fn test_type_over_auto_closed_paren_with_multiple_cursors() {
     use crate::common::harness::HarnessOptions;
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config::Config;
@@ -2265,36 +2303,4 @@ fn test_type_over_auto_closed_paren_with_multiple_cursors() {
         harness.assert_screen_contains("a();");
         harness.assert_screen_contains("xx);");
     }
-    // The harness disables auto-indent/auto-close unless it is handed a
-    // config, and this is a test about what auto-close does.
-    let mut config = Config::default();
-    config.editor.auto_indent = true;
-    config.editor.auto_close = true;
-    let mut harness =
-        EditorTestHarness::create(100, 24, HarnessOptions::new().with_config(config)).unwrap();
-    harness
-        .load_buffer_from_text_named("mc.cpp", "a\na\n")
-        .unwrap();
-
-    // End of line 1, then a second cursor on line 2 (Ctrl+Alt+Down).
-    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
-        .unwrap();
-    // Guard against the test passing vacuously with a single cursor.
-    harness.assert_screen_contains("2 cursors");
-
-    // `(` auto-closes at both cursors.
-    harness.type_text(".open(").unwrap();
-    harness.assert_buffer_content("a.open()\na.open()\n");
-
-    // The `)` is already there, so this must move both cursors past it and
-    // leave the text alone — not be ignored.
-    harness.type_text(")").unwrap();
-    harness.assert_buffer_content("a.open()\na.open()\n");
-
-    // Which is what puts the `;` after the parens rather than inside them.
-    harness.type_text(";").unwrap();
-    harness.assert_buffer_content("a.open();\na.open();\n");
-    harness.assert_screen_contains("a.open();");
 }
