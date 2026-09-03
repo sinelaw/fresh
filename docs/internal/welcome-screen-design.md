@@ -461,7 +461,7 @@ underline stays an honest affordance.
     }
   },
   "editor": {
-    // what you fall back to once the welcome screen stands down
+    // the host's own empty state, which this plugin neither reads nor changes
     //   true  — the historical [No Name] scratch buffer
     //   false — the blank pane with the one-line hint
     "auto_create_empty_buffer_on_last_buffer_close": true
@@ -469,8 +469,11 @@ underline stays an honest affordance.
 }
 ```
 
-`showOnStartup` governs **both** empty-workspace paths — launch with nothing
-to restore, and closing the last buffer — because they are the same state.
+`showOnStartup` governs the one automatic path: launch. Not "launch with
+nothing to restore" — the page opens either way, as a tab behind whatever
+is already there, and it never comes to the front on its own. Emptying the
+workspace later is not a path at all; see "When it opens" below, so the two
+older empty states stay exactly as they were.
 The startup toggle on the page writes a plugin *global state* override that
 wins over the config field, so flipping it in the UI persists without
 rewriting `config.json`; the config field is what the Settings UI edits and
@@ -490,25 +493,69 @@ already load-bearing across the test suite.
 
 **When it opens.**
 
-- At startup, when the session restore produced no buffers.
-- After the last buffer is closed.
-- On demand: `Welcome` in the palette, or **Help ▸ Welcome**.
+- At startup, always — as a tab behind whatever is already open, whether
+  that is the host's untitled seed, a restored session or the file named on
+  the command line. Never in the foreground.
+- On demand: `Welcome` in the palette, or **Help ▸ Welcome**. This is the
+  one path that brings it to the front.
 
-**When it gets out of the way.** This is the ruling that decides whether the
-screen is a good citizen or a nuisance:
+**One concern.** The plugin decides one thing: open at startup, or don't.
+It does not count the other buffers, does not ask what the host's `[No Name]`
+seed means, does not read `auto_create_empty_buffer_on_last_buffer_close`,
+and closes nothing but its own buffer when the reader asks. Every earlier
+revision took on one more of those questions and got it wrong in a new way —
+the seed reaped unconditionally, then only under one setting; the page hidden
+whenever anything was open; the page deleted on the reader's first file open
+— and each answer needed state (`engaged`, `shown`, a structural test for
+"seed") that the next answer had to be reconciled with. The reader's own
+buffers are the host's and the reader's; a welcome tab is a tab, and the
+reader closes it.
 
-> A welcome buffer that was **auto-opened and never interacted with** —
-> never scrolled, never focused, no widget touched — closes itself when a
-> real file opens. One the user **engaged with** stays open until they close
-> it.
+**It never takes the view and gives it back.** A background open is a
+`background: true` on `createVirtualBuffer`, not an open followed by a switch
+back. Creation used to make the new buffer active unconditionally, so the
+only way to leave a restored session alone was to switch away afterwards —
+and that is two visible switches: the tab bar came up without the page, the
+page took the pane, the file returned. Worse, the panel composed its layout
+during that flicker and kept it. The host now gates the one
+`set_active_buffer` call on the flag, so the page is added to the tab bar
+and the current buffer is left alone.
 
-An ambient screen you ignored was ambient; a document you started reading is
-yours. This also means `fresh src/main.rs` never leaves a Welcome tab behind,
-without needing the Dashboard's blunt "close on any file open".
+**Startup means startup, not "startup that found an empty workspace".** The
+page used to ask whether anything else was open and give up if anything was,
+so restoring a session — or plain `fresh note.txt` — meant never seeing it
+again: the only way back was to close every buffer and relaunch, which is
+not a thing anyone does on purpose. Opening is unconditional now.
 
-**Closing it never reopens it.** Closing the last tab when the welcome buffer
-was the thing you just closed leaves the plain placeholder for the rest of the
-session. There is no loop, and no way to get trapped.
+**No lit cursor row.** The page passes `highlightCurrentLine: false` to
+`createVirtualBuffer`. The caret's row means nothing on a page laid out by
+widgets, and a highlighted band across the centred wordmark read as a
+selection. The option is new and general: any panel whose rows are not lines
+of a document can use it.
+
+**Closing buffers never opens it.** It is a *startup* surface, not an
+empty-workspace surface. It used to take the second path too, on the
+reasoning that "launched with nothing" and "left with nothing" are the same
+state. They are not: startup is the one moment the reader has not just told
+us what they want, and every other emptying of the workspace is a close they
+asked for. Reopening the page there read as the editor undoing that close,
+and left no way to say "close everything" — you closed the last file and got
+a full-page document back. The `buffer_closed` handler now does nothing but
+drop this plugin's handle on its own buffer when that buffer is the one that
+went away.
+
+**Opening files never closes it.** There was a "step aside" rule: an
+auto-opened page nobody had touched closed itself when a real file opened.
+It was written for a page occupying the pane, and once the page became a
+background tab it needed a second flag to avoid deleting a tab the reader had
+never seen, and a third rule so that summoning it by name counted as
+touching it. All of that is gone. `fresh src/main.rs` leaves a Welcome tab
+behind; so does turning to the tab and then opening a file. A tab the reader
+does not want is one `Ctrl+W` away, which is what tabs are for.
+
+**Closing it never reopens it.** Closing the welcome buffer leaves whichever
+empty state the core settings choose. There is no loop, and no way to get
+trapped.
 
 **The startup toggle.** `[✓] Show this screen on startup` sits on its own
 line directly under the chips, at the head of the first viewport. A control
@@ -660,9 +707,7 @@ Eleven things the wireframes did not know:
    Ctrl-/Alt-modified keys so a focused text field can never be hijacked by
    Open or Save. That is the right default, and it means the accelerators this
    page promises have to be named — `FORWARDED` lists them and each one
-   forwards to the real action, so a rebound key keeps working. Notably they
-   do *not* mark the page engaged: reaching past it for the palette is the
-   ambient case.
+   forwards to the real action, so a rebound key keeps working.
 
 6. **Tab moves widget focus, but the host only scrolls the pane for a focused
    *text* widget.** A focused button further down a long document was
@@ -675,13 +720,13 @@ Eleven things the wireframes did not know:
    are the theme names.
 
 8. **Closing the page reopened it.** `closeBuffer` fires `buffer_closed`,
-   which — with no other buffer left — is exactly the condition the ambient
-   open path watches for. Escape, the tab's `×` and `Ctrl+W` were all
-   unclosable. A `dismissed` flag now records that the *reader* closed it and
-   the ambient paths stay quiet for the session; the `Welcome` command clears
-   it. Stepping aside for a file deliberately does not set it — that is the
-   page being polite, not the reader dismissing it. §8's "closing it never
-   reopens it" was a design rule; it needed code.
+   which — with no other buffer left — was exactly the condition the ambient
+   open path watched for. Escape, the tab's `×` and `Ctrl+W` were all
+   unclosable, and a `dismissed` flag was added to hold the ambient path off
+   for as long as the workspace stayed empty. The flag was a patch on the
+   ambient path, and the ambient path is now gone (§8, "closing buffers never
+   opens it"), so both are: nothing reopens the page but startup and the
+   `Welcome` command.
 
 9. **A `List` inside a `labeledSection` cannot reach the section's right
    border.** Its items are emitted at their natural width, so every finder
@@ -807,8 +852,10 @@ Eleven things the wireframes did not know:
 25. **The empty-workspace screen has to mean empty.** The ambient-open
     condition asked whether any *file* buffer was open, so closing the
     last text buffer with a terminal or an agent still running popped the
-    page up over a workspace that was plainly in use. It now counts every
-    buffer except this page and the host's own untitled seed.
+    page up over a workspace that was plainly in use. It was fixed to count
+    every buffer except this page and the host's own untitled seed. Both
+    the ambient path and the counting are gone now (§8): the page opens
+    at startup as a background tab and asks nothing about the workspace.
 
 26. **`hoverStyle` had no sibling.** A bare button is just its label, so
     the only way to mark a word as clickable was to spend a colour on
@@ -866,14 +913,91 @@ Eleven things the wireframes did not know:
     dropped from the Tab cycle can never be what focus is on, so it must
     not look like it.
 
-31. **"I closed it" answers one question, not the session.** The
-    dismissal flag was set for good, so closing the page once meant it
-    never returned however many times the workspace emptied afterwards —
-    which reads exactly like a screen that appears at random. It is
-    cleared the moment anything opens: the next emptying is a new
-    question. The flag still does the job it was added for, which is to
-    stop the `buffer_closed` event fired by the close itself from
-    undoing the close.
+31. **"I closed it" answers one question, not the session.** The dismissal
+    flag was set for good, so closing the page once meant it never returned
+    however many times the workspace emptied afterwards — which reads
+    exactly like a screen that appears at random. Scoping it to a single
+    emptying fixed that symptom and kept the cause: a page that comes back
+    when you close things. Dropping the reopen-on-empty behaviour outright
+    (§8) retired the flag with it — there is no longer a question for "I
+    closed it" to answer.
+
+32. **A background tab was laid out to its neighbour's width.** A page
+    opened behind a file painted at a measure its pane could not hold: the
+    wordmark wrapped mid-glyph, the doors broke across two rows, every
+    centred row sat far right. `widget_panel_width` sizes a panel from
+    `compose_width` — correctly, and its own comment says why, measured on
+    this page — but it read `vs.compose_width`, and `SplitViewState` derefs
+    to whichever buffer is *active* in that split. So the panel was sized
+    from the neighbouring tab's answer (`None`, hence the whole split)
+    whenever it was not the one on screen, and nothing repaints a
+    background tab afterwards, so it stayed wrong until a resize. It now
+    reads `vs.buffer_state(buffer_id).compose_width` — this buffer's own.
+    The pane width beside it is a property of the split and still comes
+    through the deref.
+
+    This was worth chasing to the host rather than papering over. The
+    plugin-side workarounds all failed, each for the same reason: a
+    re-render, a panel remount and a repaint armed on `buffer_activated`
+    read the same wrong width, and `viewport_changed` never fires for this
+    buffer at all. Opening in the foreground and handing the pane back a
+    tick later did work — on Linux and macOS, while Windows CI, where a
+    later repaint landed after the hand-back, showed the bug unchanged.
+    A fix that depends on which repaint wins is not a fix.
+
+33. **A background tab hears nothing about geometry.** `viewport_changed`
+    is fired per *split*, against a `previous_viewports` tuple read through
+    `SplitViewState`'s deref — i.e. the active buffer's. A page sitting
+    behind a file is told nothing: not a resize, and not the switch that
+    finally shows it, because the split's tuple after the switch is the
+    same pane it already was. So a page created at 140 columns and brought
+    forward after the terminal shrank to 70 kept a `composeWidth` hint
+    describing a terminal that no longer existed.
+
+    The page now catches up when it comes to the front: `buffer_activated`
+    schedules a repaint one tick later — `getViewport()` at the moment of
+    activation still reports the viewport this buffer had when it was last
+    on screen, and only the following frame corrects it — which clears
+    `paneWidth`, recomputes `layoutKey` and repaints if the shape moved.
+    The `await editor.flush()` between the hint and the repaint is load
+    bearing: `widget_panel_width` reads `compose_width` while it processes
+    the update, so a repaint issued in the same breath as the hint is laid
+    out against the previous one.
+
+34. **The tab-switch slide froze the pane at its first frame, and the
+    screen kept that frame after the slide.** Even with 33 fixed, the
+    corrected page did not appear until the reader's next keystroke, and
+    for a while the note here blamed an idle editor drawing no frame, and
+    then a stale row index. Probing one frame end to end settled it: the
+    buffer held the new text, the tokeniser read it, the content pass
+    painted it (toggle at column 36) — and `animations.apply_all`, a few
+    lines later in `Editor::render`, painted the old cells (57) back over
+    the pane.
+
+    `Ctrl+PageDown` starts a 260ms `SlideIn` over the pane. Two things it
+    did were wrong, both general, neither about this page:
+
+    - It took its "after" snapshot **once, on its first apply** — the first
+      frame after the switch, when the pane still held the stale layout —
+      and shifted that for the slide's whole duration. The plugin's catch-up
+      (33) lands ~100ms in and was painted every frame, and covered every
+      frame. It now retakes the snapshot from the freshly painted frame on
+      every apply: the content pass runs before the runner, so `buf` is the
+      pane as it is *now*, which is the only thing a slide may show shifted.
+      A snapshot is 69×37 cells; per frame for 260ms that is nothing.
+    - When the last effect finished, the frame it finished on was its own
+      composite, the runner retired it, `is_active()` went false, and no one
+      asked for another frame. The runner now owes one settle frame after an
+      effect retires (`take_settle_frame`), and the frame loop treats it as
+      "animations active" for that one iteration. This is what "a repaint
+      with no input behind it" actually was: not a missing frame, but a
+      frame painted from a snapshot, followed by no frame at all.
+
+    A wrong turn worth recording: `set_virtual_buffer_content` skipping
+    `wrap_indices.damage_all()` looked like this bug and is not — the row
+    index is rebuilt on the version bump regardless. The e2e test written
+    for it passed with the change reverted, which is how the theory was
+    caught; it is not in this PR.
 
 ### Still aspirational
 
@@ -899,5 +1023,5 @@ and jump keys, `/` to the finder, live fuzzy-find over `git ls-files` and
 by click (status bar confirms), the startup toggle flipping and **persisting
 across a restart** (the screen then stays away, and the `Welcome` command
 brings it back), `Ctrl+P` opening the palette from the page, the `[No Name]`
-seed being retired on open, `fresh notes.txt` never leaving a Welcome tab
-behind, and both responsive breakpoints.
+seed keeping the pane with `Welcome ×` beside it, `fresh notes.txt` leaving a
+Welcome tab behind `notes.txt`, and both responsive breakpoints.

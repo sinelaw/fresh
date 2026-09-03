@@ -6182,7 +6182,12 @@ where
         // spinner is wall-clock-derived (see
         // `lsp_status::compose_lsp_status`) and needs a periodic
         // re-render to advance even when no other event fires.
-        let animations_active = editor.active_window().animations.is_active();
+        // `take_settle_frame` is the frame owed after the last effect retires:
+        // that frame was the effect's own composite (a slide's final position,
+        // a fade's last step), and with `is_active` already false nothing else
+        // would ask for the frame that paints the true content underneath.
+        let animations_active = editor.active_window().animations.is_active()
+            || editor.active_window_mut().animations.take_settle_frame();
         let lsp_progress_active = editor.active_window().has_active_lsp_progress();
         // Same for a wheel gesture still walking its lines: each frame
         // hands over the next one.
