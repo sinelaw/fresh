@@ -388,20 +388,19 @@ impl Editor {
 
         let ch = bytes[0] as char;
 
-        // All supported bracket pairs
-        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
-
-        let bracket_info = match ch {
-            '(' => Some(('(', ')', true)),
-            ')' => Some(('(', ')', false)),
-            '[' => Some(('[', ']', true)),
-            ']' => Some(('[', ']', false)),
-            '{' => Some(('{', '}', true)),
-            '}' => Some(('{', '}', false)),
-            '<' => Some(('<', '>', true)),
-            '>' => Some(('<', '>', false)),
-            _ => None,
-        };
+        // The same pair table the highlighter uses, and the same language
+        // question: `<` and `>` are brackets only where they are delimiters
+        // rather than comparison operators (issue #3090). Asking it here too
+        // is what keeps the jump and the colouring telling one story — with a
+        // table of its own, this command still walked into the `<` of
+        // `if (a < b)` and called it the enclosing bracket.
+        let angle_brackets = state
+            .highlighter
+            .language()
+            .is_some_and(|language| language.angle_brackets_are_delimiters());
+        let bracket_pairs = crate::view::bracket_highlight_overlay::bracket_pairs(angle_brackets);
+        let bracket_info =
+            crate::view::bracket_highlight_overlay::get_bracket_pair(ch, angle_brackets);
 
         // Limit searches to avoid O(n) scans on huge files.
         use crate::view::bracket_highlight_overlay::MAX_BRACKET_SEARCH_BYTES;
@@ -414,7 +413,7 @@ impl Editor {
             } else {
                 // Search backward from cursor to find enclosing opening bracket.
                 // Track depth per bracket type to handle nesting correctly.
-                let mut depths: Vec<i32> = vec![0; BRACKET_PAIRS.len()];
+                let mut depths: Vec<i32> = vec![0; bracket_pairs.len()];
                 let mut found = None;
                 let search_limit = pos.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
                 let mut search_pos = pos.saturating_sub(1);
@@ -422,7 +421,7 @@ impl Editor {
                     let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
                     if !b.is_empty() {
                         let c = b[0] as char;
-                        for (i, &(open, close)) in BRACKET_PAIRS.iter().enumerate() {
+                        for (i, &(open, close)) in bracket_pairs.iter().enumerate() {
                             if c == close {
                                 depths[i] += 1;
                             } else if c == open {

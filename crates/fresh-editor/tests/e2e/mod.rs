@@ -110,6 +110,7 @@ pub mod issue_2797_selection_visibility;
 #[cfg(feature = "plugins")]
 pub mod issue_2810_session_escape_flush;
 pub mod issue_2843_single_line_viewport;
+pub mod issue_2859_explorer_scrollbar;
 pub mod issue_2876_prompt_input_hscroll;
 pub mod issue_2878_split_cursor_independence;
 pub mod issue_2893_replace_all_many_matches;
@@ -120,6 +121,10 @@ pub mod issue_3006_drag_beyond_text_area;
 pub mod issue_3006_shift_select_at_buffer_edges;
 pub mod issue_3021_diff_hunk_header_bg;
 pub mod issue_3031_stale_fold_hides_block_header;
+pub mod issue_3077_tab_padding_markers;
+pub mod issue_3079_guide_and_tab_marker;
+pub mod issue_3090_angle_brackets_not_rainbow;
+pub mod issue_3148_block_selection_tabs;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;

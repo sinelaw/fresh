@@ -627,6 +627,7 @@ mod tests {
         let mut s = Section::explorer(Explorer {
             body: Body::Rows(vec![row_of(0, "src"), row_of(1, "lib")]),
             caret_row: None,
+            scroll: None,
         });
         s.title = " Files ".to_string();
         s.rows = rows;

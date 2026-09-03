@@ -104,12 +104,41 @@ impl Default for Body {
     }
 }
 
+/// Where the tree's window sits, when the tree is taller than the panel.
+///
+/// The three numbers the bar is drawn from, in tree rows. They are the
+/// model's — `FileTreeView` windows its own rows and owns the offset, so the
+/// panel is not a `viewport` and the bar is not the framework's (see the
+/// module docs: *what it does not measure*). Present only when the tree
+/// overflows, which is the whole of "should there be a bar".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Scroll {
+    /// First visible row.
+    pub offset: usize,
+    /// The largest offset the tree will scroll to.
+    ///
+    /// **Not `total - rows`.** `FileTreeView::max_scroll_offset` pins the
+    /// first ordinary row's ancestors as sticky context, and those rows eat
+    /// part of the window — so the last offset is *larger* than the naive
+    /// ceiling by however many ancestors are pinned, and the wheel is clamped
+    /// to it. A bar that assumed the naive ceiling parked its thumb at the
+    /// bottom of the track while the list was still moving.
+    pub max_offset: usize,
+    /// Rows in the whole tree.
+    pub total: usize,
+    /// Rows the panel shows at once — the track's height, in cells.
+    pub rows: usize,
+}
+
 /// The explorer's content: what the sidebar's first section holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Explorer {
     pub body: Body,
     /// The viewport row the caret sits on, when the panel owns the keyboard.
     pub caret_row: Option<usize>,
+    /// The tree's scroll state when it overflows the panel; `None` when the
+    /// whole tree fits and no bar is drawn (issue #2859).
+    pub scroll: Option<Scroll>,
 }
 
 impl Explorer {
@@ -149,14 +178,63 @@ pub fn rows(e: &Explorer) -> Node<UiMsg> {
 }
 
 fn build_rows(e: &Explorer) -> Node<UiMsg> {
-    match &e.body {
+    let body = match &e.body {
         Body::Loading(text_) => col().child(
             text(text_.clone())
                 .theme(pair("editor.line_number_fg", "editor.bg"))
                 .h(Sizing::Cells(1)),
         ),
         Body::Rows(rows) => col().children(rows.iter().map(|r| node_row(e, r))),
+    };
+    match e.scroll {
+        // The bar takes a column of its own rather than floating over the
+        // rows: a row's trailing status slot is pushed flush to the right
+        // edge by layout, so an overlay bar would sit exactly on top of the
+        // git markers. One column narrower is what a gutter costs, and the
+        // rows are measured at the narrower width by the same layout that
+        // answers a press — nothing re-derives a column.
+        Some(scroll) => row().children([body.flex(1), scrollbar(scroll)]),
+        None => body,
     }
+}
+
+/// The bar for an overflowing tree: one cell per visible row, the thumb's
+/// cells in the thumb colour and the rest in the track's.
+///
+/// **A bar is two background colours, not two glyphs** — the rule the shell's
+/// own `Draw::Scrollbar` follows, because box-drawing glyphs leave gaps
+/// between rows in some terminals, and every test that finds a scrollbar on
+/// screen finds it by that background.
+///
+/// The geometry is [`ScrollbarState::thumb_geometry`], the same one the
+/// settings panel's bar and the editor's use, so a thumb of a given size sits
+/// where the rest of the editor would put it.
+fn scrollbar(scroll: Scroll) -> Node<UiMsg> {
+    use crate::view::ui::scrollbar::ScrollbarState;
+    // `ScrollbarState`'s ceiling is `total_items - visible_items`, so the
+    // `visible_items` it is given has to be the one that makes that ceiling
+    // the model's own `max_offset` — otherwise the thumb reaches the track's
+    // end before the tree reaches its last row. With ancestors pinned that is
+    // fewer rows than the panel shows, and a slightly shorter thumb is the
+    // honest answer: fewer of the tree's rows are reachable as ordinary ones.
+    let visible = scroll.total.saturating_sub(scroll.max_offset).max(1);
+    let state = ScrollbarState::new(scroll.total, visible, scroll.offset.min(scroll.max_offset));
+    let (thumb_top, thumb_len) = state.thumb_geometry(scroll.rows);
+    let thumb = pair("ui.scrollbar_thumb_fg", "ui.scrollbar_thumb_fg");
+    let track = pair("ui.scrollbar_track_fg", "ui.scrollbar_track_fg");
+    col()
+        .w(Sizing::Cells(1))
+        // The bar is drawn, not pressed: a press here is the panel's dead
+        // space, which the union box answers by focusing the explorer.
+        .pointer_mode(fresh_ui::PointerMode::Transparent)
+        .children((0..scroll.rows).map(|i| {
+            let on_thumb = i >= thumb_top && i < thumb_top + thumb_len;
+            row().h(Sizing::Cells(1)).theme(if on_thumb {
+                thumb.clone()
+            } else {
+                track.clone()
+            })
+        }))
 }
 
 /// **The union box.** A right-press anywhere on the panel opens the menu,
@@ -443,6 +521,7 @@ mod tests {
             Explorer {
                 body: Body::Rows(rows),
                 caret_row: None,
+                scroll: None,
             },
         );
         s.sections[0].title = " Files ".to_string();
@@ -524,6 +603,133 @@ mod tests {
             Size::new(w, h),
         );
         ui
+    }
+
+    /// A panel whose tree is taller than its body, scrolled to `offset`.
+    fn scrolled_panel(total: usize, rows_shown: usize, offset: usize, cols: u16) -> Sidebar {
+        scrolled_panel_with_max(total, rows_shown, offset, total - rows_shown, cols)
+    }
+
+    /// The same, for a tree whose pinned ancestors push the model's last
+    /// offset past `total - rows`.
+    fn scrolled_panel_with_max(
+        total: usize,
+        rows_shown: usize,
+        offset: usize,
+        max_offset: usize,
+        cols: u16,
+    ) -> Sidebar {
+        // The rows the model would have windowed: `rows_shown` of them.
+        let rows: Vec<Row> = (0..rows_shown)
+            .map(|i| row_of(i, &format!("f{}", offset + i), None))
+            .collect();
+        let mut s = Sidebar::explorer_only(
+            cols,
+            true,
+            Explorer {
+                body: Body::Rows(rows),
+                caret_row: None,
+                scroll: Some(Scroll {
+                    offset,
+                    max_offset,
+                    total,
+                    rows: rows_shown,
+                }),
+            },
+        );
+        s.sections[0].title = " Files ".to_string();
+        s
+    }
+
+    /// The background of every cell in the panel's last inner column — the
+    /// bar's lane — from the first body row down.
+    fn bar_column(e: Sidebar, w: u16, h: u16) -> Vec<ratatui::style::Color> {
+        let ui = laid_out(e, w, h);
+        let spec = ui.spec().clone();
+        let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+        let palette = |k: &fresh_ui::ThemeKey| super::super::fold::test_palette::of(k.as_str());
+        fold_native(&spec, &mut buf, &palette, Band::Background);
+        // Column 0 is the left wall and the last column is the right one, so
+        // the bar's lane is the one before it. Rows: the title is row 0 and
+        // the bottom border the last.
+        let x = w - 2;
+        (1..h - 1).map(|y| buf[(x, y)].bg).collect()
+    }
+
+    /// What a thumb cell and a track cell actually carry, painted.
+    fn bar_colours() -> (ratatui::style::Color, ratatui::style::Color) {
+        let of = |key: &str| {
+            super::super::fold::test_palette::painted(&pair(key, key))
+                .bg
+                .expect("a bar colour")
+        };
+        (of("ui.scrollbar_thumb_fg"), of("ui.scrollbar_track_fg"))
+    }
+
+    /// Issue #2859: a tree taller than the panel draws a bar, and the thumb
+    /// is where the window is.
+    #[test]
+    fn an_overflowing_tree_draws_a_scrollbar() {
+        let (thumb, track) = bar_colours();
+        assert_ne!(thumb, track, "the two bar colours must differ");
+
+        // 8 rows of body (10 tall, less title and bottom border) onto 40.
+        let got = bar_column(scrolled_panel(40, 8, 0, 20), 20, 10);
+        assert_eq!(got.len(), 8);
+        assert!(
+            got.contains(&thumb) && got.contains(&track),
+            "an overflowing tree draws a thumb on a track, got {got:?}"
+        );
+        let first_thumb = got.iter().position(|bg| *bg == thumb);
+        assert_eq!(first_thumb, Some(0), "unscrolled, the thumb is at the top");
+
+        // Scrolled to the end, the thumb sits flush against the bottom.
+        let got = bar_column(scrolled_panel(40, 8, 32, 20), 20, 10);
+        assert_eq!(
+            got.last().copied(),
+            Some(thumb),
+            "fully scrolled, the thumb reaches the track's end, got {got:?}"
+        );
+    }
+
+    /// Issue #2859, follow-up: the thumb reaches the end of the track exactly
+    /// when the *model* is at its last offset — which pinned sticky ancestors
+    /// push past `total - rows`. Assuming the naive ceiling parked the thumb
+    /// at the bottom while the wheel could still move the list.
+    #[test]
+    fn the_thumb_reaches_the_end_only_at_the_models_last_offset() {
+        let (thumb, _track) = bar_colours();
+        // 8 body rows onto 40, with two ancestors pinned: the model scrolls to
+        // 34, not to 32.
+        let max_offset = 34;
+        let at_naive_end = bar_column(scrolled_panel_with_max(40, 8, 32, max_offset, 20), 20, 10);
+        assert_ne!(
+            at_naive_end.last().copied(),
+            Some(thumb),
+            "at offset 32 the tree still has rows below, so the thumb is not at the end: {at_naive_end:?}"
+        );
+
+        let at_real_end = bar_column(
+            scrolled_panel_with_max(40, 8, max_offset, max_offset, 20),
+            20,
+            10,
+        );
+        assert_eq!(
+            at_real_end.last().copied(),
+            Some(thumb),
+            "at the model's last offset the thumb is flush with the track's end: {at_real_end:?}"
+        );
+    }
+
+    /// And a tree that fits draws none: no bar cells at all, in either colour.
+    #[test]
+    fn a_tree_that_fits_draws_no_scrollbar() {
+        let (thumb, track) = bar_colours();
+        let got = bar_column(panel_of(vec![row_of(0, "a.rs", None)], 20), 20, 10);
+        assert!(
+            got.iter().all(|bg| *bg != thumb && *bg != track),
+            "no bar when the whole tree fits, got {got:?}"
+        );
     }
 
     fn lines(e: Sidebar, w: u16, h: u16) -> Vec<String> {
