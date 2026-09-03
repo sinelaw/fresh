@@ -4813,9 +4813,11 @@ fn test_issue3126_reopening_review_diff_does_not_stack_a_second_panel() {
 fn test_issue3104_diff_body_carries_syntax_colours() {
     init_tracing_from_env();
     let (repo, calc) = repo_with_committed_python();
+    // `add` is edited on one token so the diff has a changed pair with a
+    // word-level highlight; `sub` is new.
     fs::write(
         &calc,
-        "def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b\n",
+        "def add(a, b):\n    return a * b\n\ndef sub(a, b):\n    return a - b\n",
     )
     .unwrap();
 
@@ -4859,6 +4861,20 @@ fn test_issue3104_diff_body_carries_syntax_colours() {
     // A context row (unchanged line) is tokenised too — #3104 called those
     // out separately.
     wait_for_fg(&mut harness, "def add", 0, keyword);
+
+    // On a changed row the word-level diff still wins: the `*` that
+    // replaced `+` carries the word-diff foreground, not the operator
+    // colour, while the `return` beside it is a keyword. What changed on
+    // the row stays its strongest signal.
+    let word_diff = harness.editor().theme().diagnostic_info_fg;
+    wait_for_fg(&mut harness, "return a * b", 0, keyword);
+    let (x, y) = harness.find_text_on_screen("return a * b").unwrap();
+    assert_eq!(harness.get_cell(x + 9, y).as_deref(), Some("*"));
+    assert_eq!(
+        harness.get_cell_style(x + 9, y).and_then(|s| s.fg),
+        Some(word_diff),
+        "the changed token should keep the word-diff colour over the syntax colour"
+    );
 }
 
 /// A construct spanning several rows of a hunk — here a block comment —
