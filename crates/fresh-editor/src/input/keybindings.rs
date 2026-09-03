@@ -1689,6 +1689,276 @@ impl BindingSource {
 /// not parse, so a rejected binding leaves a trace in the log instead of dying
 /// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
 /// anywhere).
+/// A key a config entry can name in words, and the spellings it answers to.
+///
+/// The tables below plus [`fresh_input_parser::keypad::KEYPAD_KEYS`] are the
+/// whole accepted vocabulary, and they are data rather than match arms for two
+/// reasons: `parse_key` reads them, and so does the generator that writes the
+/// table in `docs/configuration/keyboard.md`. A name that is not documented is
+/// a name nobody can find.
+pub struct KeyName {
+    /// Accepted spellings, lowercase. The first is canonical — the one the
+    /// generated documentation lists and the one to prefer in examples.
+    pub names: &'static [&'static str],
+    /// What the name resolves to.
+    pub code: KeyCode,
+}
+
+/// Keys that have a name of their own — neither a character nor the keypad.
+///
+/// Every spelling [`crate::app::keybinding_editor::helpers::key_code_to_config_name`]
+/// can write must appear here, or the editor would record a binding that its
+/// own loader then rejects; `config_names_round_trip` holds that.
+pub const NAMED_KEYS: &[KeyName] = &[
+    KeyName {
+        names: &["enter"],
+        code: KeyCode::Enter,
+    },
+    KeyName {
+        names: &["backspace"],
+        code: KeyCode::Backspace,
+    },
+    KeyName {
+        names: &["delete", "del"],
+        code: KeyCode::Delete,
+    },
+    KeyName {
+        names: &["insert", "ins"],
+        code: KeyCode::Insert,
+    },
+    KeyName {
+        names: &["tab"],
+        code: KeyCode::Tab,
+    },
+    KeyName {
+        names: &["backtab"],
+        code: KeyCode::BackTab,
+    },
+    KeyName {
+        names: &["escape", "esc"],
+        code: KeyCode::Esc,
+    },
+    KeyName {
+        names: &["space"],
+        code: KeyCode::Char(' '),
+    },
+    KeyName {
+        names: &["left"],
+        code: KeyCode::Left,
+    },
+    KeyName {
+        names: &["right"],
+        code: KeyCode::Right,
+    },
+    KeyName {
+        names: &["up"],
+        code: KeyCode::Up,
+    },
+    KeyName {
+        names: &["down"],
+        code: KeyCode::Down,
+    },
+    KeyName {
+        names: &["home"],
+        code: KeyCode::Home,
+    },
+    KeyName {
+        names: &["end"],
+        code: KeyCode::End,
+    },
+    KeyName {
+        names: &["pageup"],
+        code: KeyCode::PageUp,
+    },
+    KeyName {
+        names: &["pagedown"],
+        code: KeyCode::PageDown,
+    },
+    // Lock and system keys. A terminal speaking the kitty keyboard protocol
+    // reports these (the input parser decodes them at codepoints 57358-57363),
+    // so the keybinding editor can record one — and without a name here it
+    // would write a `{:?}` spelling that the loader then refused, which is the
+    // `Insert` bug one line up, repeated.
+    KeyName {
+        names: &["capslock"],
+        code: KeyCode::CapsLock,
+    },
+    KeyName {
+        names: &["scrolllock"],
+        code: KeyCode::ScrollLock,
+    },
+    KeyName {
+        names: &["numlock"],
+        code: KeyCode::NumLock,
+    },
+    KeyName {
+        names: &["printscreen"],
+        code: KeyCode::PrintScreen,
+    },
+    KeyName {
+        names: &["pause"],
+        code: KeyCode::Pause,
+    },
+    KeyName {
+        names: &["menu"],
+        code: KeyCode::Menu,
+    },
+];
+
+/// X11 keysym spellings for ASCII punctuation.
+///
+/// A single-character key name is still the canonical spelling (and what the
+/// keybinding editor writes back), but people reach for the X11 keysym name
+/// they know — `"key": "asterisk"` is what issue #1128 was actually configured
+/// with, and it bound nothing at all. JSON also makes some of these awkward to
+/// write literally (`"\\"` for backslash, `"\""` for the double quote), so a
+/// name is the friendlier spelling.
+pub const PUNCTUATION_KEYS: &[KeyName] = &[
+    KeyName {
+        names: &["asterisk", "star"],
+        code: KeyCode::Char('*'),
+    },
+    KeyName {
+        names: &["plus"],
+        code: KeyCode::Char('+'),
+    },
+    KeyName {
+        names: &["minus", "hyphen"],
+        code: KeyCode::Char('-'),
+    },
+    KeyName {
+        names: &["slash"],
+        code: KeyCode::Char('/'),
+    },
+    KeyName {
+        names: &["period", "dot"],
+        code: KeyCode::Char('.'),
+    },
+    KeyName {
+        names: &["equal", "equals"],
+        code: KeyCode::Char('='),
+    },
+    KeyName {
+        names: &["backslash"],
+        code: KeyCode::Char('\\'),
+    },
+    KeyName {
+        names: &["comma"],
+        code: KeyCode::Char(','),
+    },
+    KeyName {
+        names: &["semicolon"],
+        code: KeyCode::Char(';'),
+    },
+    KeyName {
+        names: &["colon"],
+        code: KeyCode::Char(':'),
+    },
+    KeyName {
+        names: &["apostrophe", "quote"],
+        code: KeyCode::Char('\''),
+    },
+    KeyName {
+        names: &["quotedbl", "doublequote"],
+        code: KeyCode::Char('"'),
+    },
+    KeyName {
+        names: &["grave", "backtick"],
+        code: KeyCode::Char('`'),
+    },
+    KeyName {
+        names: &["tilde"],
+        code: KeyCode::Char('~'),
+    },
+    KeyName {
+        names: &["exclam", "exclamation"],
+        code: KeyCode::Char('!'),
+    },
+    KeyName {
+        names: &["at"],
+        code: KeyCode::Char('@'),
+    },
+    KeyName {
+        names: &["numbersign", "hash"],
+        code: KeyCode::Char('#'),
+    },
+    KeyName {
+        names: &["dollar"],
+        code: KeyCode::Char('$'),
+    },
+    KeyName {
+        names: &["percent"],
+        code: KeyCode::Char('%'),
+    },
+    KeyName {
+        names: &["asciicircum", "caret"],
+        code: KeyCode::Char('^'),
+    },
+    KeyName {
+        names: &["ampersand"],
+        code: KeyCode::Char('&'),
+    },
+    KeyName {
+        names: &["underscore"],
+        code: KeyCode::Char('_'),
+    },
+    KeyName {
+        names: &["bar", "pipe"],
+        code: KeyCode::Char('|'),
+    },
+    KeyName {
+        names: &["question"],
+        code: KeyCode::Char('?'),
+    },
+    KeyName {
+        names: &["less", "lessthan"],
+        code: KeyCode::Char('<'),
+    },
+    KeyName {
+        names: &["greater", "greaterthan"],
+        code: KeyCode::Char('>'),
+    },
+    KeyName {
+        names: &["parenleft"],
+        code: KeyCode::Char('('),
+    },
+    KeyName {
+        names: &["parenright"],
+        code: KeyCode::Char(')'),
+    },
+    KeyName {
+        names: &["bracketleft"],
+        code: KeyCode::Char('['),
+    },
+    KeyName {
+        names: &["bracketright"],
+        code: KeyCode::Char(']'),
+    },
+    KeyName {
+        names: &["braceleft"],
+        code: KeyCode::Char('{'),
+    },
+    KeyName {
+        names: &["braceright"],
+        code: KeyCode::Char('}'),
+    },
+];
+
+/// Resolve an already-lowercased key name against every table.
+///
+/// The keypad comes last and from the parser's own table: those names are
+/// aliases for the key the terminal actually reports (`kp_multiply` *is* `*`
+/// by the time the editor sees it), so they must agree with the decoder by
+/// construction rather than by a second hand-written list.
+pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
+    NAMED_KEYS
+        .iter()
+        .chain(PUNCTUATION_KEYS)
+        .find(|k| k.names.contains(&lower))
+        .map(|k| k.code)
+        .or_else(|| fresh_input_parser::keypad::code_for_keysym(lower))
+}
+
 fn warn_invalid_key(key: &str, action: &str) {
     tracing::warn!(
         "Invalid keybinding in config: unknown key \"{key}\" for action \"{action}\" (binding ignored)"
@@ -2772,74 +3042,19 @@ impl KeybindingResolver {
         None
     }
 
-    /// Parse a key string to KeyCode
+    /// Parse a key string to KeyCode.
+    ///
+    /// Three sources, in order: the tables of names below, the numeric keypad
+    /// (via [`fresh_input_parser::keypad`], which is also what decodes those
+    /// keys off the wire — one definition, so a name that binds and a key that
+    /// arrives cannot drift apart), and finally the two open-ended forms, a
+    /// single character and `f<n>`.
     fn parse_key(key: &str) -> Option<KeyCode> {
         let lower = key.to_lowercase();
+        if let Some(code) = key_name_to_code(&lower) {
+            return Some(code);
+        }
         match lower.as_str() {
-            "enter" => Some(KeyCode::Enter),
-            "backspace" => Some(KeyCode::Backspace),
-            "delete" | "del" => Some(KeyCode::Delete),
-            "tab" => Some(KeyCode::Tab),
-            "backtab" => Some(KeyCode::BackTab),
-            "esc" | "escape" => Some(KeyCode::Esc),
-            "space" => Some(KeyCode::Char(' ')),
-
-            "left" => Some(KeyCode::Left),
-            "right" => Some(KeyCode::Right),
-            "up" => Some(KeyCode::Up),
-            "down" => Some(KeyCode::Down),
-            "home" => Some(KeyCode::Home),
-            "end" => Some(KeyCode::End),
-            "pageup" => Some(KeyCode::PageUp),
-            "pagedown" => Some(KeyCode::PageDown),
-
-            // Symbolic names for punctuation. A single-character key
-            // name is still the canonical spelling (and what the
-            // keybinding editor writes back), but people reach for the
-            // X11 keysym name they know — `"key": "asterisk"` is what
-            // issue #1128 was actually configured with, and it bound
-            // nothing at all. JSON also makes some of these awkward to
-            // write literally (`"\\"` for backslash, `"\""` for the
-            // double quote), so a name is the friendlier spelling.
-            //
-            // The keypad aliases map onto the same characters their key
-            // transmits: a terminal reports the numeric keypad through
-            // its ASCII byte, so `kp_multiply` *is* `*` by the time the
-            // editor sees it. Naming them separately documents intent
-            // without promising a distinction the terminal doesn't make.
-            "asterisk" | "kp_multiply" | "star" => Some(KeyCode::Char('*')),
-            "plus" | "kp_add" => Some(KeyCode::Char('+')),
-            "minus" | "hyphen" | "kp_subtract" => Some(KeyCode::Char('-')),
-            "slash" | "kp_divide" => Some(KeyCode::Char('/')),
-            "period" | "dot" | "kp_decimal" => Some(KeyCode::Char('.')),
-            "equal" | "equals" => Some(KeyCode::Char('=')),
-            "backslash" => Some(KeyCode::Char('\\')),
-            "comma" => Some(KeyCode::Char(',')),
-            "semicolon" => Some(KeyCode::Char(';')),
-            "colon" => Some(KeyCode::Char(':')),
-            "apostrophe" | "quote" => Some(KeyCode::Char('\'')),
-            "quotedbl" | "doublequote" => Some(KeyCode::Char('"')),
-            "grave" | "backtick" => Some(KeyCode::Char('`')),
-            "tilde" => Some(KeyCode::Char('~')),
-            "exclam" | "exclamation" => Some(KeyCode::Char('!')),
-            "at" => Some(KeyCode::Char('@')),
-            "numbersign" | "hash" => Some(KeyCode::Char('#')),
-            "dollar" => Some(KeyCode::Char('$')),
-            "percent" => Some(KeyCode::Char('%')),
-            "asciicircum" | "caret" => Some(KeyCode::Char('^')),
-            "ampersand" => Some(KeyCode::Char('&')),
-            "underscore" => Some(KeyCode::Char('_')),
-            "bar" | "pipe" => Some(KeyCode::Char('|')),
-            "question" => Some(KeyCode::Char('?')),
-            "less" | "lessthan" => Some(KeyCode::Char('<')),
-            "greater" | "greaterthan" => Some(KeyCode::Char('>')),
-            "parenleft" => Some(KeyCode::Char('(')),
-            "parenright" => Some(KeyCode::Char(')')),
-            "bracketleft" => Some(KeyCode::Char('[')),
-            "bracketright" => Some(KeyCode::Char(']')),
-            "braceleft" => Some(KeyCode::Char('{')),
-            "braceright" => Some(KeyCode::Char('}')),
-
             // Character count, not byte count: `"é"` is two bytes, and
             // spelling it out as a key name used to fall past this arm
             // into the function-key arm and out as `None` — a binding on
@@ -3574,6 +3789,49 @@ mod tests {
         assert_eq!(
             resolver.resolve(&event, KeyContext::Normal),
             Action::DuplicateLine
+        );
+    }
+
+    /// A keypad name binds the key the terminal actually sends.
+    ///
+    /// `kp_enter` is the headline gap issue #1128 left open: the name parsed
+    /// as nothing, so the entry was dropped at load and the binding silently
+    /// did nothing. It resolves on `Enter`, because that is what a terminal
+    /// reports the keypad's Enter as — the aliasing the docs spell out.
+    #[test]
+    fn keypad_name_binds_from_config() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "kp_enter".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "duplicate_line".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        config.keybindings.push(crate::config::Keybinding {
+            key: "kp_begin".to_string(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            action: "select_all".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve(
+                &KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                KeyContext::Normal
+            ),
+            Action::DuplicateLine
+        );
+        // The one keypad key that is not an alias resolves on its own code.
+        assert_eq!(
+            resolver.resolve(
+                &KeyEvent::new(KeyCode::KeypadBegin, KeyModifiers::empty()),
+                KeyContext::Normal
+            ),
+            Action::SelectAll
         );
     }
 
@@ -5709,5 +5967,125 @@ mod tests {
             Action::MoveLeft,
             "inheriting-modes membership must survive reload_from_config"
         );
+    }
+
+    /// Every keypad key the input parser decodes is nameable in config.
+    ///
+    /// This is the half of issue #1128 that the first pass left open: the
+    /// table stopped at the five arithmetic keysyms, so `kp_enter`,
+    /// `kp_0`…`kp_9`, `kp_equal`, `kp_separator` and the navigation names
+    /// parsed as nothing and their bindings were dropped. Both sides now read
+    /// one table, so this cannot regress by omission.
+    #[test]
+    fn every_keypad_key_has_a_config_name() {
+        for k in fresh_input_parser::keypad::KEYPAD_KEYS {
+            assert_eq!(
+                KeybindingResolver::parse_key(k.keysym),
+                Some(k.code),
+                "keypad name {:?} does not parse",
+                k.keysym
+            );
+            // Case-insensitive, like every other name.
+            assert_eq!(
+                KeybindingResolver::parse_key(&k.keysym.to_uppercase()),
+                Some(k.code),
+                "keypad name {:?} is case-sensitive",
+                k.keysym
+            );
+        }
+    }
+
+    /// `kp_begin` is the one keypad name that does not alias a main-keyboard
+    /// key — the distinction the generated docs promise.
+    #[test]
+    fn keypad_begin_is_the_only_distinct_keypad_binding() {
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_begin"),
+            Some(KeyCode::KeypadBegin)
+        );
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_enter"),
+            Some(KeyCode::Enter)
+        );
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_multiply"),
+            Some(KeyCode::Char('*'))
+        );
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_left"),
+            Some(KeyCode::Left)
+        );
+    }
+
+    /// Anything the keybinding editor can write, the loader can read back.
+    ///
+    /// The editor records a chord and serialises it with
+    /// `key_code_to_config_name`; if `parse_key` then rejects that spelling,
+    /// the editor has written a binding that silently does nothing. `Insert`
+    /// was exactly that — emitted as `"Insert"`, and no `insert` arm existed —
+    /// and `KeypadBegin` fell through to a `{:?}` spelling nothing claimed.
+    #[test]
+    fn config_names_round_trip() {
+        use crate::app::keybinding_editor::helpers::key_code_to_config_name;
+
+        let mut codes: Vec<KeyCode> = NAMED_KEYS.iter().map(|k| k.code).collect();
+        codes.extend(PUNCTUATION_KEYS.iter().map(|k| k.code));
+        codes.extend(
+            fresh_input_parser::keypad::KEYPAD_KEYS
+                .iter()
+                .map(|k| k.code),
+        );
+        codes.extend((1..=24).map(KeyCode::F));
+        codes.extend("azAZ09".chars().map(KeyCode::Char));
+
+        for code in codes {
+            let name = key_code_to_config_name(code);
+            let parsed = KeybindingResolver::parse_key(&name);
+            // `Char` is written lowercase, so an uppercase input round-trips
+            // to its lowercase self — that is the documented behaviour, not a
+            // loss (modifiers carry the shift).
+            let expected = match code {
+                KeyCode::Char(c) => KeyCode::Char(c.to_lowercase().next().unwrap_or(c)),
+                other => other,
+            };
+            assert_eq!(
+                parsed,
+                Some(expected),
+                "{code:?} serialises to {name:?}, which does not parse back"
+            );
+        }
+    }
+
+    /// No spelling is claimed twice. A duplicate would make one of the two
+    /// entries unreachable, silently, depending on table order.
+    #[test]
+    fn key_names_are_unique() {
+        let mut all: Vec<&str> = NAMED_KEYS
+            .iter()
+            .chain(PUNCTUATION_KEYS)
+            .flat_map(|k| k.names.iter().copied())
+            .chain(
+                fresh_input_parser::keypad::KEYPAD_KEYS
+                    .iter()
+                    .map(|k| k.keysym),
+            )
+            .collect();
+        all.sort_unstable();
+        let total = all.len();
+        all.dedup();
+        assert_eq!(all.len(), total, "a key name is claimed by two entries");
+    }
+
+    /// Every documented name is lowercase, since `parse_key` lowercases its
+    /// input before looking it up — an upper-case entry would be dead.
+    #[test]
+    fn key_names_are_lowercase() {
+        for name in NAMED_KEYS
+            .iter()
+            .chain(PUNCTUATION_KEYS)
+            .flat_map(|k| k.names.iter().copied())
+        {
+            assert_eq!(name, &name.to_lowercase(), "{name:?} is not lowercase");
+        }
     }
 }

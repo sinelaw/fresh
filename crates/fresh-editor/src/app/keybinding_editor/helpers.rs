@@ -47,6 +47,12 @@ pub fn key_code_to_config_name(key_code: KeyCode) -> String {
         KeyCode::PageUp => "PageUp".to_string(),
         KeyCode::PageDown => "PageDown".to_string(),
         KeyCode::Insert => "Insert".to_string(),
+        // The one keypad key with no main-keyboard equivalent, so the one the
+        // Debug spelling (`KeypadBegin`) would strand: `parse_key` knows it by
+        // its keysym name, from the same table the input parser decodes it
+        // with. Every other name above is in `keybindings::NAMED_KEYS`, and
+        // `config_names_round_trip` is what keeps that true.
+        KeyCode::KeypadBegin => "kp_begin".to_string(),
         KeyCode::F(n) => format!("F{}", n),
         _ => format!("{:?}", key_code),
     }
