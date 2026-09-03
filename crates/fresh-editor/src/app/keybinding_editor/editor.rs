@@ -212,6 +212,15 @@ impl KeybindingEditor {
         let mut bindings = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
 
+        // `unbind` entries remove built-in rows; they are not rows themselves.
+        let removed: HashSet<(String, String)> = config
+            .keybindings
+            .iter()
+            .filter(|kb| kb.is_unbind())
+            .filter_map(|kb| Self::keybinding_to_resolved(kb, BindingSource::Custom, resolver))
+            .map(|entry| (entry.key_display, entry.context))
+            .collect();
+
         // First, load bindings from the active keymap. `resolve_keymap`
         // returns the inheritance chain parent-first, and the resolver takes
         // the last write for a given key+context — so a keymap that overrides
@@ -222,6 +231,9 @@ impl KeybindingEditor {
         for kb in &map_bindings {
             if let Some(entry) = Self::keybinding_to_resolved(kb, BindingSource::Keymap, resolver) {
                 let key = (entry.key_display.clone(), entry.context.clone());
+                if removed.contains(&key) {
+                    continue;
+                }
                 if let Some(&existing_idx) = seen.get(&key) {
                     bindings[existing_idx] = entry;
                 } else {
@@ -233,7 +245,7 @@ impl KeybindingEditor {
         }
 
         // Then, load custom bindings (these override keymap bindings)
-        for kb in &config.keybindings {
+        for kb in config.keybindings.iter().filter(|kb| !kb.is_unbind()) {
             if let Some(entry) = Self::keybinding_to_resolved(kb, BindingSource::Custom, resolver) {
                 let key = (entry.key_display.clone(), entry.context.clone());
                 if let Some(&existing_idx) = seen.get(&key) {
@@ -259,8 +271,9 @@ impl KeybindingEditor {
                 for ((key_code, modifiers), action) in context_bindings {
                     let key_display = format_keybinding(key_code, modifiers);
                     let seen_key = (key_display.clone(), context_str.clone());
-                    // Skip if already overridden by a user custom binding
-                    if seen.contains_key(&seen_key) {
+                    // Skip if already overridden by a user custom binding,
+                    // or removed with an `unbind` entry.
+                    if seen.contains_key(&seen_key) || removed.contains(&seen_key) {
                         continue;
                     }
                     let command = action.to_qualified_action_str();
@@ -837,13 +850,16 @@ impl KeybindingEditor {
         self.edit_dialog = None;
     }
 
-    /// Delete the selected binding.
+    /// Delete the selected binding: it is gone, and the key falls through to
+    /// whatever else binds it.
     ///
     /// * **Custom** bindings are removed outright (tracked in `pending_removes`
     ///   or dropped from `pending_adds` when added in the same session).
-    /// * **Keymap** bindings cannot be removed from the built-in map, so a
-    ///   custom `noop` override is created for the same key, which shadows the
-    ///   default binding in the resolver.
+    /// * **Keymap** and **plugin** bindings live in read-only maps, so the
+    ///   removal is recorded as an `unbind` entry in the user config, which
+    ///   the resolver applies by taking the built-in binding out of scope.
+    ///
+    /// To make a key do *nothing* instead, see [`Self::disable_selected`].
     ///
     /// Returns `DeleteResult` indicating what happened.
     pub fn delete_selected(&mut self) -> DeleteResult {
@@ -853,9 +869,29 @@ impl KeybindingEditor {
 
         match self.bindings[idx].source {
             BindingSource::Custom => self.delete_custom_binding(idx),
-            // Keymap and plugin defaults can't be removed from their source
-            // map, so both shadow the key with a custom `noop` override —
-            // identical handling, hence one arm.
+            BindingSource::Keymap | BindingSource::Plugin => self.remove_builtin_binding(idx),
+            BindingSource::Unbound => DeleteResult::CannotDelete,
+        }
+    }
+
+    /// Disable the selected binding: a `noop` override for the same
+    /// key+context, so the key does nothing there — including whatever a
+    /// broader context or the parent keymap bound underneath it. That is the
+    /// difference from [`Self::delete_selected`], which lets the key fall
+    /// through. A custom binding is rewritten to `noop` in place.
+    pub fn disable_selected(&mut self) -> DeleteResult {
+        let Some(idx) = self.selected_binding_index() else {
+            return DeleteResult::NothingSelected;
+        };
+
+        match self.bindings[idx].source {
+            BindingSource::Custom => {
+                if self.bindings[idx].action == "noop" {
+                    return DeleteResult::CannotDelete;
+                }
+                self.retire_custom_config_entry(idx);
+                self.override_binding_with_noop(idx)
+            }
             BindingSource::Keymap | BindingSource::Plugin => self.override_binding_with_noop(idx),
             BindingSource::Unbound => DeleteResult::CannotDelete,
         }
@@ -865,8 +901,22 @@ impl KeybindingEditor {
     /// when it was added this session, otherwise record it in `pending_removes`
     /// so the save drops it from the persisted config.
     fn delete_custom_binding(&mut self, idx: usize) -> DeleteResult {
+        let action_name = self.bindings[idx].action.clone();
+        self.retire_custom_config_entry(idx);
+
+        self.bindings.remove(idx);
+        self.has_changes = true;
+
+        self.readd_as_unbound_if_orphaned(action_name);
+        self.apply_filters();
+        DeleteResult::CustomRemoved
+    }
+
+    /// Take the config entry behind the custom row at `idx` out of the save:
+    /// drop it from `pending_adds` when it was added this session, otherwise
+    /// queue it in `pending_removes`. The row itself is left to the caller.
+    fn retire_custom_config_entry(&mut self, idx: usize) {
         let binding = &self.bindings[idx];
-        let action_name = binding.action.clone();
 
         // Use the original config-level Keybinding if available (for bindings
         // loaded from config), otherwise reconstruct it. This avoids lossy
@@ -891,28 +941,17 @@ impl KeybindingEditor {
         } else {
             self.pending_removes.push(config_kb);
         }
-
-        self.bindings.remove(idx);
-        self.has_changes = true;
-
-        self.readd_as_unbound_if_orphaned(action_name);
-        self.apply_filters();
-        DeleteResult::CustomRemoved
     }
 
-    /// Shadow a built-in keymap or plugin binding with a custom `noop` override
-    /// for the same key+context — the underlying map can't be edited in place,
-    /// so the override masks the default in the resolver.
-    fn override_binding_with_noop(&mut self, idx: usize) -> DeleteResult {
+    /// The config entry that addresses the built-in binding at `idx`
+    /// (same key or chord, same context) with `action`.
+    fn config_entry_for_builtin(&self, idx: usize, action: &str) -> Keybinding {
         let binding = &self.bindings[idx];
-        let action_name = binding.action.clone();
-
-        // Build a noop custom override for the same key+context. A chord is
-        // written back as its `keys` sequence — a chord has no single
-        // key/modifiers pair, and emitting an empty one produced a binding
-        // the resolver drops, so the keymap chord stayed live (the editor
-        // reported it disabled and nothing changed).
-        let noop_kb = Keybinding {
+        // A chord is written back as its `keys` sequence — a chord has no
+        // single key/modifiers pair, and emitting an empty one produced an
+        // entry the resolver drops, so the keymap chord stayed live (the
+        // editor reported it disabled and nothing changed).
+        Keybinding {
             key: if binding.is_chord {
                 String::new()
             } else {
@@ -924,14 +963,39 @@ impl KeybindingEditor {
                 modifiers_to_config_names(binding.modifiers)
             },
             keys: binding.chord_keys.clone(),
-            action: "noop".to_string(),
+            action: action.to_string(),
             args: HashMap::new(),
             when: if binding.context.is_empty() {
                 None
             } else {
                 Some(binding.context.clone())
             },
-        };
+        }
+    }
+
+    /// Remove a built-in keymap or plugin binding: queue an `unbind` entry for
+    /// its key+context and drop the row. The resolver takes the binding out
+    /// of scope when the config is saved, so the key falls through to
+    /// whatever else binds it.
+    fn remove_builtin_binding(&mut self, idx: usize) -> DeleteResult {
+        let action_name = self.bindings[idx].action.clone();
+        let unbind_kb = self.config_entry_for_builtin(idx, Keybinding::UNBIND_ACTION);
+        self.pending_adds.push(unbind_kb);
+
+        self.bindings.remove(idx);
+        self.has_changes = true;
+
+        self.readd_as_unbound_if_orphaned(action_name);
+        self.apply_filters();
+        DeleteResult::KeymapRemoved
+    }
+
+    /// Shadow the binding at `idx` with a custom `noop` override for the same
+    /// key+context: the key does nothing there, and the row shows the
+    /// override so it can be deleted again.
+    fn override_binding_with_noop(&mut self, idx: usize) -> DeleteResult {
+        let action_name = self.bindings[idx].action.clone();
+        let noop_kb = self.config_entry_for_builtin(idx, "noop");
         self.pending_adds.push(noop_kb);
 
         // Replace the entry with a noop custom entry in the display.
@@ -954,7 +1018,7 @@ impl KeybindingEditor {
 
         self.readd_as_unbound_if_orphaned(action_name);
         self.apply_filters();
-        DeleteResult::KeymapOverridden
+        DeleteResult::Disabled
     }
 
     /// After a delete/override, if no binding remains for `action_name`, push an
@@ -1365,6 +1429,78 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_keymap_chord_writes_an_unbind_entry_and_drops_the_row() {
+        let mut editor = make_emacs_editor();
+        let idx = emacs_save_chord(&editor);
+        editor.selected = select_row(&editor, idx);
+        assert_eq!(editor.delete_selected(), DeleteResult::KeymapRemoved);
+
+        assert!(
+            !editor
+                .bindings
+                .iter()
+                .any(|b| b.is_chord && b.action == "save"),
+            "a deleted keymap row must be gone, not shown as an override"
+        );
+        let unbind = editor
+            .get_custom_bindings()
+            .into_iter()
+            .find(|kb| kb.is_unbind())
+            .expect("deleting a keymap binding queues an unbind entry");
+        assert!(unbind.key.is_empty(), "a chord entry has no single key");
+        assert_eq!(
+            unbind
+                .keys
+                .iter()
+                .map(|k| k.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["x", "s"],
+            "the entry must name the chord it removes"
+        );
+        assert_eq!(unbind.when.as_deref(), Some("normal"));
+        assert!(
+            !editor
+                .get_custom_bindings()
+                .iter()
+                .any(|kb| kb.action == "noop"),
+            "delete must not write a noop override"
+        );
+    }
+
+    #[test]
+    fn an_unbind_entry_hides_the_keymap_row_on_reload() {
+        // What the editor shows after the save above is persisted: the
+        // removed chord is absent, and the unbind entry is not a row.
+        let mut config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        config.keybindings.push(
+            serde_json::from_value(serde_json::json!({
+                "keys": [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}],
+                "action": "unbind", "when": "normal"
+            }))
+            .unwrap(),
+        );
+        let editor = make_editor_with_config(config, &[]);
+        assert!(
+            !editor
+                .bindings
+                .iter()
+                .any(|b| b.is_chord && b.action == "save"),
+            "the removed chord must not come back on reload"
+        );
+        assert!(
+            !editor.bindings.iter().any(|b| b.action == "unbind"),
+            "an unbind entry is a removal, not a binding row"
+        );
+        assert!(
+            editor.bindings.iter().any(|b| b.action == "save"),
+            "the action stays listed (single-key or unbound) so it can be rebound"
+        );
+    }
+
+    #[test]
     fn disabling_a_chord_writes_a_chord_shaped_noop() {
         // Regression: the noop override was written with an empty `key` and
         // no `keys`, so the resolver dropped it as an invalid binding — the
@@ -1372,7 +1508,7 @@ mod tests {
         let mut editor = make_emacs_editor();
         let idx = emacs_save_chord(&editor);
         editor.selected = select_row(&editor, idx);
-        assert_eq!(editor.delete_selected(), DeleteResult::KeymapOverridden);
+        assert_eq!(editor.disable_selected(), DeleteResult::Disabled);
 
         let noop = editor
             .get_custom_bindings()

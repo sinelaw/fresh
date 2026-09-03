@@ -2685,7 +2685,8 @@ pub struct Keybinding {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<KeyPress>,
 
-    /// Action to perform (e.g., "insert_char", "move_left")
+    /// Action to perform (e.g., "insert_char", "move_left"), or "unbind" to
+    /// remove the built-in binding for this key instead of binding anything.
     pub action: String,
 
     /// Optional arguments for the action
@@ -2695,6 +2696,23 @@ pub struct Keybinding {
     /// Optional condition (e.g., "mode == insert")
     #[serde(default)]
     pub when: Option<String>,
+}
+
+impl Keybinding {
+    /// The action name that removes a built-in (keymap or plugin) binding
+    /// rather than binding anything: `{"key": "g", "modifiers": ["alt"],
+    /// "action": "unbind", "when": "normal"}` takes the matching built-in
+    /// binding out of scope, so the key falls through to whatever else binds
+    /// it — a `global` entry, the parent keymap, or nothing. This is what
+    /// the keybinding editor's Delete writes for a keymap row. Contrast
+    /// `noop`, which is a real binding that makes the key do nothing in that
+    /// context.
+    pub const UNBIND_ACTION: &'static str = "unbind";
+
+    /// Whether this entry removes a built-in binding instead of adding one.
+    pub fn is_unbind(&self) -> bool {
+        self.action == Self::UNBIND_ACTION
+    }
 }
 
 /// Keymap configuration (for built-in and user-defined keymaps)
