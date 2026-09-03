@@ -1706,9 +1706,9 @@ pub struct KeyName {
 
 /// Keys that have a name of their own — neither a character nor the keypad.
 ///
-/// Every spelling [`crate::app::keybinding_editor::helpers::key_code_to_config_name`]
-/// can write must appear here, or the editor would record a binding that its
-/// own loader then rejects; `config_names_round_trip` holds that.
+/// Every spelling `keybinding_editor::helpers::key_code_to_config_name` can
+/// write must appear here, or the editor would record a binding that its own
+/// loader then rejects; `config_names_round_trip` holds that.
 pub const NAMED_KEYS: &[KeyName] = &[
     KeyName {
         names: &["enter"],
