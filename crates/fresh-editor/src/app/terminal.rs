@@ -2856,6 +2856,9 @@ pub mod render {
                 if cell.bold {
                     style = style.add_modifier(Modifier::BOLD);
                 }
+                if cell.dim {
+                    style = style.add_modifier(Modifier::DIM);
+                }
                 if cell.italic {
                     style = style.add_modifier(Modifier::ITALIC);
                 }
