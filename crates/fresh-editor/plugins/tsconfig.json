@@ -48,6 +48,7 @@
     "lsp_navigation.ts",
     "markdown_compose.ts",
     "markdown_source.ts",
+    "markdown_toc.ts",
     "merge_conflict.ts",
     "path_complete.ts",
     "pkg.ts",

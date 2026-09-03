@@ -124,6 +124,10 @@ pub enum Slot {
     /// than about the vocabulary. What the host cannot recover without this
     /// is *which* mounted panel a hit belongs to, and a pane is one buffer.
     Pane(crate::model::event::LeafId),
+    /// A section of the sidebar column (`mountSidebarSection`), by section
+    /// index. The dock's case with a different slot: the same interior, the
+    /// same keys layer, and hits that route to the panel the section holds.
+    Sidebar(usize),
 }
 
 /// What a panel's widgets need beyond their spec.
@@ -1756,7 +1760,32 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         serde_json::json!({ "index": abs, "key": item_key }),
                         true,
                     ));
-                    entry_row_hits(&r.entry, slot, &surface, &hits)
+                    let piece = entry_row_hits(&r.entry, slot, &surface, &hits);
+                    // **In the sidebar, the selected row wears the explorer's
+                    // `▌`** (design §5.1): a section's tree sits in the same
+                    // column as the file tree, and the two read as one family
+                    // when selection looks the same in both. The mark replaces
+                    // the row's first cell exactly as the explorer's caret
+                    // does, over the band the row already has, and only in
+                    // this slot — the dock's and a pane's trees keep the band
+                    // alone. The overlay carries no gesture, so a press on
+                    // that cell continues to the row's own `select` beneath.
+                    let selected = matches!(
+                        st,
+                        fresh_ui::widgets::RowState::Selected
+                            | fresh_ui::widgets::RowState::SelectedBlur
+                    );
+                    if selected && matches!(slot, Slot::Sidebar(_)) {
+                        let ink = surface.with_fg(Paint::key("editor.cursor")).to_string();
+                        fresh_ui::stack().h(Sizing::Cells(1)).children([
+                            piece,
+                            row()
+                                .h(Sizing::Cells(1))
+                                .children([fresh_ui::text("▌").theme(ink).w(Sizing::Cells(1))]),
+                        ])
+                    } else {
+                        piece
+                    }
                 }
             };
 
@@ -2883,6 +2912,10 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
                 }))
             }
             (Slot::Dock, _) => None,
+            // A sidebar section is a described interior like the dock's, and
+            // its rows scroll themselves; a float over it swallows the
+            // notch, as a pane's does.
+            (Slot::Sidebar(_), _) => None,
             // A pane-mounted panel's float covers the panel and nothing else:
             // there is no scrolling surface *behind* it to hand the notch on
             // to the way the dock's column takes it, and `e.stop()` above has
@@ -2977,6 +3010,7 @@ fn dropdown_anchor_key(slot: Slot, widget_key: &str) -> fresh_ui::Key {
         Slot::Settings => "settings".to_string(),
         Slot::SettingsEntry => "settings_entry".to_string(),
         Slot::Pane(leaf) => format!("pane:{}", leaf.0 .0),
+        Slot::Sidebar(i) => format!("sidebar:{i}"),
     };
     fresh_ui::Key::Str(format!("widget_dropdown_anchor:{scope}:{widget_key}").into())
 }
@@ -2993,6 +3027,12 @@ fn popup_anchor_key(slot: Slot, row: usize) -> fresh_ui::Key {
         Slot::Pane(leaf) => {
             return fresh_ui::Key::Pair(
                 format!("widget_popup_anchor:pane:{}", leaf.0 .0).into(),
+                row as u64,
+            )
+        }
+        Slot::Sidebar(i) => {
+            return fresh_ui::Key::Pair(
+                format!("widget_popup_anchor:sidebar:{i}").into(),
                 row as u64,
             )
         }
@@ -3120,7 +3160,7 @@ fn hit_node(
     // Only the panels. The settings dialog's rows carry their own hover facts
     // (`SettingsItemHover` and its siblings) onto settings state, and its
     // `Ctx` has no `hovered_key` to read, so a fact from here would be noise.
-    let hover = matches!(slot, Slot::Dock | Slot::Floating).then(|| {
+    let hover = matches!(slot, Slot::Dock | Slot::Floating | Slot::Sidebar(_)).then(|| {
         let (widget, item) = (
             hit.widget_key.clone(),
             hit.payload
@@ -3305,6 +3345,7 @@ pub fn caret_key(slot: Slot) -> fresh_ui::Key {
         Slot::Pane(leaf) => {
             return fresh_ui::Key::Pair("widget_caret:pane".into(), leaf.0 .0 as u64)
         }
+        Slot::Sidebar(i) => return fresh_ui::Key::Pair("widget_caret:sidebar".into(), i as u64),
     };
     fresh_ui::Key::Str(tag.into())
 }
@@ -5009,6 +5050,41 @@ mod tests {
         assert!(
             open.iter().any(|r| r.contains("child")),
             "an expanded one shows it, got {open:?}"
+        );
+    }
+
+    /// **In the sidebar, the selected row wears the explorer's `▌`** (design
+    /// §5.1): the mark replaces the row's first cell, once, over the band —
+    /// and only there. The same spec in a floating panel or the dock marks
+    /// its selection by colour alone, so the glyph never appears.
+    #[test]
+    fn a_sidebar_trees_selected_row_wears_the_explorers_mark() {
+        let spec = a_tree(&["r"], 1);
+        let floating = tree_text(&spec, &cx());
+        let child = floating
+            .iter()
+            .find(|r| r.contains("child"))
+            .expect("child row");
+        assert!(
+            !child.contains('▌'),
+            "a floating tree marks selection by colour alone: {child:?}"
+        );
+
+        let mut sidebar = cx();
+        sidebar.slot = Slot::Sidebar(1);
+        let rows = tree_text(&spec, &sidebar);
+        let child = rows
+            .iter()
+            .find(|r| r.contains("child"))
+            .expect("child row");
+        assert!(
+            child.starts_with('▌'),
+            "the selected row's first cell is the mark: {child:?}"
+        );
+        assert_eq!(
+            rows.iter().filter(|r| r.contains('▌')).count(),
+            1,
+            "one mark, on the selected row alone: {rows:?}"
         );
     }
 

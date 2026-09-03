@@ -448,6 +448,11 @@ pub struct FileExplorerState {
     /// Show gitignored files (fixes #569)
     #[serde(default)]
     pub show_gitignored: bool,
+    /// The sidebar's sections, top to bottom. Empty — every workspace
+    /// written before sections existed — restores as exactly one explorer
+    /// section filling the column.
+    #[serde(default)]
+    pub sections: Vec<SectionState>,
 }
 
 impl Default for FileExplorerState {
@@ -460,8 +465,33 @@ impl Default for FileExplorerState {
             scroll_offset: 0,
             show_hidden: false,
             show_gitignored: false,
+            sections: Vec::new(),
         }
     }
+}
+
+/// One sidebar section as the workspace file records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SectionState {
+    pub kind: SectionStateKind,
+    /// A plugin section's title, so a section whose plugin has not loaded
+    /// can still show its header.
+    #[serde(default)]
+    pub title: String,
+    /// Requested body rows; `0` shares the remainder.
+    #[serde(default)]
+    pub rows: u16,
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+/// What a persisted section holds: the explorer, or a plugin panel by its
+/// composite `(plugin, id)` identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SectionStateKind {
+    Explorer,
+    Panel { plugin: String, id: u64 },
 }
 
 /// Per-workspace input histories
@@ -1705,6 +1735,7 @@ mod tests {
             scroll_offset: 5,
             show_hidden: true,
             show_gitignored: false,
+            sections: Vec::new(),
         };
 
         let json = serde_json::to_string(&state).unwrap();
@@ -1728,6 +1759,7 @@ mod tests {
             scroll_offset: 0,
             show_hidden: false,
             show_gitignored: false,
+            sections: Vec::new(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let restored: FileExplorerState = serde_json::from_str(&json).unwrap();

@@ -3466,6 +3466,7 @@ pub fn action_to_events(
         | Action::FocusFileExplorer
         | Action::FocusEditor
         | Action::ToggleDockFocus
+        | Action::FocusNextSidebarSection
         | Action::SetBackground
         | Action::SetBackgroundBlend
         | Action::FileExplorerUp

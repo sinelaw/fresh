@@ -480,7 +480,10 @@ impl Editor {
             return Ok(());
         }
 
-        let workspace = win.capture_workspace();
+        let mut workspace = win.capture_workspace();
+        // The sidebar's sections are editor state (see `app::sidebar`), so
+        // the window's snapshot does not know them; they ride in its file.
+        workspace.file_explorer.sections = self.sidebar_section_states();
 
         // Refuse to overwrite a non-empty on-disk workspace with an
         // all-virtual snapshot (issue #2027). The protection is for
@@ -615,6 +618,13 @@ impl Editor {
             built.plugin_state = pstate;
             built.authority_spec = workspace.authority_spec.clone();
             self.windows.insert(id, built);
+        }
+
+        // Active-window only, because the sections are editor-global (see
+        // `app::sidebar`): the active window's file is the one whose layout
+        // the column shows.
+        if id == self.active_window {
+            self.restore_sidebar_sections(&workspace.file_explorer.sections);
         }
 
         // Active-window only: the restored active buffer never went through a
@@ -2783,6 +2793,7 @@ impl crate::app::window::Window {
                 scroll_offset: explorer.get_scroll_offset(),
                 show_hidden: explorer.ignore_patterns().show_hidden(),
                 show_gitignored: explorer.ignore_patterns().show_gitignored(),
+                sections: Vec::new(),
             }
         } else {
             FileExplorerState {
@@ -2793,6 +2804,7 @@ impl crate::app::window::Window {
                 scroll_offset: 0,
                 show_hidden: false,
                 show_gitignored: false,
+                sections: Vec::new(),
             }
         };
 

@@ -692,6 +692,9 @@ pub enum Action {
     /// persistent orchestrator dock (the left session column). When the
     /// dock is hidden, this opens and focuses it.
     ToggleDockFocus,
+    /// Cycle keyboard focus through the sidebar: the file explorer, then
+    /// each plugin section under it in order, then back to the editor.
+    FocusNextSidebarSection,
     FileExplorerUp,
     FileExplorerDown,
     FileExplorerPageUp,
@@ -1203,6 +1206,7 @@ impl Action {
             "focus_file_explorer" => FocusFileExplorer,
             "focus_editor" => FocusEditor,
             "toggle_dock_focus" => ToggleDockFocus,
+            "focus_next_sidebar_section" => FocusNextSidebarSection,
             "file_explorer_up" => FileExplorerUp,
             "file_explorer_down" => FileExplorerDown,
             "file_explorer_page_up" => FileExplorerPageUp,
@@ -2011,6 +2015,7 @@ impl KeybindingResolver {
                 | Action::ToggleUtilityDock
                 | Action::OpenTerminalInDock
                 | Action::ToggleDockFocus
+                | Action::FocusNextSidebarSection
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
@@ -2932,6 +2937,7 @@ impl KeybindingResolver {
             Action::FocusFileExplorer => t!("action.focus_file_explorer"),
             Action::FocusEditor => t!("action.focus_editor"),
             Action::ToggleDockFocus => t!("action.toggle_dock_focus"),
+            Action::FocusNextSidebarSection => t!("action.focus_next_sidebar_section"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),
             Action::FileExplorerDown => t!("action.file_explorer_down"),
             Action::FileExplorerPageUp => t!("action.file_explorer_page_up"),

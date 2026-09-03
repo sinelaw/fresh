@@ -415,15 +415,12 @@ impl Editor {
                 new_sticky_column: Some(target_col),
             };
 
-            let split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
-            self.active_window_mut()
-                .apply_event_to_buffer(buffer_id, split_id, &event);
+            // Through the editor-level applier, not the window's: the
+            // window's applies the move and nothing else, so this jump
+            // reached the buffer without firing `cursor_moved`, and every
+            // plugin that follows the cursor (the Markdown contents section
+            // among them) kept showing where it had been.
+            self.apply_event_to_active_buffer(&event);
 
             // For scanned large files, override the line number with the known exact value
             // since offset_to_position may fall back to proportional estimation.
@@ -545,15 +542,12 @@ impl Editor {
                 new_sticky_column: None,
             };
 
-            let split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
-            self.active_window_mut()
-                .apply_event_to_buffer(buffer_id, split_id, &event);
+            // Through the editor-level applier, not the window's: the
+            // window's applies the move and nothing else, so this jump
+            // reached the buffer without firing `cursor_moved`, and every
+            // plugin that follows the cursor (the Markdown contents section
+            // among them) kept showing where it had been.
+            self.apply_event_to_active_buffer(&event);
         }
     }
 

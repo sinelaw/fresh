@@ -5526,6 +5526,34 @@ pub enum PluginCommand {
         start_blurred: bool,
     },
 
+    /// Mount a declarative widget panel as a **sidebar section**: a
+    /// titled, collapsible section of the file explorer's column, appended
+    /// after the explorer (and after any section already there). The
+    /// sidebar is shown if it was hidden. `rows` is the section's requested
+    /// body height; a divider the user has dragged overrides it. The panel
+    /// is the same registry entry a floating or dock mount makes, so
+    /// `UpdateFloatingWidget`, `UnmountFloatingWidget`, `WidgetMutate`,
+    /// `WidgetCommand` and the `widget_event` hook all apply to it
+    /// unchanged. Mounting an identity that is already a section replaces
+    /// its content in place.
+    MountSidebarSection {
+        plugin: String,
+        panel_id: u64,
+        spec: WidgetSpec,
+        /// The section header's title.
+        title: String,
+        /// Requested body rows; `0` shares the remainder with the explorer.
+        rows: u16,
+        /// Whether the header carries a `×` that removes the section
+        /// (firing the panel's `cancel` `widget_event`). Default `true`.
+        #[serde(default = "default_true")]
+        closable: bool,
+        /// Mount without taking keyboard focus. Default `false`: the
+        /// section takes the keys, as a dock mount does.
+        #[serde(default)]
+        start_blurred: bool,
+    },
+
     /// Replace the spec of the currently-mounted floating widget
     /// panel. No-op when no floating panel is mounted, or when the
     /// `panel_id` doesn't match the mounted one.
@@ -5551,6 +5579,12 @@ pub enum PluginCommand {
     /// - "fullscreen" — a centered panel renders over the *entire* frame
     ///   (covering the dimmed dock) when `arg != 0`, instead of laying
     ///   into the chrome area beside the dock. No-op when no dock is up.
+    /// - "sidebar" — re-anchor a dock or centered panel as a sidebar
+    ///   section under the file explorer; `arg` is the requested body
+    ///   rows. "dock" and "center" re-anchor a section back out.
+    /// - "sidebar_rows" — set a sidebar section's requested body rows to
+    ///   `arg`, without touching focus. A divider the user has dragged
+    ///   wins. No-op unless the panel is a section.
     FloatingPanelControl {
         plugin: String,
         panel_id: u64,

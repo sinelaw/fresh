@@ -20,6 +20,8 @@ pub enum HoverTarget {
     FileExplorerBorder,
     /// Hovering over the orchestrator dock's right border (for resize)
     DockBorder,
+    /// Hovering over the `×` of sidebar section `index`'s header row.
+    SidebarSectionClose(usize),
     /// Hovering over a file browser navigation shortcut
     FileBrowserNavShortcut(usize),
     /// Hovering over a file browser file/directory entry

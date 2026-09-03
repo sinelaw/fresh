@@ -4641,6 +4641,33 @@ interface EditorAPI {
 	*/
 	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean): boolean;
 	/**
+	* Mount a declarative widget panel as a **sidebar section**: a titled,
+	* collapsible section of the file explorer's column, appended after
+	* the explorer and any section already there. The sidebar is shown if
+	* it was hidden.
+	* 
+	* `rows` is the section's requested body height in rows (`0` shares the
+	* column with the explorer); a divider the user has dragged overrides
+	* it. `opts.closable` (default `true`) puts a `×` on the header that
+	* removes the section and fires the panel's `cancel` `widget_event`;
+	* `opts.startBlurred` (default `false`) mounts without taking keyboard
+	* focus.
+	* 
+	* The section is an ordinary panel: `updateFloatingWidget(panelId, spec)`
+	* replaces its content, `unmountFloatingWidget(panelId)` removes the
+	* section, `widgetMutate` / `widgetCommand` apply, and its hits arrive
+	* through the `widget_event` hook with this `panelId` unchanged.
+	* `floatingPanelControl(panelId, "sidebar_rows", n)` changes the
+	* requested rows, `"focus"` / `"blur"` work as for the dock, and
+	* `"dock"` / `"center"` re-anchor the panel out of the sidebar (with
+	* `"sidebar"` bringing a dock or centered panel in). Mounting an id that
+	* is already a section replaces its content in place.
+	*/
+	mountSidebarSection(panelId: number, specObj: unknown, title: string, rows: number, opts?: {
+		closable?: boolean;
+		startBlurred?: boolean;
+	}): boolean;
+	/**
 	* Replace the spec of the currently-mounted floating widget panel.
 	*/
 	updateFloatingWidget(panelId: number, specObj: unknown): boolean;
@@ -4652,8 +4679,11 @@ interface EditorAPI {
 	* Control a mounted floating panel's placement / focus without
 	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
 	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-	* centered panel cover the whole frame over the dock). See
-	* `PluginCommand::FloatingPanelControl`.
+	* centered panel cover the whole frame over the dock), "sidebar"
+	* (`arg` = requested rows; re-anchors the panel as a sidebar section
+	* under the file explorer — "dock" / "center" re-anchor it back out),
+	* "sidebar_rows" (`arg` = requested rows for a section; a divider the
+	* user has dragged wins). See `PluginCommand::FloatingPanelControl`.
 	*/
 	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**
