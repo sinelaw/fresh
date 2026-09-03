@@ -273,36 +273,71 @@ function truncate(s: string, maxLen: number): string {
   return result + "...";
 }
 
-/** Matches a string containing any non-ASCII scalar. Non-global so it
- *  carries no `lastIndex` state between calls. */
-const NON_ASCII_RE = /[^\x00-\x7F]/;
-
-/** Convert a 0-based UTF-8 *byte* offset into a line to the UTF-16 index
- *  the same line is sliced by.
+/** UTF-16 index of the `pattern` hit in `line` nearest to (at or before)
+ *  `byteHint`, or -1 when the pattern is empty, invalid, or absent.
  *
- *  `SearchMatch.column` is documented as a byte column
- *  (`fresh-editor-core/src/model/filesystem.rs`), while every `slice`
- *  here counts UTF-16 units. On an ASCII line the two coincide, which is
- *  why the mismatch hid: it only bites when the text before the match is
- *  multibyte, and then it overstates the position by up to 3x (CJK) —
- *  enough to slide the window clean past the match it was meant to
- *  centre on.
+ *  This is how a row learns where its own match sits, and it deliberately
+ *  does NOT convert `match.column` to a UTF-16 index. Three reasons:
  *
- *  The ASCII fast path is a native regex scan with early exit, so the
- *  common case (source code, minified assets) costs no per-codepoint
- *  work. The slow path walks only as far as the match. */
-function byteColumnToIndex(line: string, byteCol: number): number {
-  if (byteCol <= 0) return 0;
-  if (!NON_ASCII_RE.test(line)) return Math.min(byteCol, line.length);
-  let bytes = 0;
-  let index = 0;
-  for (const ch of line) {
-    if (bytes >= byteCol) break;
-    const cp = ch.codePointAt(0)!;
-    bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
-    index += ch.length;
+ *  1. A conversion has to walk the line codepoint by codepoint, and on the
+ *     very files `CONTEXT_HARD_CAP` was written for — 5 000-50 000 char
+ *     minified bundles — that walk is tens of thousands of QuickJS
+ *     iterations per row, per re-render. One `©` anywhere on the line puts
+ *     every row on it onto that path. Native string search is two to three
+ *     orders of magnitude cheaper and is all this needs.
+ *  2. `column` and `context` are not guaranteed to describe the same
+ *     string: `resolveMatchTarget` rewrites `line`/`column` from the live
+ *     interval marker after a jump or replace and leaves `context` at its
+ *     grep-time value. Searching `context` itself cannot drift from it.
+ *  3. A byte offset is never smaller than the UTF-16 index of the same
+ *     position, so `column` is a soundupper bound to search back from —
+ *     which is what makes it useful as a hint without being trusted as a
+ *     position. Picking the hit at or before it is what keeps several
+ *     matches on one line anchored to their own rows.
+ *
+ *  Returns -1 rather than guessing when the pattern isn't on the line at
+ *  all — the stale-row case, where the tree renders the previous search's
+ *  results against the pattern currently being typed. The caller reads
+ *  that as "no anchor" and falls back to the head of the line. */
+function matchIndexNearByteColumn(
+  line: string,
+  pattern: string,
+  isRegex: boolean,
+  caseSensitive: boolean,
+  byteHint: number,
+): number {
+  if (!pattern) return -1;
+  // The hint is a byte offset; clamping to the UTF-16 length keeps it a
+  // valid search position and costs nothing when they coincide.
+  const hint = Math.max(0, Math.min(byteHint, line.length));
+  try {
+    if (!isRegex) {
+      const hay = caseSensitive ? line : line.toLowerCase();
+      const needle = caseSensitive ? pattern : pattern.toLowerCase();
+      const before = hay.lastIndexOf(needle, hint);
+      // Nothing at or before the hint: the byte column overstated the
+      // position past the last hit (a heavily multibyte prefix), so take
+      // the first hit on the line instead of reporting none.
+      return before >= 0 ? before : hay.indexOf(needle);
+    }
+    const re = new RegExp(pattern, caseSensitive ? "g" : "gi");
+    let best = -1;
+    let first = -1;
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      if (first < 0) first = m.index;
+      if (m.index > hint) break;
+      best = m.index;
+    }
+    return best >= 0 ? best : first;
+  } catch (_e) {
+    // Invalid regex mid-typing: no anchor, same as no hit.
+    return -1;
   }
-  return index;
 }
 
 /** Codepoint index and length of the `pattern` hit in `text` nearest to
@@ -347,7 +382,16 @@ function matchSpanNear(
  *  exactly `truncate`, so ordinary rows are unchanged.
  *
  *  `matchAt` is where this row's own match is expected to sit in
- *  `text` — see `matchSpanNear`. */
+ *  `text` — see `matchSpanNear`.
+ *
+ *  `alreadySliced` says whether `text` is itself a mid-line window. It
+ *  governs the fallbacks, not the happy path: head-truncating a slice
+ *  that does not start at the beginning of the line renders it as
+ *  though it did, with a trailing "..." implying nothing was cut on the
+ *  left. The caller now anchors at 0 whenever it cannot locate the
+ *  match, so this should not arise — but a marker costs one column and
+ *  a row that silently lies about where it starts is worse than a row
+ *  that is one character narrower. */
 function windowAroundMatch(
   text: string,
   budget: number,
@@ -355,17 +399,25 @@ function windowAroundMatch(
   isRegex: boolean,
   caseSensitive: boolean,
   matchAt: number,
+  alreadySliced: boolean,
 ): string {
-  if (charLen(text) <= budget) return text;
+  const ELLIPSIS = "…";
+  // Head-truncation, honest about a left-hand elision when there is one.
+  const head = (t: string) =>
+    alreadySliced
+      ? ELLIPSIS + truncate(t, Math.max(1, budget - 1))
+      : truncate(t, budget);
+  // `head` (not a bare prepend) so the marker cannot push the row one
+  // column over `budget` when the text already fills it exactly.
+  if (charLen(text) <= budget) return alreadySliced ? head(text) : text;
   const span = matchSpanNear(text, pattern, isRegex, caseSensitive, matchAt);
   // No locatable match (empty/invalid pattern, or a hit that fell
   // outside the capped window): keep the historical head-truncation.
-  if (!span) return truncate(text, budget);
+  if (!span) return head(text);
   // The match is already visible in the head — `truncate`'s own "..."
   // marker covers the elided tail.
-  if (span.start + span.length <= budget - 3) return truncate(text, budget);
+  if (span.start + span.length <= budget - 3) return head(text);
 
-  const ELLIPSIS = "…";
   // Codepoint array: slicing it can never split a surrogate pair, and
   // the input is capped well under a couple of thousand codepoints.
   const cps = Array.from(text);
@@ -376,7 +428,7 @@ function windowAroundMatch(
   // Nothing is elided on the left, so there is no window to slide: the
   // match starts inside the first third and is simply wider than the
   // row. Head-truncation is all this width allows.
-  if (start === 0) return truncate(text, budget);
+  if (start === 0) return head(text);
   // One column goes to the leading `…`.
   const room = budget - 1;
   if (start + room >= cps.length) {
@@ -823,21 +875,22 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // of a 290-char line rendered as `start xxxx…`, with the matched
   // text nowhere on screen).
   //
-  // `match.column` is a 1-based *byte* column and every slice here counts
-  // UTF-16 units, so it is converted before use. Half a cap of slack does
-  // NOT absorb the difference — a CJK prefix inflates the byte column 3x,
-  // so ~128 such characters ahead of the match are enough to put the
-  // window past it entirely; `windowAroundMatch` then finds no match and
-  // falls back to truncating a window centred on the wrong part of the
-  // line, which is worse than the head-truncation it replaced.
-  //
-  // `windowAroundMatch` still re-locates the match in the sliced text
-  // rather than trusting this arithmetic, and still degrades to
-  // head-truncation if it isn't there. The window stays one cap wide, so
-  // the per-codepoint work downstream is bounded as it was.
-  const matchCol = byteColumnToIndex(rawCtx, Math.max(0, (result.match.column || 1) - 1));
-  const capStart = rawCtx.length > CONTEXT_HARD_CAP
-    ? Math.max(0, Math.min(matchCol - CONTEXT_HARD_CAP / 2, rawCtx.length - CONTEXT_HARD_CAP))
+  // The anchor is a hit located in `rawCtx` itself, not arithmetic on
+  // `match.column` — see `matchIndexNearByteColumn` for why (bounded
+  // work, and immune to `column` drifting out of step with `context`).
+  // -1 means the pattern is not on this line at all, which happens
+  // routinely: the tree renders the previous search's rows against the
+  // pattern currently being typed. Anchor at 0 then, so the row shows
+  // the head of the line exactly as it did before this feature existed.
+  const anchor = matchIndexNearByteColumn(
+    rawCtx,
+    panel.searchPattern,
+    panel.useRegex,
+    panel.caseSensitive,
+    Math.max(0, (result.match.column || 1) - 1),
+  );
+  const capStart = anchor >= 0 && rawCtx.length > CONTEXT_HARD_CAP
+    ? Math.max(0, Math.min(anchor - CONTEXT_HARD_CAP / 2, rawCtx.length - CONTEXT_HARD_CAP))
     : 0;
   const capped = rawCtx.slice(capStart, capStart + CONTEXT_HARD_CAP);
   // Leading indentation is noise worth trimming when the window starts
@@ -859,10 +912,10 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // more of the context, which is fine.
   const maxCtx = innerWidth - location.length - 3;
   // Where this row's match sits in `context`, after the cap slice and
-  // the leading trim above. Byte-vs-UTF-16 again: an approximation used
-  // only to pick between several hits on the same line.
+  // the leading trim above — used to pick between several hits on the
+  // same line. Exact, since `anchor` is an index into `rawCtx`.
   const trimmedLead = capStart === 0 ? capped.length - capped.trimStart().length : 0;
-  const matchAt = matchCol - capStart - trimmedLead;
+  const matchAt = Math.max(0, anchor) - capStart - trimmedLead;
   const displayCtx = windowAroundMatch(
     context,
     Math.max(10, maxCtx),
@@ -870,6 +923,7 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
     panel.useRegex,
     panel.caseSensitive,
     matchAt,
+    capStart > 0,
   );
 
   // Pattern-match highlights inside the context substring. Emitted

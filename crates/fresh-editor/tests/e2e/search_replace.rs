@@ -3235,7 +3235,8 @@ fn test_search_replace_long_line_match_is_visible() {
 /// for a whole class of real files: a CJK prefix inflates the column 3x
 /// and a non-BMP one 2x, sliding the window past the match. The row then
 /// renders the region *after* the match — strictly worse than the
-/// head-truncation the windowing replaced.
+/// head-truncation the windowing replaced. The column is now a hint that
+/// bounds a search, never a position that is trusted.
 #[test]
 fn test_search_replace_multibyte_prefix_match_is_visible() {
     init_tracing_from_env();
@@ -3282,9 +3283,85 @@ fn test_search_replace_multibyte_prefix_match_is_visible() {
         assert!(
             row.contains("NEEDLE_MARKER"),
             "the match is not shown on a line with a multibyte prefix — \
-             the byte column has to be converted to the unit the context \
-             is sliced by before it anchors the window. Row:\n{row}\n\
-             Screen:\n{screen}"
+             the window must anchor on a hit located in the line itself, \
+             not on arithmetic over a byte column the slicing does not \
+             count in. Row:\n{row}\nScreen:\n{screen}"
         );
     }
+}
+
+/// A row whose pattern the renderer cannot locate must show the HEAD of
+/// the line, not a slice from the middle of it dressed up as the head.
+///
+/// The window is anchored on a hit found in the line itself, and when
+/// there is no such hit the anchor collapses to 0. Without that, the
+/// anchor came from `match.column` arithmetic, which is happy to point
+/// into a line the renderer can't confirm — so the row rendered
+/// characters from the middle of a long line with a trailing `...`
+/// implying nothing had been cut on the left. It reads as the start of
+/// the line when it isn't.
+///
+/// Driven with a regex Rust's engine accepts and JavaScript's rejects:
+/// the search finds the matches, the plugin's `new RegExp` throws, and
+/// the renderer is left with no locatable hit. That is the same state
+/// the panel is in whenever it renders the previous search's rows
+/// against a pattern that is still being typed, but reached
+/// deterministically instead of through a race.
+#[test]
+fn test_search_replace_unlocatable_pattern_renders_line_head() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // Past the 512-char context cap, with the match far along it. The
+    // head carries a distinctive marker: filler alone cannot tell "the
+    // head of the line" apart from "a slice of the filler", which is
+    // exactly how this test first passed against the bug it targets.
+    let long_line = format!(
+        "HEAD_MARKER{}NEEDLE_MARKER{}",
+        "a".repeat(1700),
+        "b".repeat(1700)
+    );
+    fs::write(project_root.join("long.txt"), format!("{long_line}\n")).unwrap();
+
+    let start_file = project_root.join("long.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    // Alt+R turns on Regex; the inline `(?i)` flag is valid in the Rust
+    // regex crate and a SyntaxError in JavaScript.
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("(?i)NEEDLE_MARKER").unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("long.txt:1"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let row = screen
+        .lines()
+        .find(|l| l.contains("long.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the long-line match. Screen:\n{screen}"))
+        .to_string();
+    let body = row.split(" - ").nth(1).unwrap_or("").trim();
+    assert!(
+        body.starts_with("HEAD_MARKER"),
+        "with no locatable hit the row must fall back to the head of the \
+         line; it rendered a slice from elsewhere in it. Row:\n{row}"
+    );
+    assert!(
+        !body.starts_with('\u{2026}'),
+        "a row that starts at the head of the line must not claim a \
+         left-hand elision. Row:\n{row}"
+    );
 }
