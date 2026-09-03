@@ -355,56 +355,6 @@ pub fn suspend_and_resume(
     Ok(())
 }
 
-/// The async-signal-safe counterpart of [`emergency_cleanup`], for use from
-/// a signal handler.
-///
-/// [`emergency_cleanup`] goes through crossterm, which allocates and locks;
-/// calling it from a handler risks deadlocking against a thread the signal
-/// interrupted. This writes the same teardown bytes with a single `write(2)`
-/// and restores cooked mode with `tcgetattr`/`tcsetattr` — all three are on
-/// POSIX's async-signal-safe list.
-///
-/// Restoring cooked mode does not use crossterm's saved termios (reading it
-/// would take a lock); it re-enables the flags a shell needs — canonical
-/// input, echo, signal generation, output post-processing — which is what
-/// makes the terminal usable again without a `reset`.
-///
-/// A no-op when the tty is already gone: every call is best-effort and the
-/// errors are deliberately unexamined, since there is nowhere to report them.
-#[cfg(unix)]
-pub fn emergency_cleanup_from_signal() {
-    use std::os::unix::io::AsRawFd;
-
-    // One buffer, one write: fewer syscalls and no chance of interleaving
-    // half a sequence with another thread's output.
-    const TEARDOWN: &[u8] = concat_teardown();
-    const fn concat_teardown() -> &'static [u8] {
-        // `const` concatenation of the `sequences` constants is not
-        // expressible, so this mirrors `terminal_teardown_sequences()` in
-        // `server::capture_backend` — keep the two in step.
-        b"\x1b[?25h\x1b[0 q\x1b[?2004l\x1b[?1004l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[<u\x1b[0m\x1b[?1049l"
-    }
-
-    let fd = stdout().as_raw_fd();
-
-    // SAFETY: `write` is async-signal-safe; a short or failed write only
-    // means a less tidy terminal, which is why the result is ignored.
-    unsafe {
-        libc::write(fd, TEARDOWN.as_ptr().cast(), TEARDOWN.len());
-    }
-
-    // SAFETY: `tcgetattr`/`tcsetattr` are async-signal-safe and operate on
-    // a stack `termios` this thread owns.
-    unsafe {
-        let mut tio: libc::termios = std::mem::zeroed();
-        if libc::tcgetattr(fd, &mut tio) == 0 {
-            tio.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN;
-            tio.c_oflag |= libc::OPOST;
-            libc::tcsetattr(fd, libc::TCSANOW, &tio);
-        }
-    }
-}
-
 /// Unconditionally restore terminal state without tracking.
 ///
 /// This is intended for use in panic hooks where we don't have access

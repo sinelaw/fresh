@@ -640,66 +640,58 @@ struct SetupState {
     terminal_modes: TerminalModes,
 }
 
-/// State for stdin streaming in background
-#[cfg(unix)]
+/// State for stdin streaming in background.
+///
+/// The spool the pipe is drained into has no name — see
+/// `services::stdin_spool` — so this is the only handle on it, and the
+/// filesystem the buffer must use to read it back travels with it.
 pub struct StdinStreamState {
-    /// Path to temp file where stdin is being written
-    pub temp_path: PathBuf,
+    /// The nameless spool, and the filesystem view that can read it.
+    pub spool: std::sync::Arc<fresh::services::stdin_spool::StdinSpool>,
     /// Handle to background thread (None if completed)
     pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
 }
 
-/// Start streaming stdin to temp file in background.
-/// Returns immediately with streaming state. Editor can start while data streams in.
-/// Must be called BEFORE enabling raw terminal mode.
-#[cfg(unix)]
+/// Start streaming stdin to the spool in the background.
+///
+/// Returns immediately; the editor starts while data is still arriving.
+/// Must be called BEFORE enabling raw terminal mode, because it reopens
+/// stdin from `/dev/tty` once the pipe has been handed to the drain thread.
 fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
-    use std::fs::File;
-    use std::os::unix::io::{AsRawFd, FromRawFd};
+    use std::sync::Arc;
 
-    // Duplicate stdin fd BEFORE reopening it as TTY
-    // This preserves access to the pipe for background reading
-    let stdin_fd = io::stdin().as_raw_fd();
-    let pipe_fd = unsafe { libc::dup(stdin_fd) };
-    if pipe_fd == -1 {
-        anyhow::bail!("Failed to dup stdin: {}", io::Error::last_os_error());
-    }
+    // Take the pipe before stdin is reopened as the terminal, so the drain
+    // thread keeps reading what was piped in.
+    let pipe = take_stdin_pipe()?;
 
-    // Create empty temp file
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(format!("fresh-stdin-{}.tmp", std::process::id()));
-    File::create(&temp_path)?;
-    // The buffer lazily reads chunks back off this file for as long as it
-    // lives, so it can't be unlinked here — the process deletes it on the
-    // way out instead (#3134).
-    fresh::services::temp_files::register(&temp_path);
+    let (spool, mut writer) = fresh::services::stdin_spool::StdinSpool::create()
+        .context("Failed to create the stdin spool")?;
+    let spool = Arc::new(spool);
 
-    // Reopen stdin from /dev/tty so crossterm can use it for keyboard input
+    // Reopen stdin from the terminal so crossterm can read keys from it.
     reopen_stdin_from_tty()?;
     tracing::info!("Reopened stdin from /dev/tty for terminal input");
 
-    // Spawn background thread to drain pipe into temp file
-    let temp_path_clone = temp_path.clone();
-    let thread_handle = std::thread::spawn(move || {
+    let thread_handle = std::thread::spawn(move || -> anyhow::Result<()> {
         use std::io::{Read, Write};
 
-        // SAFETY: pipe_fd is a valid duplicated file descriptor
-        let mut pipe_file = unsafe { File::from_raw_fd(pipe_fd) };
-        let mut temp_file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&temp_path_clone)?;
-
+        let mut pipe = pipe;
         const CHUNK_SIZE: usize = 64 * 1024;
         let mut buffer = vec![0u8; CHUNK_SIZE];
 
         loop {
-            let bytes_read = pipe_file.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break; // EOF
-            }
-            temp_file.write_all(&buffer[..bytes_read])?;
-            // Flush each chunk so main thread can see progress
-            temp_file.flush()?;
+            let bytes_read = match pipe.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                // A closed pipe is an ordinary end of input, not a failure.
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => break,
+                Err(e) => return Err(e.into()),
+            };
+            writer.write_all(&buffer[..bytes_read])?;
+            // Flush each chunk so the editor can show progress while the
+            // rest is still arriving.
+            writer.flush()?;
         }
 
         tracing::info!("Stdin streaming complete");
@@ -707,114 +699,70 @@ fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
     });
 
     Ok(StdinStreamState {
-        temp_path,
+        spool,
         thread_handle: Some(thread_handle),
     })
 }
 
-/// Windows stdin stream state
-#[cfg(windows)]
-pub struct StdinStreamState {
-    pub temp_path: PathBuf,
-    pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+/// Hand back the piped stdin as an owned reader, so it survives stdin being
+/// reopened as the terminal.
+#[cfg(unix)]
+fn take_stdin_pipe() -> AnyhowResult<std::fs::File> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+
+    let stdin_fd = io::stdin().as_raw_fd();
+    // SAFETY: `dup` returns a fresh descriptor for the same pipe, which the
+    // `File` below then owns; the original fd is left for `reopen_stdin_from_tty`.
+    let pipe_fd = unsafe { libc::dup(stdin_fd) };
+    if pipe_fd == -1 {
+        anyhow::bail!("Failed to dup stdin: {}", io::Error::last_os_error());
+    }
+    // SAFETY: `pipe_fd` is a valid descriptor this function just created and
+    // hands sole ownership of to the returned `File`.
+    Ok(unsafe { std::fs::File::from_raw_fd(pipe_fd) })
 }
 
-/// Stream stdin content to a temp file on Windows.
-/// This is called when stdin is a pipe (e.g., `cat file.txt | fresh`).
-/// We duplicate the stdin handle, spawn a thread to read from it,
-/// and then reopen stdin from CONIN$ for keyboard input.
+/// Windows counterpart of [`take_stdin_pipe`].
 #[cfg(windows)]
-fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
-    use std::fs::File;
-    use std::io::{Read, Write};
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+fn take_stdin_pipe() -> AnyhowResult<std::fs::File> {
+    use std::os::windows::io::FromRawHandle;
     use windows_sys::Win32::Foundation::{
         DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
     };
-    use windows_sys::Win32::System::Console::GetStdHandle;
-    use windows_sys::Win32::System::Console::STD_INPUT_HANDLE;
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE};
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-    // Get the current stdin handle (which is a pipe)
+    // SAFETY: plain console/handle queries; every failure is checked below.
     let stdin_handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
     if stdin_handle == INVALID_HANDLE_VALUE || stdin_handle.is_null() {
         anyhow::bail!("Failed to get stdin handle");
     }
 
-    // Duplicate the handle so we can read from it in a background thread
-    // while we replace stdin with CONIN$ for keyboard input
-    let mut duplicated_handle: HANDLE = std::ptr::null_mut();
-    let current_process = unsafe { GetCurrentProcess() };
-    let success = unsafe {
+    let mut duplicated: HANDLE = std::ptr::null_mut();
+    // SAFETY: duplicating a handle this process owns into this process; the
+    // result is checked and then owned by the `File` below.
+    let ok = unsafe {
+        let me = GetCurrentProcess();
         DuplicateHandle(
-            current_process,
+            me,
             stdin_handle,
-            current_process,
-            &mut duplicated_handle,
+            me,
+            &mut duplicated,
             0,
             0, // not inheritable
             DUPLICATE_SAME_ACCESS,
         )
     };
-
-    if success == 0 {
+    if ok == 0 {
         anyhow::bail!(
             "Failed to duplicate stdin handle: {}",
             io::Error::last_os_error()
         );
     }
 
-    // Create a temp file to store the piped content.
-    //
-    // Created here rather than in the worker thread below so that it exists
-    // by the time it is registered: a sweep that ran in between would find
-    // nothing and the thread would then create the file behind it, which is
-    // the leak this is meant to close.
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(format!("fresh-stdin-{}.txt", std::process::id()));
-    File::create(&temp_path)?;
-    // Deleted when the process exits, not when the buffer closes: the
-    // buffer keeps lazily reading chunks off this file (#3134).
-    fresh::services::temp_files::register(&temp_path);
-
-    let temp_path_clone = temp_path.clone();
-
-    // Cast handle to usize for Send across thread boundary
-    // SAFETY: HANDLE is a pointer-sized value, usize preserves it exactly
-    let handle_as_usize = duplicated_handle as usize;
-
-    // Spawn a thread to read from the duplicated pipe handle
-    let thread_handle = std::thread::spawn(move || -> AnyhowResult<()> {
-        // SAFETY: We own this duplicated handle and will close it when done
-        // Cast back from usize to raw handle
-        let raw_handle = handle_as_usize as *mut std::ffi::c_void;
-        let owned_handle = unsafe { OwnedHandle::from_raw_handle(raw_handle) };
-        let mut pipe_reader = unsafe { File::from_raw_handle(owned_handle.as_raw_handle()) };
-        // Forget the OwnedHandle since File now owns it
-        std::mem::forget(owned_handle);
-
-        let mut temp_file = File::create(&temp_path_clone)?;
-        let mut buffer = [0u8; 8192];
-
-        loop {
-            match pipe_reader.read(&mut buffer) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    temp_file.write_all(&buffer[..n])?;
-                }
-                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => break,
-                Err(e) => return Err(e.into()),
-            }
-        }
-
-        temp_file.flush()?;
-        Ok(())
-    });
-
-    Ok(StdinStreamState {
-        temp_path,
-        thread_handle: Some(thread_handle),
-    })
+    // SAFETY: `duplicated` is a valid handle this function just created and
+    // hands sole ownership of to the returned `File`.
+    Ok(unsafe { std::fs::File::from_raw_handle(duplicated.cast()) })
 }
 
 /// Check if stdin has data available (is a pipe or redirect, not a TTY)
@@ -984,8 +932,14 @@ fn handle_first_run_setup(
     // Handle stdin streaming (takes priority over files)
     // Opens with empty/partial buffer, content streams in background
     if let Some(mut stream_state) = stdin_stream.take() {
-        tracing::info!("Opening stdin buffer from: {:?}", stream_state.temp_path);
-        editor.open_stdin_buffer(&stream_state.temp_path, stream_state.thread_handle.take())?;
+        tracing::info!(
+            "Opening stdin buffer from spool {:?}",
+            stream_state.spool.path()
+        );
+        editor.open_stdin_buffer(
+            std::sync::Arc::clone(&stream_state.spool),
+            stream_state.thread_handle.take(),
+        )?;
     }
 
     // Queue CLI files to be opened after the TUI starts
@@ -1741,21 +1695,6 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         terminal_modes::emergency_cleanup();
-        // Under `panic = "abort"` (the `min-size` profile) this hook is the
-        // only chance to remove the stdin spool file: nothing unwinds, so the
-        // `CleanupOnDrop` guard in `real_main` never runs (#3134).
-        //
-        // Deliberately NOT done when unwinding. A panic hook fires for a
-        // panic on *any* thread, and a panicking thread is not a dying
-        // process: the stdin drain thread in particular is expected to
-        // panic and be survived (`ThreadOutcome::Panic` becomes a status
-        // message and the editor carries on). Sweeping here would delete
-        // the file out from under a live buffer that is still lazily
-        // reading chunks off it — worse than the leak this fixes. The
-        // unwinding case is already covered, because a *fatal* panic
-        // unwinds `real_main` and drops the guard.
-        #[cfg(panic = "abort")]
-        fresh::services::temp_files::cleanup_all();
         original_hook(panic);
     }));
 
@@ -1772,8 +1711,8 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             match start_stdin_streaming() {
                 Ok(stream_state) => {
                     tracing::info!(
-                        "Stdin streaming started, temp file: {:?}",
-                        stream_state.temp_path
+                        "Stdin streaming started, spool: {:?}",
+                        stream_state.spool.path()
                     );
                     Some(stream_state)
                 }
@@ -5466,13 +5405,6 @@ fn build_localized_cli_command() -> clap::Command {
 }
 
 fn real_main() -> AnyhowResult<()> {
-    // Every scratch file this process registers (today: the stdin spool
-    // file) is deleted when this frame unwinds, on any return path — the
-    // early CLI-command returns and the `?` out of `initialize_app`
-    // included. `main` turns some errors into `process::exit`, which skips
-    // destructors, so the guard belongs here rather than one frame up.
-    let _temp_files = fresh::services::temp_files::CleanupOnDrop;
-
     // Early check, otherwise terminal check would fail.
     #[cfg(all(windows, feature = "gui"))]
     let console_available = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 };
