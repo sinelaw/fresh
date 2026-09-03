@@ -497,6 +497,16 @@ already load-bearing across the test suite.
   produced nothing, and as a tab beside the work when it produced anything.
 - On demand: `Welcome` in the palette, or **Help ▸ Welcome**.
 
+**It never takes the view and gives it back.** A background open is a
+`background: true` on `createVirtualBuffer`, not an open followed by a switch
+back. Creation used to make the new buffer active unconditionally, so the
+only way to leave a restored session alone was to switch away afterwards —
+and that is two visible switches: the tab bar came up without the page, the
+page took the pane, the file returned. Worse, the panel composed its layout
+during that flicker and kept it. The host now gates the one
+`set_active_buffer` call on the flag, so the page is added to the tab bar
+and the current buffer is left alone.
+
 **Startup means startup, not "startup that found an empty workspace".** The
 page used to ask whether anything else was open and give up if anything was,
 so restoring a session — or plain `fresh note.txt` — meant never seeing it

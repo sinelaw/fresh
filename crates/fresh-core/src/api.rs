@@ -4244,6 +4244,15 @@ pub enum PluginCommand {
         editing_disabled: bool,
         /// Whether this buffer should be hidden from tabs (for composite source buffers)
         hidden_from_tabs: bool,
+        /// Open the buffer as a tab in the active split *without* making it
+        /// the active buffer. Creation otherwise switches to the new buffer,
+        /// which is right for a panel the reader just asked for and wrong for
+        /// one the editor offers unbidden — a startup page, say, which should
+        /// be there to turn to without displacing the file being restored.
+        /// Ignored when `hidden_from_tabs` is set: a detached buffer is not
+        /// in a tab bar to be background *in*.
+        #[serde(default)]
+        background: bool,
         /// Optional initial cursor line (0-indexed). Applied before the
         /// new buffer becomes the active buffer, so plugins can land the
         /// cursor atomically with creation rather than chasing a race
@@ -6067,6 +6076,21 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "hiddenFromTabs")]
     #[ts(optional, rename = "hiddenFromTabs")]
     pub hidden_from_tabs: Option<bool>,
+    /// Open as a tab without taking the view (default: false).
+    ///
+    /// Creating a virtual buffer otherwise makes it the active buffer, and
+    /// there is no quiet way back: switching away afterwards is a second
+    /// visible switch, and the layout the panel composed while it briefly
+    /// held the pane is not the one it gets later. Set this when the buffer
+    /// is one the editor offers rather than one the reader asked for — a
+    /// startup page beside a restored session — and it appears in the tab
+    /// bar with the current buffer left alone.
+    ///
+    /// Ignored together with `hiddenFromTabs`, which has no tab bar to be
+    /// background in.
+    #[serde(default)]
+    #[ts(optional)]
+    pub background: Option<bool>,
     /// Initial content as **spans, concatenated verbatim** — a span is a run
     /// of text with optional styling, not a line. Nothing inserts newlines
     /// for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
@@ -7184,6 +7208,7 @@ impl PluginApi {
             show_cursors: true,
             editing_disabled: false,
             hidden_from_tabs: false,
+            background: false,
             initial_cursor_line: None,
             indentation_guide: None,
             request_id: None,

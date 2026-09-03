@@ -2450,6 +2450,21 @@ type CreateVirtualBufferOptions = {
 	*/
 	hiddenFromTabs?: boolean;
 	/**
+	* Open as a tab without taking the view (default: false).
+	*
+	* Creating a virtual buffer otherwise makes it the active buffer, and
+	* there is no quiet way back: switching away afterwards is a second
+	* visible switch, and the layout the panel composed while it briefly
+	* held the pane is not the one it gets later. Set this when the buffer
+	* is one the editor offers rather than one the reader asked for — a
+	* startup page beside a restored session — and it appears in the tab
+	* bar with the current buffer left alone.
+	*
+	* Ignored together with `hiddenFromTabs`, which has no tab bar to be
+	* background in.
+	*/
+	background?: boolean;
+	/**
 	* Initial content as **spans, concatenated verbatim** — a span is a run
 	* of text with optional styling, not a line. Nothing inserts newlines
 	* for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include

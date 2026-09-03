@@ -31,6 +31,7 @@ fn reproduce_cursor_panic() {
         show_cursors: false, // <--- The trigger: hiding cursors
         editing_disabled: false,
         hidden_from_tabs: false,
+        background: false,
         initial_cursor_line: None,
         indentation_guide: None,
         request_id: None,

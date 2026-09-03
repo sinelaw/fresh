@@ -1476,7 +1476,8 @@ function hasOtherBuffers(): boolean {
  *  command — which both overrides `showOnStartup` and brings the page to
  *  the front. Startup passes `false` and lets `hasOtherBuffers` decide
  *  the second half: an empty workspace lands on the page, a workspace
- *  with work in it gets a tab and keeps looking at the work. */
+ *  with work in it gets a tab and keeps looking at the work — the page
+ *  is never made active and then unmade. */
 async function openWelcome(force: boolean): Promise<void> {
   if (bufferId !== null) {
     editor.showBuffer(bufferId);
@@ -1485,11 +1486,6 @@ async function openWelcome(force: boolean): Promise<void> {
   if (opening) return;
   if (!force && !showOnStartup()) return;
   const foreground = force || !hasOtherBuffers();
-
-  // `createVirtualBuffer` tabs the new buffer into the focused pane and
-  // makes it active — there is no "open it quietly" option — so a
-  // background open is an open followed by putting the reader back.
-  const restoreTo = foreground ? 0 : editor.getActiveBufferId();
   opening = true;
   readActiveTheme();
   try {
@@ -1510,6 +1506,12 @@ async function openWelcome(force: boolean): Promise<void> {
       // lit its occurrences and the reader could see no reason why.
       showCursors: true,
       editingDisabled: true,
+      // Never take the view from a workspace that already has something
+      // in it. The page arrives as a tab, in one step: opening and then
+      // switching back is two visible switches, and the reader watches
+      // their file get displaced and returned for no reason they asked
+      // for.
+      background: !foreground,
     });
     bufferId = res.bufferId;
     // Nothing focused is this page's resting state: it opens as
@@ -1539,11 +1541,7 @@ async function openWelcome(force: boolean): Promise<void> {
     probeThemes();
     probeWorkspaces();
     render();
-    if (foreground) {
-      editor.showBuffer(bufferId);
-    } else if (restoreTo !== 0 && restoreTo !== bufferId) {
-      editor.showBuffer(restoreTo);
-    }
+    if (foreground) editor.showBuffer(bufferId);
     void probeRepoFiles();
     void probeGit();
   } catch (e) {

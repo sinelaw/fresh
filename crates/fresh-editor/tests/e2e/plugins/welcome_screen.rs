@@ -193,17 +193,29 @@ fn startup_with_a_file_already_open_still_gets_a_welcome_tab() {
 
 /// The other half of the same rule: a workspace that already has
 /// something in it keeps looking at it. The page is a tab you can turn
-/// to, not a thing that lands on top of the file you asked for.
+/// to, not a thing that lands on top of the file you asked for — and
+/// not one that lands on top of it and then gets out of the way again,
+/// which is what opening-then-switching-back looked like: the tab bar
+/// appeared without the page, the page took the pane, and the file came
+/// back. Creation itself now leaves the active buffer alone
+/// (`background` on `createVirtualBuffer`), so there is no moment in
+/// between to see.
 #[test]
 fn a_welcome_tab_beside_a_file_does_not_take_the_foreground() {
     let (mut harness, tmp) = harness_with_welcome();
     let path = tmp.path().join("work").join("note.txt");
     fs::write(&path, "alpha\nbeta\n").unwrap();
     harness.open_file(&path).unwrap();
+    let active_before = harness.editor().active_buffer_id();
 
     harness.editor_mut().fire_ready_hook();
     harness.wait_for_async_quiescence(4).unwrap();
 
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        active_before,
+        "startup changed which buffer is active"
+    );
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("alpha"),

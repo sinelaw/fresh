@@ -1359,6 +1359,7 @@ impl Editor {
                 show_cursors,
                 editing_disabled,
                 hidden_from_tabs,
+                background,
                 initial_cursor_line,
                 indentation_guide,
                 request_id,
@@ -1372,6 +1373,7 @@ impl Editor {
                     show_cursors,
                     editing_disabled,
                     hidden_from_tabs,
+                    background,
                     initial_cursor_line,
                     indentation_guide,
                     request_id,
@@ -3563,6 +3565,7 @@ impl Editor {
         show_cursors: bool,
         editing_disabled: bool,
         hidden_from_tabs: bool,
+        background: bool,
         initial_cursor_line: Option<u32>,
         indentation_guide: Option<bool>,
         request_id: Option<u64>,
@@ -3622,8 +3625,12 @@ impl Editor {
             Ok(()) => {
                 tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
                 // Switch to the new buffer to display it — but only when it's
-                // attached (a detached hidden buffer must not steal the view).
-                if !hidden_from_tabs {
+                // attached (a detached hidden buffer must not steal the view)
+                // and the caller did not ask for a background tab. A
+                // `background` buffer is already in the tab bar by now:
+                // `create_virtual_buffer` adds it and seeds its view state,
+                // and only this line makes it the one on screen.
+                if !hidden_from_tabs && !background {
                     self.set_active_buffer(buffer_id);
                     tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
                 }
