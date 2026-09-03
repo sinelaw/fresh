@@ -759,7 +759,9 @@ export function textInput(
  * reserved rectangle.
  *
  * `windowId` of 0 (or any unknown id) renders the placeholder
- * blanks without dispatching the per-window paint. */
+ * blanks without dispatching the per-window paint — which is also
+ * what a `windowId` that names no window at all is normalised to,
+ * see below. */
 export function windowEmbed(options: {
   windowId: number;
   rows: number;
@@ -767,7 +769,30 @@ export function windowEmbed(options: {
 }): WidgetSpec {
   return {
     kind: "windowEmbed",
-    windowId: options.windowId,
+    // **A window id the host cannot hold is "no window", not a broken
+    // panel.** The host reads this field as a `u32`, so a negative or
+    // fractional id fails to deserialise — and it fails for the *whole
+    // spec*, which the host then drops: `updateFloatingWidget` logs
+    // `invalid spec` and the panel keeps painting whatever it last
+    // showed. A plugin that embeds a placeholder row therefore froze
+    // its own panel, and the user saw a stuck card that only unstuck on
+    // the next keystroke that happened to produce a valid spec
+    // (sinelaw/fresh#1971: the orchestrator's synthetic ids for
+    // workspaces that have no window yet, which left the picker on
+    // "Archiving… / Waiting for git…" after the archive had finished).
+    //
+    // "No window" is a state this widget already has a value for, and
+    // that value is 0. Mapping to it keeps a placeholder rendering as
+    // the blanks it is meant to render, instead of taking the panel
+    // down with it.
+    // The range is closed at *both* ends: `u32` has a top as well as a
+    // bottom, and an id above it fails to deserialise exactly as a negative
+    // one does — same rejected spec, same frozen panel.
+    windowId: Number.isFinite(options.windowId) &&
+        options.windowId > 0 &&
+        options.windowId <= 0xffff_ffff
+      ? Math.trunc(options.windowId)
+      : 0,
     rows: options.rows,
     key: options.key,
   };

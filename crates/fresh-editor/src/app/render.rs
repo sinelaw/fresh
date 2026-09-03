@@ -379,36 +379,19 @@ impl Editor {
         // the top — is read off the column that laid the cards out.
         self.refresh_settings_body_window();
         let shell = self.shell_frame((dock_area, chrome_area));
-        // The shell's tree is retained across frames — element state, focus and
-        // the dirty set live on it — so it is moved out for the duration of the
-        // frame rather than borrowed from `self`. See `Editor::shell_ui`.
-        // `expect`, not `unwrap_or_default`: silently substituting a fresh
-        // `Ui` would discard every element's state, the focus position and the
-        // dirty set, and the frame would still render — the retained tree's
-        // whole point, lost without a symptom. If this is ever `None` a
-        // re-entrant path took it and did not put it back, which is a bug in
-        // that path.
-        let mut ui = self
+        self.lay_out_shell_tree(shell.clone(), fresh_ui::Size::new(size.width, size.height));
+        let ui = self
             .shell_ui
-            .take()
+            .as_ref()
             .expect("the shell tree is taken and returned within one frame");
-        crate::view::shell::geometry::stats::note_shell_layout();
-        ui.frame(
-            crate::view::shell::frame::frame_tree(shell.clone()),
-            fresh_ui::Size::new(size.width, size.height),
-        );
-        let regions = crate::view::shell::frame::regions_of(&ui, size);
+        let regions = crate::view::shell::frame::regions_of(ui, size);
         // **The frame's one geometry pass, for the panes.** Every pane's box
         // and content slot, off the tree just laid out. The plugin hooks below,
         // the body painter's pass and the pane `Host`s all read this; nothing
         // on the render path lays the grid out again to ask where a pane is.
         // See `view::shell::geometry`.
-        let pane_rects = crate::view::shell::geometry::PaneRects::read(
-            &ui,
-            self.window_panes().into_iter().map(|(leaf, _)| leaf),
-            size,
-        );
-        self.shell_ui = Some(ui);
+        let pane_rects =
+            crate::view::shell::geometry::PaneRects::read(ui, self.window_panes_leaves(), size);
         // Retained for the callers that ask between frames where a pane is —
         // the same rects this frame paints with. See `Window::pane_rects`.
         self.active_window_mut().set_pane_rects(pane_rects.clone());
@@ -4355,6 +4338,53 @@ impl Editor {
     /// rectangle this reads, so taking the size as well would be a second way
     /// to say the same thing — and the two could then disagree, which is the
     /// bug above wearing a different hat.
+    /// Lay the shell's retained tree out for one frame, and settle the focus
+    /// moves that were waiting for it.
+    ///
+    /// **One function because they are one step, and because a test that
+    /// re-spelled the step could not fail when the step changed.** The replay
+    /// has to happen on the frame that first builds the element a
+    /// `setFocusKey` named (see [`Editor::pending_panel_tree_focus`]), so it
+    /// belongs to laying the tree out, not beside it. `render` used to spell
+    /// the sequence inline and the widget-runtime tests spelled it again in a
+    /// helper — two copies, and deleting the replay from `render` left the
+    /// copy passing. Now there is one, and #3137 comes back as a test failure.
+    ///
+    /// The tree is retained across frames — element state, focus and the dirty
+    /// set live on it — so it is moved out for the duration rather than
+    /// borrowed from `self`. `expect`, not `unwrap_or_default`: silently
+    /// substituting a fresh `Ui` would discard every element's state, the
+    /// focus position and the dirty set, and the frame would still render —
+    /// the retained tree's whole point, lost without a symptom. If this is
+    /// ever `None` a re-entrant path took it and did not put it back, which is
+    /// a bug in that path.
+    pub(crate) fn lay_out_shell_tree(
+        &mut self,
+        shell: crate::view::shell::frame::Frame,
+        size: fresh_ui::Size,
+    ) {
+        let mut ui = self
+            .shell_ui
+            .take()
+            .expect("the shell tree is taken and returned within one frame");
+        crate::view::shell::geometry::stats::note_shell_layout();
+        ui.frame(crate::view::shell::frame::frame_tree(shell), size);
+        self.shell_ui = Some(ui);
+        // The gain this raises is queued behind the one the stale holder
+        // already left, and `apply_settled_shell_messages` settles on the last
+        // — which is why the replay belongs here and not at the drain.
+        self.retry_pending_panel_tree_focus();
+    }
+
+    /// The active window's pane leaves, collected so a caller can hold the
+    /// tree borrowed while it asks.
+    fn window_panes_leaves(&self) -> Vec<crate::model::event::LeafId> {
+        self.window_panes()
+            .into_iter()
+            .map(|(leaf, _)| leaf)
+            .collect()
+    }
+
     pub(crate) fn shell_frame(
         &mut self,
         split: (Option<ratatui::layout::Rect>, ratatui::layout::Rect),
