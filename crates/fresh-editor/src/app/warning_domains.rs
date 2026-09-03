@@ -214,6 +214,29 @@ impl LspWarningDomain {
         if let Some(lang) = error_lang {
             self.language = Some(lang);
             self.level = WarningLevel::Error;
+            return;
+        }
+
+        // A server that is up but has stopped answering requests is a
+        // warning: the feature the user just invoked silently did nothing
+        // (issue #2197).
+        let stuck = statuses
+            .iter()
+            .find(|(_, status)| matches!(status, LspServerStatus::Unresponsive))
+            .map(|((lang, server), _)| (lang.clone(), server.clone()));
+
+        if let Some((lang, server)) = stuck {
+            self.language = Some(lang);
+            // Deliberately no `server_command`: that field means "this
+            // command was not found" to `popup_content`, and the server is
+            // running — it just isn't answering.
+            self.server_command = None;
+            self.error_message = Some(format!(
+                "'{}' is running but is not answering requests (they time out). \
+                 Try restarting it, or check the server's log.",
+                server,
+            ));
+            self.level = WarningLevel::Warning;
         } else {
             self.clear();
         }

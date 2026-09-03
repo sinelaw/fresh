@@ -646,6 +646,13 @@ pub struct InlineHint {
     pub anchor: usize,
     pub text: String,
     pub position: VirtualTextPosition,
+    /// How the underlying marker moves when text is inserted at `anchor`.
+    ///
+    /// The wrap index keeps its own copy of these anchors and shifts them
+    /// itself (`IndexDecorations::shift_for_edit`); without the gravity it
+    /// would have to assume one, and a snapshot that disagrees with the live
+    /// marker makes the index lay out a line the renderer never draws.
+    pub gravity: crate::view::virtual_text::MarkerGravity,
     /// `None` when the caller passed no theme — the scroll-math and index
     /// paths, where only the cell's *width* matters and nothing is drawn.
     pub style: Option<ViewTokenStyle>,
@@ -670,6 +677,7 @@ pub fn resolve_inline_hints(
             anchor,
             text: vtext.text.clone(),
             position: vtext.position,
+            gravity: vtext.gravity,
             style: theme.map(|t| token_style_from_ratatui(vtext.resolved_style(t))),
         })
         .collect()

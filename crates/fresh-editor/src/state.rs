@@ -2906,6 +2906,53 @@ mod tests {
             assert_eq!(results[0].1.text, "/*param*/");
         }
 
+        /// Entries added through [`VirtualTextManager::add`] keep the
+        /// default right gravity whichever side they render on: the
+        /// async-paste placeholder's marker *is* the eventual insertion
+        /// point, so it has to travel with the text typed at it. The
+        /// left-gravity variant is opt-in per entry (see
+        /// `view::virtual_text::MarkerGravity`) and is what inlay hints
+        /// ask for — issue #722.
+        #[test]
+        fn test_after_char_virtual_text_tracks_its_character_on_insert() {
+            let mut state = EditorState::new(
+                80,
+                24,
+                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+                test_fs(),
+            );
+            state.buffer = Buffer::from_str_test("hello world");
+
+            if !state.buffer.is_empty() {
+                state.marker_list.adjust_for_insert(0, state.buffer.len());
+            }
+
+            let _vtext_id = state.virtual_texts.add(
+                &mut state.marker_list,
+                6,
+                ": string".to_string(),
+                Style::default(),
+                VirtualTextPosition::AfterChar,
+                0,
+            );
+
+            let mut cursors = Cursors::new();
+            let cursor_id = cursors.primary_id();
+            state.apply(
+                &mut cursors,
+                &Event::Insert {
+                    position: 6,
+                    text: "beautiful ".to_string(),
+                    cursor_id,
+                },
+            );
+
+            let results = state.virtual_texts.query_range(&state.marker_list, 0, 30);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].0, 16);
+            assert_eq!(results[0].1.text, ": string");
+        }
+
         #[test]
         fn test_virtual_text_position_tracking_on_delete() {
             let mut state = EditorState::new(

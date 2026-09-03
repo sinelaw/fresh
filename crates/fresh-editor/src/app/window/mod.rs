@@ -864,6 +864,18 @@ pub struct Window {
     pub lsp_server_statuses:
         HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
 
+    /// Most recent request timeout per `(language, method)`, so a feature
+    /// that came back empty can say *why* it is empty. A request that
+    /// expires is delivered to the feature as "no result", which is how
+    /// issue #2197 got its "F12 reports No definition found" symptom — the
+    /// server never answered at all.
+    ///
+    /// Keyed by method, and consumed once, because the editor also makes
+    /// requests the user did not: without that, a background `inlayHint`
+    /// expiring at t=0 would explain a `definition` the server answered
+    /// correctly and promptly with `[]` at t=2s.
+    pub lsp_request_timeouts: HashMap<(String, String), LspRequestTimeoutRecord>,
+
     /// Plugin-contributed menu items merged into the LSP-Servers popup
     /// (the one opened by clicking the LSP indicator). Keyed by
     /// `(language, plugin_id)` so each plugin owns its own slice and
@@ -1170,6 +1182,33 @@ pub struct Window {
     /// see [`process_group`] module docs for the authority-
     /// pluggable `Signaller` design.
     pub process_groups: ProcessGroups,
+}
+
+/// The last LSP request that expired for a language.
+#[derive(Debug, Clone)]
+pub struct LspRequestTimeoutRecord {
+    /// The server the request was sent to.
+    ///
+    /// The record is keyed by the label the server registered under, which
+    /// for a universal server is `"universal"` rather than any language —
+    /// so the lookup has to be able to ask whether that server's scope
+    /// accepts the buffer's language, the way `is_lsp_server_ready` does.
+    pub server_name: String,
+    /// When the timeout was reported.
+    pub at: std::time::Instant,
+    /// How long it waited.
+    pub timeout: std::time::Duration,
+    /// Timeouts in a row on that server, including this one.
+    pub consecutive: u32,
+}
+
+impl LspRequestTimeoutRecord {
+    /// Whether this timeout is recent enough to explain a request that
+    /// just came back empty. Requests are answered (or expire) one at a
+    /// time, so a few seconds is a generous window.
+    pub fn explains_empty_result(&self) -> bool {
+        self.at.elapsed() < std::time::Duration::from_secs(5)
+    }
 }
 
 /// Apply language-server configuration to a freshly-created
@@ -2373,6 +2412,7 @@ impl Window {
             diagnostic_result_ids: HashMap::new(),
             lsp_progress: HashMap::new(),
             lsp_server_statuses: HashMap::new(),
+            lsp_request_timeouts: HashMap::new(),
             lsp_menu_contributions: HashMap::new(),
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),

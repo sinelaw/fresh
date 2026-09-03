@@ -243,7 +243,10 @@ impl Editor {
         self.active_window_mut().pending_goto_definition_request = None;
 
         if locations.is_empty() {
-            self.active_window_mut().status_message = Some(t!("lsp.no_definition").to_string());
+            let message = self
+                .expired_request_message("textDocument/definition")
+                .unwrap_or_else(|| t!("lsp.no_definition").to_string());
+            self.active_window_mut().status_message = Some(message);
             return Ok(());
         }
 
@@ -1080,7 +1083,10 @@ impl Editor {
             // Every capable server answered and none returned a hover, and
             // there are no overlapping diagnostics — report "no hover" exactly
             // once (only fires on the final response of the batch).
-            self.set_status_message(t!("lsp.no_hover").to_string());
+            let message = self
+                .expired_request_message("textDocument/hover")
+                .unwrap_or_else(|| t!("lsp.no_hover").to_string());
+            self.set_status_message(message);
             self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
@@ -1500,6 +1506,16 @@ impl Editor {
             // Use the hint text as-is - spacing is handled during rendering
             let display_text = text;
 
+            // Left gravity: a hint rendered *before* its anchor belongs in
+            // front of anything typed at that anchor. Without it, pressing
+            // Enter with the cursor on a hint's anchor dragged the hint onto
+            // the next line until the debounced refresh arrived (#722).
+            // `AfterChar` hints — the end-of-line anchoring from #1572 —
+            // keep the default right gravity so they travel with their glyph.
+            let gravity = match position {
+                VirtualTextPosition::BeforeChar => crate::view::virtual_text::MarkerGravity::Left,
+                _ => crate::view::virtual_text::MarkerGravity::Right,
+            };
             state.virtual_texts.add_with_theme_keys(
                 &mut state.marker_list,
                 byte_offset,
@@ -1509,10 +1525,60 @@ impl Editor {
                 None,
                 position,
                 0, // Default priority
+                gravity,
             );
         }
 
         tracing::debug!("Applied {} inlay hints as virtual text", hints.len());
+    }
+
+    /// Why a just-completed LSP request came back empty, when the reason
+    /// is that it never got an answer.
+    ///
+    /// A request that expires after its timeout reaches the feature as
+    /// "no result", so "No definition found" and "No hover information
+    /// available" were reported for a server that simply never replied
+    /// (issue #2197). When *this* request's method expired for this
+    /// buffer's language a moment ago, say that instead.
+    ///
+    /// Deliberately narrow: it matches on the method the feature actually
+    /// asked for, and consumes the record, so one expiry explains one empty
+    /// result and never a later, genuinely empty answer.
+    fn expired_request_message(&mut self, method: &str) -> Option<String> {
+        let language = self
+            .buffers()
+            .get(&self.active_buffer())
+            .map(|state| state.language.clone())?;
+
+        // Records are keyed by the label the server registered under, which
+        // for a universal server is `"universal"`, not the buffer's language.
+        // Accept either, the same way `is_lsp_server_ready` does.
+        let window = self.active_window();
+        let key = window
+            .lsp_request_timeouts
+            .iter()
+            .find(|((lang, recorded_method), record)| {
+                recorded_method == method
+                    && (lang == &language
+                        || window
+                            .lsp
+                            .server_scope(&record.server_name)
+                            .map(|scope| scope.accepts(&language))
+                            .unwrap_or(false))
+            })
+            .map(|(key, _)| key.clone())?;
+
+        let record = self.active_window().lsp_request_timeouts.get(&key)?;
+        let explains = record.explains_empty_result();
+        let timeout_secs = record.timeout.as_secs();
+        self.active_window_mut().lsp_request_timeouts.remove(&key);
+        if !explains {
+            return None;
+        }
+        Some(format!(
+            "LSP ({}): no answer — '{}' timed out after {}s",
+            language, method, timeout_secs,
+        ))
     }
 
     /// Request LSP find references at current cursor position
