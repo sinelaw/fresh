@@ -1360,6 +1360,7 @@ impl Editor {
                 editing_disabled,
                 hidden_from_tabs,
                 background,
+                highlight_current_line,
                 initial_cursor_line,
                 indentation_guide,
                 request_id,
@@ -1374,6 +1375,7 @@ impl Editor {
                     editing_disabled,
                     hidden_from_tabs,
                     background,
+                    highlight_current_line,
                     initial_cursor_line,
                     indentation_guide,
                     request_id,
@@ -3566,6 +3568,7 @@ impl Editor {
         editing_disabled: bool,
         hidden_from_tabs: bool,
         background: bool,
+        highlight_current_line: Option<bool>,
         initial_cursor_line: Option<u32>,
         indentation_guide: Option<bool>,
         request_id: Option<u64>,
@@ -3614,7 +3617,16 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .get_mut(&active_split)
             {
-                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+                let bs = view_state.ensure_buffer_state(buffer_id);
+                bs.show_line_numbers = show_line_numbers;
+                // Both the live value and the override: the live one is
+                // what this frame paints, the override is what survives
+                // `apply_config_defaults` re-resolving the view against the
+                // editor setting on the next config change.
+                if let Some(lit) = highlight_current_line {
+                    bs.highlight_current_line = lit;
+                    bs.highlight_current_line_override = Some(lit);
+                }
             }
         } else if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             meta.hidden_from_tabs = true;

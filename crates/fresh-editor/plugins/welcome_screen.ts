@@ -26,7 +26,9 @@ const editor = getEditor();
 //   audiences on one page without overwhelming the simplest. It opens
 //   once, when Fresh launches, and takes the foreground only when there
 //   is nothing else to look at — otherwise it waits in a tab. Closing
-//   buffers never summons it, and it closes nothing to make room.
+//   buffers never summons it. The one buffer it will close is the
+//   host's untitled seed, and only when the reader's own setting says
+//   they want no empty buffer; then the page is what replaces it.
 //   Design note: docs/internal/welcome-screen-design.md.
 //
 //   Structure is a ladder. The first viewport is a zero-anxiety zone
@@ -1462,6 +1464,30 @@ function showOnStartup(): boolean {
 
 // ── Lifecycle ────────────────────────────────────────────────────────
 
+/** The host's own answer to "what do I show when there is nothing to
+ *  show": `editor.auto_create_empty_buffer_on_last_buffer_close`. With it
+ *  on, the reader wants a `[No Name]` scratch buffer in an empty
+ *  workspace; with it off they want nothing. Fresh seeds one untitled
+ *  buffer at launch either way, so this page reads the setting to decide
+ *  what that seed *means* — a buffer the reader asked for, or a
+ *  placeholder this page replaces. */
+function seedWanted(): boolean {
+  const cfg = editor.getConfig() as
+    | { editor?: { auto_create_empty_buffer_on_last_buffer_close?: boolean } }
+    | null;
+  return cfg?.editor?.auto_create_empty_buffer_on_last_buffer_close !== false;
+}
+
+/** The host's empty untitled seed: not a file, no name, never typed
+ *  into. Anything else unnamed and unmodified is a scratch buffer the
+ *  reader opened with `Ctrl+N` — but so is the seed, structurally, and
+ *  at startup the two are told apart only by the setting above. */
+function isSeed(b: { id: number; path: string; is_virtual: boolean; modified: boolean }): boolean {
+  if (bufferId !== null && b.id === bufferId) return false;
+  const unnamed = !b.path || b.path.length === 0;
+  return !b.is_virtual && unnamed && !b.modified;
+}
+
 /** Is anything at all open besides this page?
  *
  *  Asked once, at startup, and it decides one thing only: whether the
@@ -1470,14 +1496,16 @@ function showOnStartup(): boolean {
  *  hid it until you closed every buffer and relaunched.
  *
  *  Anything counts: a file, a terminal, an agent session, another
- *  plugin's panel. Two buffers do not: this page itself, and the host's
- *  empty untitled seed, which is the very thing the page stands in
- *  for — a workspace holding only that is an empty one. */
+ *  plugin's panel. The host's untitled seed counts exactly when the
+ *  reader has said they want one (`seedWanted`): then it is *their*
+ *  scratch buffer and keeps the pane, with this page a tab beside it.
+ *  When they have said they want nothing, the seed is the placeholder
+ *  this page stands in for, and a workspace holding only that is empty. */
 function hasOtherBuffers(): boolean {
+  const seedCounts = seedWanted();
   return editor.listBuffers().some((b) => {
     if (bufferId !== null && b.id === bufferId) return false;
-    const unnamed = !b.path || b.path.length === 0;
-    if (!b.is_virtual && unnamed && !b.modified) return false;
+    if (isSeed(b)) return seedCounts;
     return true;
   });
 }
@@ -1522,6 +1550,9 @@ async function openWelcome(force: boolean): Promise<void> {
       // lit its occurrences and the reader could see no reason why.
       showCursors: true,
       editingDisabled: true,
+      // The caret's row means nothing on a page laid out by widgets, and a
+      // lit band across the centred wordmark reads as a selection.
+      highlightCurrentLine: false,
       // Never take the view from a workspace that already has something
       // in it. The page arrives as a tab, in one step: opening and then
       // switching back is two visible switches, and the reader watches
@@ -1545,13 +1576,20 @@ async function openWelcome(force: boolean): Promise<void> {
     // cursor reached the viewport edge and the page finally scrolled.
     // This is the order `setBufferShowCursors`'s own docs prescribe.
     editor.setBufferShowCursors(bufferId, true);
-    // Nothing else is closed to make room. Retiring the host's empty
-    // `[No Name]` seed here looked tidy — the page is what that seed
-    // stands in for — but the test it selected on (unnamed, unmodified,
-    // not virtual) is also every scratch buffer anyone ever opened with
-    // `Ctrl+N` and had not yet typed into, and a plugin buffer closing
-    // the reader's buffers is a plugin exceeding its brief either way.
-    // The page opens; it does not clear the table first.
+    // Retire the host's seed only when the reader has said they want no
+    // empty buffer (`seedWanted` false) *and* this page is what the
+    // workspace is opening to. Then the seed is the placeholder the page
+    // replaces, and leaving it is a `[No Name]` tab the reader has
+    // explicitly asked not to see. Anything else unnamed is theirs — a
+    // scratch buffer, or the seed they *do* want — and stays: a plugin
+    // buffer closing the reader's buffers is a plugin exceeding its
+    // brief. The `Welcome` command never does this; the palette is not
+    // startup.
+    if (!force && foreground && !seedWanted()) {
+      for (const b of editor.listBuffers()) {
+        if (isSeed(b)) editor.closeBuffer(b.id);
+      }
+    }
     engaged = force;
     shown = foreground;
     applyComposeWidth();

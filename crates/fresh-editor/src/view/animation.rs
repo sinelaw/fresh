@@ -155,24 +155,30 @@ impl FrameEffect for SlideIn {
     }
 
     fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus {
-        // First apply captures the post-paint "after" snapshot. The
-        // "before" snapshot, if any, was captured at the top of this
-        // render pass via the trait hook.
-        if self.after.is_none() {
-            self.after = Some(Self::snapshot_area(buf, area));
+        // The "after" snapshot is taken from `buf` on *every* apply. By the
+        // time the runner reaches this effect the frame's content pass has
+        // already painted the incoming pane into `buf`, so what is read here
+        // is the pane as it is *now* — which is the only thing a slide may
+        // show shifted. It used to be captured once, on the first apply, and
+        // held for the slide's whole duration: a pane whose content changed
+        // mid-slide (a plugin panel catching up to a new width on
+        // `buffer_activated`, ~100ms in) kept showing the first frame's
+        // cells, and because the slide's final frame is its own composite
+        // and the runner asked for no frame after it, the stale picture
+        // outlived the slide until the next input. A snapshot is 69×37 cells
+        // for a pane; copying it per frame for 260ms costs nothing worth
+        // a stale screen.
+        //
+        // The "before" snapshot, if any, was captured at the top of this
+        // render pass via the trait hook; it is dropped if the area moved
+        // under it (a resize mid-slide), which falls back to the
+        // slide-in-with-blanks path.
+        let area_changed = self.after.as_ref().is_some_and(|s| s.area != area);
+        if area_changed {
+            self.before = None;
         }
-        let after = match &self.after {
-            Some(s) if s.area == area => s,
-            Some(_) => {
-                // Area changed mid-animation (resize) — re-snapshot the
-                // after, and drop the before whose dimensions no longer
-                // match. Falls back to the slide-in-with-blanks path.
-                self.after = Some(Self::snapshot_area(buf, area));
-                self.before = None;
-                self.after.as_ref().unwrap()
-            }
-            None => unreachable!(),
-        };
+        self.after = Some(Self::snapshot_area(buf, area));
+        let after = self.after.as_ref().expect("snapshot just taken");
         let before = self.before.as_ref().filter(|b| b.area == area);
 
         let t = if self.duration.is_zero() {
@@ -1049,6 +1055,13 @@ struct ActiveEffect {
 pub struct AnimationRunner {
     next_id: u64,
     active: Vec<ActiveEffect>,
+    /// An effect finished during the last `apply_all`, so the frame it
+    /// finished on is its own composite and one more frame is owed to
+    /// paint the true content. Read once by the frame loop through
+    /// [`Self::take_settle_frame`]; without it the loop's "animations are
+    /// active" test is already false when it next asks, and the screen
+    /// is left showing whatever the effect's last frame drew.
+    settle_owed: bool,
     /// Cumulative count of effects accepted by either `start` or
     /// `start_with_id`. Monotonic; increments before the effect is
     /// pushed so a sample taken any time after the call sees the
@@ -1070,6 +1083,7 @@ impl AnimationRunner {
             next_id: 1,
             active: Vec::new(),
             total_started: 0,
+            settle_owed: false,
         }
     }
 
@@ -1200,8 +1214,19 @@ impl AnimationRunner {
             }
             let elapsed = now - effective_start;
             e.status = e.effect.apply(buf, e.area, elapsed);
+            if e.status == EffectStatus::Done {
+                self.settle_owed = true;
+            }
         }
         self.active.retain(|e| e.status == EffectStatus::Running);
+    }
+
+    /// Whether an effect finished on the last frame, so one more frame is
+    /// owed to paint the content it was drawn over. Clears on read: the
+    /// frame loop asks once per iteration and the debt is paid by the frame
+    /// that follows.
+    pub fn take_settle_frame(&mut self) -> bool {
+        std::mem::take(&mut self.settle_owed)
     }
 
     pub fn is_active(&self) -> bool {
@@ -1238,6 +1263,41 @@ impl AnimationRunner {
 
 #[cfg(test)]
 mod tests {
+    /// The frame an effect finishes on is its own composite, so the runner
+    /// owes one more frame to paint the content underneath. `is_active` is
+    /// already false by the time the loop asks; this is the signal that
+    /// carries the debt across, and it is paid exactly once.
+    #[test]
+    fn a_finished_effect_owes_exactly_one_settle_frame() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        let area = Rect::new(0, 0, 8, 2);
+        let mut runner = super::AnimationRunner::new();
+        assert!(
+            !runner.take_settle_frame(),
+            "nothing owed before any effect"
+        );
+        runner.start(
+            area,
+            super::AnimationKind::SlideIn {
+                from: super::Edge::Right,
+                duration: std::time::Duration::ZERO,
+                delay: std::time::Duration::ZERO,
+            },
+        );
+        let mut buf = Buffer::empty(area);
+        runner.apply_all(&mut buf);
+        assert!(
+            !runner.is_active(),
+            "a zero-duration slide finishes on its first apply"
+        );
+        assert!(
+            runner.take_settle_frame(),
+            "the finishing frame owes a settle frame"
+        );
+        assert!(!runner.take_settle_frame(), "the debt is paid once");
+    }
+
     use super::*;
     use ratatui::style::Color;
 

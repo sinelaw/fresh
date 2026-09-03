@@ -614,6 +614,7 @@ impl EditorServer {
                 // frame hands over the next one, so without this a
                 // multi-line notch would stop part-way through.
                 if editor.active_window().animations.is_active()
+                    || editor.active_window_mut().animations.take_settle_frame()
                     || editor.has_pending_wheel_scroll()
                 {
                     needs_render = true;

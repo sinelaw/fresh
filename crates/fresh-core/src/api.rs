@@ -4253,6 +4253,12 @@ pub enum PluginCommand {
         /// in a tab bar to be background *in*.
         #[serde(default)]
         background: bool,
+        /// Per-buffer current-line highlight. `None` follows the editor's
+        /// `highlight_current_line` setting; `Some(false)` switches it off
+        /// for a buffer where a lit row is noise — a page laid out by a
+        /// widget panel, where the caret's line means nothing to the reader.
+        #[serde(default)]
+        highlight_current_line: Option<bool>,
         /// Optional initial cursor line (0-indexed). Applied before the
         /// new buffer becomes the active buffer, so plugins can land the
         /// cursor atomically with creation rather than chasing a race
@@ -6091,6 +6097,13 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default)]
     #[ts(optional)]
     pub background: Option<bool>,
+    /// Current-line highlight for this buffer (default: follow the editor
+    /// setting). Pass `false` for a page whose rows are laid out by a widget
+    /// panel — the caret's line means nothing to the reader there, and a
+    /// lit band across a centred wordmark is noise.
+    #[serde(default, rename = "highlightCurrentLine")]
+    #[ts(optional, rename = "highlightCurrentLine")]
+    pub highlight_current_line: Option<bool>,
     /// Initial content as **spans, concatenated verbatim** — a span is a run
     /// of text with optional styling, not a line. Nothing inserts newlines
     /// for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
@@ -7209,6 +7222,7 @@ impl PluginApi {
             editing_disabled: false,
             hidden_from_tabs: false,
             background: false,
+            highlight_current_line: None,
             initial_cursor_line: None,
             indentation_guide: None,
             request_id: None,

@@ -791,6 +791,7 @@ fn test_next_buffer_skips_hidden_buffers() {
         editing_disabled: true,
         hidden_from_tabs: true, // <-- This makes it hidden
         background: false,
+        highlight_current_line: None,
         initial_cursor_line: None,
         indentation_guide: None,
         request_id: None,

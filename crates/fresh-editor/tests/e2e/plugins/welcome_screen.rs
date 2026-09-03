@@ -13,10 +13,18 @@
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
 use std::fs;
 
+const TAB_BAR_ROW: u16 = 1;
+
 /// A harness rooted in a scratch directory holding the real plugin.
-fn harness_with_welcome() -> (EditorTestHarness, tempfile::TempDir) {
+///
+/// `seed_wanted` is `editor.auto_create_empty_buffer_on_last_buffer_close`,
+/// the setting the page reads to decide what the host's untitled seed
+/// means. Most tests here want the page in the foreground of a bare start,
+/// which is the *off* case: the seed is a placeholder the page replaces.
+fn harness_with_welcome_seed(seed_wanted: bool) -> (EditorTestHarness, tempfile::TempDir) {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let working_dir = temp.path().join("work");
     fs::create_dir_all(&working_dir).unwrap();
@@ -25,8 +33,17 @@ fn harness_with_welcome() -> (EditorTestHarness, tempfile::TempDir) {
     copy_plugin(&plugins_dir, "welcome_screen");
     copy_plugin_lib(&plugins_dir);
 
-    let harness = EditorTestHarness::with_working_dir(120, 40, working_dir).expect("harness");
+    let mut config = Config::default();
+    config.editor.auto_create_empty_buffer_on_last_buffer_close = seed_wanted;
+    let harness = EditorTestHarness::with_config_and_working_dir(120, 40, config, working_dir)
+        .expect("harness");
     (harness, temp)
+}
+
+/// The common case for these tests: the reader wants no empty buffer, so a
+/// bare start lands on the page.
+fn harness_with_welcome() -> (EditorTestHarness, tempfile::TempDir) {
+    harness_with_welcome_seed(false)
 }
 
 /// Bring the page up the way a bare `fresh` does.
@@ -228,32 +245,79 @@ fn a_welcome_tab_beside_a_file_does_not_take_the_foreground() {
     );
 }
 
-/// **It opens; it does not clear the table first.** The page used to
-/// reap the host's empty `[No Name]` seed on the way up, on the reasoning
-/// that the seed was the placeholder it replaces. But the reaping loop's
-/// test — unnamed, unmodified, not virtual — is also every scratch buffer
-/// anyone ever opened with `Ctrl+N` and had not yet typed into, and a
-/// plugin buffer closing the reader's buffers is a plugin exceeding its
-/// brief either way.
+/// **When the reader wants an empty buffer, the page touches nothing.**
+/// With `auto_create_empty_buffer_on_last_buffer_close` on, the host's
+/// `[No Name]` seed is the reader's scratch buffer: it keeps the pane and
+/// the focus, and the page is a tab beside it. Closing it — as the page
+/// once did unconditionally — would be a plugin deleting the very buffer
+/// the reader's setting asked for.
 #[test]
-fn opening_the_welcome_screen_closes_no_other_buffer() {
-    let (mut harness, _tmp) = harness_with_welcome();
+fn a_workspace_that_wants_an_empty_buffer_keeps_it_focused() {
+    let (mut harness, _tmp) = harness_with_welcome_seed(true);
+    // The harness draws no tab bar for a lone buffer, so the seed is
+    // observed by id, not by its `[No Name]` label.
     let before = harness.editor().all_buffer_ids_for_tests();
-    assert!(
-        !before.is_empty(),
-        "precondition: the host seeds a buffer to open into"
-    );
+    let active_before = harness.editor().active_buffer_id();
+    assert_eq!(before.len(), 1, "precondition: the host seeds one buffer");
 
-    open_welcome(&mut harness);
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
 
     let after = harness.editor().all_buffer_ids_for_tests();
     for id in &before {
         assert!(
             after.contains(id),
-            "the welcome screen closed buffer {id:?} to make room for \
-             itself: {before:?} became {after:?}"
+            "the welcome screen closed buffer {id:?}: {before:?} became {after:?}"
         );
     }
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        active_before,
+        "the page took the focus from the reader's empty buffer"
+    );
+    let tab_bar = harness.screen_row_text(TAB_BAR_ROW);
+    assert!(
+        tab_bar.contains("[No Name]") && tab_bar.contains("Welcome"),
+        "expected `[No Name]` and a Welcome tab side by side, got: {tab_bar}"
+    );
+    assert!(
+        !harness.screen_to_string().contains("JUST EDIT TEXT"),
+        "the page is in the foreground of a workspace whose reader asked \
+         for an empty buffer"
+    );
+}
+
+/// **When the reader wants no empty buffer, the page replaces the seed.**
+/// With the setting off, Fresh still seeds one untitled buffer at launch;
+/// leaving it beside the page is a `[No Name]` tab the reader explicitly
+/// asked never to see. The page closes it and takes the pane — the one
+/// buffer this plugin will ever close, and only here.
+#[test]
+fn a_workspace_that_wants_no_empty_buffer_gets_only_the_welcome_page() {
+    let (mut harness, _tmp) = harness_with_welcome_seed(false);
+    let seed = harness.editor().all_buffer_ids_for_tests();
+    assert_eq!(
+        seed.len(),
+        1,
+        "precondition: the host seeds one buffer regardless of the setting"
+    );
+
+    open_welcome(&mut harness);
+
+    let after = harness.editor().all_buffer_ids_for_tests();
+    assert!(
+        !after.contains(&seed[0]),
+        "the seed survived a start the reader asked to be empty: {seed:?} -> {after:?}"
+    );
+    assert_eq!(
+        after.len(),
+        1,
+        "expected the page to be the only buffer: {after:?}"
+    );
+    assert!(
+        !harness.screen_to_string().contains("[No Name]"),
+        "a `[No Name]` label is still on screen"
+    );
 }
 
 /// **A page composed off screen composed against the wrong pane.** The

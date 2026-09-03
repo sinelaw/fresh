@@ -6446,6 +6446,7 @@ impl JsEditorApi {
                 editing_disabled: opts.editing_disabled.unwrap_or(false),
                 hidden_from_tabs: opts.hidden_from_tabs.unwrap_or(false),
                 background: opts.background.unwrap_or(false),
+                highlight_current_line: opts.highlight_current_line,
                 initial_cursor_line: opts.initial_cursor_line,
                 indentation_guide: opts.indentation_guide,
                 request_id: Some(id),

@@ -344,6 +344,7 @@ pub mod vertical_scrollbar_cursor_extent;
 pub mod vi_mode;
 #[cfg(feature = "plugins")]
 pub mod vi_mode_bugs;
+pub mod virtual_buffer_repaint;
 pub mod virtual_space;
 pub mod visual_regression;
 pub mod warning_indicators;

@@ -2465,6 +2465,13 @@ type CreateVirtualBufferOptions = {
 	*/
 	background?: boolean;
 	/**
+	* Current-line highlight for this buffer (default: follow the editor
+	* setting). Pass `false` for a page whose rows are laid out by a widget
+	* panel — the caret's line means nothing to the reader there, and a
+	* lit band across a centred wordmark is noise.
+	*/
+	highlightCurrentLine?: boolean;
+	/**
 	* Initial content as **spans, concatenated verbatim** — a span is a run
 	* of text with optional styling, not a line. Nothing inserts newlines
 	* for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include

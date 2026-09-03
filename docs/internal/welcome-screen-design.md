@@ -515,13 +515,30 @@ not a thing anyone does on purpose. Opening is unconditional now.
 `hasOtherBuffers` survives, demoted: it decides the foreground, so
 `fresh note.txt` still lands on `note.txt`.
 
-**It closes nothing to make room.** The page used to reap the host's empty
-`[No Name]` seed on the way up, on the reasoning that the seed is the
-placeholder the page replaces. But the test it selected on — unnamed,
-unmodified, not virtual — is also every scratch buffer anyone ever opened
-with `Ctrl+N` and had not yet typed into, and a plugin buffer closing the
-reader's buffers is a plugin exceeding its brief either way. A bare `fresh`
-now shows `[No Name]` and `Welcome` side by side.
+**The seed follows the reader's own setting.** Fresh seeds one untitled
+`[No Name]` buffer at launch. Whether the reader wants it is a question the
+editor already asks — `editor.auto_create_empty_buffer_on_last_buffer_close`
+— and this page reads the answer rather than inventing its own:
+
+- **Setting on** (the default): the seed is the reader's scratch buffer. It
+  keeps the pane and the focus; the page opens as a tab beside it. A bare
+  `fresh` lands on `[No Name]` with `Welcome ×` in the tab bar.
+- **Setting off**: the reader has said they want no empty buffer, so the seed
+  is the placeholder this page replaces. The page closes it and takes the
+  pane. A bare `fresh` shows one tab, `Welcome`, and no `[No Name]` anywhere.
+
+For a while the page reaped the seed unconditionally, and then — after that
+closed scratch buffers too — not at all. Both were wrong for the same reason:
+the seed's meaning is not the page's to decide. The test for "seed" is
+structural (not a file, no name, never modified) and is applied only at
+startup and only on the foreground path; the `Welcome` palette command
+closes nothing, because the palette is not startup.
+
+**No lit cursor row.** The page passes `highlightCurrentLine: false` to
+`createVirtualBuffer`. The caret's row means nothing on a page laid out by
+widgets, and a highlighted band across the centred wordmark read as a
+selection. The option is new and general: any panel whose rows are not lines
+of a document can use it.
 
 **Closing buffers never opens it.** It is a *startup* surface, not an
 empty-workspace surface. It used to take the second path too, on the
@@ -961,9 +978,8 @@ Eleven things the wireframes did not know:
     behind a file is told nothing: not a resize, and not the switch that
     finally shows it, because the split's tuple after the switch is the
     same pane it already was. So a page created at 140 columns and brought
-    forward after the terminal shrank to 70 painted at a measure the pane
-    could not hold, its `composeWidth` hint still describing a terminal
-    that no longer existed.
+    forward after the terminal shrank to 70 kept a `composeWidth` hint
+    describing a terminal that no longer existed.
 
     The page now catches up when it comes to the front: `buffer_activated`
     schedules a repaint one tick later — `getViewport()` at the moment of
@@ -975,14 +991,40 @@ Eleven things the wireframes did not know:
     the update, so a repaint issued in the same breath as the hint is laid
     out against the previous one.
 
-    **Residual:** the corrected content reaches the buffer but not the
-    screen until the reader's next input. An idle editor draws no frame,
-    and nothing in the repaint path wakes one — `invalidate_layouts_for_buffer`
-    on the content write was tried and does not (it marks the layout stale
-    without asking for a draw). So switching to the tab after a background
-    resize shows the old layout until the next keystroke. That is a
-    main-loop question rather than a welcome-screen one, and it is left
-    open here.
+34. **The tab-switch slide froze the pane at its first frame, and the
+    screen kept that frame after the slide.** Even with 33 fixed, the
+    corrected page did not appear until the reader's next keystroke, and
+    for a while the note here blamed an idle editor drawing no frame, and
+    then a stale row index. Probing one frame end to end settled it: the
+    buffer held the new text, the tokeniser read it, the content pass
+    painted it (toggle at column 36) — and `animations.apply_all`, a few
+    lines later in `Editor::render`, painted the old cells (57) back over
+    the pane.
+
+    `Ctrl+PageDown` starts a 260ms `SlideIn` over the pane. Two things it
+    did were wrong, both general, neither about this page:
+
+    - It took its "after" snapshot **once, on its first apply** — the first
+      frame after the switch, when the pane still held the stale layout —
+      and shifted that for the slide's whole duration. The plugin's catch-up
+      (33) lands ~100ms in and was painted every frame, and covered every
+      frame. It now retakes the snapshot from the freshly painted frame on
+      every apply: the content pass runs before the runner, so `buf` is the
+      pane as it is *now*, which is the only thing a slide may show shifted.
+      A snapshot is 69×37 cells; per frame for 260ms that is nothing.
+    - When the last effect finished, the frame it finished on was its own
+      composite, the runner retired it, `is_active()` went false, and no one
+      asked for another frame. The runner now owes one settle frame after an
+      effect retires (`take_settle_frame`), and the frame loop treats it as
+      "animations active" for that one iteration. This is what "a repaint
+      with no input behind it" actually was: not a missing frame, but a
+      frame painted from a snapshot, followed by no frame at all.
+
+    A wrong turn worth recording: `set_virtual_buffer_content` skipping
+    `wrap_indices.damage_all()` looked like this bug and is not — the row
+    index is rebuilt on the version bump regardless. The e2e test written
+    for it passed with the change reverted, which is how the theory was
+    caught; it is not in this PR.
 
 ### Still aspirational
 
