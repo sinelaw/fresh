@@ -153,6 +153,16 @@ let opening = false;
  *  auto-opened screen nobody touched steps aside when a real file
  *  opens; one the reader engaged with is theirs to close. */
 let engaged = false;
+/** True once the page has actually been on screen — opened in the
+ *  foreground, or switched to since.
+ *
+ *  The step-aside rule was written for a page *occupying the pane*: an
+ *  ambient screen you ignored gets out of the way of the file you asked
+ *  for. A background tab is not occupying anything, so closing it is not
+ *  politeness — it is deleting a tab the reader never asked to close,
+ *  and it deleted the startup tab on their first file open, before they
+ *  had ever seen it. */
+let shown = false;
 const folded = new Set<string>();
 
 let finderQuery = "";
@@ -1480,6 +1490,12 @@ function hasOtherBuffers(): boolean {
  *  is never made active and then unmade. */
 async function openWelcome(force: boolean): Promise<void> {
   if (bufferId !== null) {
+    // Asking for the page by name is engagement even when it is already
+    // open. Startup now always creates the buffer, so this is the path
+    // the `Welcome` command takes for the rest of the session — leave
+    // `engaged` false here and the page the reader just summoned is
+    // ambient again, closed by their next file open.
+    if (force) engaged = true;
     editor.showBuffer(bufferId);
     return;
   }
@@ -1537,6 +1553,7 @@ async function openWelcome(force: boolean): Promise<void> {
     // the reader's buffers is a plugin exceeding its brief either way.
     // The page opens; it does not clear the table first.
     engaged = force;
+    shown = foreground;
     applyComposeWidth();
     probeThemes();
     probeWorkspaces();
@@ -1590,7 +1607,8 @@ registerHandler("welcomeOnBufferClosed", (e: { buffer_id: number }) => {
 registerHandler("welcomeOnAfterFileOpen", (_e: { buffer_id: number; path: string }) => {
   // An auto-opened screen nobody touched was ambient — step aside. One
   // the reader engaged with is a document they are reading; leave it.
-  if (bufferId === null || engaged) return;
+  // A tab they have never even seen has nothing to step aside from.
+  if (bufferId === null || engaged || !shown) return;
   closeWelcome();
 });
 /** Everything about the page's shape a resize can change: the measure,
@@ -1626,6 +1644,36 @@ function layoutKey(): string {
 // it is this buffer's pane, where `getViewport()` is whichever split
 // happens to be active.
 let lastKey = "";
+/** `viewport_changed` reaches the *active* buffer of a split only, so a
+ *  page sitting behind a file hears nothing — not a resize, not the
+ *  switch that finally shows it. Its `composeWidth` hint and its spec
+ *  are then whatever the terminal was when it was created: resize from
+ *  140 columns to 70 while the page is a background tab and it paints,
+ *  when you turn to it, at a measure the pane cannot hold.
+ *
+ *  Coming to the front is the moment to catch up. `layoutKey` is
+ *  recomputed from scratch — `paneWidth` is cleared first, because the
+ *  cached one belongs to a pane this buffer may never have had — and
+ *  the page repaints if anything about its shape moved. */
+registerHandler("welcomeOnBufferActivated", (e: { buffer_id: number }) => {
+  if (bufferId === null || e.buffer_id !== bufferId) return;
+  if (editor.getActiveBufferId() !== bufferId) return;
+  shown = true;
+  editor.setTimeout(0, "welcomeCatchUpOnShow");
+});
+registerHandler("welcomeCatchUpOnShow", async () => {
+  if (bufferId === null || editor.getActiveBufferId() !== bufferId) return;
+  paneWidth = 0;
+  const key = layoutKey();
+  if (key === lastKey) return;
+  lastKey = key;
+  applyComposeWidth();
+  // The hint has to be *in* before the panel is laid out against it:
+  // `widget_panel_width` reads it while it processes the update, and a
+  // repaint issued in the same breath as the hint reads the old one.
+  await editor.flush();
+  render();
+});
 registerHandler(
   "welcomeOnViewportChanged",
   (d: { buffer_id: number; width: number }) => {
@@ -1640,6 +1688,7 @@ registerHandler(
 );
 
 editor.on("ready", "welcomeOnReady");
+editor.on("buffer_activated", "welcomeOnBufferActivated");
 editor.on("buffer_closed", "welcomeOnBufferClosed");
 editor.on("after_file_open", "welcomeOnAfterFileOpen");
 editor.on("viewport_changed", "welcomeOnViewportChanged");

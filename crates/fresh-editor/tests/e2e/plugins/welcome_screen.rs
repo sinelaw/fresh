@@ -300,3 +300,86 @@ fn a_welcome_tab_opened_behind_a_file_paints_correctly_when_shown() {
          doors are no longer one row. Screen:\n{screen}"
     );
 }
+
+/// **The startup tab did not survive being ignored.** `engaged` is only
+/// set by a keystroke or click *on the page*, and the step-aside rule
+/// closes an unengaged page when a file opens — a rule written for a page
+/// occupying the pane. The background tab never occupies anything, so the
+/// reader's first `Ctrl+P` deleted a tab they had not yet seen, and the
+/// only way back was a palette command that produced another one just as
+/// short-lived.
+#[test]
+fn a_welcome_tab_the_reader_has_not_seen_survives_their_first_file_open() {
+    let (mut harness, tmp) = harness_with_welcome();
+    let first = tmp.path().join("work").join("note.txt");
+    fs::write(&first, "alpha\n").unwrap();
+    harness.open_file(&first).unwrap();
+
+    let before = harness.editor().all_buffer_ids_for_tests();
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+    let welcome = harness
+        .editor()
+        .all_buffer_ids_for_tests()
+        .into_iter()
+        .find(|id| !before.contains(id))
+        .expect("startup opened a Welcome buffer");
+
+    // The reader opens something. The page is not in their way — it has
+    // never been on screen — so it has nothing to step aside from.
+    let second = tmp.path().join("work").join("other.txt");
+    fs::write(&second, "beta\n").unwrap();
+    harness.open_file(&second).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    assert!(
+        harness
+            .editor()
+            .all_buffer_ids_for_tests()
+            .contains(&welcome),
+        "opening a file closed a Welcome tab the reader had never seen"
+    );
+}
+
+/// **Summoning the page counts as engagement.** `openWelcome`'s
+/// already-open path brings the buffer forward and used to leave
+/// `engaged` false — and since startup now always creates the buffer,
+/// that is the path `Welcome` takes for the rest of the session. The
+/// reader asked for the page by name, read it, opened a file, and the
+/// step-aside rule destroyed it as if nobody had touched it.
+#[test]
+fn asking_for_the_page_by_name_keeps_it_through_the_next_file_open() {
+    let (mut harness, tmp) = harness_with_welcome();
+    let first = tmp.path().join("work").join("note.txt");
+    fs::write(&first, "alpha\n").unwrap();
+    harness.open_file(&first).unwrap();
+
+    let before = harness.editor().all_buffer_ids_for_tests();
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+    let welcome = harness
+        .editor()
+        .all_buffer_ids_for_tests()
+        .into_iter()
+        .find(|id| !before.contains(id))
+        .expect("startup opened a Welcome buffer");
+
+    harness.run_palette_command("Welcome").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("JUST EDIT TEXT"))
+        .expect("the palette command brings the page forward");
+
+    let second = tmp.path().join("work").join("other.txt");
+    fs::write(&second, "beta\n").unwrap();
+    harness.open_file(&second).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    assert!(
+        harness
+            .editor()
+            .all_buffer_ids_for_tests()
+            .contains(&welcome),
+        "the page the reader summoned by name was closed by their next \
+         file open, as if it had been ambient"
+    );
+}

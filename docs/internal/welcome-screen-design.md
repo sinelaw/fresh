@@ -537,14 +537,30 @@ went away.
 **When it gets out of the way.** This is the ruling that decides whether the
 screen is a good citizen or a nuisance:
 
-> A welcome buffer that was **auto-opened and never interacted with** —
-> never scrolled, never focused, no widget touched — closes itself when a
-> real file opens. One the user **engaged with** stays open until they close
-> it.
+> A welcome buffer that was **on screen, auto-opened and never interacted
+> with** — never scrolled, never focused, no widget touched — closes itself
+> when a real file opens. One the user **engaged with** stays open until they
+> close it. One that has never been on screen is not in the way of anything,
+> and stays.
 
 An ambient screen you ignored was ambient; a document you started reading is
-yours. This also means `fresh src/main.rs` never leaves a Welcome tab behind,
-without needing the Dashboard's blunt "close on any file open".
+yours. The third case is new with the background tab, and the rule had to
+learn it: "step aside" was written for a page *occupying the pane*, and a tab
+the reader has never seen has nothing to step aside from — closing it is not
+politeness but deleting a tab they never asked to close. It used to do
+exactly that, on the very first file they opened.
+
+So `fresh src/main.rs` *does* leave a Welcome tab behind now, deliberately.
+CLI file arguments are drained before `fire_ready_hook` (`main.rs`,
+`process_pending_file_opens`), so the `after_file_open` for `main.rs` arrives
+while there is no page yet and is ignored; `ready` then opens the page as a
+background tab, and nothing later removes it. Turning to that tab and then
+opening a file does close it, which is the original rule doing its job.
+
+Asking for the page by name — `Welcome` in the palette — counts as
+engagement whether or not the buffer already exists. Otherwise the startup
+tab stays ambient for the whole session and evaporates on the next file open,
+however many times the reader summons it.
 
 **Closing it never reopens it.** Closing the welcome buffer leaves whichever
 empty state the core settings choose. There is no loop, and no way to get
@@ -938,6 +954,35 @@ Eleven things the wireframes did not know:
     tick later did work — on Linux and macOS, while Windows CI, where a
     later repaint landed after the hand-back, showed the bug unchanged.
     A fix that depends on which repaint wins is not a fix.
+
+33. **A background tab hears nothing about geometry.** `viewport_changed`
+    is fired per *split*, against a `previous_viewports` tuple read through
+    `SplitViewState`'s deref — i.e. the active buffer's. A page sitting
+    behind a file is told nothing: not a resize, and not the switch that
+    finally shows it, because the split's tuple after the switch is the
+    same pane it already was. So a page created at 140 columns and brought
+    forward after the terminal shrank to 70 painted at a measure the pane
+    could not hold, its `composeWidth` hint still describing a terminal
+    that no longer existed.
+
+    The page now catches up when it comes to the front: `buffer_activated`
+    schedules a repaint one tick later — `getViewport()` at the moment of
+    activation still reports the viewport this buffer had when it was last
+    on screen, and only the following frame corrects it — which clears
+    `paneWidth`, recomputes `layoutKey` and repaints if the shape moved.
+    The `await editor.flush()` between the hint and the repaint is load
+    bearing: `widget_panel_width` reads `compose_width` while it processes
+    the update, so a repaint issued in the same breath as the hint is laid
+    out against the previous one.
+
+    **Residual:** the corrected content reaches the buffer but not the
+    screen until the reader's next input. An idle editor draws no frame,
+    and nothing in the repaint path wakes one — `invalidate_layouts_for_buffer`
+    on the content write was tried and does not (it marks the layout stale
+    without asking for a draw). So switching to the tab after a background
+    resize shows the old layout until the next keystroke. That is a
+    main-loop question rather than a welcome-screen one, and it is left
+    open here.
 
 ### Still aspirational
 
