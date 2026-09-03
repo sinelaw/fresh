@@ -3191,6 +3191,7 @@ impl Editor {
                 hint(" Enter", t!("keybinding_editor.footer_edit").to_string()),
                 hint("a", t!("keybinding_editor.footer_add").to_string()),
                 hint("d", t!("keybinding_editor.footer_delete").to_string()),
+                hint("x", t!("keybinding_editor.footer_disable").to_string()),
                 hint("/", t!("keybinding_editor.footer_search").to_string()),
                 hint("r", t!("keybinding_editor.footer_record_key").to_string()),
                 hint("c", t!("keybinding_editor.footer_context").to_string()),
@@ -3355,6 +3356,10 @@ impl Editor {
                     l(
                         "  d / Delete",
                         t!("keybinding_editor.help_delete_binding").to_string(),
+                    ),
+                    l(
+                        "  x",
+                        t!("keybinding_editor.help_disable_binding").to_string(),
                     ),
                     gap(),
                     head(&t!("keybinding_editor.help_filters")),

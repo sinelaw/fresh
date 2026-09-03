@@ -1418,7 +1418,7 @@
           }
         },
         "action": {
-          "description": "Action to perform (e.g., \"insert_char\", \"move_left\")",
+          "description": "Action to perform (e.g., \"insert_char\", \"move_left\"), or \"unbind\" to\nremove the built-in binding for this key instead of binding anything.",
           "type": "string"
         },
         "args": {

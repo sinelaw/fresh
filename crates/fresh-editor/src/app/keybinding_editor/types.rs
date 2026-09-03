@@ -22,8 +22,11 @@ pub enum BindingSource {
 pub enum DeleteResult {
     /// A custom binding was removed
     CustomRemoved,
-    /// A keymap binding was overridden with a noop custom binding
-    KeymapOverridden,
+    /// A keymap or plugin binding was removed with an `unbind` entry
+    KeymapRemoved,
+    /// The binding was disabled with a `noop` override (a real binding that
+    /// makes the key do nothing in that context)
+    Disabled,
     /// Cannot delete (e.g. unbound entry)
     CannotDelete,
     /// Nothing was selected
