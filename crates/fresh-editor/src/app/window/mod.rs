@@ -55,8 +55,7 @@ use crate::view::file_tree::FileTreeView;
 use crate::view::split::{SplitManager, SplitViewState};
 use fresh_core::{BufferId, WindowId};
 use std::collections::HashMap;
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// A project-rooted unit of editor state.
@@ -1179,12 +1178,8 @@ pub struct Window {
 /// window's construction so the server set is identical regardless of
 /// how the window came to exist (boot, orchestrator new-session,
 /// disk-restored shell).
-pub(crate) fn configure_lsp_servers(
-    lsp: &mut LspManager,
-    root: &std::path::Path,
-    config: &crate::config::Config,
-) {
-    use crate::types::{LspServerConfig, ProcessLimits};
+pub(crate) fn configure_lsp_servers(lsp: &mut LspManager, config: &crate::config::Config) {
+    use crate::types::LspServerConfig;
 
     // Global master switch — gates auto-start of every server below.
     lsp.set_globally_enabled(config.lsp_enabled);
@@ -1203,39 +1198,9 @@ pub(crate) fn configure_lsp_servers(
         .collect();
     lsp.set_universal_configs(universal_servers);
 
-    // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
-    // window root, override JS/TS LSP to use `deno lsp` (#1191). Checked
-    // against the window's own root so each workspace gets the detection for
-    // its actual project rather than the process cwd.
-    if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
-        // Check if the Deno runtime is present so we can safely switch to `deno lsp`.
-        let has_deno = env::var_os("PATH")
-            .and_then(|paths| {
-                env::split_paths(&paths)
-                    .any(|dir| {
-                        let executable = dir.join("deno");
-                        executable.is_file()
-                    })
-                    .then_some(true)
-            })
-            .is_some();
-        if (has_deno) {
-            tracing::info!(
-                "Detected Deno project (deno.json + runtime found), using deno lsp for JS/TS"
-            );
-            let deno_config = LspServerConfig {
-                command: "deno".to_string(),
-                args: Some(vec!["lsp".to_string()]),
-                enabled: true,
-                auto_start: false,
-                process_limits: ProcessLimits::default(),
-                initialization_options: Some(serde_json::json!({"enable": true})),
-                ..Default::default()
-            };
-            lsp.set_language_config("javascript".to_string(), deno_config.clone());
-            lsp.set_language_config("typescript".to_string(), deno_config);
-        }
-    }
+    // Project conventions that pick a different server for a language —
+    // `deno lsp` for a workspace with a `deno.json` — live in plugins
+    // (`plugins/deno_lsp.ts`), not here (#2981).
 }
 
 /// Build the [`LspManager`] every window owns: rooted at the window's
@@ -1271,7 +1236,7 @@ pub(crate) fn build_window_lsp(
     lsp.set_path_translation(authority.path_translation.clone());
     lsp.set_workspace_trust(authority.workspace_trust.clone());
 
-    configure_lsp_servers(&mut lsp, root, &resources.config);
+    configure_lsp_servers(&mut lsp, &resources.config);
     lsp
 }
 

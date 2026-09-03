@@ -28,6 +28,7 @@ pub mod csi_u_session_input;
 pub mod ctrl_slash_legacy_terminal;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
+pub mod deno_lsp_plugin;
 pub mod dispatch_precedence;
 pub mod dock_create_terminal_resize;
 #[cfg(feature = "plugins")]
