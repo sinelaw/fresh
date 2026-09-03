@@ -1634,6 +1634,9 @@ impl Editor {
             PluginCommand::CloseCompositeBuffer { buffer_id } => {
                 self.active_window_mut().close_composite_buffer(buffer_id);
             }
+            PluginCommand::SetSyntaxRegions { buffer_id, regions } => {
+                self.handle_set_syntax_regions(buffer_id, regions);
+            }
             PluginCommand::FlushLayout => {
                 self.flush_layout();
             }

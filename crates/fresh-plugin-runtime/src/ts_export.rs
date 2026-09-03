@@ -108,6 +108,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         }
         "TsCompositePaneStyle" | "CompositePaneStyle" => Some(CompositePaneStyle::decl(&cfg)),
         "TsCompositeHunk" | "CompositeHunk" => Some(CompositeHunk::decl(&cfg)),
+        "TsSyntaxRegion" | "SyntaxRegion" => Some(fresh_core::api::SyntaxRegion::decl(&cfg)),
         "TsCreateCompositeBufferOptions" | "CreateCompositeBufferOptions" => {
             Some(CreateCompositeBufferOptions::decl(&cfg))
         }
@@ -345,6 +346,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCompositeSourceConfig",         // Used in createCompositeBuffer opts.sources
     "TsCompositePaneStyle",            // Used in TsCompositeSourceConfig.style
     "TsCompositeHunk",                 // Used in createCompositeBuffer opts.hunks
+    "TsSyntaxRegion",                  // Used by setSyntaxRegions
     "TsCreateCompositeBufferOptions",  // Options for createCompositeBuffer
     "ViewportInfo",                    // Used by plugins for viewport queries
     "ScreenSize",                      // Used by editor.getScreenSize()
@@ -1010,6 +1012,7 @@ mod tests {
             "TsCompositeSourceConfig",
             "TsCompositePaneStyle",
             "TsCompositeHunk",
+            "TsSyntaxRegion",
             "TsCreateCompositeBufferOptions",
             "ViewTokenWireKind",
             "TokenColor",
@@ -1050,6 +1053,7 @@ mod tests {
         // Rust name aliases should produce the same declaration as ts-rs name
         let alias_pairs = vec![
             ("CompositeHunk", "TsCompositeHunk"),
+            ("SyntaxRegion", "TsSyntaxRegion"),
             ("CompositeLayoutConfig", "TsCompositeLayoutConfig"),
             ("CompositeSourceConfig", "TsCompositeSourceConfig"),
             ("CompositePaneStyle", "TsCompositePaneStyle"),
@@ -1156,6 +1160,7 @@ mod tests {
             "TsCompositeSourceConfig",
             "TsCompositePaneStyle",
             "TsCompositeHunk",
+            "TsSyntaxRegion",
             "TsCreateCompositeBufferOptions",
             "PromptSuggestion",
             "BufferInfo",
@@ -1486,6 +1491,7 @@ mod tests {
             "pluginTranslate",
             "createCompositeBuffer",
             "updateCompositeAlignment",
+            "setSyntaxRegions",
             "closeCompositeBuffer",
             "flushLayout",
             "compositeNextHunk",

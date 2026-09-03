@@ -55,6 +55,19 @@ There are now three ways to get a second language highlighted, and they are
    (hover popups, the markdown *preview* renderer). Never use it for
    buffer content — it has no incrementality and no cache.
 
+4. **Regions declared by the plugin** (`setSyntaxRegions`): for buffers a
+   plugin *composes* — the Review Diff stream, a log — which are not
+   documents any grammar can parse (a gutter, headers, comment boxes, rows
+   from many files and two sides of each). The plugin declares byte-range
+   regions, each with a language (a path or token), a per-row prefix to
+   skip, and the parser *streams* its rows feed; the engine becomes a
+   "region host" (plain text of its own) and runs the child parsers over
+   the declared rows through the same checkpointed, viewport-windowed
+   path as tools 1 and 2. Regions are span markers, so edits move them.
+   Streams are what make an interleaved diff correct: the old and new
+   side of a hunk each keep their own parser across the other side's rows
+   and across anything else in between, so a docstring is one docstring.
+
 ## How the engine-level mechanism works
 
 The TextMate engine's resumable parse state is a **composite snapshot**:

@@ -468,6 +468,10 @@ impl crate::app::window::Window {
         // Set text properties
         state.text_properties = properties;
 
+        // Regions a plugin declared on the previous content pointed into
+        // it; the new content brings its own (see `SetSyntaxRegions`).
+        state.highlighter.set_syntax_regions(Vec::new());
+
         // Create inline overlays for the new content. Build the full vec
         // first and bulk-add it so the OverlayManager sorts exactly once;
         // a per-overlay `add` re-sorts every time and is O(n² log n) for

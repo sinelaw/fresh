@@ -1325,6 +1325,57 @@ pub struct CompositePaneStyle {
     pub gutter_style: Option<String>,
 }
 
+/// A run of rows in a plugin-composed buffer that carry code, for the
+/// host's highlighter (`setSyntaxRegions`).
+///
+/// A composed buffer — a diff stream, a log — is not a document any
+/// grammar can parse, so the plugin says where the code is instead. A
+/// region is a byte range of whole rows; every row in it is handed to the
+/// language's parser with its first `prefix` bytes skipped (a gutter, a
+/// diff marker), and rows outside every region keep whatever the plugin
+/// styled them with and never advance a parser.
+///
+/// `streams` name the parsers a row feeds, and regions that share a
+/// stream id continue one parse across the rows between them: the old
+/// and new side of a hunk interleave, and a comment box can sit inside a
+/// hunk, yet each side is still read as the contiguous text it is. A row
+/// both sides share (context) lists both. An empty list means one parser
+/// shared by every region that says nothing.
+///
+/// Regions replace the buffer's previous set, and setting the buffer's
+/// content clears them. They are anchored to the text, so an edit moves
+/// them the way it moves overlays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename = "TsSyntaxRegion", rename_all = "camelCase")]
+pub struct SyntaxRegion {
+    /// Byte offset of the first row's first byte.
+    pub start: usize,
+    /// Byte offset one past the last row's newline.
+    pub end: usize,
+    /// What the rows are written in: a path (`src/main.rs`, `Makefile`)
+    /// or a language token (`py`, `rust`). Nothing is opened or read;
+    /// it only selects the grammar.
+    pub language: String,
+    /// Bytes at the start of every row that are not code.
+    #[serde(default)]
+    pub prefix: usize,
+    /// Parsers the rows feed; see the type docs.
+    #[serde(default)]
+    pub streams: Vec<u32>,
+}
+
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for SyntaxRegion {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "SyntaxRegion",
+            message: Some(e.to_string()),
+        })
+    }
+}
+
 /// Diff hunk for composite buffer alignment
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -4499,6 +4550,14 @@ pub enum PluginCommand {
     UpdateCompositeAlignment {
         buffer_id: BufferId,
         hunks: Vec<CompositeHunk>,
+    },
+
+    /// Say where a plugin-composed buffer carries code, and in what
+    /// language, so the host highlights it (see [`SyntaxRegion`]).
+    /// Replaces the buffer's previous regions.
+    SetSyntaxRegions {
+        buffer_id: BufferId,
+        regions: Vec<SyntaxRegion>,
     },
 
     /// Close a composite buffer

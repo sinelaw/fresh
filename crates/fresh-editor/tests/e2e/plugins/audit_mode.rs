@@ -4519,7 +4519,7 @@ fn test_branch_log_detail_enter_opens_file_at_commit() {
 
 // ---------------------------------------------------------------------------
 // Review Diff against a working tree that moves under it, and the actions
-// that claim to have changed it: #2318, #3126.
+// that claim to have changed it: #2318, #3126, #3104.
 // ---------------------------------------------------------------------------
 
 /// `git status --porcelain` for the repo, trimmed. The tests below assert on
@@ -4802,6 +4802,117 @@ fn test_issue3126_reopening_review_diff_does_not_stack_a_second_panel() {
         "re-running the command must reuse the open panel, not add another \
          tab. Screen:\n{screen}"
     );
+}
+
+/// Issue #3104: the diff body was drawn as plain text — the add/remove
+/// colours and nothing else — while the same lines one tab over in the
+/// editor carried the language's keyword, function and punctuation
+/// colours. The stream now declares where its code is and the host's
+/// highlighter colours it like any buffer.
+#[test]
+fn test_issue3104_diff_body_carries_syntax_colours() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+    fs::write(
+        &calc,
+        "def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b\n",
+    )
+    .unwrap();
+
+    // Tests get an empty grammar registry by default (fast startup); this
+    // one is about grammars, so it opts into the real thing.
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("def sub"))
+        .unwrap();
+
+    // `def` — a keyword — in the added row of the diff. A plain `def`
+    // here is the bug, and a never-satisfied wait is how it fails.
+    let keyword = harness.editor().theme().syntax_keyword;
+    let function = harness.editor().theme().syntax_function;
+    wait_for_fg(&mut harness, "def sub", 0, keyword);
+
+    // The function name right after it is a *different* colour — proof the
+    // row is tokenised rather than washed in one colour.
+    let (x, y) = harness.find_text_on_screen("def sub").unwrap();
+    assert_eq!(
+        harness.get_cell(x + 4, y).as_deref(),
+        Some("s"),
+        "expected the `s` of `sub` four columns after `def`"
+    );
+    assert_eq!(
+        harness.get_cell_style(x + 4, y).and_then(|s| s.fg),
+        Some(function),
+        "the function name should carry the theme's function colour"
+    );
+
+    // A context row (unchanged line) is tokenised too — #3104 called those
+    // out separately.
+    wait_for_fg(&mut harness, "def add", 0, keyword);
+}
+
+/// A construct spanning several rows of a hunk — here a block comment —
+/// colours every row it covers, not just the one it opens on: the
+/// hunk's side is parsed as the contiguous text it is.
+#[test]
+fn test_issue3104_multi_line_constructs_colour_every_row() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+    let app = repo.create_file("app.ts", "const x = 1;\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    fs::write(
+        &app,
+        "const x = 1;\n/* alpha\n   BRAVO_MARKER\n   omega */\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("BRAVO_MARKER"))
+        .unwrap();
+
+    // A row in the middle of a block comment carries the comment colour
+    // rather than falling back to plain text.
+    let comment = harness.editor().theme().syntax_comment;
+    wait_for_fg(&mut harness, "BRAVO_MARKER", 0, comment);
+}
+
+/// Wait until the cell `dx` columns into the first on-screen occurrence of
+/// `text` is painted with foreground `fg`. The colours are the host's
+/// highlighter's, painted on the render after the rows are mounted, so
+/// waiting for them rather than asserting on one frame keeps the test
+/// independent of how many frames the mount takes.
+fn wait_for_fg(harness: &mut EditorTestHarness, text: &str, dx: u16, fg: ratatui::style::Color) {
+    harness
+        .wait_until(|h| {
+            h.find_text_on_screen(text)
+                .and_then(|(x, y)| h.get_cell_style(x + dx, y))
+                .and_then(|s| s.fg)
+                == Some(fg)
+        })
+        .unwrap();
 }
 
 /// The same, from the *other* row. `git status` reports a file added to
