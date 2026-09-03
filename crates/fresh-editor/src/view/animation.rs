@@ -1368,9 +1368,16 @@ mod tests {
 
         // Construct SlideIn directly so we can drive its clock.
         let mut effect = SlideIn::new(Edge::Bottom, Duration::from_millis(100));
-        // First apply at t=0 snapshots the buffer.
+        // Frame 1, t=0: the content pass has painted the pane; the slide
+        // shifts it fully off the bottom edge.
         effect.apply(&mut buf, area, Duration::ZERO);
-        // Now drive it to t=duration: result should equal the original painted content.
+        // Frame 2, t=duration. The runner only ever applies to a buffer the
+        // content pass has just repainted — that is what lets the effect
+        // snapshot the pane as it is *now* on every apply, which is how a
+        // pane that changed mid-slide gets shown (see `SlideIn::apply`). A
+        // test that skipped the repaint would hand the effect its own
+        // previous composite, a frame that never happens.
+        paint(&mut buf, area, 'X', Color::Red);
         let status = effect.apply(&mut buf, area, Duration::from_millis(100));
         assert_eq!(status, EffectStatus::Done);
         for dy in 0..area.height {
@@ -1412,7 +1419,10 @@ mod tests {
                 );
             }
         }
-        // And: at t=duration, the AFTER content is fully in place.
+        // And: at t=duration, the AFTER content is fully in place. The next
+        // frame's content pass repaints the pane before the runner applies
+        // (see `slide_in_bottom_at_duration_matches_snapshot`).
+        let mut work = after_buf.clone();
         let status = effect.apply(&mut work, area, Duration::from_millis(100));
         assert_eq!(status, EffectStatus::Done);
         for dy in 0..area.height {
