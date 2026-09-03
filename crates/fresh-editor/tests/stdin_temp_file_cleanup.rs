@@ -47,7 +47,15 @@ fn isolated_fresh(home: &Path) -> Command {
         .env("XDG_DATA_HOME", home.join("data"))
         .env("XDG_STATE_HOME", home.join("state"))
         .env("XDG_CACHE_HOME", home.join("cache"))
-        .env("TERM", "xterm-256color");
+        .env("TERM", "xterm-256color")
+        // The screen predicates below are English. Pin the language the same
+        // way `daemon_locale_from_config.rs` does, so a developer with
+        // `LANG=ja_JP.UTF-8` does not get a menu bar these tests can never
+        // match — and an interactive editor that never exits means the wait
+        // never ends.
+        .env("LANG", "C.UTF-8")
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES");
     cmd
 }
 
@@ -174,6 +182,53 @@ fn sighup_deletes_the_stdin_spool_file() {
         spool_files(home.path()),
         Vec::<PathBuf>::new(),
         "SIGHUP should not leave a stdin spool file behind"
+    );
+}
+
+/// `nohup fresh …` makes the process immune to SIGHUP, and installing a
+/// handler must not take that away: `SA_RESETHAND` resets to `SIG_DFL`, not
+/// back to `SIG_IGN`, so a handler installed over an inherited ignore would
+/// turn "survives the terminal closing" into "killed by it".
+#[test]
+fn sighup_ignored_by_the_parent_stays_ignored() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+
+    let mut cmd = isolated_fresh(home.path());
+    cmd.args(["--no-session", "--no-init", "--no-upgrade-check", "-"]);
+    // SAFETY: between fork and exec; `signal` is async-signal-safe. This is
+    // what `nohup` does to its child.
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::signal(libc::SIGHUP, libc::SIG_IGN);
+            Ok(())
+        });
+    }
+
+    let mut editor =
+        spawn_on_pty(cmd, ChildStdin::Piped(b"hello-from-stdin\n".to_vec()), 100, 30)
+            .expect("spawn fresh on a pty");
+    editor
+        .wait_for_screen(|screen| screen.contains("File") && screen.contains("Help"))
+        .expect("editor should render");
+
+    // SAFETY: signalling a child this test owns and has not yet reaped.
+    assert_eq!(
+        unsafe { libc::kill(editor.pid() as i32, libc::SIGHUP) },
+        0
+    );
+
+    // It should still be alive: quit it normally and check it exited that
+    // way rather than by the signal.
+    editor.send(CTRL_Q).expect("send Ctrl+Q");
+    let status = editor.drain_and_wait().expect("wait for fresh to exit");
+    assert!(
+        status.success(),
+        "SIGHUP inherited as SIG_IGN should not kill the editor; got {status:?}"
     );
 }
 

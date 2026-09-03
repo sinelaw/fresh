@@ -74,33 +74,67 @@ pub fn install_signal_handlers() {
     unix_fallback::install_signal_handlers_basic();
 }
 
-/// Handle SIGHUP purely to drop this process's scratch files.
+/// Handle SIGHUP to restore the terminal and drop this process's scratch
+/// files, then die by SIGHUP exactly as it would have anyway.
 ///
 /// SIGHUP is what a terminal sends when its window closes or an ssh session
 /// drops, and it had no handler at all: the default action terminated the
-/// editor outright, leaking the stdin spool file every time (#3134). This is
+/// editor outright, leaking the stdin spool file every time (#3134). It is
 /// deliberately *not* folded into the termination handler above — that one
 /// dumps every thread's backtrace and exits 130, which would turn closing a
 /// terminal into a diagnostic dump and quietly rewrite the exit status a
 /// parent sees.
 ///
-/// `SA_RESETHAND` restores the default disposition before the handler runs,
-/// so the `raise` below terminates the process *by SIGHUP*, exactly as it
-/// would have with no handler installed. The only added behaviour is the
-/// cleanup.
+/// Three things keep this from changing behaviour beyond the cleanup:
+///
+///   * An inherited `SIG_IGN` is left alone. `nohup fresh …` (and various
+///     supervisors and detached launchers) make the process immune to
+///     SIGHUP, and installing over that would kill something that used to
+///     survive — `SA_RESETHAND` resets to `SIG_DFL`, not back to `SIG_IGN`,
+///     so the `raise` would be fatal.
+///   * `SA_RESETHAND` restores the default disposition before the handler
+///     runs, so the `raise` terminates the process *by SIGHUP* and a parent
+///     sees the status it always saw.
+///   * Everything the handler calls is async-signal-safe.
+///
+/// The terminal restore is not redundant with the pty going away: SIGHUP
+/// also arrives from an explicit `kill -HUP`, from a session leader exiting
+/// while the pty survives, and from `tmux`/`screen` teardown that leaves the
+/// pane alive. In those cases the terminal is still there, and without this
+/// the user is left in raw mode on the alternate screen, needing `reset`.
 #[cfg(unix)]
 fn install_hangup_handler() {
     use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 
     extern "C" fn hangup_handler(_: libc::c_int) {
-        // The terminal is already gone, so there is nothing to restore and
-        // nowhere to print; just drop the scratch files.
-        crate::services::temp_files::cleanup_all();
+        // Both of these are async-signal-safe by construction; see their
+        // docs. In particular neither takes a lock, because a handler that
+        // blocked here would never return, so the pending SIGHUP would
+        // never be delivered and the editor would be orphaned onto a pty
+        // nobody owns instead of dying.
+        crate::services::terminal_modes::emergency_cleanup_from_signal();
+        crate::services::temp_files::cleanup_from_signal();
+
         // SAFETY: `raise` is async-signal-safe. SIGHUP is blocked for the
         // duration of the handler, so this leaves it pending and it is
         // delivered — to the default action, thanks to `SA_RESETHAND` — as
         // soon as the handler returns.
         unsafe { libc::raise(libc::SIGHUP) };
+    }
+
+    // Query the current disposition without disturbing it: a null `act`
+    // only fills in `old`.
+    //
+    // SAFETY: `libc::sigaction` with a null `act` is a pure query, and
+    // `old` is a stack value this thread owns.
+    let inherited_ignore = unsafe {
+        let mut old: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(libc::SIGHUP, std::ptr::null(), &mut old) == 0
+            && old.sa_sigaction == libc::SIG_IGN
+    };
+    if inherited_ignore {
+        tracing::debug!("SIGHUP is inherited as SIG_IGN (nohup?); leaving it alone");
+        return;
     }
 
     let action = SigAction::new(
@@ -109,9 +143,7 @@ fn install_hangup_handler() {
         SigSet::empty(),
     );
 
-    // SAFETY: installing a signal handler; the handler itself only calls
-    // async-signal-safe `raise` plus the cleanup sweep, which is the same
-    // latitude the termination handler above already takes.
+    // SAFETY: installing a signal handler whose body is async-signal-safe.
     unsafe {
         if let Err(e) = sigaction(Signal::SIGHUP, &action) {
             tracing::error!("Failed to set SIGHUP handler: {}", e);
@@ -163,9 +195,10 @@ mod linux {
 
             // This process is about to go without unwinding, so the
             // `CleanupOnDrop` guard in `real_main` will not run. Remove the
-            // scratch files here instead (#3134). Not async-signal-safe, but
-            // neither is anything else this handler already does.
-            crate::services::temp_files::cleanup_all();
+            // scratch files here instead (#3134) — through the sweep that
+            // takes no locks, so this cannot be the thing that stops the
+            // handler reaching the `exit` below.
+            crate::services::temp_files::cleanup_from_signal();
 
             // Terminate the process
             std::process::exit(130); // Standard exit code for Ctrl+C
@@ -326,8 +359,9 @@ mod unix_fallback {
             tracing::error!("=== Debug dump complete, terminating process ===");
 
             // See the Linux handler: nothing unwinds from here, so the
-            // scratch files have to go now (#3134).
-            crate::services::temp_files::cleanup_all();
+            // scratch files have to go now (#3134), through the lock-free
+            // sweep.
+            crate::services::temp_files::cleanup_from_signal();
 
             std::process::exit(130);
         }
