@@ -4827,6 +4827,11 @@ impl Config {
             },
         );
 
+        // Markdown is prose, not code: backticks, quotes and brackets are
+        // typed far more often as literal text than as pairs, so neither
+        // auto-close nor auto-surround is on by default here. Set
+        // `languages.markdown.auto_close` / `.auto_surround` to `true` to get
+        // the global behaviour back; they are independent of each other.
         languages.insert(
             "markdown".to_string(),
             LanguageConfig {
@@ -4835,8 +4840,8 @@ impl Config {
                 grammar: "markdown".to_string(),
                 comment_prefix: None,
                 auto_indent: false,
-                auto_close: None,
-                auto_surround: None,
+                auto_close: Some(false),
+                auto_surround: Some(false),
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 line_wrap: None,
@@ -9423,6 +9428,53 @@ mod tests {
         let md = BufferConfig::resolve(&config, Some("markdown"));
         assert_eq!(md.wrap_column, Some(120));
         assert_eq!(md.tab_size, 8);
+    }
+
+    #[test]
+    fn test_markdown_auto_pairing_disabled_by_default() {
+        let config = Config::default();
+
+        // Both globals default on, but Markdown opts out of both.
+        assert!(config.editor.auto_close);
+        assert!(config.editor.auto_surround);
+        assert_eq!(config.languages["markdown"].auto_close, Some(false));
+        assert_eq!(config.languages["markdown"].auto_surround, Some(false));
+
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert!(!md.auto_close);
+        assert!(!md.auto_surround);
+
+        // Other languages still inherit the global settings.
+        let rust = BufferConfig::resolve(&config, Some("rust"));
+        assert!(rust.auto_close);
+        assert!(rust.auto_surround);
+    }
+
+    #[test]
+    fn test_markdown_auto_pairing_can_be_re_enabled_independently() {
+        // Auto-surround back on while auto-close stays off.
+        let mut config = Config::default();
+        config
+            .languages
+            .get_mut("markdown")
+            .expect("markdown language config")
+            .auto_surround = Some(true);
+
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert!(!md.auto_close);
+        assert!(md.auto_surround);
+
+        // And the other way round.
+        let mut config = Config::default();
+        config
+            .languages
+            .get_mut("markdown")
+            .expect("markdown language config")
+            .auto_close = Some(true);
+
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert!(md.auto_close);
+        assert!(!md.auto_surround);
     }
 
     #[test]
