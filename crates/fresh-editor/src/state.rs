@@ -1245,7 +1245,7 @@ impl EditorState {
     /// must call this too, or the status bar keeps reporting the line of a
     /// cursor that is no longer the primary, while the column, read live,
     /// is right (#3167).
-    pub fn sync_primary_cursor_line_number(&mut self, primary_position: usize) {
+    pub(crate) fn sync_primary_cursor_line_number(&mut self, primary_position: usize) {
         // Try to get exact line number from buffer, or estimate for large files.
         self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_position) {
             Some(pos) => LineNumber::Absolute(pos.line),
@@ -1436,11 +1436,7 @@ impl EditorState {
         self.highlighter.invalidate_all();
 
         // Update primary cursor line number
-        let primary_pos = cursors.primary().position;
-        self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_pos) {
-            Some(pos) => LineNumber::Absolute(pos.line),
-            None => LineNumber::Absolute(0),
-        };
+        self.sync_primary_cursor_line_number(cursors.primary().position);
     }
 
     /// Replay the marker and margin position adjustments recorded for a bulk

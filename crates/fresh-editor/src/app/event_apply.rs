@@ -573,29 +573,24 @@ impl Editor {
             cursors.primary().position
         };
 
-        // The cursors were written directly rather than through `MoveCursor`,
-        // so the primary's cached line number did not follow (#3167).
-        self.windows
+        let state = self
+            .windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
             .expect("active window present")
             .get_mut(&active_buf)
-            .unwrap()
-            .sync_primary_cursor_line_number(primary_position);
+            .unwrap();
+
+        // The cursors were written directly rather than through `MoveCursor`,
+        // so the primary's cached line number did not follow (#3167).
+        state.sync_primary_cursor_line_number(primary_position);
 
         // Notify the highlighter of each edit so the cache can take the
         // partial-update path on the next render. Throwing the whole cache
         // away here (the previous behaviour) wiped every checkpoint as well,
         // forcing a cold reparse from byte zero on the next keystroke — see
         // https://github.com/sinelaw/fresh/issues/1958.
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&active_buf)
-            .unwrap()
-            .highlighter
-            .notify_edits(&edit_lengths);
+        state.highlighter.notify_edits(&edit_lengths);
 
         // Bulk edits (multi-cursor typing, paste, code-action rewrites) apply
         // here instead of through the Insert/Delete hook arms, so shift plugin
