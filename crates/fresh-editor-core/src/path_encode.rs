@@ -6,13 +6,28 @@
 
 use std::path::Path;
 
-/// The longest filename [`encode_path_for_filename`] will return.
+/// The longest filename [`encode_path_for_filename`] will return: `NAME_MAX`
+/// itself.
 ///
-/// `NAME_MAX` is 255 bytes on Linux and macOS, and **every caller appends to
-/// this** — `.json` for a workspace snapshot, `-3.txt` and `-3.log` for a
-/// terminal's scrollback — so the budget is not the whole of `NAME_MAX`. 200
-/// leaves each of them room.
-const MAX_ENCODED_LEN: usize = 200;
+/// **The cap is what decides which existing names get re-keyed, so it is the
+/// largest one that changes nothing.** This value is not a budget for the
+/// callers that append to the encoding — it deliberately is not. Folding is a
+/// rename, and every place the encoding is a *key* (a workspace snapshot, the
+/// recovery scope, a terminal's scrollback directory, a daemon's socket) would
+/// stop finding what the previous release wrote. So the only names that may
+/// fold are the ones no caller could have created at all, which means the
+/// filesystem's own limit and not a byte less.
+///
+/// Leaving headroom for a suffix would have been wrong in both directions.
+/// Several callers append nothing — `terminal_dir_for`, `working_data_dir_for`,
+/// `project_state_dir` and the recovery scope each join the encoding as a whole
+/// directory name — so a 250-byte encoding is live today and must not move.
+/// And the longest suffix is not a small constant either: `workspace_path_for`
+/// builds `<encoded>.<stable_id>.json`, and a `ws-<hex>-<hex>` id makes that
+/// roughly 28 bytes. A name that overflows *with* a suffix but fits without one
+/// is a caller-specific limit, and it is no better or worse here than it was
+/// before this cap existed.
+const MAX_ENCODED_LEN: usize = 255;
 
 /// Marks a name [`fold_to_max_len`] shortened.
 ///
@@ -49,10 +64,21 @@ fn fold_hash(bytes: &[u8]) -> u64 {
 /// and left the workspace with nowhere to write its terminals (#1971).
 ///
 /// The head keeps the tail of the path readable in a directory listing; the
-/// hash is what keeps two paths sharing a 183-character prefix apart. It runs
-/// over the *path*, not the truncated head, so the digest cannot be truncated
-/// with it.
-fn fold_to_max_len(encoded: String, path_str: &str) -> String {
+/// hash is what keeps two paths sharing a 238-character prefix apart. It runs
+/// over the whole encoding, not the truncated head, so the digest cannot be
+/// truncated with it.
+///
+/// **Over the encoding rather than the path, because the encoding is the
+/// normalised form.** `encode_path_for_filename` maps several spellings of one
+/// path onto one name: both separators become `_`, runs of them collapse, and a
+/// leading one is stripped, so `/a/b`, `/a//b`, `/a/b/` and `a/b` already share
+/// a filename. Digesting the raw path would have broken that for exactly the
+/// long paths that fold — same head, different hash, two directories for one
+/// place — and neither `terminal_dir_for` nor `working_data_dir_for`
+/// canonicalises what it is given (`spawn_terminal_session_impl` passes a
+/// caller-supplied `cwd` straight through), so a trailing separator would have
+/// been enough to strand a workspace's scrollback beside itself.
+fn fold_to_max_len(encoded: String) -> String {
     if encoded.len() <= MAX_ENCODED_LEN {
         return encoded;
     }
@@ -70,7 +96,7 @@ fn fold_to_max_len(encoded: String, path_str: &str) -> String {
     } else if head.len() >= 2 && head.as_bytes()[head.len() - 2] == b'%' {
         head = &head[..head.len() - 2];
     }
-    format!("{head}{FOLD_MARK}{:016x}", fold_hash(path_str.as_bytes()))
+    format!("{head}{FOLD_MARK}{:016x}", fold_hash(encoded.as_bytes()))
 }
 
 /// Encode a path into a filesystem-safe filename using percent encoding
@@ -129,7 +155,7 @@ pub fn encode_path_for_filename(path: &Path) -> String {
         final_result = "root".to_string();
     }
 
-    fold_to_max_len(final_result, &path_str)
+    fold_to_max_len(final_result)
 }
 
 #[cfg(test)]
@@ -146,6 +172,59 @@ mod tests {
     /// The orchestrator nests one encoded path inside another, so a workspace
     /// under a long root ran past `NAME_MAX` and its terminal directory could
     /// not be created at all — `File name too long (os error 36)` (#1971).
+    /// The cap re-keys nothing a previous release could have written: a name
+    /// the filesystem accepts is returned exactly as before.
+    #[test]
+    fn a_name_the_filesystem_accepts_is_never_folded() {
+        // Grown a component at a time until the encoder has to fold. Length
+        // is not the signal here — a folded name is under the cap by
+        // construction, so waiting for one to exceed it never returns — the
+        // mark is.
+        let mut deep = String::from("/a");
+        while !encode_path_for_filename(Path::new(&deep)).contains(FOLD_MARK) {
+            deep.push_str("/bbbbbbbbbb");
+        }
+
+        // One component shorter is the longest name that fits, and it is
+        // untouched — a directory of exactly NAME_MAX bytes is live today.
+        let fits = deep.rsplit_once('/').unwrap().0.to_string();
+        let name = encode_path_for_filename(Path::new(&fits));
+        assert!(name.len() <= MAX_ENCODED_LEN);
+        assert!(
+            !name.contains(FOLD_MARK),
+            "a name that fits must be returned whole, or it stops finding what \
+             the last release wrote under it: {name}"
+        );
+    }
+
+    /// The encoder maps several spellings of one path onto one name, and a
+    /// folded name has to keep doing that — otherwise the head matches, the
+    /// digest does not, and one directory acquires two names.
+    ///
+    /// Only the equivalences the encoder actually provides are asserted. A
+    /// *trailing* separator is not among them: it becomes a trailing `_` that
+    /// nothing strips, so `/a/b/` and `/a/b` name different files here and
+    /// always have. That is worth knowing and is not folding's to fix.
+    #[test]
+    fn folding_keeps_the_encoders_normalisation() {
+        let long = format!("/{}", "a_directory_component/".repeat(30))
+            .trim_end_matches('/')
+            .to_string();
+        let canonical = encode_path_for_filename(Path::new(&long));
+        assert!(canonical.contains(FOLD_MARK), "long enough to fold");
+        for spelling in [
+            long.replace('/', "//"),             // doubled separators collapse
+            long.trim_start_matches('/').into(), // a leading one is stripped
+            long.replace('/', "\\"),             // either separator will do
+        ] {
+            assert_eq!(
+                encode_path_for_filename(Path::new(&spelling)),
+                canonical,
+                "spelling {spelling:?} names the same directory"
+            );
+        }
+    }
+
     #[test]
     fn an_over_long_path_folds_under_the_cap_and_stays_unique() {
         let deep = format!("/{}/workspace", "a_very_long_directory_name/".repeat(20));

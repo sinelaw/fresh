@@ -5875,7 +5875,13 @@ function archivedPathFor(repoRoot: string, s: AgentSession): string {
     slugify(repoRoot),
     ".archived",
   );
-  const name = editor.pathBasename(s.root) || s.hostLabel || "workspace";
+  // `s.hostLabel` is NOT a fallback here: it is a display string too (the
+  // reconcile sites write it from the window's own label, and the rename path
+  // overwrites it), so falling back to it would put the very characters this
+  // function exists to keep out of a path back into one. A root with no
+  // basename is a filesystem root, which owns no workspace; the constant is
+  // the honest answer.
+  const name = editor.pathBasename(s.root) || "workspace";
   let candidate = editor.pathJoin(graveyard, name);
   for (let n = 2; editor.fileExists(editor.localPath(candidate)); n++) {
     candidate = editor.pathJoin(graveyard, `${name}-${n}`);

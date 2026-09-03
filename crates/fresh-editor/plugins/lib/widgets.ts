@@ -785,7 +785,12 @@ export function windowEmbed(options: {
     // that value is 0. Mapping to it keeps a placeholder rendering as
     // the blanks it is meant to render, instead of taking the panel
     // down with it.
-    windowId: Number.isFinite(options.windowId) && options.windowId > 0
+    // The range is closed at *both* ends: `u32` has a top as well as a
+    // bottom, and an id above it fails to deserialise exactly as a negative
+    // one does — same rejected spec, same frozen panel.
+    windowId: Number.isFinite(options.windowId) &&
+        options.windowId > 0 &&
+        options.windowId <= 0xffff_ffff
       ? Math.trunc(options.windowId)
       : 0,
     rows: options.rows,

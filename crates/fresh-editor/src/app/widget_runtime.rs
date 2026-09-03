@@ -3334,20 +3334,20 @@ mod tests {
         }
     }
 
-    /// One frame of the shell's tree, without a terminal: the same two calls
-    /// `Editor::render` makes around it.
+    /// One frame of the shell's tree, without a terminal.
+    ///
+    /// **`Editor::lay_out_shell_tree`, not a re-spelling of it.** This used to
+    /// repeat the take/frame/put-back sequence `render` performs, which meant
+    /// a step deleted from `render` was still taken here and the tests went on
+    /// passing — including the one guarding #3137, whose whole subject is a
+    /// call `render` makes after the frame. Calling the same function is what
+    /// makes that test able to fail.
     fn frame_the_shell(editor: &mut Editor) {
         use ratatui::layout::Rect;
         let dock = Rect::new(0, 0, 30, 24);
         let chrome = Rect::new(30, 0, 50, 24);
         let shell = editor.shell_frame((Some(dock), chrome));
-        let mut ui = editor.shell_ui.take().expect("the shell tree");
-        crate::view::shell::geometry::stats::note_shell_layout();
-        ui.frame(
-            crate::view::shell::frame::frame_tree(shell),
-            fresh_ui::Size::new(80, 24),
-        );
-        editor.shell_ui = Some(ui);
+        editor.lay_out_shell_tree(shell, fresh_ui::Size::new(80, 24));
     }
 
     fn button(key: &str) -> WidgetSpec {
@@ -4166,7 +4166,6 @@ mod tests {
         );
 
         frame_the_shell(&mut editor);
-        editor.retry_pending_panel_tree_focus();
 
         let ui = editor.shell_ui.as_ref().expect("the tree");
         assert_eq!(
