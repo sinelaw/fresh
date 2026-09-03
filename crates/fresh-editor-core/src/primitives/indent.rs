@@ -262,6 +262,12 @@ impl IndentCalculator {
             return indent;
         }
 
+        // A blank line keeps the cursor's own column (#3165). Not on the
+        // language path: see `cursor_column_on_blank_line`.
+        if let Some(indent) = Self::cursor_column_on_blank_line(buffer, position, tab_size) {
+            return indent;
+        }
+
         // Pattern-based indent (for incomplete syntax)
         if let Some(indent) = Self::calculate_indent_pattern(buffer, position, tab_size) {
             return indent;
@@ -269,6 +275,72 @@ impl IndentCalculator {
 
         // Final fallback: copy current line's indent
         Self::get_current_line_indent(buffer, position, tab_size)
+    }
+
+    /// If `position` is on a line with no non-whitespace content (empty or
+    /// whitespace-only), return the cursor's column measured in indent
+    /// units; `None` when the line has content.
+    ///
+    /// This extends the leading-whitespace rule of
+    /// [`indent_for_cursor_in_leading_ws`] to blank lines, for files with
+    /// no language: pressing Enter there gives the new line the column the
+    /// cursor was at. At the end of eight spaces that is eight — the
+    /// "keep typing the indented block" flow, where each Enter lands at the
+    /// end of the indent it inserted, is unchanged — and at column 0 of an
+    /// empty line it is none.
+    ///
+    /// Without this, [`calculate_indent_pattern`]'s backward scan reached
+    /// past the blank line to the previous non-empty one and copied its
+    /// indent. Its forward look-ahead corrects that when a less-indented
+    /// line follows (#1425), but a blank line at the end of the buffer has
+    /// nothing to look ahead to, so Enter on the blank last line of a text
+    /// file landed at column 9 under an 8-space block (#3165). In prose a
+    /// blank line ends what came before it; the previous block's indent is
+    /// not wanted, whether or not anything follows.
+    ///
+    /// Deliberately **not** applied on the language path
+    /// ([`calculate_indent`]): there the same backward scan is the fallback
+    /// for code tree-sitter cannot parse yet, where a blank line at the end
+    /// of an unclosed block *should* keep the block's indent
+    /// (`test_indent_after_empty_line_incomplete_syntax`).
+    fn cursor_column_on_blank_line(
+        buffer: &Buffer,
+        position: usize,
+        tab_size: usize,
+    ) -> Option<usize> {
+        // Find start of the current line.
+        let mut line_start = position;
+        while line_start > 0 {
+            if Self::byte_at(buffer, line_start.saturating_sub(1)) == Some(b'\n') {
+                break;
+            }
+            line_start = line_start.saturating_sub(1);
+        }
+
+        // Everything before the cursor on this line must be whitespace;
+        // accumulate the cursor's column in indent units.
+        let mut col = 0;
+        let mut pos = line_start;
+        while pos < position {
+            match Self::byte_at(buffer, pos) {
+                Some(b' ') => col += 1,
+                Some(b'\t') => col += tab_size,
+                Some(b'\r') => {}
+                _ => return None, // cursor is past content on this line
+            }
+            pos += 1;
+        }
+
+        // And so must everything after it, up to the end of the line.
+        let mut pos = position;
+        while pos < buffer.len() {
+            match Self::byte_at(buffer, pos) {
+                Some(b'\n') | None => break,
+                Some(b' ') | Some(b'\t') | Some(b'\r') => pos += 1,
+                Some(_) => return None, // the line has content
+            }
+        }
+        Some(col)
     }
 
     /// If `position` is inside (or at the boundary of) the leading whitespace
@@ -1891,6 +1963,51 @@ mod tests {
             indent, 0,
             "Enter at column 0 of an existing non-empty line must not insert indentation"
         );
+    }
+
+    #[test]
+    fn test_enter_on_blank_last_line_keeps_cursor_column_no_language() {
+        // Regression test for #3165, the end-of-buffer half of #1425: a
+        // blank line with *nothing* after it. The forward look-ahead that
+        // handles the shape above has nothing to find here, and the
+        // backward scan copied `line4`'s 8 spaces onto the new line.
+        //
+        //     ····line1
+        //     ····line2
+        //     ········line3
+        //     ········line4
+        //     <empty, last line>   <- cursor at column 0, press Enter
+        let buffer = Buffer::from_str_test("    line1\n    line2\n        line3\n        line4\n");
+        let position = buffer.len();
+
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
+        assert_eq!(
+            indent, 0,
+            "Enter at column 0 of the blank last line must not inherit the previous block's indent"
+        );
+
+        // The rule is the cursor's own column, so the "keep typing the
+        // indented block" flow — Enter at the end of the whitespace the
+        // previous Enter inserted — still keeps the indent...
+        let buffer = Buffer::from_str_test("        line4\n        ");
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, buffer.len(), 4);
+        assert_eq!(
+            indent, 8,
+            "Enter at the end of a whitespace-only line keeps its indent"
+        );
+
+        // ...and splitting a whitespace-only line keeps the column too.
+        let buffer = Buffer::from_str_test("        line4\n        ");
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, buffer.len() - 6, 4);
+        assert_eq!(
+            indent, 2,
+            "Enter inside a whitespace-only line keeps the cursor's column"
+        );
+
+        // Tabs count as tab_size columns, as everywhere else in this file.
+        let buffer = Buffer::from_str_test("\tline4\n\t\t");
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, buffer.len(), 4);
+        assert_eq!(indent, 8, "two tabs at tab_size 4 are eight columns");
     }
 
     #[test]

@@ -179,6 +179,54 @@ fn test_fallback_copies_previous_indent() {
     );
 }
 
+/// Enter on the blank last line of a plain-text file must not indent the
+/// new line to the block above it (#3165).
+#[test]
+fn test_plain_text_enter_on_blank_last_line_does_not_indent() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(
+        &file_path,
+        "    line1\n    line2\n        line3\n        line4\n",
+    )
+    .unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // The blank fifth line is the last line of the file.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.assert_screen_contains("Ln 5, Col 1");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 6, Col 1");
+
+    harness.type_text("x").unwrap();
+    harness.assert_buffer_content("    line1\n    line2\n        line3\n        line4\n\nx");
+
+    // Whereas Enter at the end of an indented line still carries the
+    // indent, and a further Enter at the end of that whitespace keeps it:
+    // the blank-line rule is the cursor's own column, not zero.
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.assert_screen_contains("Ln 4, Col 14");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("y").unwrap();
+    harness.assert_buffer_content(
+        "    line1\n    line2\n        line3\n        line4\n        \n        y\n\nx",
+    );
+}
+
 /// Test auto-indent with multi-cursor
 #[test]
 fn test_auto_indent_with_multi_cursor() {
