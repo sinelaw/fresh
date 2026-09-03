@@ -11,9 +11,9 @@
 //!
 //! The daemon is the process that renders the UI, so this has to be observed
 //! through a real one: the client's screen is the daemon's screen. Driving
-//! the binary is also the only way to see the second half of the fix — the
-//! `--locale` the client was given has to be forwarded across the spawn, and
-//! nothing in-process can show that.
+//! the binary is also the only way to see the other half of the fix — the
+//! `--locale` and `--config` the client was given have to be forwarded
+//! across the spawn, and nothing in-process can show that.
 //!
 //! Linux-gated: `XDG_CONFIG_HOME`/`XDG_RUNTIME_DIR` are what isolate the
 //! config the daemon reads and the socket it binds, and `dirs` honours them
@@ -145,6 +145,43 @@ fn daemon_takes_its_locale_from_the_clients_flag() {
     assert!(
         screen.contains(FILE_JA),
         "expected --locale to be forwarded to the daemon, got:\n{screen}"
+    );
+}
+
+/// `--config <PATH>` names the file a *new* session should read, so the
+/// daemon it starts has to be given that path too — it discovers a config
+/// for itself otherwise, and would read the wrong one.
+///
+/// Observed through the locale because that is what shows on screen: the
+/// alternate config asks for Japanese and the discovered one does not, so a
+/// Japanese menu bar can only mean the daemon read the file the client
+/// named.
+#[test]
+fn daemon_takes_its_config_from_the_clients_flag() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    // The config the daemon would find on its own says nothing about the
+    // language; the one named on the command line asks for Japanese.
+    setup(home.path(), None);
+    let alternate = home.path().join("alternate.json");
+    std::fs::write(
+        &alternate,
+        "{\n  \"locale\": \"ja\",\n  \"check_for_updates\": false\n}\n",
+    )
+    .unwrap();
+
+    let screen = daemon_screen(
+        home.path(),
+        "config-from-flag",
+        &["--config", alternate.to_str().unwrap()],
+    );
+
+    assert!(
+        screen.contains(FILE_JA),
+        "expected --config to be forwarded to the daemon, got:\n{screen}"
     );
 }
 

@@ -3251,6 +3251,7 @@ fn run_open_files_command(
     files: &[String],
     wait: bool,
     locale: Option<&str>,
+    config: Option<&Path>,
 ) -> AnyhowResult<()> {
     use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{ClientControl, ServerControl};
@@ -3297,7 +3298,7 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale)?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
 
         // Wait for server to be ready
         loop {
@@ -3336,7 +3337,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale);
+            return run_attach(session_name, &[], locale, config);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -4737,17 +4738,21 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         args.session_name.as_deref(),
         &args.files,
         args.locale.as_deref(),
+        args.config.as_deref(),
     )
 }
 
-/// `locale` is the client's own `--locale`, forwarded to a daemon we
-/// *start* here so the flag survives the hop into the process that
-/// actually renders the UI. Attaching to an already-running daemon leaves
-/// its locale alone — the same way an existing daemon keeps its authority.
+/// `locale` and `config` are the client's own `--locale` and `--config`,
+/// forwarded to a daemon we *start* here so those flags survive the hop
+/// into the process that actually renders the UI and reads the config.
+/// Attaching to an already-running daemon leaves both alone: it is someone
+/// else's session, already serving other terminals, the same way an
+/// existing daemon keeps its authority.
 fn run_attach(
     session_name: Option<&str>,
     files: &[String],
     locale: Option<&str>,
+    config: Option<&Path>,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -4793,7 +4798,7 @@ fn run_attach(
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale)?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
         true
     } else {
         false
@@ -5153,6 +5158,7 @@ fn run_if_subcommand(
             files,
             *wait,
             args.locale.as_deref(),
+            args.config.as_deref(),
         ));
     }
     if args.attach {
