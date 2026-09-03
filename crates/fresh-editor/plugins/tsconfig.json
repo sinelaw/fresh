@@ -28,6 +28,7 @@
     "code-tour.ts",
     "csharp_support.ts",
     "dashboard.ts",
+    "deno_lsp.ts",
     "devcontainer.ts",
     "diagnostics_panel.ts",
     "diff_nav.ts",
