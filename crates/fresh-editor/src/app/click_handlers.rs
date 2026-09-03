@@ -646,7 +646,7 @@ impl Editor {
             crate::primitives::display_width::visual_column_of(&state.buffer, target_position)
         });
 
-        let event = Event::MoveCursor {
+        let move_event = Event::MoveCursor {
             cursor_id: primary_cursor_id,
             old_position,
             new_position: target_position,
@@ -656,9 +656,50 @@ impl Editor {
             new_sticky_column,
         };
 
+        // A plain click ends multi-cursor editing: every secondary cursor
+        // goes, and the primary is what moves to the click — as in VS Code,
+        // Sublime and Zed. Shift/Ctrl-click extends the primary's selection
+        // and leaves the set alone, so a selection built across several
+        // cursors is not lost to the click that extends it. Before this the
+        // click moved the primary and kept the rest, which may be out of
+        // the viewport, and the next keystroke edited every one of them
+        // (#3125). The removals and the move are one `Batch` so undo steps
+        // back over the click as a whole.
+        let mut events: Vec<Event> = Vec::new();
+        if !extend_selection {
+            let cursors = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| vs.cursors.clone());
+            if let Some(cursors) = cursors {
+                for (cursor_id, cursor) in cursors.iter() {
+                    if cursor_id != primary_cursor_id {
+                        events.push(Event::RemoveCursor {
+                            cursor_id,
+                            position: cursor.position,
+                            anchor: cursor.anchor,
+                        });
+                    }
+                }
+            }
+        }
+        let event = if events.is_empty() {
+            move_event.clone()
+        } else {
+            events.push(move_event.clone());
+            Event::Batch {
+                events,
+                description: "Click".to_string(),
+            }
+        };
+
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
-        self.track_cursor_movement(&event);
+        self.track_cursor_movement(&move_event);
 
         // Park the cursor on the clicked virtual line (transient state, not
         // carried by the MoveCursor event — see Cursor::virtual_lines_below).
