@@ -461,7 +461,7 @@ underline stays an honest affordance.
     }
   },
   "editor": {
-    // what you fall back to once the welcome screen stands down
+    // the host's own empty state, which this plugin neither reads nor changes
     //   true  — the historical [No Name] scratch buffer
     //   false — the blank pane with the one-line hint
     "auto_create_empty_buffer_on_last_buffer_close": true
@@ -470,8 +470,8 @@ underline stays an honest affordance.
 ```
 
 `showOnStartup` governs the one automatic path: launch. Not "launch with
-nothing to restore" — the page opens either way, and what an already-busy
-workspace changes is only whether it comes to the front. Emptying the
+nothing to restore" — the page opens either way, as a tab behind whatever
+is already there, and it never comes to the front on its own. Emptying the
 workspace later is not a path at all; see "When it opens" below, so the two
 older empty states stay exactly as they were.
 The startup toggle on the page writes a plugin *global state* override that
@@ -493,9 +493,23 @@ already load-bearing across the test suite.
 
 **When it opens.**
 
-- At startup, always — as the foreground buffer when the session restore
-  produced nothing, and as a tab beside the work when it produced anything.
-- On demand: `Welcome` in the palette, or **Help ▸ Welcome**.
+- At startup, always — as a tab behind whatever is already open, whether
+  that is the host's untitled seed, a restored session or the file named on
+  the command line. Never in the foreground.
+- On demand: `Welcome` in the palette, or **Help ▸ Welcome**. This is the
+  one path that brings it to the front.
+
+**One concern.** The plugin decides one thing: open at startup, or don't.
+It does not count the other buffers, does not ask what the host's `[No Name]`
+seed means, does not read `auto_create_empty_buffer_on_last_buffer_close`,
+and closes nothing but its own buffer when the reader asks. Every earlier
+revision took on one more of those questions and got it wrong in a new way —
+the seed reaped unconditionally, then only under one setting; the page hidden
+whenever anything was open; the page deleted on the reader's first file open
+— and each answer needed state (`engaged`, `shown`, a structural test for
+"seed") that the next answer had to be reconciled with. The reader's own
+buffers are the host's and the reader's; a welcome tab is a tab, and the
+reader closes it.
 
 **It never takes the view and gives it back.** A background open is a
 `background: true` on `createVirtualBuffer`, not an open followed by a switch
@@ -512,27 +526,6 @@ page used to ask whether anything else was open and give up if anything was,
 so restoring a session — or plain `fresh note.txt` — meant never seeing it
 again: the only way back was to close every buffer and relaunch, which is
 not a thing anyone does on purpose. Opening is unconditional now.
-`hasOtherBuffers` survives, demoted: it decides the foreground, so
-`fresh note.txt` still lands on `note.txt`.
-
-**The seed follows the reader's own setting.** Fresh seeds one untitled
-`[No Name]` buffer at launch. Whether the reader wants it is a question the
-editor already asks — `editor.auto_create_empty_buffer_on_last_buffer_close`
-— and this page reads the answer rather than inventing its own:
-
-- **Setting on** (the default): the seed is the reader's scratch buffer. It
-  keeps the pane and the focus; the page opens as a tab beside it. A bare
-  `fresh` lands on `[No Name]` with `Welcome ×` in the tab bar.
-- **Setting off**: the reader has said they want no empty buffer, so the seed
-  is the placeholder this page replaces. The page closes it and takes the
-  pane. A bare `fresh` shows one tab, `Welcome`, and no `[No Name]` anywhere.
-
-For a while the page reaped the seed unconditionally, and then — after that
-closed scratch buffers too — not at all. Both were wrong for the same reason:
-the seed's meaning is not the page's to decide. The test for "seed" is
-structural (not a file, no name, never modified) and is applied only at
-startup and only on the foreground path; the `Welcome` palette command
-closes nothing, because the palette is not startup.
 
 **No lit cursor row.** The page passes `highlightCurrentLine: false` to
 `createVirtualBuffer`. The caret's row means nothing on a page laid out by
@@ -551,33 +544,14 @@ a full-page document back. The `buffer_closed` handler now does nothing but
 drop this plugin's handle on its own buffer when that buffer is the one that
 went away.
 
-**When it gets out of the way.** This is the ruling that decides whether the
-screen is a good citizen or a nuisance:
-
-> A welcome buffer that was **on screen, auto-opened and never interacted
-> with** — never scrolled, never focused, no widget touched — closes itself
-> when a real file opens. One the user **engaged with** stays open until they
-> close it. One that has never been on screen is not in the way of anything,
-> and stays.
-
-An ambient screen you ignored was ambient; a document you started reading is
-yours. The third case is new with the background tab, and the rule had to
-learn it: "step aside" was written for a page *occupying the pane*, and a tab
-the reader has never seen has nothing to step aside from — closing it is not
-politeness but deleting a tab they never asked to close. It used to do
-exactly that, on the very first file they opened.
-
-So `fresh src/main.rs` *does* leave a Welcome tab behind now, deliberately.
-CLI file arguments are drained before `fire_ready_hook` (`main.rs`,
-`process_pending_file_opens`), so the `after_file_open` for `main.rs` arrives
-while there is no page yet and is ignored; `ready` then opens the page as a
-background tab, and nothing later removes it. Turning to that tab and then
-opening a file does close it, which is the original rule doing its job.
-
-Asking for the page by name — `Welcome` in the palette — counts as
-engagement whether or not the buffer already exists. Otherwise the startup
-tab stays ambient for the whole session and evaporates on the next file open,
-however many times the reader summons it.
+**Opening files never closes it.** There was a "step aside" rule: an
+auto-opened page nobody had touched closed itself when a real file opened.
+It was written for a page occupying the pane, and once the page became a
+background tab it needed a second flag to avoid deleting a tab the reader had
+never seen, and a third rule so that summoning it by name counted as
+touching it. All of that is gone. `fresh src/main.rs` leaves a Welcome tab
+behind; so does turning to the tab and then opening a file. A tab the reader
+does not want is one `Ctrl+W` away, which is what tabs are for.
 
 **Closing it never reopens it.** Closing the welcome buffer leaves whichever
 empty state the core settings choose. There is no loop, and no way to get
@@ -733,9 +707,7 @@ Eleven things the wireframes did not know:
    Ctrl-/Alt-modified keys so a focused text field can never be hijacked by
    Open or Save. That is the right default, and it means the accelerators this
    page promises have to be named — `FORWARDED` lists them and each one
-   forwards to the real action, so a rebound key keeps working. Notably they
-   do *not* mark the page engaged: reaching past it for the palette is the
-   ambient case.
+   forwards to the real action, so a rebound key keeps working.
 
 6. **Tab moves widget focus, but the host only scrolls the pane for a focused
    *text* widget.** A focused button further down a long document was
@@ -881,8 +853,9 @@ Eleven things the wireframes did not know:
     condition asked whether any *file* buffer was open, so closing the
     last text buffer with a terminal or an agent still running popped the
     page up over a workspace that was plainly in use. It was fixed to count
-    every buffer except this page and the host's own untitled seed — which
-    is still the test the startup path uses, now the only path that asks.
+    every buffer except this page and the host's own untitled seed. Both
+    the ambient path and the counting are gone now (§8): the page opens
+    at startup as a background tab and asks nothing about the workspace.
 
 26. **`hoverStyle` had no sibling.** A bare button is just its label, so
     the only way to mark a word as clickable was to spend a colour on
@@ -1050,5 +1023,5 @@ and jump keys, `/` to the finder, live fuzzy-find over `git ls-files` and
 by click (status bar confirms), the startup toggle flipping and **persisting
 across a restart** (the screen then stays away, and the `Welcome` command
 brings it back), `Ctrl+P` opening the palette from the page, the `[No Name]`
-seed being retired on open, `fresh notes.txt` never leaving a Welcome tab
-behind, and both responsive breakpoints.
+seed keeping the pane with `Welcome ×` beside it, `fresh notes.txt` leaving a
+Welcome tab behind `notes.txt`, and both responsive breakpoints.

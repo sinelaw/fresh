@@ -9,22 +9,21 @@
 //!
 //! So these assert behaviours that were *observed broken*, not the
 //! happy path: what the finder does with the characters the page also
-//! binds, and where focus goes when the reader leaves it.
+//! binds, where focus goes when the reader leaves it, and the one
+//! lifecycle rule the plugin has — open at startup as a tab, and touch
+//! nothing else.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use fresh::config::{Config, PluginConfig};
+use fresh::model::event::BufferId;
 use std::fs;
 
 const TAB_BAR_ROW: u16 = 1;
 
-/// A harness rooted in a scratch directory holding the real plugin.
-///
-/// `seed_wanted` is `editor.auto_create_empty_buffer_on_last_buffer_close`,
-/// the setting the page reads to decide what the host's untitled seed
-/// means. Most tests here want the page in the foreground of a bare start,
-/// which is the *off* case: the seed is a placeholder the page replaces.
-fn harness_with_welcome_seed(seed_wanted: bool) -> (EditorTestHarness, tempfile::TempDir) {
+/// A harness rooted in a scratch directory holding the real plugin, under
+/// the caller's config.
+fn harness_with_welcome_config(config: Config) -> (EditorTestHarness, tempfile::TempDir) {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let working_dir = temp.path().join("work");
     fs::create_dir_all(&working_dir).unwrap();
@@ -33,22 +32,33 @@ fn harness_with_welcome_seed(seed_wanted: bool) -> (EditorTestHarness, tempfile:
     copy_plugin(&plugins_dir, "welcome_screen");
     copy_plugin_lib(&plugins_dir);
 
-    let mut config = Config::default();
-    config.editor.auto_create_empty_buffer_on_last_buffer_close = seed_wanted;
     let harness = EditorTestHarness::with_config_and_working_dir(120, 40, config, working_dir)
         .expect("harness");
     (harness, temp)
 }
 
-/// The common case for these tests: the reader wants no empty buffer, so a
-/// bare start lands on the page.
 fn harness_with_welcome() -> (EditorTestHarness, tempfile::TempDir) {
-    harness_with_welcome_seed(false)
+    harness_with_welcome_config(Config::default())
 }
 
-/// Bring the page up the way a bare `fresh` does.
-fn open_welcome(harness: &mut EditorTestHarness) {
+/// Fire startup and return the one buffer it added.
+fn startup_welcome_tab(harness: &mut EditorTestHarness) -> BufferId {
+    let before = harness.editor().all_buffer_ids_for_tests();
     harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+    harness
+        .editor()
+        .all_buffer_ids_for_tests()
+        .into_iter()
+        .find(|id| !before.contains(id))
+        .expect("startup opened a Welcome buffer")
+}
+
+/// Bring the page to the front the way a reader does: startup adds the
+/// tab behind the host's `[No Name]` seed, and the palette turns to it.
+fn open_welcome(harness: &mut EditorTestHarness) {
+    startup_welcome_tab(harness);
+    harness.run_palette_command("Welcome").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("JUST EDIT TEXT"))
         .expect("welcome screen renders its three doors");
@@ -174,22 +184,110 @@ fn closing_the_last_buffer_does_not_reopen_the_welcome_screen() {
     );
 }
 
-/// The startup path is the one that survives: a launch with nothing to
-/// restore still brings the page up. Guards the fix above against being
-/// "fixed" into a page that never opens by itself at all.
+/// **A bare start adds a tab and changes nothing else.** The host seeds
+/// one untitled `[No Name]` buffer at launch; the page appears beside it
+/// and leaves it the pane and the focus. The page used to close that seed,
+/// then to close it only under one setting — and each rule needed the
+/// plugin to know what the seed *meant*. It no longer asks.
 #[test]
-fn an_empty_startup_still_opens_the_welcome_screen() {
+fn a_bare_startup_adds_a_welcome_tab_behind_the_empty_buffer() {
     let (mut harness, _tmp) = harness_with_welcome();
-    open_welcome(&mut harness);
+    let before = harness.editor().all_buffer_ids_for_tests();
+    let active_before = harness.editor().active_buffer_id();
+    assert_eq!(before.len(), 1, "precondition: the host seeds one buffer");
+
+    startup_welcome_tab(&mut harness);
+
+    let after = harness.editor().all_buffer_ids_for_tests();
+    for id in &before {
+        assert!(
+            after.contains(id),
+            "the welcome screen closed buffer {id:?}: {before:?} became {after:?}"
+        );
+    }
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        active_before,
+        "the page took the focus from the reader's empty buffer"
+    );
+    let tab_bar = harness.screen_row_text(TAB_BAR_ROW);
+    assert!(
+        tab_bar.contains("[No Name]") && tab_bar.contains("Welcome"),
+        "expected `[No Name]` and a Welcome tab side by side, got: {tab_bar}"
+    );
+    assert!(
+        !harness.screen_to_string().contains("JUST EDIT TEXT"),
+        "the page is in the foreground of a workspace it should have \
+         joined quietly"
+    );
+}
+
+/// **The empty-buffer setting is not this plugin's business.** With
+/// `auto_create_empty_buffer_on_last_buffer_close` off, the page used to
+/// read the seed as a placeholder and close it. Whatever the host does
+/// with its own seed is the host's call; the page does exactly what it
+/// does under the default.
+#[test]
+fn the_empty_buffer_setting_changes_nothing_about_startup() {
+    let mut config = Config::default();
+    config.editor.auto_create_empty_buffer_on_last_buffer_close = false;
+    let (mut harness, _tmp) = harness_with_welcome_config(config);
+    let before = harness.editor().all_buffer_ids_for_tests();
+    let active_before = harness.editor().active_buffer_id();
+
+    let welcome = startup_welcome_tab(&mut harness);
+
+    let after = harness.editor().all_buffer_ids_for_tests();
+    for id in &before {
+        assert!(
+            after.contains(id),
+            "the welcome screen closed buffer {id:?} because of a setting \
+             that is not its own: {before:?} became {after:?}"
+        );
+    }
+    assert!(after.contains(&welcome));
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        active_before,
+        "startup changed which buffer is active"
+    );
+}
+
+/// **`showOnStartup` is the one switch, and off means off.** Nothing
+/// opens at launch; `Welcome` in the palette still works.
+#[test]
+fn show_on_startup_off_opens_nothing_until_asked() {
+    let mut config = Config::default();
+    config.plugins.insert(
+        "welcome_screen".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "showOnStartup": false }),
+        },
+    );
+    let (mut harness, _tmp) = harness_with_welcome_config(config);
+    let before = harness.editor().all_buffer_ids_for_tests();
+
+    harness.editor_mut().fire_ready_hook();
+    harness.wait_for_async_quiescence(4).unwrap();
+    assert_eq!(
+        harness.editor().all_buffer_ids_for_tests(),
+        before,
+        "the page opened at startup with showOnStartup off"
+    );
+
+    harness.run_palette_command("Welcome").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("JUST EDIT TEXT"))
+        .expect("the palette command still opens the page");
 }
 
 /// **Startup means startup — not "startup that found an empty
 /// workspace".** The page asked whether anything else was open and gave
 /// up if anything was, so restoring a session, or plain `fresh
 /// note.txt`, meant never seeing it again: the only way back was to
-/// close every buffer and relaunch. Opening is now unconditional. What a
-/// non-empty workspace changes is only whether the page comes to the
-/// front, which is the next test.
+/// close every buffer and relaunch. Opening is unconditional now.
 #[test]
 fn startup_with_a_file_already_open_still_gets_a_welcome_tab() {
     let (mut harness, tmp) = harness_with_welcome();
@@ -245,81 +343,6 @@ fn a_welcome_tab_beside_a_file_does_not_take_the_foreground() {
     );
 }
 
-/// **When the reader wants an empty buffer, the page touches nothing.**
-/// With `auto_create_empty_buffer_on_last_buffer_close` on, the host's
-/// `[No Name]` seed is the reader's scratch buffer: it keeps the pane and
-/// the focus, and the page is a tab beside it. Closing it — as the page
-/// once did unconditionally — would be a plugin deleting the very buffer
-/// the reader's setting asked for.
-#[test]
-fn a_workspace_that_wants_an_empty_buffer_keeps_it_focused() {
-    let (mut harness, _tmp) = harness_with_welcome_seed(true);
-    // The harness draws no tab bar for a lone buffer, so the seed is
-    // observed by id, not by its `[No Name]` label.
-    let before = harness.editor().all_buffer_ids_for_tests();
-    let active_before = harness.editor().active_buffer_id();
-    assert_eq!(before.len(), 1, "precondition: the host seeds one buffer");
-
-    harness.editor_mut().fire_ready_hook();
-    harness.wait_for_async_quiescence(4).unwrap();
-
-    let after = harness.editor().all_buffer_ids_for_tests();
-    for id in &before {
-        assert!(
-            after.contains(id),
-            "the welcome screen closed buffer {id:?}: {before:?} became {after:?}"
-        );
-    }
-    assert_eq!(
-        harness.editor().active_buffer_id(),
-        active_before,
-        "the page took the focus from the reader's empty buffer"
-    );
-    let tab_bar = harness.screen_row_text(TAB_BAR_ROW);
-    assert!(
-        tab_bar.contains("[No Name]") && tab_bar.contains("Welcome"),
-        "expected `[No Name]` and a Welcome tab side by side, got: {tab_bar}"
-    );
-    assert!(
-        !harness.screen_to_string().contains("JUST EDIT TEXT"),
-        "the page is in the foreground of a workspace whose reader asked \
-         for an empty buffer"
-    );
-}
-
-/// **When the reader wants no empty buffer, the page replaces the seed.**
-/// With the setting off, Fresh still seeds one untitled buffer at launch;
-/// leaving it beside the page is a `[No Name]` tab the reader explicitly
-/// asked never to see. The page closes it and takes the pane — the one
-/// buffer this plugin will ever close, and only here.
-#[test]
-fn a_workspace_that_wants_no_empty_buffer_gets_only_the_welcome_page() {
-    let (mut harness, _tmp) = harness_with_welcome_seed(false);
-    let seed = harness.editor().all_buffer_ids_for_tests();
-    assert_eq!(
-        seed.len(),
-        1,
-        "precondition: the host seeds one buffer regardless of the setting"
-    );
-
-    open_welcome(&mut harness);
-
-    let after = harness.editor().all_buffer_ids_for_tests();
-    assert!(
-        !after.contains(&seed[0]),
-        "the seed survived a start the reader asked to be empty: {seed:?} -> {after:?}"
-    );
-    assert_eq!(
-        after.len(),
-        1,
-        "expected the page to be the only buffer: {after:?}"
-    );
-    assert!(
-        !harness.screen_to_string().contains("[No Name]"),
-        "a `[No Name]` label is still on screen"
-    );
-}
-
 /// **A page composed off screen composed against the wrong pane.** The
 /// layout is measured from `getViewport()`, which reports the *active*
 /// split — so a page opened behind a file took that file's pane geometry
@@ -335,18 +358,9 @@ fn a_welcome_tab_opened_behind_a_file_paints_correctly_when_shown() {
     fs::write(&path, "alpha\nbeta\n").unwrap();
     harness.open_file(&path).unwrap();
 
-    let before = harness.editor().all_buffer_ids_for_tests();
-    harness.editor_mut().fire_ready_hook();
-    harness.wait_for_async_quiescence(4).unwrap();
+    let welcome = startup_welcome_tab(&mut harness);
 
-    // Switch to the Welcome tab, the way `Ctrl+PageDown` does. It is the
-    // one buffer startup added.
-    let welcome = harness
-        .editor()
-        .all_buffer_ids_for_tests()
-        .into_iter()
-        .find(|id| !before.contains(id))
-        .expect("startup opened a Welcome buffer");
+    // Switch to the Welcome tab, the way `Ctrl+PageDown` does.
     harness.editor_mut().switch_buffer(welcome);
     harness.wait_for_async_quiescence(4).unwrap();
 
@@ -365,32 +379,20 @@ fn a_welcome_tab_opened_behind_a_file_paints_correctly_when_shown() {
     );
 }
 
-/// **The startup tab did not survive being ignored.** `engaged` is only
-/// set by a keystroke or click *on the page*, and the step-aside rule
-/// closes an unengaged page when a file opens — a rule written for a page
-/// occupying the pane. The background tab never occupies anything, so the
-/// reader's first `Ctrl+P` deleted a tab they had not yet seen, and the
-/// only way back was a palette command that produced another one just as
-/// short-lived.
+/// **Opening a file never closes the tab.** The page used to "step aside"
+/// for a file when nobody had touched it, which took an engagement score
+/// and a was-it-ever-shown flag to get even half right, and still deleted
+/// a tab the reader had not asked to close. Here the reader has never
+/// turned to it.
 #[test]
-fn a_welcome_tab_the_reader_has_not_seen_survives_their_first_file_open() {
+fn opening_a_file_leaves_a_welcome_tab_the_reader_has_not_seen() {
     let (mut harness, tmp) = harness_with_welcome();
     let first = tmp.path().join("work").join("note.txt");
     fs::write(&first, "alpha\n").unwrap();
     harness.open_file(&first).unwrap();
 
-    let before = harness.editor().all_buffer_ids_for_tests();
-    harness.editor_mut().fire_ready_hook();
-    harness.wait_for_async_quiescence(4).unwrap();
-    let welcome = harness
-        .editor()
-        .all_buffer_ids_for_tests()
-        .into_iter()
-        .find(|id| !before.contains(id))
-        .expect("startup opened a Welcome buffer");
+    let welcome = startup_welcome_tab(&mut harness);
 
-    // The reader opens something. The page is not in their way — it has
-    // never been on screen — so it has nothing to step aside from.
     let second = tmp.path().join("work").join("other.txt");
     fs::write(&second, "beta\n").unwrap();
     harness.open_file(&second).unwrap();
@@ -405,33 +407,23 @@ fn a_welcome_tab_the_reader_has_not_seen_survives_their_first_file_open() {
     );
 }
 
-/// **Summoning the page counts as engagement.** `openWelcome`'s
-/// already-open path brings the buffer forward and used to leave
-/// `engaged` false — and since startup now always creates the buffer,
-/// that is the path `Welcome` takes for the rest of the session. The
-/// reader asked for the page by name, read it, opened a file, and the
-/// step-aside rule destroyed it as if nobody had touched it.
+/// The same rule for a page the reader *has* turned to and not touched —
+/// exactly the case the old step-aside rule fired on. It stays; the
+/// reader closes tabs, not the plugin.
 #[test]
-fn asking_for_the_page_by_name_keeps_it_through_the_next_file_open() {
+fn opening_a_file_leaves_a_welcome_page_the_reader_was_looking_at() {
     let (mut harness, tmp) = harness_with_welcome();
     let first = tmp.path().join("work").join("note.txt");
     fs::write(&first, "alpha\n").unwrap();
     harness.open_file(&first).unwrap();
 
-    let before = harness.editor().all_buffer_ids_for_tests();
-    harness.editor_mut().fire_ready_hook();
-    harness.wait_for_async_quiescence(4).unwrap();
-    let welcome = harness
-        .editor()
-        .all_buffer_ids_for_tests()
-        .into_iter()
-        .find(|id| !before.contains(id))
-        .expect("startup opened a Welcome buffer");
-
-    harness.run_palette_command("Welcome").unwrap();
+    let welcome = startup_welcome_tab(&mut harness);
+    // Turn to the tab the way `Ctrl+PageDown` does — not the palette,
+    // which the old rule counted as "engagement" and spared.
+    harness.editor_mut().switch_buffer(welcome);
     harness
         .wait_until(|h| h.screen_to_string().contains("JUST EDIT TEXT"))
-        .expect("the palette command brings the page forward");
+        .expect("switching to the tab shows the page");
 
     let second = tmp.path().join("work").join("other.txt");
     fs::write(&second, "beta\n").unwrap();
@@ -443,7 +435,7 @@ fn asking_for_the_page_by_name_keeps_it_through_the_next_file_open() {
             .editor()
             .all_buffer_ids_for_tests()
             .contains(&welcome),
-        "the page the reader summoned by name was closed by their next \
-         file open, as if it had been ambient"
+        "the page the reader was looking at was closed by their next file \
+         open, as if the plugin still stepped aside"
     );
 }

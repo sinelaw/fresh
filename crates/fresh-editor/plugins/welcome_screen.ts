@@ -23,12 +23,12 @@ const editor = getEditor();
 //   WELCOME SCREEN
 //
 //   The startup surface: a scrollable buffer that onboards three
-//   audiences on one page without overwhelming the simplest. It opens
-//   once, when Fresh launches, and takes the foreground only when there
-//   is nothing else to look at — otherwise it waits in a tab. Closing
-//   buffers never summons it. The one buffer it will close is the
-//   host's untitled seed, and only when the reader's own setting says
-//   they want no empty buffer; then the page is what replaces it.
+//   audiences on one page without overwhelming the simplest. It has one
+//   automatic behaviour, and one setting to govern it: when Fresh
+//   launches, open as a tab behind whatever is already there. It never
+//   takes the foreground on its own, never closes another buffer, and
+//   never reopens because something else went away — closing it is the
+//   reader's, and `Welcome` in the palette brings it back.
 //   Design note: docs/internal/welcome-screen-design.md.
 //
 //   Structure is a ladder. The first viewport is a zero-anxiety zone
@@ -151,20 +151,6 @@ type Workspace = {
 let bufferId: number | null = null;
 let panel: WidgetPanel | null = null;
 let opening = false;
-/** True once the user has scrolled, clicked or typed here. An
- *  auto-opened screen nobody touched steps aside when a real file
- *  opens; one the reader engaged with is theirs to close. */
-let engaged = false;
-/** True once the page has actually been on screen — opened in the
- *  foreground, or switched to since.
- *
- *  The step-aside rule was written for a page *occupying the pane*: an
- *  ambient screen you ignored gets out of the way of the file you asked
- *  for. A background tab is not occupying anything, so closing it is not
- *  politeness — it is deleting a tab the reader never asked to close,
- *  and it deleted the startup tab on their first file open, before they
- *  had ever seen it. */
-let shown = false;
 const folded = new Set<string>();
 
 let finderQuery = "";
@@ -1448,7 +1434,7 @@ function probeWorkspaces(): void {
 
 editor.defineConfigBoolean("showOnStartup", {
   default: true,
-  description: "Open the welcome screen when Fresh starts. It takes the foreground only when there is nothing else open.",
+  description: "Open the welcome screen when Fresh starts, as a tab behind whatever is already open.",
 });
 
 /** The footer toggle writes plugin global state, which persists across
@@ -1464,72 +1450,20 @@ function showOnStartup(): boolean {
 
 // ── Lifecycle ────────────────────────────────────────────────────────
 
-/** The host's own answer to "what do I show when there is nothing to
- *  show": `editor.auto_create_empty_buffer_on_last_buffer_close`. With it
- *  on, the reader wants a `[No Name]` scratch buffer in an empty
- *  workspace; with it off they want nothing. Fresh seeds one untitled
- *  buffer at launch either way, so this page reads the setting to decide
- *  what that seed *means* — a buffer the reader asked for, or a
- *  placeholder this page replaces. */
-function seedWanted(): boolean {
-  const cfg = editor.getConfig() as
-    | { editor?: { auto_create_empty_buffer_on_last_buffer_close?: boolean } }
-    | null;
-  return cfg?.editor?.auto_create_empty_buffer_on_last_buffer_close !== false;
-}
-
-/** The host's empty untitled seed: not a file, no name, never typed
- *  into. Anything else unnamed and unmodified is a scratch buffer the
- *  reader opened with `Ctrl+N` — but so is the seed, structurally, and
- *  at startup the two are told apart only by the setting above. */
-function isSeed(b: { id: number; path: string; is_virtual: boolean; modified: boolean }): boolean {
-  if (bufferId !== null && b.id === bufferId) return false;
-  const unnamed = !b.path || b.path.length === 0;
-  return !b.is_virtual && unnamed && !b.modified;
-}
-
-/** Is anything at all open besides this page?
- *
- *  Asked once, at startup, and it decides one thing only: whether the
- *  page comes to the front. It used to decide whether the page opened at
- *  all, which meant restoring a session — or plain `fresh note.txt` —
- *  hid it until you closed every buffer and relaunched.
- *
- *  Anything counts: a file, a terminal, an agent session, another
- *  plugin's panel. The host's untitled seed counts exactly when the
- *  reader has said they want one (`seedWanted`): then it is *their*
- *  scratch buffer and keeps the pane, with this page a tab beside it.
- *  When they have said they want nothing, the seed is the placeholder
- *  this page stands in for, and a workspace holding only that is empty. */
-function hasOtherBuffers(): boolean {
-  const seedCounts = seedWanted();
-  return editor.listBuffers().some((b) => {
-    if (bufferId !== null && b.id === bufferId) return false;
-    if (isSeed(b)) return seedCounts;
-    return true;
-  });
-}
-
 /** `force` is the reader asking for the page by name — the `Welcome`
  *  command — which both overrides `showOnStartup` and brings the page to
- *  the front. Startup passes `false` and lets `hasOtherBuffers` decide
- *  the second half: an empty workspace lands on the page, a workspace
- *  with work in it gets a tab and keeps looking at the work — the page
- *  is never made active and then unmade. */
+ *  the front. Startup passes `false`: the page is created as a tab
+ *  behind whatever is already open and nothing else about the workspace
+ *  is consulted — not how many buffers there are, not what the host's
+ *  untitled seed means, not any other setting. One concern: open at
+ *  startup, or don't. */
 async function openWelcome(force: boolean): Promise<void> {
   if (bufferId !== null) {
-    // Asking for the page by name is engagement even when it is already
-    // open. Startup now always creates the buffer, so this is the path
-    // the `Welcome` command takes for the rest of the session — leave
-    // `engaged` false here and the page the reader just summoned is
-    // ambient again, closed by their next file open.
-    if (force) engaged = true;
     editor.showBuffer(bufferId);
     return;
   }
   if (opening) return;
   if (!force && !showOnStartup()) return;
-  const foreground = force || !hasOtherBuffers();
   opening = true;
   readActiveTheme();
   try {
@@ -1553,12 +1487,11 @@ async function openWelcome(force: boolean): Promise<void> {
       // The caret's row means nothing on a page laid out by widgets, and a
       // lit band across the centred wordmark reads as a selection.
       highlightCurrentLine: false,
-      // Never take the view from a workspace that already has something
-      // in it. The page arrives as a tab, in one step: opening and then
-      // switching back is two visible switches, and the reader watches
-      // their file get displaced and returned for no reason they asked
-      // for.
-      background: !foreground,
+      // Startup never takes the view. The page arrives as a tab, in one
+      // step: opening and then switching back is two visible switches,
+      // and the reader watches their buffer get displaced and returned
+      // for no reason they asked for. Only the palette brings it forward.
+      background: !force,
     });
     bufferId = res.bufferId;
     // Nothing focused is this page's resting state: it opens as
@@ -1576,27 +1509,11 @@ async function openWelcome(force: boolean): Promise<void> {
     // cursor reached the viewport edge and the page finally scrolled.
     // This is the order `setBufferShowCursors`'s own docs prescribe.
     editor.setBufferShowCursors(bufferId, true);
-    // Retire the host's seed only when the reader has said they want no
-    // empty buffer (`seedWanted` false) *and* this page is what the
-    // workspace is opening to. Then the seed is the placeholder the page
-    // replaces, and leaving it is a `[No Name]` tab the reader has
-    // explicitly asked not to see. Anything else unnamed is theirs — a
-    // scratch buffer, or the seed they *do* want — and stays: a plugin
-    // buffer closing the reader's buffers is a plugin exceeding its
-    // brief. The `Welcome` command never does this; the palette is not
-    // startup.
-    if (!force && foreground && !seedWanted()) {
-      for (const b of editor.listBuffers()) {
-        if (isSeed(b)) editor.closeBuffer(b.id);
-      }
-    }
-    engaged = force;
-    shown = foreground;
     applyComposeWidth();
     probeThemes();
     probeWorkspaces();
     render();
-    if (foreground) editor.showBuffer(bufferId);
+    if (force) editor.showBuffer(bufferId);
     void probeRepoFiles();
     void probeGit();
   } catch (e) {
@@ -1633,7 +1550,13 @@ registerHandler("welcomeOnReady", async () => {
  *  itself whenever the last buffer went away, which made closing your
  *  final file feel like the editor undoing the close — and made
  *  "close everything" impossible to express. Startup is the one moment
- *  the reader has not just told us what they wanted. */
+ *  the reader has not just told us what they wanted.
+ *
+ *  Nor does opening a file close the page. It used to "step aside" for
+ *  a file when nobody had touched it, which needed the plugin to keep
+ *  score of engagement and of whether the page had ever been on screen,
+ *  and still deleted a tab the reader had not asked to close. A tab is
+ *  a tab: the reader closes it. */
 registerHandler("welcomeOnBufferClosed", (e: { buffer_id: number }) => {
   // The tab's `×` / `Ctrl+W` route: the buffer is gone and we were not
   // the ones who asked, so drop our handle on it.
@@ -1641,13 +1564,6 @@ registerHandler("welcomeOnBufferClosed", (e: { buffer_id: number }) => {
     panel = null;
     bufferId = null;
   }
-});
-registerHandler("welcomeOnAfterFileOpen", (_e: { buffer_id: number; path: string }) => {
-  // An auto-opened screen nobody touched was ambient — step aside. One
-  // the reader engaged with is a document they are reading; leave it.
-  // A tab they have never even seen has nothing to step aside from.
-  if (bufferId === null || engaged || !shown) return;
-  closeWelcome();
 });
 /** Everything about the page's shape a resize can change: the measure,
  *  the three widths the layout switches on, and whether there is room
@@ -1696,7 +1612,6 @@ let lastKey = "";
 registerHandler("welcomeOnBufferActivated", (e: { buffer_id: number }) => {
   if (bufferId === null || e.buffer_id !== bufferId) return;
   if (editor.getActiveBufferId() !== bufferId) return;
-  shown = true;
   editor.setTimeout(0, "welcomeCatchUpOnShow");
 });
 registerHandler("welcomeCatchUpOnShow", async () => {
@@ -1728,18 +1643,15 @@ registerHandler(
 editor.on("ready", "welcomeOnReady");
 editor.on("buffer_activated", "welcomeOnBufferActivated");
 editor.on("buffer_closed", "welcomeOnBufferClosed");
-editor.on("after_file_open", "welcomeOnAfterFileOpen");
 editor.on("viewport_changed", "welcomeOnViewportChanged");
 
 // ── Keyboard ─────────────────────────────────────────────────────────
 
 function dispatch(action: ReturnType<typeof widgetKey>): void {
-  engaged = true;
   panel?.command(action);
 }
 
 function jumpTo(level: string): void {
-  engaged = true;
   if (bufferId === null) return;
   editor.scrollToWidget(bufferId, `level:${level}`);
 }
@@ -1757,7 +1669,6 @@ registerHandler("welcome_jump_1", () => jumpTo("1"));
 registerHandler("welcome_jump_2", () => jumpTo("2"));
 registerHandler("welcome_jump_3", () => jumpTo("3"));
 registerHandler("welcome_jump_top", () => {
-  engaged = true;
   if (bufferId === null) return;
   // The startup switch is the first widget on the page, so "go to the
   // top" is the same request as every other jump.
@@ -1790,12 +1701,10 @@ function activateFocused(): boolean {
 }
 
 registerHandler("welcome_enter", () => {
-  engaged = true;
   if (activateFocused()) return;
   dispatch(widgetKey("Enter"));
 });
 registerHandler("welcome_space", () => {
-  engaged = true;
   if (activateFocused()) return;
   dispatch(widgetKey("Space"));
 });
@@ -1815,12 +1724,10 @@ function moveFinder(delta: number): void {
  *  mean something the host cannot know: with the finder focused they
  *  walk its *hits*, which are plugin state, not text in the field. */
 registerHandler("welcome_up", () => {
-  engaged = true;
   if (finderFocused()) moveFinder(-1);
   else editor.executeAction("move_up");
 });
 registerHandler("welcome_down", () => {
-  engaged = true;
   if (finderFocused()) moveFinder(1);
   else editor.executeAction("move_down");
 });
@@ -1857,9 +1764,6 @@ const FORWARDED: Array<[string, string]> = [
   ["F1", "show_help"],
 ];
 for (const [, action] of FORWARDED) {
-  // Deliberately does NOT mark the page engaged: reaching past it for
-  // the palette is the ambient case, not a reader settling in. If the
-  // key you pressed opens a file, this screen should still step aside.
   registerHandler(`welcome_do_${action}`, () => editor.executeAction(action));
 }
 
@@ -1868,7 +1772,6 @@ for (const [, action] of FORWARDED) {
  *  runtime's own focus mutation, so the host stays the single owner of
  *  focus. */
 registerHandler("welcome_focus_find", () => {
-  engaged = true;
   if (!panel) return;
   if (folded.has("finder")) {
     folded.delete("finder");
@@ -1884,7 +1787,6 @@ registerHandler("mode_text_input", (args: { text: string }) => {
   // Every character typed into a focused field arrives here, including
   // the ones this page also binds: the host gives a focused text widget
   // the key before it consults the mode's bindings.
-  engaged = true;
   panel.command(textInputChar(args.text));
 });
 
@@ -1920,7 +1822,6 @@ editor.defineMode(
 // ── Widget events ────────────────────────────────────────────────────
 
 function activateKey(k: string): void {
-  engaged = true;
   if (k.startsWith("fold:")) {
     const id = k.slice(5);
     if (folded.has(id)) folded.delete(id);
@@ -2027,7 +1928,6 @@ function openFinderHit(index: number): void {
 
 editor.on("widget_event", (args) => {
   if (!panel || args.panel_id !== panel.id()) return;
-  engaged = true;
   const k = typeof args.widget_key === "string" ? args.widget_key : "";
   if (k.length > 0) lastFocusedWidget = k;
 
