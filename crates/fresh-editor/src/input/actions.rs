@@ -1225,6 +1225,17 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 }
 
 /// Handle InsertChar action - insert character at each cursor position.
+///
+/// With more than one cursor the resulting list is meaningful only to
+/// `apply_events_as_bulk_edit`, which applies every edit against the
+/// original buffer and shifts cursor targets itself: a skip-over's
+/// `MoveCursor` is rebased onto the other cursors' edits before it leaves
+/// here (see [`shift_skip_over_moves`]), while an auto-close's is left
+/// pre-edit for that applier to shift. Feeding the same list to
+/// `EditorState::apply` one event at a time would shift the skip-over
+/// moves a second time. Every multi-cursor dispatcher already routes lists
+/// of more than one event to the bulk applier; the single-cursor list has
+/// no other cursors' edits and is unchanged.
 #[allow(clippy::too_many_arguments)]
 fn insert_char_events(
     state: &mut EditorState,

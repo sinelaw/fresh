@@ -2273,7 +2273,12 @@ fn test_type_over_auto_closed_paren_when_earlier_cursor_inserts() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config::Config;
 
-    for (fixture, expected) in [("xx\na()\n", "xx);\na();\n"), ("a()\nxx\n", "a();\nxx);\n")] {
+    // `a()` first: `End` lands after the `)`, so one `Left` puts the cursor
+    // between the parens before the second cursor is added below it.
+    for (fixture, a_first, expected) in [
+        ("xx\na()\n", false, "xx);\na();\n"),
+        ("a()\nxx\n", true, "a();\nxx);\n"),
+    ] {
         let mut config = Config::default();
         config.editor.auto_indent = true;
         config.editor.auto_close = true;
@@ -2283,15 +2288,23 @@ fn test_type_over_auto_closed_paren_when_earlier_cursor_inserts() {
             .load_buffer_from_text_named("mix.cpp", fixture)
             .unwrap();
 
-        // End of line 1, then a second cursor on line 2 at the same column,
-        // which is between `(` and `)` on the `a()` line.
+        // Column 3 of line 1 — the end of `xx`, or between `(` and `)` of
+        // `a()` — then a second cursor on line 2 at the same column, which
+        // is the other of the two.
         harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        if a_first {
+            harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+        }
+        harness.assert_screen_contains("Ln 1, Col 3");
         harness
             .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
             .unwrap();
         harness.assert_screen_contains("2 cursors");
 
-        // One cursor inserts the `)`, the other steps over its own.
+        // One cursor inserts the `)`, the other steps over its own. The
+        // buffer looks the same on master (only the stepping cursor's
+        // position differs), so this is a guard on the setup, not the
+        // evidence: that is the `;` below.
         harness.type_text(")").unwrap();
         let after_paren = fixture.replacen("xx", "xx)", 1);
         harness.assert_buffer_content(&after_paren);
