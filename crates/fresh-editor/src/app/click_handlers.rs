@@ -7,7 +7,8 @@
 //!   the byte to fold/unfold (uses the pure helper from
 //!   `super::click_geometry`).
 //! - `handle_editor_click`: dispatches mouse clicks to gutter / scrollbar
-//!   / cursor placement / multi-cursor add depending on modifiers.
+//!   / caret placement. A plain click places the caret and collapses to
+//!   one cursor; Shift/Ctrl extend the selection. No click adds a cursor.
 //!
 //! (`handle_file_explorer_click` lives with its component in
 //! `chrome/file_explorer.rs`.)
@@ -442,6 +443,11 @@ impl Editor {
             .get(&split_id)
             .and_then(|vs| vs.compose_width);
 
+        // Shift-click extends the selection; Ctrl-click too, since some
+        // terminals intercept Shift+click.
+        let extend_selection =
+            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
+
         // Calculate clicked position in buffer
         let (toggle_fold_byte, onclick_action, click_target, cursor_snapshot) = if let Some(state) =
             self.windows
@@ -510,16 +516,55 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .get(&split_id)
                 .map(|vs| {
-                    let cursor = vs.cursors.primary();
+                    // A plain click ends multi-cursor editing: every other
+                    // cursor goes and the one kept moves to the click — as
+                    // in VS Code, Sublime and Zed. Before this the click
+                    // moved the primary and kept the rest, which may be
+                    // out of the viewport, and the next keystroke edited
+                    // every one of them (#3125). Shift/Ctrl-click extends
+                    // the primary's selection and leaves the set alone.
+                    //
+                    // The survivor is the lowest id, as `Esc`
+                    // (`RemoveSecondaryCursors`) keeps it, not the primary:
+                    // the add-cursor commands allocate the next id from the
+                    // cursor count, so a lone survivor with a higher id
+                    // would be overwritten by the next `Ctrl+Alt+Down`.
+                    let kept_id = if extend_selection {
+                        vs.cursors.primary_id()
+                    } else {
+                        vs.cursors
+                            .ids()
+                            .into_iter()
+                            .min_by_key(|id| id.0)
+                            .unwrap_or_else(|| vs.cursors.primary_id())
+                    };
+                    let cursor = vs
+                        .cursors
+                        .get(kept_id)
+                        .copied()
+                        .unwrap_or(*vs.cursors.primary());
+                    // Sorted by id so the logged batch, and which cursor an
+                    // undo re-adds last, do not depend on hash order.
+                    let mut removed: Vec<(CursorId, usize, Option<usize>)> = if extend_selection {
+                        Vec::new()
+                    } else {
+                        vs.cursors
+                            .iter()
+                            .filter(|(id, _)| *id != kept_id)
+                            .map(|(id, c)| (id, c.position, c.anchor))
+                            .collect()
+                    };
+                    removed.sort_by_key(|(id, _, _)| id.0);
                     (
-                        vs.cursors.primary_id(),
+                        kept_id,
                         cursor.position,
                         cursor.anchor,
                         cursor.sticky_column,
                         cursor.deselect_on_move,
+                        removed,
                     )
                 })
-                .unwrap_or((CursorId(0), 0, None, None, true));
+                .unwrap_or((CursorId(0), 0, None, None, true, Vec::new()));
 
             // Check for onClick text property at this position
             // This enables clickable UI elements in virtual buffers
@@ -550,14 +595,12 @@ impl Editor {
         // buffer's last display line) parks the cursor on a virtual line at
         // the clicked column, regardless of the last line's width. Only when
         // virtual space is fully on and the click doesn't extend a selection.
-        let extend_click =
-            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
         let virtual_lines_below = self
             .buffers()
             .get(&buffer_id)
             .filter(|state| {
                 click_target.row_overshoot > 0
-                    && !extend_click
+                    && !extend_selection
                     && state.buffer_settings.virtual_space.cursor_beyond_eol()
                     && cached_mappings
                         .as_ref()
@@ -583,8 +626,14 @@ impl Editor {
             return Ok(());
         }
 
-        let (primary_cursor_id, old_position, old_anchor, old_sticky_column, deselect_on_move) =
-            cursor_snapshot;
+        let (
+            kept_cursor_id,
+            old_position,
+            old_anchor,
+            old_sticky_column,
+            deselect_on_move,
+            removed_cursors,
+        ) = cursor_snapshot;
 
         if let Some(action_name) = onclick_action {
             // Execute the action associated with this clickable element
@@ -601,9 +650,6 @@ impl Editor {
         }
 
         // Move cursor to clicked position (respect shift for selection)
-        // Both modifiers supported since some terminals intercept shift+click.
-        let extend_selection =
-            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
         let new_anchor = if extend_selection {
             Some(old_anchor.unwrap_or(old_position))
         } else if deselect_on_move {
@@ -647,7 +693,7 @@ impl Editor {
         });
 
         let move_event = Event::MoveCursor {
-            cursor_id: primary_cursor_id,
+            cursor_id: kept_cursor_id,
             old_position,
             new_position: target_position,
             old_anchor,
@@ -656,41 +702,23 @@ impl Editor {
             new_sticky_column,
         };
 
-        // A plain click ends multi-cursor editing: every secondary cursor
-        // goes, and the primary is what moves to the click — as in VS Code,
-        // Sublime and Zed. Shift/Ctrl-click extends the primary's selection
-        // and leaves the set alone, so a selection built across several
-        // cursors is not lost to the click that extends it. Before this the
-        // click moved the primary and kept the rest, which may be out of
-        // the viewport, and the next keystroke edited every one of them
-        // (#3125). The removals and the move are one `Batch` so undo steps
-        // back over the click as a whole.
-        let mut events: Vec<Event> = Vec::new();
-        if !extend_selection {
-            let cursors = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&split_id)
-                .map(|vs| vs.cursors.clone());
-            if let Some(cursors) = cursors {
-                for (cursor_id, cursor) in cursors.iter() {
-                    if cursor_id != primary_cursor_id {
-                        events.push(Event::RemoveCursor {
-                            cursor_id,
-                            position: cursor.position,
-                            anchor: cursor.anchor,
-                        });
-                    }
-                }
-            }
-        }
+        // The removals (see the cursor snapshot above) and the move are one
+        // `Batch`. Removing a cursor is a write action, so unlike the lone
+        // `MoveCursor` a click used to log, a collapsing click is an undo
+        // step — `Ctrl+Z` brings the cursors back — and it truncates redo,
+        // exactly as `Esc` does today.
+        let mut events: Vec<Event> = removed_cursors
+            .into_iter()
+            .map(|(cursor_id, position, anchor)| Event::RemoveCursor {
+                cursor_id,
+                position,
+                anchor,
+            })
+            .collect();
         let event = if events.is_empty() {
-            move_event.clone()
+            move_event
         } else {
-            events.push(move_event.clone());
+            events.push(move_event);
             Event::Batch {
                 events,
                 description: "Click".to_string(),
@@ -699,7 +727,12 @@ impl Editor {
 
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
-        self.track_cursor_movement(&move_event);
+        // Position history follows the move, not the removals.
+        let moved = match &event {
+            Event::Batch { events, .. } => events.last().expect("the batch ends with the move"),
+            other => other,
+        };
+        self.track_cursor_movement(moved);
 
         // Park the cursor on the clicked virtual line (transient state, not
         // carried by the MoveCursor event — see Cursor::virtual_lines_below).

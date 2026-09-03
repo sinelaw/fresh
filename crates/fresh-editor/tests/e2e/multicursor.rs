@@ -2299,4 +2299,12 @@ fn test_plain_click_collapses_multiple_cursors() {
     harness.type_text("Z").unwrap();
     harness.assert_buffer_content("foo bar\nfoo baz\nfooZ qux\n");
     harness.assert_screen_contains("fooZ qux");
+
+    // The survivor is a normal cursor: adding below it works. (It is the
+    // lowest id, as after Esc; a kept higher id would be overwritten by
+    // the next add, whose id is allocated from the cursor count.)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
 }
