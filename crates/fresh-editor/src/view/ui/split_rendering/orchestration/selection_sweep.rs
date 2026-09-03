@@ -106,8 +106,16 @@ impl<'a> SelectionActiveSet<'a> {
     ///
     /// `buffer_byte` is the absolute byte position (used by the
     /// linear-range sweep). `None` for cells with no source byte
-    /// (ANSI / virtual cells) — those still get block-rect checks
-    /// but no linear-range coverage, matching the existing logic.
+    /// (ANSI / virtual cells), which are in no selection of either
+    /// kind: such a cell has no column in the file, so `line_column`
+    /// is `None` too and the block test below declines it.
+    ///
+    /// That last part is a deliberate change, not only a narrower
+    /// spelling: soft-wrap indent padding, fold placeholders and
+    /// plugin-injected inline text used to be swept into a block rect
+    /// whose column span happened to reach their *view-row* index. A
+    /// rectangle cannot cover a cell that is not in the file — a block
+    /// copy takes none of it — so they are outside it now.
     ///
     /// `line_column` is the cell's byte offset **within its logical
     /// source line** — the unit `block_rects` states its column bounds

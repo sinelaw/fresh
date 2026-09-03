@@ -3810,15 +3810,22 @@ impl Editor {
                 )
             })
             .collect();
-        // The bar's three numbers, in tree rows: what the tree holds, what the
-        // panel shows, and where the window sits. `None` when the whole tree
-        // fits, which is the whole of "should there be a bar" (issue #2859).
-        let scroll = (viewport_rows > 0 && display.len() > viewport_rows).then(|| fe::Scroll {
-            offset: view
-                .get_scroll_offset()
-                .min(display.len().saturating_sub(1)),
-            total: display.len(),
-            window: viewport_rows,
+        // The bar's numbers, in tree rows: what the tree holds, what the panel
+        // shows, where the window sits, and how far it can go. `None` when the
+        // whole tree fits, which is the whole of "should there be a bar"
+        // (issue #2859). The ceiling is the model's own — pinned ancestors put
+        // it past `total - rows`, and a bar that assumed otherwise showed the
+        // thumb at the end while the wheel still moved the tree.
+        let scroll = (viewport_rows > 0 && display.len() > viewport_rows).then(|| {
+            let max_offset = view
+                .max_scroll_offset()
+                .min(display.len().saturating_sub(1));
+            fe::Scroll {
+                offset: view.get_scroll_offset().min(max_offset),
+                max_offset,
+                total: display.len(),
+                rows: viewport_rows,
+            }
         });
         (fe::Body::Rows(rows), scroll)
     }

@@ -45,7 +45,12 @@ const BRACKET_PAIRS_WITH_ANGLES: &[(char, char)] =
     &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
 
 /// The pairs that count as brackets for this buffer.
-fn bracket_pairs(angle_brackets: bool) -> &'static [(char, char)] {
+///
+/// `pub(crate)` because the go-to-matching-bracket command needs the same
+/// answer: two tables meant two surfaces disagreeing about whether `<` is a
+/// bracket, which is how #3090 survived in the jump command after the
+/// highlighter stopped counting it.
+pub(crate) fn bracket_pairs(angle_brackets: bool) -> &'static [(char, char)] {
     if angle_brackets {
         BRACKET_PAIRS_WITH_ANGLES
     } else {
@@ -103,7 +108,7 @@ fn pos_in_ranges(ranges: &[Range<usize>], pos: usize) -> bool {
 }
 
 /// Get the matching bracket pair for a character
-fn get_bracket_pair(ch: char, angle_brackets: bool) -> Option<(char, char, bool)> {
+pub(crate) fn get_bracket_pair(ch: char, angle_brackets: bool) -> Option<(char, char, bool)> {
     for &(open, close) in bracket_pairs(angle_brackets) {
         if ch == open {
             return Some((open, close, true)); // forward search
@@ -175,6 +180,12 @@ pub struct BracketHighlightOverlay {
     pub match_color: Color,
     /// Last cursor position where we computed brackets
     last_cursor_pos: Option<usize>,
+    /// Whether `<`/`>` counted as brackets when the pair overlays were last
+    /// computed. Part of the short-circuit below: the pair the cursor sits on
+    /// is a function of the language too, so a language switch with a
+    /// stationary cursor has to re-derive rather than leave a stale `<`…`>`
+    /// pair painted (or a real one unpainted).
+    last_angle_brackets: Option<bool>,
     /// Whether depth-colorization overlays are currently present. Lets a
     /// disabled pass clear them exactly once instead of re-clearing (and
     /// reporting "updated") on every frame.
@@ -216,6 +227,7 @@ impl BracketHighlightOverlay {
             rainbow_colors: DEFAULT_BRACKET_COLORS,
             match_color: Color::Rgb(255, 215, 0), // Gold
             last_cursor_pos: None,
+            last_angle_brackets: None,
             colorization_active: false,
             colorization_cache: None,
         }
@@ -280,15 +292,20 @@ impl BracketHighlightOverlay {
         if !settings.matching {
             if self.last_cursor_pos.take().is_some() {
                 overlays.clear_namespace(&bracket_highlight_namespace(), marker_list);
+                self.last_angle_brackets = None;
                 updated = true;
             }
             return updated;
         }
 
-        if self.last_cursor_pos == Some(cursor_position) && !colors_changed {
+        if self.last_cursor_pos == Some(cursor_position)
+            && self.last_angle_brackets == Some(settings.angle_brackets)
+            && !colors_changed
+        {
             return updated;
         }
         self.last_cursor_pos = Some(cursor_position);
+        self.last_angle_brackets = Some(settings.angle_brackets);
         updated = true;
 
         // Clear existing bracket overlays
@@ -497,12 +514,14 @@ impl BracketHighlightOverlay {
         let color_ns = bracket_colorization_namespace();
         overlays.clear_namespace(&color_ns, marker_list);
         self.last_cursor_pos = None;
+        self.last_angle_brackets = None;
         self.colorization_active = false;
     }
 
     /// Force recalculation on next update
     pub fn invalidate(&mut self) {
         self.last_cursor_pos = None;
+        self.last_angle_brackets = None;
     }
 
     /// Drop the depth-colorization overlays. Returns whether anything was
@@ -673,6 +692,66 @@ mod tests {
         markers: &mut MarkerList,
     ) -> bool {
         overlay.update_colorization(buffer, overlays, markers, 0, buffer.len(), &[], false)
+    }
+
+    /// One `update` as the renderer makes it, for a cursor that does not move.
+    fn matching_frame(
+        overlay: &mut BracketHighlightOverlay,
+        buffer: &Buffer,
+        overlays: &mut OverlayManager,
+        markers: &mut MarkerList,
+        cursor: usize,
+        angle_brackets: bool,
+    ) {
+        overlay.update(
+            buffer,
+            overlays,
+            markers,
+            &Theme::load_builtin("dark").expect("the built-in dark theme"),
+            BracketHighlightSettings {
+                matching: true,
+                rainbow: false,
+                angle_brackets,
+            },
+            cursor,
+            0,
+            buffer.len(),
+            &[],
+        );
+    }
+
+    /// The pair overlays are a function of the language as well as the
+    /// cursor, so the short-circuit that skips a frame for a stationary
+    /// cursor has to notice an angle-bracket change too. It did not: a
+    /// language switch with the caret parked on a `<` left the old `<`…`>`
+    /// pair painted until the caret moved.
+    #[test]
+    fn a_language_switch_redraws_the_pair_under_a_stationary_cursor() {
+        let buffer = Buffer::from_str_test("<span>hi</span>\n");
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut overlay = BracketHighlightOverlay::new();
+
+        // Caret on the opening `<`, in a language where it is a delimiter.
+        matching_frame(&mut overlay, &buffer, &mut overlays, &mut markers, 0, true);
+        let with_angles = overlays.len();
+        assert!(with_angles > 0, "the tag's delimiters are a pair in markup");
+
+        // The same caret, in a language where it is not.
+        matching_frame(&mut overlay, &buffer, &mut overlays, &mut markers, 0, false);
+        assert_eq!(
+            overlays.len(),
+            0,
+            "the pair must be retracted without waiting for the caret to move"
+        );
+
+        // And back again.
+        matching_frame(&mut overlay, &buffer, &mut overlays, &mut markers, 0, true);
+        assert_eq!(
+            overlays.len(),
+            with_angles,
+            "switching back repaints it, again without moving the caret"
+        );
     }
 
     /// A frame that changed nothing the pass reads must do nothing. Without

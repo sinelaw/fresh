@@ -9,6 +9,7 @@
 //! Angle brackets are structural in markup, and stay coloured there.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use crossterm::event::{KeyCode, KeyModifiers};
 
 fn harness() -> EditorTestHarness {
     EditorTestHarness::create(
@@ -79,6 +80,76 @@ fn a_comparison_does_not_recolour_the_brackets_around_it() {
         l1_fg,
         l2_fg,
         "a `<` on one line must not shift the brackets on the next\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The jump command reads the same table. It had one of its own, so after the
+/// classifier stopped counting `<`, go-to-matching-bracket still walked into
+/// the `<` of `if (a < b)`, called that comparison the enclosing bracket, and
+/// looked for a `>` — landing anywhere but the `)` that actually encloses the
+/// cursor.
+#[test]
+fn the_jump_command_agrees_about_what_a_bracket_is() {
+    let mut harness = harness();
+    let project_dir = harness.project_dir().unwrap();
+    let file = project_dir.join("jump.c");
+    // `(` at column 17, `<` at 20, `b` at 22, `)` at 23.
+    std::fs::write(&file, "int g(void) { if (a < b) { return 2; } }\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    // Put the caret on the `b` inside the parens.
+    for _ in 0..22 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    let (before_x, before_y) = harness.screen_cursor_position();
+    assert_eq!(
+        harness.get_cell(before_x, before_y).as_deref(),
+        Some("b"),
+        "the caret starts inside the parens\n{}",
+        harness.screen_to_string()
+    );
+
+    // Ctrl+] — go to matching bracket.
+    harness
+        .send_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (after_x, after_y) = harness.screen_cursor_position();
+    assert_eq!(
+        (harness.get_cell(after_x, after_y).as_deref(), after_y),
+        (Some(")"), before_y),
+        "the jump lands on the `)` that encloses the caret\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// And in markup the same command still jumps between a tag's delimiters.
+#[test]
+fn the_jump_command_still_pairs_markup_delimiters() {
+    let mut harness = harness();
+    let project_dir = harness.project_dir().unwrap();
+    let file = project_dir.join("jump.html");
+    std::fs::write(&file, "<span>hi</span>\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    // The caret starts on the opening `<` of `<span>`.
+    harness
+        .send_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (x, y) = harness.screen_cursor_position();
+    assert_eq!(
+        harness.get_cell(x, y).as_deref(),
+        Some(">"),
+        "in HTML the tag's delimiters are still a pair\n{}",
         harness.screen_to_string()
     );
 }

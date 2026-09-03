@@ -115,10 +115,19 @@ impl Default for Body {
 pub struct Scroll {
     /// First visible row.
     pub offset: usize,
+    /// The largest offset the tree will scroll to.
+    ///
+    /// **Not `total - rows`.** `FileTreeView::max_scroll_offset` pins the
+    /// first ordinary row's ancestors as sticky context, and those rows eat
+    /// part of the window — so the last offset is *larger* than the naive
+    /// ceiling by however many ancestors are pinned, and the wheel is clamped
+    /// to it. A bar that assumed the naive ceiling parked its thumb at the
+    /// bottom of the track while the list was still moving.
+    pub max_offset: usize,
     /// Rows in the whole tree.
     pub total: usize,
-    /// Rows the panel shows at once — the track's height.
-    pub window: usize,
+    /// Rows the panel shows at once — the track's height, in cells.
+    pub rows: usize,
 }
 
 /// The explorer's content: what the sidebar's first section holds.
@@ -202,8 +211,15 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
 /// where the rest of the editor would put it.
 fn scrollbar(scroll: Scroll) -> Node<UiMsg> {
     use crate::view::ui::scrollbar::ScrollbarState;
-    let state = ScrollbarState::new(scroll.total, scroll.window, scroll.offset);
-    let (thumb_top, thumb_len) = state.thumb_geometry(scroll.window);
+    // `ScrollbarState`'s ceiling is `total_items - visible_items`, so the
+    // `visible_items` it is given has to be the one that makes that ceiling
+    // the model's own `max_offset` — otherwise the thumb reaches the track's
+    // end before the tree reaches its last row. With ancestors pinned that is
+    // fewer rows than the panel shows, and a slightly shorter thumb is the
+    // honest answer: fewer of the tree's rows are reachable as ordinary ones.
+    let visible = scroll.total.saturating_sub(scroll.max_offset).max(1);
+    let state = ScrollbarState::new(scroll.total, visible, scroll.offset.min(scroll.max_offset));
+    let (thumb_top, thumb_len) = state.thumb_geometry(scroll.rows);
     let thumb = pair("ui.scrollbar_thumb_fg", "ui.scrollbar_thumb_fg");
     let track = pair("ui.scrollbar_track_fg", "ui.scrollbar_track_fg");
     col()
@@ -211,7 +227,7 @@ fn scrollbar(scroll: Scroll) -> Node<UiMsg> {
         // The bar is drawn, not pressed: a press here is the panel's dead
         // space, which the union box answers by focusing the explorer.
         .pointer_mode(fresh_ui::PointerMode::Transparent)
-        .children((0..scroll.window).map(|i| {
+        .children((0..scroll.rows).map(|i| {
             let on_thumb = i >= thumb_top && i < thumb_top + thumb_len;
             row().h(Sizing::Cells(1)).theme(if on_thumb {
                 thumb.clone()
@@ -590,9 +606,21 @@ mod tests {
     }
 
     /// A panel whose tree is taller than its body, scrolled to `offset`.
-    fn scrolled_panel(total: usize, window: usize, offset: usize, cols: u16) -> Sidebar {
-        // The rows the model would have windowed: `window` of them.
-        let rows: Vec<Row> = (0..window)
+    fn scrolled_panel(total: usize, rows_shown: usize, offset: usize, cols: u16) -> Sidebar {
+        scrolled_panel_with_max(total, rows_shown, offset, total - rows_shown, cols)
+    }
+
+    /// The same, for a tree whose pinned ancestors push the model's last
+    /// offset past `total - rows`.
+    fn scrolled_panel_with_max(
+        total: usize,
+        rows_shown: usize,
+        offset: usize,
+        max_offset: usize,
+        cols: u16,
+    ) -> Sidebar {
+        // The rows the model would have windowed: `rows_shown` of them.
+        let rows: Vec<Row> = (0..rows_shown)
             .map(|i| row_of(i, &format!("f{}", offset + i), None))
             .collect();
         let mut s = Sidebar::explorer_only(
@@ -603,8 +631,9 @@ mod tests {
                 caret_row: None,
                 scroll: Some(Scroll {
                     offset,
+                    max_offset,
                     total,
-                    window,
+                    rows: rows_shown,
                 }),
             },
         );
@@ -660,6 +689,35 @@ mod tests {
             got.last().copied(),
             Some(thumb),
             "fully scrolled, the thumb reaches the track's end, got {got:?}"
+        );
+    }
+
+    /// Issue #2859, follow-up: the thumb reaches the end of the track exactly
+    /// when the *model* is at its last offset — which pinned sticky ancestors
+    /// push past `total - rows`. Assuming the naive ceiling parked the thumb
+    /// at the bottom while the wheel could still move the list.
+    #[test]
+    fn the_thumb_reaches_the_end_only_at_the_models_last_offset() {
+        let (thumb, _track) = bar_colours();
+        // 8 body rows onto 40, with two ancestors pinned: the model scrolls to
+        // 34, not to 32.
+        let max_offset = 34;
+        let at_naive_end = bar_column(scrolled_panel_with_max(40, 8, 32, max_offset, 20), 20, 10);
+        assert_ne!(
+            at_naive_end.last().copied(),
+            Some(thumb),
+            "at offset 32 the tree still has rows below, so the thumb is not at the end: {at_naive_end:?}"
+        );
+
+        let at_real_end = bar_column(
+            scrolled_panel_with_max(40, 8, max_offset, max_offset, 20),
+            20,
+            10,
+        );
+        assert_eq!(
+            at_real_end.last().copied(),
+            Some(thumb),
+            "at the model's last offset the thumb is flush with the track's end: {at_real_end:?}"
         );
     }
 
