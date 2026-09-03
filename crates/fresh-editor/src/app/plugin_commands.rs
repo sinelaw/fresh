@@ -150,6 +150,35 @@ impl Editor {
         }
     }
 
+    /// Handle SetSyntaxRegions: a plugin-composed buffer says where its
+    /// code is and in what language (see `SyntaxRegion`). The buffer's
+    /// highlighter becomes a region host if it is not one yet — it has no
+    /// grammar of its own to lose, only whatever its name happened to
+    /// suggest — and the regions replace the ones it held.
+    pub(super) fn handle_set_syntax_regions(
+        &mut self,
+        buffer_id: BufferId,
+        regions: Vec<fresh_core::api::SyntaxRegion>,
+    ) {
+        let syntax_set = self.grammar_registry.syntax_set_arc();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            if !state.highlighter.hosts_syntax_regions() {
+                state.highlighter =
+                    crate::primitives::highlight_engine::HighlightEngine::region_host(syntax_set);
+            }
+            state.highlighter.set_syntax_regions(regions);
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
     /// Handle SetCursorLineOverlay command
     pub(super) fn handle_set_cursor_line_overlay(
         &mut self,

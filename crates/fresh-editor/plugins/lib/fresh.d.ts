@@ -223,6 +223,30 @@ type TsCompositeHunk = {
 	*/
 	ops?: string;
 };
+type TsSyntaxRegion = {
+	/**
+	* Byte offset of the first row's first byte.
+	*/
+	start: number;
+	/**
+	* Byte offset one past the last row's newline.
+	*/
+	end: number;
+	/**
+	* What the rows are written in: a path (`src/main.rs`, `Makefile`)
+	* or a language token (`py`, `rust`). Nothing is opened or read;
+	* it only selects the grammar.
+	*/
+	language: string;
+	/**
+	* Bytes at the start of every row that are not code.
+	*/
+	prefix: number;
+	/**
+	* Parsers the rows feed; see the type docs.
+	*/
+	streams: Array<number>;
+};
 type TsCreateCompositeBufferOptions = {
 	/**
 	* Buffer name (displayed in tabs/title)
@@ -3673,6 +3697,14 @@ interface EditorAPI {
 	* Uses typed Vec<CompositeHunk> - serde validates field names at runtime
 	*/
 	updateCompositeAlignment(bufferId: number, hunks: TsCompositeHunk[]): boolean;
+	/**
+	* Say where a buffer this plugin composed carries code, and in what
+	* language, so the host highlights it. Replaces the buffer's
+	* previous regions; setting the buffer's content clears them.
+	* 
+	* Uses typed Vec<SyntaxRegion> - serde validates field names at runtime
+	*/
+	setSyntaxRegions(bufferId: number, regions: TsSyntaxRegion[]): boolean;
 	/**
 	* Close a composite buffer
 	*/

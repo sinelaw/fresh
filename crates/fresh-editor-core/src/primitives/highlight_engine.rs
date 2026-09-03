@@ -43,6 +43,7 @@ use crate::primitives::highlighter::{
     highlight_bg, highlight_color, HighlightCategory, HighlightSpan, Highlighter, Language,
 };
 use crate::theme::Theme;
+use fresh_core::api::SyntaxRegion;
 use fresh_core::hooks::{RegionLine, TableLine, TableRole};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -288,7 +289,35 @@ pub struct TextMateEngine {
     // Scope→Category memo. Syntect Scope atoms are append-only-interned
     // globally, so entries never need invalidation.
     scope_category_cache: HashMap<syntect::parsing::Scope, Option<HighlightCategory>>,
+    // A region host highlights a buffer a plugin composed, whose code
+    // rows the plugin declared (`set_syntax_regions`) rather than a
+    // grammar found. Its own syntax is plain text; every colour comes
+    // from a region's child parser.
+    region_host: bool,
+    // One span marker per declared region, so the bounds follow the text
+    // through edits the way checkpoints do; `regions` holds what each
+    // marker's region parses as.
+    region_markers: MarkerList,
+    regions: HashMap<MarkerId, RegionInfo>,
 }
+
+/// What a declared region's rows parse as; see `SyntaxRegion`.
+struct RegionInfo {
+    /// Resolved once, when the region is declared. `None` when nothing in
+    /// the set claims the language, and the rows stay as the plugin
+    /// styled them.
+    syntax_index: Option<usize>,
+    prefix: usize,
+    streams: Arc<[u32]>,
+}
+
+/// Stream a region that names none feeds; see `SyntaxRegion::streams`.
+const DEFAULT_REGION_STREAM: u32 = u32::MAX;
+
+/// Parsers a region host carries between rows. The diff panels interleave
+/// the two sides of one hunk and never need more than that; anything
+/// older is dropped rather than cloned into every checkpoint.
+const MAX_REGION_STREAMS: usize = 4;
 
 /// Counters for monitoring highlighting performance in tests.
 #[derive(Debug, Default, Clone)]
@@ -541,6 +570,9 @@ struct ParseSnapshot {
     state: syntect::parsing::ParseState,
     scopes: syntect::parsing::ScopeStack,
     embedded: Option<EmbeddedParseState>,
+    /// A region host's live parsers, most recently fed last; empty for
+    /// every grammar host. See `SyntaxRegion::streams`.
+    streams: Vec<(u32, EmbeddedParseState)>,
 }
 
 impl ParseSnapshot {
@@ -549,6 +581,38 @@ impl ParseSnapshot {
             state: syntect::parsing::ParseState::new(syntax),
             scopes: syntect::parsing::ScopeStack::new(),
             embedded: None,
+            streams: Vec::new(),
+        }
+    }
+
+    /// The parser for `stream`, taken out of the snapshot for the
+    /// duration of a row, or a fresh one when the stream is new — or was
+    /// last parsing a different language, which cannot continue.
+    fn take_stream(
+        &mut self,
+        stream: u32,
+        syntax_index: usize,
+        syntax_set: &SyntaxSet,
+    ) -> EmbeddedParseState {
+        if let Some(pos) = self.streams.iter().position(|(id, _)| *id == stream) {
+            let (_, parser) = self.streams.remove(pos);
+            if parser.syntax_index == syntax_index {
+                return parser;
+            }
+        }
+        EmbeddedParseState {
+            syntax_index,
+            state: syntect::parsing::ParseState::new(&syntax_set.syntaxes()[syntax_index]),
+            scopes: syntect::parsing::ScopeStack::new(),
+        }
+    }
+
+    /// Put a stream's parser back, as the most recent; the oldest goes
+    /// once there are more than a hunk's two sides could need.
+    fn keep_stream(&mut self, stream: u32, parser: EmbeddedParseState) {
+        self.streams.push((stream, parser));
+        if self.streams.len() > MAX_REGION_STREAMS {
+            self.streams.remove(0);
         }
     }
 }
@@ -599,6 +663,23 @@ struct PreparedLine {
     ends_with_newline: bool,
 }
 
+/// A row as its embedded language parser should see it: the first
+/// `prefix` bytes — a gutter, a diff marker — removed and nothing else,
+/// so the parser's offsets land on the code. `None` for a row too short
+/// to hold the prefix (a filler row) or whose prefix ends inside a
+/// character; such a row keeps the styling it has and advances no parser.
+fn prepare_row_content(prepared: &PreparedLine, prefix: usize) -> Option<PreparedLine> {
+    if prepared.line_content_len < prefix {
+        return None;
+    }
+    let rest = prepared.line_for_syntect.get(prefix..)?;
+    Some(PreparedLine {
+        line_for_syntect: rest.to_string(),
+        line_content_len: prepared.line_content_len - prefix,
+        ends_with_newline: prepared.ends_with_newline,
+    })
+}
+
 /// Prepare one unified-diff source row for its embedded language parser.
 ///
 /// Added, removed, and context rows carry a one-byte patch marker that is
@@ -614,11 +695,7 @@ fn prepare_unified_diff_content(prepared: &PreparedLine) -> Option<PreparedLine>
     if bytes.starts_with(b"+++") || bytes.starts_with(b"---") {
         return None;
     }
-    Some(PreparedLine {
-        line_for_syntect: prepared.line_for_syntect.get(1..)?.to_string(),
-        line_content_len: prepared.line_content_len.saturating_sub(1),
-        ends_with_newline: prepared.ends_with_newline,
-    })
+    prepare_row_content(prepared, 1)
 }
 
 /// Longest logical line highlighted in full. Beyond this, only the
@@ -873,7 +950,70 @@ impl TextMateEngine {
             host_span_scratch: Vec::new(),
             child_span_scratch: Vec::new(),
             scope_category_cache: HashMap::new(),
+            region_host: false,
+            region_markers: MarkerList::new(),
+            regions: HashMap::new(),
         }
+    }
+
+    /// An engine for a buffer a plugin composed: plain text of its own,
+    /// coloured only where `set_syntax_regions` says there is code.
+    pub fn region_host(syntax_set: Arc<SyntaxSet>) -> Self {
+        let plain = syntax_set.find_syntax_plain_text();
+        let index = syntax_set
+            .syntaxes()
+            .iter()
+            .position(|s| std::ptr::eq(s, plain))
+            .unwrap_or(0);
+        let mut engine = Self::new(syntax_set, index);
+        engine.region_host = true;
+        engine
+    }
+
+    /// Whether this engine takes its regions from a plugin rather than a
+    /// grammar (see [`Self::region_host`]).
+    pub fn hosts_syntax_regions(&self) -> bool {
+        self.region_host
+    }
+
+    /// Replace the declared regions (see `SyntaxRegion`). Each becomes a
+    /// span marker, so an edit moves it with the text; the language is
+    /// resolved here, once, and every cached span is dropped since any of
+    /// them may now be wrong.
+    pub fn set_syntax_regions(&mut self, regions: Vec<SyntaxRegion>) {
+        let stale: Vec<MarkerId> = self.regions.keys().copied().collect();
+        for id in stale {
+            self.region_markers.delete(id);
+        }
+        self.regions.clear();
+        for region in regions {
+            if region.end <= region.start {
+                continue;
+            }
+            let syntax_index = self.resolve_embedded_syntax(&region.language);
+            let id = self.region_markers.create_span(region.start, region.end);
+            self.regions.insert(
+                id,
+                RegionInfo {
+                    syntax_index,
+                    prefix: region.prefix,
+                    streams: Arc::from(region.streams),
+                },
+            );
+        }
+        self.invalidate_all();
+    }
+
+    /// The declared region a row belongs to, by the row's first byte.
+    /// Regions are meant not to overlap; if they do, the one that starts
+    /// last wins, as an inner overlay would.
+    fn region_at(&self, row_start: usize) -> Option<MarkerId> {
+        self.region_markers
+            .query_range(row_start, row_start + 1)
+            .into_iter()
+            .filter(|&(_, start, end)| start <= row_start && row_start < end)
+            .max_by_key(|&(_, start, _)| start)
+            .map(|(id, _, _)| id)
     }
 
     /// Get performance stats for testing and diagnostics.
@@ -895,6 +1035,7 @@ impl TextMateEngine {
     /// the cache dirty so the partial-update path runs on next render.
     pub fn notify_insert(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_insert(position, length);
+        self.region_markers.adjust_for_insert(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
             for span in &mut cache.spans {
@@ -917,6 +1058,7 @@ impl TextMateEngine {
     /// Buffer-delete notification. Mirror of `notify_insert`.
     pub fn notify_delete(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_delete(position, length);
+        self.region_markers.adjust_for_delete(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
             let delete_end = position + length;
@@ -1103,6 +1245,9 @@ impl TextMateEngine {
         current_offset: usize,
         mut on_span: impl FnMut(usize, usize, HighlightCategory, Option<HighlightCategory>),
     ) -> bool {
+        if self.region_host {
+            return self.parse_region_line(snapshot, prepared, current_offset, on_span);
+        }
         if self.embedding.is_empty() {
             return self
                 .parse_line_into_spans(
@@ -1293,6 +1438,76 @@ impl TextMateEngine {
         }
         self.host_span_scratch = host_spans;
         true
+    }
+
+    /// One row of a region host (see [`Self::region_host`]). A row inside
+    /// a declared region is handed, prefix removed, to the parser of each
+    /// stream the region names, and coloured by the first; a row outside
+    /// every region is left as the plugin styled it and touches no
+    /// parser, so a header or a comment box between two runs of one
+    /// stream does not break the construct they are in the middle of.
+    fn parse_region_line(
+        &mut self,
+        snapshot: &mut ParseSnapshot,
+        prepared: &PreparedLine,
+        current_offset: usize,
+        mut on_span: impl FnMut(usize, usize, HighlightCategory, Option<HighlightCategory>),
+    ) -> bool {
+        let Some(id) = self.region_at(current_offset) else {
+            return true;
+        };
+        let (syntax_index, prefix, streams) = {
+            let info = &self.regions[&id];
+            (info.syntax_index, info.prefix, Arc::clone(&info.streams))
+        };
+        let Some(syntax_index) = syntax_index else {
+            return true;
+        };
+        let stripped;
+        let line = if prefix == 0 {
+            prepared
+        } else {
+            match prepare_row_content(prepared, prefix) {
+                Some(rest) => {
+                    stripped = rest;
+                    &stripped
+                }
+                None => return true,
+            }
+        };
+        let child_offset = current_offset + prefix;
+        let streams: &[u32] = if streams.is_empty() {
+            &[DEFAULT_REGION_STREAM]
+        } else {
+            &streams
+        };
+        let mut child_spans = std::mem::take(&mut self.child_span_scratch);
+        child_spans.clear();
+        let mut ok = true;
+        for (k, &stream) in streams.iter().enumerate() {
+            let mut parser = snapshot.take_stream(stream, syntax_index, &self.syntax_set);
+            let (child_ok, _) = self.parse_line_into_spans(
+                &mut parser.state,
+                &mut parser.scopes,
+                line,
+                child_offset,
+                &[],
+                |start, end, category| {
+                    if k == 0 {
+                        child_spans.push((start, end, category));
+                    }
+                },
+            );
+            ok &= child_ok;
+            snapshot.keep_stream(stream, parser);
+        }
+        if ok {
+            for &(start, end, category) in &child_spans {
+                on_span(start, end, category, None);
+            }
+        }
+        self.child_span_scratch = child_spans;
+        ok
     }
 
     /// Index of the spec whose region scope is on the host stack, if any.
@@ -2555,6 +2770,28 @@ impl HighlightEngine {
     /// Check if this engine has highlighting available
     pub fn has_highlighting(&self) -> bool {
         !matches!(self, Self::None)
+    }
+
+    /// An engine for a buffer a plugin composed; see
+    /// [`TextMateEngine::region_host`].
+    pub fn region_host(syntax_set: Arc<SyntaxSet>) -> Self {
+        Self::TextMate(Box::new(TextMateEngine::region_host(syntax_set)))
+    }
+
+    /// Whether this engine takes its regions from a plugin rather than a
+    /// grammar.
+    pub fn hosts_syntax_regions(&self) -> bool {
+        matches!(self, Self::TextMate(h) if h.hosts_syntax_regions())
+    }
+
+    /// Replace the regions a plugin declared (see `SyntaxRegion`). A
+    /// no-op for engines that take their regions from a grammar.
+    pub fn set_syntax_regions(&mut self, regions: Vec<SyntaxRegion>) {
+        if let Self::TextMate(h) = self {
+            if h.hosts_syntax_regions() {
+                h.set_syntax_regions(regions);
+            }
+        }
     }
 
     /// Get a description of the active backend
@@ -4632,5 +4869,169 @@ diff --git a/tools/check.py b/tools/check.py
              (got {:?})",
             backtick_cat,
         );
+    }
+    fn region_host_for_test() -> (HighlightEngine, Theme) {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let engine = HighlightEngine::region_host(registry.syntax_set_arc());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        (engine, theme)
+    }
+
+    fn category_at(
+        spans: &[HighlightSpan],
+        content: &str,
+        needle: &str,
+    ) -> Option<HighlightCategory> {
+        let pos = content.find(needle).expect("needle in content");
+        spans
+            .iter()
+            .find(|span| span.range.contains(&pos))
+            .and_then(|span| span.category)
+    }
+
+    fn region(start: usize, end: usize, prefix: usize, streams: &[u32]) -> SyntaxRegion {
+        SyntaxRegion {
+            start,
+            end,
+            language: "calc.py".to_string(),
+            prefix,
+            streams: streams.to_vec(),
+        }
+    }
+
+    /// A region host colours the rows a plugin declared, past their
+    /// prefix, and nothing else: the header above them and the comment
+    /// box between them stay uncoloured, and the docstring the box
+    /// interrupts is still one docstring on the row after it.
+    #[test]
+    fn test_syntax_regions_colour_declared_rows_across_a_gap() {
+        let (mut engine, theme) = region_host_for_test();
+        let header = "UNSTAGED\n";
+        let code_a = "   1 +def f():\n   2 +    \"\"\"doc\n";
+        let note = "  [ a note ]\n";
+        let code_b = "   3 +    more\"\"\"\n   4 +    return 1\n";
+        let content = format!("{header}{code_a}{note}{code_b}");
+        let a = header.len()..header.len() + code_a.len();
+        let b = a.end + note.len()..content.len();
+        engine.set_syntax_regions(vec![
+            region(a.start, a.end, 6, &[1]),
+            region(b.start, b.end, 6, &[1]),
+        ]);
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let spans = engine.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+
+        assert_eq!(
+            category_at(&spans, &content, "def"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            category_at(&spans, &content, "more"),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            category_at(&spans, &content, "return"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(category_at(&spans, &content, "UNSTAGED"), None);
+        assert_eq!(category_at(&spans, &content, "a note"), None);
+        // The gutter is not code: nothing is painted before the marker.
+        let gutter = content.find("   1 +").unwrap();
+        assert!(
+            spans
+                .iter()
+                .all(|s| s.range.end <= gutter || s.range.start >= gutter + 6),
+            "a span reached into the gutter: {spans:?}"
+        );
+    }
+
+    /// The two sides of a hunk interleave row by row, and each is the
+    /// contiguous text it came from: a docstring opened on an old-side
+    /// row is still open on the next old-side row, while the new-side
+    /// rows between them are code.
+    #[test]
+    fn test_syntax_regions_keep_one_parser_per_stream() {
+        let (mut engine, theme) = region_host_for_test();
+        let rows = ["-\"\"\"old\n", "+x = 1\n", "-still old\"\"\"\n", "+y = 2\n"];
+        let content: String = rows.concat();
+        let mut regions = Vec::new();
+        let mut at = 0;
+        for (i, row) in rows.iter().enumerate() {
+            let stream = if row.starts_with('-') { 0 } else { 1 };
+            regions.push(region(at, at + row.len(), 1, &[stream]));
+            at += row.len();
+            let _ = i;
+        }
+        engine.set_syntax_regions(regions);
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let spans = engine.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+
+        assert_eq!(
+            category_at(&spans, &content, "still old"),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            category_at(&spans, &content, "1\n"),
+            Some(HighlightCategory::Number)
+        );
+        assert_eq!(
+            category_at(&spans, &content, "2\n"),
+            Some(HighlightCategory::Number)
+        );
+    }
+
+    /// Regions ride the text: an insertion before them moves them, and
+    /// the rows they meant are still the ones coloured.
+    #[test]
+    fn test_syntax_regions_follow_an_edit() {
+        let (mut engine, theme) = region_host_for_test();
+        let code = "+def f():\n";
+        engine.set_syntax_regions(vec![region(0, code.len(), 1, &[])]);
+        let buffer = Buffer::from_str(code, 0, test_fs());
+        let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
+        assert_eq!(
+            category_at(&spans, code, "def"),
+            Some(HighlightCategory::Keyword)
+        );
+
+        let inserted = "HEADER\n";
+        let content = format!("{inserted}{code}");
+        engine.notify_insert(0, inserted.len());
+        engine.invalidate_range(0..inserted.len());
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let spans = engine.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+        assert_eq!(
+            category_at(&spans, &content, "def"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(category_at(&spans, &content, "HEADER"), None);
+    }
+
+    /// A language nothing in the set claims leaves the rows as they are,
+    /// and replacing the content's regions with none paints nothing.
+    #[test]
+    fn test_syntax_regions_unknown_language_and_clearing() {
+        let (mut engine, theme) = region_host_for_test();
+        let code = "+def f():\n";
+        engine.set_syntax_regions(vec![SyntaxRegion {
+            start: 0,
+            end: code.len(),
+            language: "notes.nosuchlanguage".to_string(),
+            prefix: 1,
+            streams: Vec::new(),
+        }]);
+        let buffer = Buffer::from_str(code, 0, test_fs());
+        let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
+        assert!(spans.is_empty(), "{spans:?}");
+
+        engine.set_syntax_regions(vec![region(0, code.len(), 1, &[])]);
+        let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
+        assert_eq!(
+            category_at(&spans, code, "def"),
+            Some(HighlightCategory::Keyword)
+        );
+        engine.set_syntax_regions(Vec::new());
+        let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
+        assert!(spans.is_empty(), "{spans:?}");
     }
 }

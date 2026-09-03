@@ -18,6 +18,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Review Diff and Git Log are syntax highlighted** - the diff bodies were painted in flat add/remove colours plus plain text, while the identical lines one tab over got the language's keyword, function and punctuation colours. A plugin-composed buffer can now tell the host where its rows carry code and in what language (a new plugin API, `editor.setSyntaxRegions`), and the host's own highlighter colours those rows like any buffer - incrementally, viewport-bounded, following the theme - with each side of a hunk read as the contiguous text it is, so a docstring or block comment spanning several rows is one construct. A `.diff` buffer, such as the Git Log detail, gets the same treatment from a diff grammar that hands each file's rows to that file's language (#3104, reported by @tinchoz49; #2871).
 * **A `deno.json` no longer takes TypeScript away from a project without Deno installed** (#2981, reported by @atk).
 * **A single-key binding on a keymap chord's prefix now fires**, and deleting a built-in keybinding actually frees the key (#3171).
 * **LSP requests that time out now say so** instead of silently reporting "no results" while the status bar claims the server is ready; a stuck server now shows `LSP (stuck)` (#2197).

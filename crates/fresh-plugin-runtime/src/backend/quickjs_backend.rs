@@ -91,7 +91,7 @@ use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
     GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
     PluginCommand, PluginMarker, PluginResponse, ScrollbarMarker, SearchHandleRegistry,
-    SearchHandleState, SearchTakeResult, SplitWindowOptions,
+    SearchHandleState, SearchTakeResult, SplitWindowOptions, SyntaxRegion,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -3786,6 +3786,20 @@ impl JsEditorApi {
             .send(PluginCommand::UpdateCompositeAlignment {
                 buffer_id: BufferId(buffer_id as usize),
                 hunks,
+            })
+            .is_ok()
+    }
+
+    /// Say where a buffer this plugin composed carries code, and in what
+    /// language, so the host highlights it. Replaces the buffer's
+    /// previous regions; setting the buffer's content clears them.
+    ///
+    /// Uses typed Vec<SyntaxRegion> - serde validates field names at runtime
+    pub fn set_syntax_regions(&self, buffer_id: u32, regions: Vec<SyntaxRegion>) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetSyntaxRegions {
+                buffer_id: BufferId(buffer_id as usize),
+                regions,
             })
             .is_ok()
     }

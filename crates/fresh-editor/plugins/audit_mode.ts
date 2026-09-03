@@ -220,6 +220,10 @@ interface ReviewState {
   // editor.getTextPropertiesAtCursor (which can return the previous
   // row's props when the cursor sits at a row-boundary byte).
   entryPropsByRow: Record<number, Record<string, unknown>>;
+  // Where the stream carries code, for the host's highlighter (#3104):
+  // built with the rows, declared on the buffer right after they are
+  // mounted. See `SyntaxRegion` in the plugin API.
+  syntaxRegions: TsSyntaxRegion[];
   // Byte ranges of collapsible bodies, captured at build time. Tab /
   // mouse / z a / z r register these as host folds (see applyFolds)
   // — no buffer rebuild on collapse / expand.
@@ -365,6 +369,7 @@ const state: ReviewState = {
   hunkRowByHunkId: {},
   diffLineRowByCommentId: {},
   entryPropsByRow: {},
+  syntaxRegions: [],
   sectionBodyRange: {},
   fileBodyRange: {},
   hunkBodyRange: {},
@@ -970,6 +975,9 @@ interface DiffLine {
     fileIndex?: number;  // for file-header rows
     style?: Partial<OverlayOptions>;
     inlineOverlays?: InlineOverlay[];
+    // For a code row: what it is written in and which parser streams
+    // (one per hunk side) it feeds. See `SyntaxRegion` in the plugin API.
+    syntax?: RowSyntax;
     // Line metadata for comment attachment
     hunkId?: string;
     file?: string;
@@ -978,6 +986,20 @@ interface DiffLine {
     newLine?: number;
     lineContent?: string;
     commentId?: string;
+}
+
+/** Language and parser streams of a code row; see `DiffLine.syntax`. */
+interface RowSyntax {
+    language: string;
+    streams: number[];
+}
+
+/**
+ * Bytes at the start of every code row that are not code: the
+ * line-number gutter and the one-byte diff marker.
+ */
+function codeRowPrefixBytes(): number {
+    return getByteLength(lineNumPrefix(undefined, undefined)) + 1;
 }
 
 /** Compute +N / -M line counts for a file. */
@@ -1214,6 +1236,8 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
     }
 
     let lastCategory: string | undefined;
+    const hunkOrdinal = new Map<Hunk, number>();
+    state.hunks.forEach((h, i) => hunkOrdinal.set(h, i));
     for (let fi = 0; fi < state.files.length; fi++) {
         const file = state.files[fi];
 
@@ -1309,6 +1333,14 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         }
 
         for (const hunk of fileHunks) {
+        // The hunk's two sides are two parser streams for the host's
+        // highlighter: its rows interleave, but each side is contiguous
+        // text and is parsed as such. Context rows feed both.
+        const oldStream = 2 * (hunkOrdinal.get(hunk) ?? 0);
+        const newStream = oldStream + 1;
+        const oldSyntax: RowSyntax = { language: hunk.file, streams: [oldStream] };
+        const newSyntax: RowSyntax = { language: hunk.file, streams: [newStream] };
+        const bothSyntax: RowSyntax = { language: hunk.file, streams: [oldStream, newStream] };
         // Hunk header — always emit the expanded triangle; collapse
         // overlays a `▸` replacement-conceal (see `applyFolds`).
         const headerInner = hunk.contextHeader
@@ -1398,6 +1430,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType: 'remove', oldLine: curOldLine, newLine: undefined, lineContent: line,
                     inlineOverlays: removeOverlays,
+                    syntax: oldSyntax,
                 });
                 // Inline comments for the removed line
                 pushLineComments(lines, hunk, 'remove', curOldLine, undefined);
@@ -1424,6 +1457,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType: 'add', oldLine: undefined, newLine: newLineNum, lineContent: nextLine,
                     inlineOverlays: addOverlays,
+                    syntax: newSyntax,
                 });
                 pushLineComments(lines, hunk, 'add', undefined, newLineNum);
                 newLineNum++;
@@ -1445,6 +1479,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                     inlineOverlays: [dimNumOverlay],
+                    syntax: newSyntax,
                 });
                 newLineNum++;
             } else if (prefix === '-') {
@@ -1454,6 +1489,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                     inlineOverlays: [dimNumOverlay],
+                    syntax: oldSyntax,
                 });
                 oldLineNum++;
             } else {
@@ -1462,6 +1498,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                     inlineOverlays: [dimNumOverlay],
+                    syntax: bothSyntax,
                 });
                 oldLineNum++;
                 newLineNum++;
@@ -1600,6 +1637,12 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     const hunkRowByHunkId: Record<string, number> = {};
     const diffLineRowByCommentId: Record<string, number> = {};
     const entryPropsByRow: Record<number, Record<string, unknown>> = {};
+    // Runs of code rows for the host's highlighter (see `RowSyntax`):
+    // consecutive rows with the same language and streams share one
+    // region, so a hunk is a handful of regions, not one per row.
+    const syntaxRegions: TsSyntaxRegion[] = [];
+    const prefix = codeRowPrefixBytes();
+    let openRegion: (TsSyntaxRegion & { key: string }) | null = null;
     // Byte ranges of collapsible bodies, captured in this same single
     // pass so collapse later just registers a host fold (no rebuild).
     // The "body" of an entity is the byte range from the byte after
@@ -1619,11 +1662,25 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
     let lastDiffLineRow = 0; // 1-indexed row of the most recent +/-/context line
 
-    const pushEntry = (entry: TextPropertyEntry) => {
+    const pushEntry = (entry: TextPropertyEntry, syntax?: RowSyntax) => {
         diffLineByteOffsets.push(runningByte);
+        const start = runningByte;
         runningByte += getByteLength(entry.text);
         entries.push(entry);
         row++;
+        const key = syntax ? `${syntax.language}\0${syntax.streams.join(',')}` : null;
+        if (openRegion && openRegion.key === key) {
+            openRegion.end = runningByte;
+            return;
+        }
+        if (openRegion) {
+            const { key: _key, ...region } = openRegion;
+            syntaxRegions.push(region);
+            openRegion = null;
+        }
+        if (syntax && key !== null) {
+            openRegion = { key, start, end: runningByte, language: syntax.language, prefix, streams: syntax.streams };
+        }
     };
 
     const lines = buildDiffLines(state.viewportWidth);
@@ -1687,7 +1744,7 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
             style: line.style,
             inlineOverlays: line.inlineOverlays,
             properties: props,
-        });
+        }, line.syntax);
 
         // After the header is pushed, runningByte points to the first
         // byte of the body that follows.
@@ -1702,7 +1759,12 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     if (curSection) sectionBodyRange[curSection] = { start: sectionBodyStart, end: runningByte };
 
     diffLineByteOffsets.push(runningByte);
+    if (openRegion) {
+        const { key: _key, ...region } = openRegion as TsSyntaxRegion & { key: string };
+        syntaxRegions.push(region);
+    }
 
+    state.syntaxRegions = syntaxRegions;
     state.hunkHeaderRows = hunkHeaderRows;
     state.diffLineByteOffsets = diffLineByteOffsets;
     state.fileHeaderRows = fileHeaderRows;
@@ -5170,6 +5232,11 @@ function mountStreamContent(): void {
     const signature = streamSignature();
     if (state.streamMountedSignature === signature) return;
     editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+    // The rows are up; say which of them are code, and in what, so the
+    // host colours them (#3104). Content replacement cleared the previous
+    // set, and the regions are byte ranges of *this* content.
+    const diffId = state.panelBuffers["diff"];
+    if (diffId !== undefined) editor.setSyntaxRegions(diffId, state.syntaxRegions);
     state.streamMountedSignature = signature;
     // Fresh content, so the host's folds went with the old rows.
     applyFolds();
@@ -7093,6 +7160,7 @@ function resetPerSessionState(): void {
     state.diffCursorRow = 1;
     state.hunkHeaderRows = [];
     state.diffLineByteOffsets = [];
+    state.syntaxRegions = [];
     state.fileHeaderRows = {};
     state.collapsedFiles = new Set();
     state.collapsedSections = new Set();
