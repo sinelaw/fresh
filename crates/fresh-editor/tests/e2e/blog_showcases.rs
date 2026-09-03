@@ -12,7 +12,7 @@
 
 use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
-use crate::common::git_test_helper::{git_command, DirGuard, GitTestRepo};
+use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
@@ -4184,8 +4184,7 @@ fn blog_showcase_fresh_0_4_0_live_diff() {
     repo.git_commit("initial");
     repo.setup_live_diff_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut h = EditorTestHarness::with_config_and_working_dir(
         100,

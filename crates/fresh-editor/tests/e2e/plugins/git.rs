@@ -1,6 +1,6 @@
 //! E2E tests for git features (git grep and git find file)
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -53,8 +53,7 @@ fn test_git_grep_shows_results() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -100,8 +99,7 @@ fn test_git_grep_interactive_updates() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -168,8 +166,7 @@ fn test_git_grep_selection_navigation() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -218,8 +215,7 @@ fn test_git_grep_confirm_jumps_to_location() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -282,8 +278,7 @@ fn test_git_grep_cancel() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -323,8 +318,7 @@ fn test_git_grep_no_matches_is_graceful() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -371,8 +365,7 @@ fn test_git_find_file_shows_results() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -417,8 +410,7 @@ fn test_git_find_file_interactive_filtering() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -485,8 +477,7 @@ fn test_git_find_file_selection_navigation() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -532,8 +523,7 @@ fn test_git_find_file_confirm_opens_file() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -596,8 +586,7 @@ fn test_git_grep_scrolling_many_results() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -641,8 +630,7 @@ fn test_git_find_file_scrolling_many_files() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -690,8 +678,7 @@ fn test_git_commands_via_command_palette() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -735,8 +722,7 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -822,8 +808,7 @@ fn test_git_find_file_actually_opens_file() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -928,8 +913,7 @@ fn test_git_grep_cursor_position_accuracy() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1054,8 +1038,7 @@ fn test_git_log_shows_commits() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1101,8 +1084,7 @@ fn test_git_log_cursor_navigation() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1151,8 +1133,7 @@ fn test_git_log_show_commit_detail() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1201,8 +1182,7 @@ fn test_git_log_q_from_detail_closes_group() {
     repo.setup_typical_project();
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1241,8 +1221,7 @@ fn test_git_log_close() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1290,8 +1269,7 @@ fn test_git_log_diff_coloring() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1516,8 +1494,7 @@ fn test_git_log_keyboard_scroll_follows_selection() {
     }
 
     repo.setup_git_log_plugin();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Short terminal so the 30 commits clearly overflow the log pane.
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -1591,8 +1568,7 @@ fn test_git_log_mouse_click_updates_selection_for_keyboard_nav() {
     }
 
     repo.setup_git_log_plugin();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1661,8 +1637,7 @@ fn test_git_log_cursor_line_matches_selected_commit() {
     }
 
     repo.setup_git_log_plugin();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1882,8 +1857,7 @@ fn test_git_blame_shows_blocks_with_headers() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1946,8 +1920,7 @@ fn test_git_blame_cursor_navigation() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2009,8 +1982,7 @@ fn test_git_blame_header_has_no_trailing_rule() {
     repo.setup_typical_project();
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2074,8 +2046,7 @@ fn test_git_blame_keeps_the_focused_line_on_its_screen_row() {
     repo.git_commit("Initial commit");
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2167,8 +2138,7 @@ fn test_git_blame_does_not_scroll_a_file_that_fits_on_screen() {
     repo.git_commit("Initial commit");
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2232,8 +2202,7 @@ fn test_git_blame_q_unwinds_history_before_closing() {
 
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2302,8 +2271,7 @@ fn test_git_blame_close() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2369,8 +2337,7 @@ fn test_git_blame_reopen_after_external_close() {
     repo.setup_typical_project();
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2449,8 +2416,7 @@ fn test_git_blame_multiple_files_open_simultaneously() {
     repo.setup_typical_project();
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         140,
@@ -2526,8 +2492,7 @@ fn test_git_blame_go_back_in_history() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2611,8 +2576,7 @@ fn test_git_blame_shows_different_commits() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2679,8 +2643,7 @@ fn test_git_blame_line_numbers_correct() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2763,8 +2726,7 @@ fn test_git_blame_scroll_to_bottom() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2844,8 +2806,7 @@ fn test_git_blame_scroll_with_many_virtual_lines() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Small viewport to stress scrolling with virtual lines from blame headers
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -3190,8 +3151,7 @@ fn test_git_blame_original_buffer_not_decorated() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -3280,8 +3240,7 @@ fn test_git_log_file_view_jk_navigation() {
 
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // This test detects the read-only file-view buffer via its status-bar
     // entry (`<hash>:notes.txt* [RO]`), rendered by the `{filename}` element.
@@ -3448,8 +3407,7 @@ fn test_git_blame_jumps_to_source_cursor_line() {
     repo.git_commit("Initial commit");
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -3538,8 +3496,7 @@ fn test_git_blame_jumps_to_cursor_line_with_multibyte_and_goto() {
     repo.git_commit("Initial commit");
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         140,
