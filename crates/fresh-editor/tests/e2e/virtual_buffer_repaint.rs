@@ -47,20 +47,22 @@ fn create(harness: &mut EditorTestHarness, text: &str, highlight_current_line: O
     harness.render().unwrap();
 }
 
-/// **A tab-switch slide froze the incoming pane at its first frame.**
-/// `SlideIn` took its "after" snapshot once, on its first apply, and shifted
-/// that for the slide's 260ms. Content that changed during the slide — here
-/// a panel repainted right after the switch — was invisible until the slide
-/// ended, and (see the design note's finding 34) beyond. The snapshot is now
-/// retaken from the freshly painted frame on every apply, so a slide shows
-/// the pane as it is, shifted.
+/// **A tab-switch slide froze the incoming pane at its first frame, and the
+/// screen kept that frame after the slide.** `SlideIn` took its snapshot once
+/// and shifted it for 260ms; when it finished, the frame it finished on was
+/// its own composite and nothing asked for another. Content that changed
+/// under the slide — a panel repainting right after the switch — was hidden
+/// until the reader's next keystroke.
 ///
-/// The animation runs on the wall clock, so this drives frames for a bounded
-/// stretch and asks whether the new content was ever visible *while the
-/// slide was still running*. With the old capture it never is: every frame
-/// of the slide is the pre-repaint cells.
+/// The slide runs on the wall clock, so the mid-slide half of this is pinned
+/// in `view::animation::tests::slide_in_retakes_the_incoming_snapshot_every_apply`,
+/// where `elapsed` is a parameter. What this end-to-end test asserts is the
+/// half a harness can observe without racing a 260ms window on a slow
+/// runner: once the slide is over, the pane shows the content it has, not
+/// the content it had when the slide began. `harness.render()` after the
+/// slide is the settle frame the runner now owes (see finding 34).
 #[test]
-fn a_pane_repainted_mid_slide_shows_its_new_content_during_the_slide() {
+fn a_pane_repainted_mid_slide_settles_on_its_new_content() {
     let mut config = Config::default();
     config.editor.animations = true;
     let mut harness = EditorTestHarness::with_config(60, 12, config).unwrap();
@@ -75,10 +77,7 @@ fn a_pane_repainted_mid_slide_shows_its_new_content_during_the_slide() {
     // `other`, *previous* is the panel.
     harness.editor_mut().prev_buffer();
     assert_eq!(harness.editor().active_buffer_id(), panel);
-    // The slide's first frame. This is the frame the old capture took its
-    // one and only snapshot from — the pane as it was *before* the repaint
-    // below. That is the order the real page saw too: a plugin's catch-up
-    // lands a few frames after the switch, not before it.
+    // The slide's first frame, with the pane still holding OLD CONTENT.
     harness.render().unwrap();
     assert!(
         harness.editor().active_window().animations.is_active(),
@@ -93,22 +92,26 @@ fn a_pane_repainted_mid_slide_shows_its_new_content_during_the_slide() {
         })
         .unwrap();
 
-    let mut seen_new_while_sliding = false;
-    for _ in 0..60 {
+    // Drive frames until the slide retires (bounded: 260ms of slide against
+    // up to ~6s of budget, so a slow runner cannot time this out).
+    let mut ran_out = true;
+    for _ in 0..600 {
         harness.render().unwrap();
         if !harness.editor().active_window().animations.is_active() {
-            break;
-        }
-        if harness.screen_to_string().contains("NEW CONTENT") {
-            seen_new_while_sliding = true;
+            ran_out = false;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    assert!(!ran_out, "the slide never finished");
+
+    // The settle frame.
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
     assert!(
-        seen_new_while_sliding,
-        "the slide kept showing the pane's first-frame cells; the repaint \
-         made during it never reached the screen while it ran"
+        screen.contains("NEW CONTENT") && !screen.contains("OLD CONTENT"),
+        "after the slide the pane still shows the content it had when the \
+         slide began:\n{screen}"
     );
 }
 

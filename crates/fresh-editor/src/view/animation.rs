@@ -1433,6 +1433,45 @@ mod tests {
         }
     }
 
+    /// The incoming snapshot is retaken from `buf` on every apply. It used to
+    /// be captured once, on the first apply, and shifted for the slide's whole
+    /// duration — so a pane whose content changed mid-slide kept showing its
+    /// first frame's cells until the slide ended, and past it (the runner asked
+    /// for no frame after). The content pass paints the pane into `buf` before
+    /// the runner applies, so `buf` at apply time *is* the incoming content.
+    #[test]
+    fn slide_in_retakes_the_incoming_snapshot_every_apply() {
+        let area = Rect::new(0, 0, 3, 4);
+        let mut effect = SlideIn::new(Edge::Right, Duration::from_millis(100));
+
+        // First frame of the slide: the pane still holds its stale cells.
+        let mut stale = make_buf(3, 4);
+        paint(&mut stale, area, 'S', Color::Red);
+        effect.apply(&mut stale, area, Duration::ZERO);
+
+        // A few frames in, the content pass has repainted the pane.
+        let mut fresh = make_buf(3, 4);
+        paint(&mut fresh, area, 'N', Color::Blue);
+        effect.apply(&mut fresh, area, Duration::from_millis(50));
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let sym = fresh.cell((area.x + dx, area.y + dy)).unwrap().symbol();
+                assert_ne!(
+                    sym, "S",
+                    "the slide painted the first frame's cell at ({dx},{dy}) over content \
+                     that has since changed"
+                );
+            }
+        }
+        // ...and at least some of the new content is on its way in.
+        let any_new = (0..area.height)
+            .any(|dy| (0..area.width).any(|dx| fresh.cell((dx, dy)).unwrap().symbol() == "N"));
+        assert!(
+            any_new,
+            "mid-slide, the incoming content should be partly visible"
+        );
+    }
+
     #[test]
     fn runner_pushes_out_the_caller_supplied_previous_frame() {
         // Simulate two frames:
