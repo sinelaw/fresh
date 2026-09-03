@@ -206,11 +206,21 @@ fn test_plain_text_enter_on_blank_last_line_does_not_indent() {
     harness.assert_screen_contains("Ln 6, Col 1");
 
     harness.type_text("x").unwrap();
-    harness.assert_buffer_content("    line1\n    line2\n        line3\n        line4\n\nx");
+    harness.assert_screen_contains("Ln 6, Col 2");
+    // Not `assert_buffer_content`: this harness validates a shadow string
+    // whose Enter knows nothing about auto-indent, as the other tests in
+    // this file that assert after an indenting Enter also avoid.
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "    line1\n    line2\n        line3\n        line4\n\nx"
+    );
 
     // Whereas Enter at the end of an indented line still carries the
     // indent, and a further Enter at the end of that whitespace keeps it:
-    // the blank-line rule is the cursor's own column, not zero.
+    // the blank-line rule is the cursor's own column, not zero. `Ln 6,
+    // Col 9` is the very position the bug produced on the blank last line;
+    // here it is right, because the cursor was at column 9 when Enter was
+    // pressed.
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -218,12 +228,16 @@ fn test_plain_text_enter_on_blank_last_line_does_not_indent() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.assert_screen_contains("Ln 5, Col 9");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.assert_screen_contains("Ln 6, Col 9");
     harness.type_text("y").unwrap();
-    harness.assert_buffer_content(
-        "    line1\n    line2\n        line3\n        line4\n        \n        y\n\nx",
+    harness.assert_screen_contains("Ln 6, Col 10");
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "    line1\n    line2\n        line3\n        line4\n        \n        y\n\nx"
     );
 }
 
