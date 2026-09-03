@@ -354,8 +354,8 @@ impl Editor {
 
         // Use optimized bulk edit for multi-line comment toggle
         let description = format!("{} lines", action_desc);
-        if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
-            self.active_event_log_mut().append(bulk_edit);
+        if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+            self.active_event_log_mut().append(applied);
         }
 
         self.set_status_message(
