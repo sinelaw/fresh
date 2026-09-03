@@ -273,6 +273,170 @@ function truncate(s: string, maxLen: number): string {
   return result + "...";
 }
 
+/** UTF-16 index of the `pattern` hit in `line` nearest to (at or before)
+ *  `byteHint`, or -1 when the pattern is empty, invalid, or absent.
+ *
+ *  This is how a row learns where its own match sits, and it deliberately
+ *  does NOT convert `match.column` to a UTF-16 index. Three reasons:
+ *
+ *  1. A conversion has to walk the line codepoint by codepoint, and on the
+ *     very files `CONTEXT_HARD_CAP` was written for — 5 000-50 000 char
+ *     minified bundles — that walk is tens of thousands of QuickJS
+ *     iterations per row, per re-render. One `©` anywhere on the line puts
+ *     every row on it onto that path. Native string search is two to three
+ *     orders of magnitude cheaper and is all this needs.
+ *  2. `column` and `context` are not guaranteed to describe the same
+ *     string: `resolveMatchTarget` rewrites `line`/`column` from the live
+ *     interval marker after a jump or replace and leaves `context` at its
+ *     grep-time value. Searching `context` itself cannot drift from it.
+ *  3. A byte offset is never smaller than the UTF-16 index of the same
+ *     position, so `column` is a soundupper bound to search back from —
+ *     which is what makes it useful as a hint without being trusted as a
+ *     position. Picking the hit at or before it is what keeps several
+ *     matches on one line anchored to their own rows.
+ *
+ *  Returns -1 rather than guessing when the pattern isn't on the line at
+ *  all — the stale-row case, where the tree renders the previous search's
+ *  results against the pattern currently being typed. The caller reads
+ *  that as "no anchor" and falls back to the head of the line. */
+function matchIndexNearByteColumn(
+  line: string,
+  pattern: string,
+  isRegex: boolean,
+  caseSensitive: boolean,
+  byteHint: number,
+): number {
+  if (!pattern) return -1;
+  // The hint is a byte offset; clamping to the UTF-16 length keeps it a
+  // valid search position and costs nothing when they coincide.
+  const hint = Math.max(0, Math.min(byteHint, line.length));
+  try {
+    if (!isRegex) {
+      const hay = caseSensitive ? line : line.toLowerCase();
+      const needle = caseSensitive ? pattern : pattern.toLowerCase();
+      const before = hay.lastIndexOf(needle, hint);
+      // Nothing at or before the hint: the byte column overstated the
+      // position past the last hit (a heavily multibyte prefix), so take
+      // the first hit on the line instead of reporting none.
+      return before >= 0 ? before : hay.indexOf(needle);
+    }
+    const re = new RegExp(pattern, caseSensitive ? "g" : "gi");
+    let best = -1;
+    let first = -1;
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      if (first < 0) first = m.index;
+      if (m.index > hint) break;
+      best = m.index;
+    }
+    return best >= 0 ? best : first;
+  } catch (_e) {
+    // Invalid regex mid-typing: no anchor, same as no hit.
+    return -1;
+  }
+}
+
+/** Codepoint index and length of the `pattern` hit in `text` nearest to
+ *  `preferAt`, or `null` when the pattern is empty, invalid, or doesn't
+ *  occur. A line with several matches yields one row per match, so the
+ *  row anchors on *its own* match rather than always on the first —
+ *  otherwise every row on that line would window to the same place.
+ *
+ *  `highlightMatches` reports UTF-16 indices; those are converted here
+ *  so callers can slice codepoint arrays without splitting a surrogate
+ *  pair. Only ever called on an already-capped window, so the
+ *  conversion walk is bounded. */
+function matchSpanNear(
+  text: string,
+  pattern: string,
+  isRegex: boolean,
+  caseSensitive: boolean,
+  preferAt: number,
+): { start: number; length: number } | null {
+  if (!pattern) return null;
+  const overlays: InlineOverlay[] = [];
+  highlightMatches(text, pattern, isRegex, caseSensitive, overlays);
+  if (overlays.length === 0) return null;
+  let o = overlays[0];
+  for (const cand of overlays) {
+    if (Math.abs(cand.start - preferAt) < Math.abs(o.start - preferAt)) o = cand;
+  }
+  return {
+    start: charLen(text.slice(0, o.start)),
+    length: charLen(text.slice(o.start, o.end)),
+  };
+}
+
+/** Fit `text` into `budget` display columns with the first match of
+ *  `pattern` inside the window.
+ *
+ *  A search result whose matched text is off the right edge tells the
+ *  reader nothing — and there is no horizontal scroll to go find it
+ *  (issue #1580). So when the match falls past the budget, the window
+ *  slides right to bring it in, marking each elided end with `…`. When
+ *  the match already fits (the overwhelmingly common case) this is
+ *  exactly `truncate`, so ordinary rows are unchanged.
+ *
+ *  `matchAt` is where this row's own match is expected to sit in
+ *  `text` — see `matchSpanNear`.
+ *
+ *  `alreadySliced` says whether `text` is itself a mid-line window. It
+ *  governs the fallbacks, not the happy path: head-truncating a slice
+ *  that does not start at the beginning of the line renders it as
+ *  though it did, with a trailing "..." implying nothing was cut on the
+ *  left. The caller now anchors at 0 whenever it cannot locate the
+ *  match, so this should not arise — but a marker costs one column and
+ *  a row that silently lies about where it starts is worse than a row
+ *  that is one character narrower. */
+function windowAroundMatch(
+  text: string,
+  budget: number,
+  pattern: string,
+  isRegex: boolean,
+  caseSensitive: boolean,
+  matchAt: number,
+  alreadySliced: boolean,
+): string {
+  const ELLIPSIS = "…";
+  // Head-truncation, honest about a left-hand elision when there is one.
+  const head = (t: string) =>
+    alreadySliced
+      ? ELLIPSIS + truncate(t, Math.max(1, budget - 1))
+      : truncate(t, budget);
+  // `head` (not a bare prepend) so the marker cannot push the row one
+  // column over `budget` when the text already fills it exactly.
+  if (charLen(text) <= budget) return alreadySliced ? head(text) : text;
+  const span = matchSpanNear(text, pattern, isRegex, caseSensitive, matchAt);
+  // No locatable match (empty/invalid pattern, or a hit that fell
+  // outside the capped window): keep the historical head-truncation.
+  if (!span) return head(text);
+  // The match is already visible in the head — `truncate`'s own "..."
+  // marker covers the elided tail.
+  if (span.start + span.length <= budget - 3) return head(text);
+
+  // Codepoint array: slicing it can never split a surrogate pair, and
+  // the input is capped well under a couple of thousand codepoints.
+  const cps = Array.from(text);
+  // Keep a third of the budget as leading context so the match reads in
+  // situ rather than flush against the elision marker.
+  const lead = Math.max(1, Math.floor(budget / 3));
+  const start = Math.max(0, span.start - lead);
+  // Nothing is elided on the left, so there is no window to slide: the
+  // match starts inside the first third and is simply wider than the
+  // row. Head-truncation is all this width allows.
+  if (start === 0) return head(text);
+  // One column goes to the leading `…`.
+  const room = budget - 1;
+  if (start + room >= cps.length) {
+    return ELLIPSIS + cps.slice(cps.length - room).join("");
+  }
+  return ELLIPSIS + cps.slice(start, start + room - 1).join("") + ELLIPSIS;
+}
+
 // Get the active field's text
 function getActiveFieldText(): string {
   if (!panel) return "";
@@ -704,9 +868,35 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // past ~512 chars is invisible anyway.
   const CONTEXT_HARD_CAP = 512;
   const rawCtx = result.match.context;
-  const context = (rawCtx.length > CONTEXT_HARD_CAP
-    ? rawCtx.slice(0, CONTEXT_HARD_CAP)
-    : rawCtx).trim();
+  // Anchor that cap on the *match*, not on the start of the line.
+  // Slicing from 0 threw away the only part of the row anyone opened
+  // it for whenever the match sat past the cap — and the same for the
+  // display-width truncation below (issue #1580: a match at column 257
+  // of a 290-char line rendered as `start xxxx…`, with the matched
+  // text nowhere on screen).
+  //
+  // The anchor is a hit located in `rawCtx` itself, not arithmetic on
+  // `match.column` — see `matchIndexNearByteColumn` for why (bounded
+  // work, and immune to `column` drifting out of step with `context`).
+  // -1 means the pattern is not on this line at all, which happens
+  // routinely: the tree renders the previous search's rows against the
+  // pattern currently being typed. Anchor at 0 then, so the row shows
+  // the head of the line exactly as it did before this feature existed.
+  const anchor = matchIndexNearByteColumn(
+    rawCtx,
+    panel.searchPattern,
+    panel.useRegex,
+    panel.caseSensitive,
+    Math.max(0, (result.match.column || 1) - 1),
+  );
+  const capStart = anchor >= 0 && rawCtx.length > CONTEXT_HARD_CAP
+    ? Math.max(0, Math.min(anchor - CONTEXT_HARD_CAP / 2, rawCtx.length - CONTEXT_HARD_CAP))
+    : 0;
+  const capped = rawCtx.slice(capStart, capStart + CONTEXT_HARD_CAP);
+  // Leading indentation is noise worth trimming when the window starts
+  // at the beginning of the line; a window that already starts mid-line
+  // must not shift further, or the offsets below drift.
+  const context = capStart === 0 ? capped.trim() : capped.replace(/\s+$/, "");
   // Host prefix consumes:
   //   indent (depth=1) = 2
   //   leaf-alignment   = 2 (in lieu of disclosure glyph)
@@ -721,7 +911,20 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // over-counting on rare non-BMP filenames just trims a little
   // more of the context, which is fine.
   const maxCtx = innerWidth - location.length - 3;
-  const displayCtx = truncate(context, Math.max(10, maxCtx));
+  // Where this row's match sits in `context`, after the cap slice and
+  // the leading trim above — used to pick between several hits on the
+  // same line. Exact, since `anchor` is an index into `rawCtx`.
+  const trimmedLead = capStart === 0 ? capped.length - capped.trimStart().length : 0;
+  const matchAt = Math.max(0, anchor) - capStart - trimmedLead;
+  const displayCtx = windowAroundMatch(
+    context,
+    Math.max(10, maxCtx),
+    panel.searchPattern,
+    panel.useRegex,
+    panel.caseSensitive,
+    matchAt,
+    capStart > 0,
+  );
 
   // Pattern-match highlights inside the context substring. Emitted
   // in segment-local char units; the host shifts them by the

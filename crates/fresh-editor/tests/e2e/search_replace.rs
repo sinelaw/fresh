@@ -2985,3 +2985,383 @@ fn test_search_results_grow_with_the_panel_on_resize() {
          before the resize, {after} after. Screen:\n{screen}"
     );
 }
+
+/// Issue #1960: a terminal-initiated bracketed paste (right-click /
+/// middle-click / Ctrl+Shift+V) must land in the panel's focused field.
+///
+/// It arrives as a single `Event::Paste`, not as key events, so it never
+/// passes through the widget key routing that makes `Ctrl+V` work here.
+/// Before the fix it fell through to `paste_text`, which targeted the
+/// panel's own read-only widget buffer and refused with "Editing disabled
+/// in this buffer" — nothing reached the field.
+#[test]
+fn test_search_replace_bracketed_paste_reaches_fields() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("gamma.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+
+    // Search field is focused on open: the paste is the whole pattern.
+    // Wait on either outcome — the text landing, or the refusal the bug
+    // produced — so a regression fails with the screen rather than
+    // hanging on a condition that will never come true.
+    harness.send_paste("hello").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello") || s.contains("Editing disabled")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Search: [hello") && !screen.contains("Editing disabled"),
+        "the bracketed paste did not reach the focused search field. \
+         Screen:\n{screen}"
+    );
+    // And it is a real pattern, not just glyphs in a box: the search runs.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("alpha.txt:1"))
+        .unwrap();
+
+    // Same for the Replace field, one Tab away.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.send_paste("goodbye").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Replace: [goodbye") || s.contains("Editing disabled")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Replace: [goodbye") && !screen.contains("Editing disabled"),
+        "the bracketed paste did not reach the focused replace field. \
+         Screen:\n{screen}"
+    );
+}
+
+/// The other half of #1960's routing: a bracketed paste belongs to
+/// whatever owns the keyboard, so a panel mounted into a buffer must NOT
+/// take one while a menu (or any other layer) is open over it.
+///
+/// Routing the paste to the panel without asking who owns the keyboard
+/// reintroduces, in mirror image, the bug
+/// `paste_bracketed_into_focused_panel` exists to prevent: text landing
+/// in a field the user cannot see.
+#[test]
+fn test_search_replace_bracketed_paste_declines_under_an_open_menu() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("gamma.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("hello").unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("Search: [hello"))
+        .unwrap();
+
+    // Alt+F opens the File menu over the panel.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("New File"))
+        .unwrap();
+
+    harness.send_paste("LEAKED").unwrap();
+    // Give the paste every chance to land in the field before asserting
+    // it didn't: drive the plugin round trip the accepting path needs.
+    for _ in 0..8 {
+        harness.tick_and_render().unwrap();
+    }
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("LEAKED"),
+        "the paste reached the search field behind an open menu. \
+         Screen:\n{screen}"
+    );
+}
+
+/// Issue #1580: a match far along a long line must still be visible in
+/// its result row.
+///
+/// The row used to render the head of the line and truncate, so a match
+/// past the panel's width was never shown — and there is no horizontal
+/// scroll in the results tree to go find it. The window now slides to
+/// bring the match in, marking the elided head with a leading ellipsis.
+#[test]
+fn test_search_replace_long_line_match_is_visible() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // The match sits at column 257 of a 290-column line — well past
+    // anything a 120-column panel can show from the start of the line.
+    let long_line = format!("{}NEEDLE_MARKER{}", "x".repeat(256), "y".repeat(21));
+    assert_eq!(long_line.chars().count(), 290);
+    fs::write(
+        project_root.join("long.txt"),
+        format!("start {long_line}\n"),
+    )
+    .unwrap();
+    // And one past the 512-char cap the plugin applies before any
+    // per-codepoint work: that cap used to be anchored at the start of
+    // the line, so a match beyond it was discarded before the row was
+    // even laid out.
+    let huge_line = format!("{}NEEDLE_MARKER{}", "x".repeat(2000), "y".repeat(1000));
+    fs::write(project_root.join("huge.txt"), format!("{huge_line}\n")).unwrap();
+    // Two matches far apart on one long line: each gets its own row, and
+    // each row must window onto *its own* match rather than both landing
+    // on the first one.
+    let multi_line = format!(
+        "{}NEEDLE_MARKER{}NEEDLE_MARKER{}",
+        "a".repeat(40),
+        "b".repeat(300),
+        "c".repeat(40),
+    );
+    fs::write(project_root.join("multi.txt"), format!("{multi_line}\n")).unwrap();
+    // A short match too, so the ordinary (unwindowed) row is covered by
+    // the same assertion pass.
+    fs::write(project_root.join("short.txt"), "a NEEDLE_MARKER here\n").unwrap();
+
+    let start_file = project_root.join("short.txt");
+    // Tall enough that every file's rows are on screen at once — this
+    // test reads the rows, so none of them may be scrolled off.
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        44,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("NEEDLE_MARKER").unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("long.txt:1"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let long_row = screen
+        .lines()
+        .find(|l| l.contains("long.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the long-line match. Screen:\n{screen}"))
+        .to_string();
+    assert!(
+        long_row.contains("NEEDLE_MARKER"),
+        "the matched text is not in its own result row — the row shows \
+         the head of the line and truncates before reaching the match, \
+         and nothing scrolls the row horizontally. Row:\n{long_row}\n\
+         Screen:\n{screen}"
+    );
+    let huge_row = screen
+        .lines()
+        .find(|l| l.contains("huge.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the past-the-cap match. Screen:\n{screen}"))
+        .to_string();
+    assert!(
+        huge_row.contains("NEEDLE_MARKER"),
+        "a match past the 512-char context cap is still not shown — the \
+         cap must be anchored on the match, not on the start of the \
+         line. Row:\n{huge_row}\nScreen:\n{screen}"
+    );
+    let multi_rows: Vec<String> = screen
+        .lines()
+        .filter(|l| l.contains("multi.txt:1"))
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        multi_rows.len(),
+        2,
+        "expected one row per match on the shared line. Screen:\n{screen}"
+    );
+    assert!(
+        multi_rows.iter().all(|r| r.contains("NEEDLE_MARKER")),
+        "both rows on the shared line must show their match. \
+         Rows:\n{multi_rows:#?}"
+    );
+    assert_ne!(
+        multi_rows[0].trim(),
+        multi_rows[1].trim(),
+        "the two matches on one line must window onto different parts of \
+         it, not both onto the first hit. Rows:\n{multi_rows:#?}"
+    );
+
+    // The short match still renders from the start of its line: the
+    // window only slides when it has to.
+    let short_row = screen
+        .lines()
+        .find(|l| l.contains("short.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the short match. Screen:\n{screen}"))
+        .to_string();
+    assert!(
+        short_row.contains("a NEEDLE_MARKER here"),
+        "a match that already fits must render its line unwindowed. \
+         Row:\n{short_row}"
+    );
+}
+
+/// The same windowing, on lines whose prefix is not ASCII.
+///
+/// `SearchMatch.column` is a UTF-8 *byte* column while the plugin slices
+/// its context in UTF-16 units. On an ASCII line the two coincide, so a
+/// test built only from ASCII fixtures passes while the feature is broken
+/// for a whole class of real files: a CJK prefix inflates the column 3x
+/// and a non-BMP one 2x, sliding the window past the match. The row then
+/// renders the region *after* the match — strictly worse than the
+/// head-truncation the windowing replaced. The column is now a hint that
+/// bounds a search, never a position that is trusted.
+#[test]
+fn test_search_replace_multibyte_prefix_match_is_visible() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // Both lines run past the 512-char context cap, so the match-anchored
+    // cap slice is exercised as well as the display window.
+    for (name, lead) in [("cjk.txt", "漢"), ("emoji.txt", "😀")] {
+        let line = format!(
+            "{}{}NEEDLE_MARKER{}",
+            lead.repeat(200),
+            "x".repeat(900),
+            "y".repeat(900)
+        );
+        fs::write(project_root.join(name), format!("{line}\n")).unwrap();
+    }
+    fs::write(project_root.join("plain.txt"), "a NEEDLE_MARKER here\n").unwrap();
+
+    let start_file = project_root.join("plain.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        44,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("NEEDLE_MARKER").unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("emoji.txt:1"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    for name in ["cjk.txt", "emoji.txt"] {
+        let row = screen
+            .lines()
+            .find(|l| l.contains(&format!("{name}:1")))
+            .unwrap_or_else(|| panic!("no row for the {name} match. Screen:\n{screen}"))
+            .to_string();
+        assert!(
+            row.contains("NEEDLE_MARKER"),
+            "the match is not shown on a line with a multibyte prefix — \
+             the window must anchor on a hit located in the line itself, \
+             not on arithmetic over a byte column the slicing does not \
+             count in. Row:\n{row}\nScreen:\n{screen}"
+        );
+    }
+}
+
+/// A row whose pattern the renderer cannot locate must show the HEAD of
+/// the line, not a slice from the middle of it dressed up as the head.
+///
+/// The window is anchored on a hit found in the line itself, and when
+/// there is no such hit the anchor collapses to 0. Without that, the
+/// anchor came from `match.column` arithmetic, which is happy to point
+/// into a line the renderer can't confirm — so the row rendered
+/// characters from the middle of a long line with a trailing `...`
+/// implying nothing had been cut on the left. It reads as the start of
+/// the line when it isn't.
+///
+/// Driven with a regex Rust's engine accepts and JavaScript's rejects:
+/// the search finds the matches, the plugin's `new RegExp` throws, and
+/// the renderer is left with no locatable hit. That is the same state
+/// the panel is in whenever it renders the previous search's rows
+/// against a pattern that is still being typed, but reached
+/// deterministically instead of through a race.
+#[test]
+fn test_search_replace_unlocatable_pattern_renders_line_head() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // Past the 512-char context cap, with the match far along it. The
+    // head carries a distinctive marker: filler alone cannot tell "the
+    // head of the line" apart from "a slice of the filler", which is
+    // exactly how this test first passed against the bug it targets.
+    let long_line = format!(
+        "HEAD_MARKER{}NEEDLE_MARKER{}",
+        "a".repeat(1700),
+        "b".repeat(1700)
+    );
+    fs::write(project_root.join("long.txt"), format!("{long_line}\n")).unwrap();
+
+    let start_file = project_root.join("long.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    // Alt+R turns on Regex; the inline `(?i)` flag is valid in the Rust
+    // regex crate and a SyntaxError in JavaScript.
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("(?i)NEEDLE_MARKER").unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("long.txt:1"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let row = screen
+        .lines()
+        .find(|l| l.contains("long.txt:1"))
+        .unwrap_or_else(|| panic!("no row for the long-line match. Screen:\n{screen}"))
+        .to_string();
+    let body = row.split(" - ").nth(1).unwrap_or("").trim();
+    assert!(
+        body.starts_with("HEAD_MARKER"),
+        "with no locatable hit the row must fall back to the head of the \
+         line; it rendered a slice from elsewhere in it. Row:\n{row}"
+    );
+    assert!(
+        !body.starts_with('\u{2026}'),
+        "a row that starts at the head of the line must not claim a \
+         left-hand elision. Row:\n{row}"
+    );
+}
