@@ -819,7 +819,16 @@ interface GitStatusResult {
 
 async function getGitStatus(): Promise<GitStatusResult> {
     const cwd = gitCwd();
-    const result = await editor.spawnProcess("git", ["status", "--porcelain", "-z", "-uall"], cwd);
+    // `--no-optional-locks`: plain `git status` refreshes the index and takes
+    // `.git/index.lock` to write it back. This runs on a timer while a review
+    // is open (#3126), so without it the panel would periodically lose a
+    // `git commit` or `git add` in the user's own terminal the race for that
+    // lock.
+    const result = await editor.spawnProcess(
+        "git",
+        ["--no-optional-locks", "status", "--porcelain", "-z", "-uall"],
+        cwd,
+    );
     if (result.exit_code !== 0) {
         return { files: [], emptyReason: 'not_git' };
     }
@@ -853,6 +862,13 @@ const DIFF_PREFIX_CONFIG = [
  */
 function diffArgs(subcommand: string[], ...rest: string[]): string[] {
     return [
+        // Top-level, so it has to precede the sub-command. `git diff`
+        // refreshes the index and writes it back under `.git/index.lock`
+        // just as `git status` does, and the watch runs both on a timer
+        // (#3126) — pinning the flag here rather than at one call site
+        // keeps the panel from racing the user's own `git` for that lock
+        // whichever sub-command the tick reaches for.
+        "--no-optional-locks",
         ...DIFF_PREFIX_CONFIG,
         ...subcommand,
         "--no-ext-diff",
@@ -3994,20 +4010,135 @@ function rememberPendingHunkAnchor(hunkId: string | null) {
 
 let pendingDiscardFile: FileEntry | null = null;
 
+/**
+ * Every path a file-level discard has to put back: the file itself, plus
+ * the pre-rename path when git reports the change as a rename (`R`). A
+ * staged rename is one change spread over two pathspecs, and restoring
+ * only the new one leaves the old one deleted in the index.
+ */
+function discardPathsOf(f: FileEntry): string[] {
+    return f.origPath && f.origPath !== f.path ? [f.path, f.origPath] : [f.path];
+}
+
+/** First line of a git/`rm` stderr, for a one-line status message. */
+function firstErrorLine(raw: string): string {
+    const line = (raw || "").split("\n").map(s => s.trim()).find(s => s.length > 0);
+    return line ?? "";
+}
+
+/**
+ * Does this file still have changes git knows about? Asked *after* a
+ * discard, of git rather than of our own state, because the whole point
+ * of #2318 is that the plugin used to announce a destructive action it
+ * had not performed.
+ */
+async function fileIsClean(paths: string[]): Promise<boolean | null> {
+    const res = await editor.spawnProcess(
+        "git",
+        ["--no-optional-locks", "status", "--porcelain", "-z", "-uall", "--", ...paths],
+        gitCwd(),
+    );
+    if (res.exit_code !== 0) return null;
+    return res.stdout.split('\0').every(entry => entry.trim() === '');
+}
+
+/**
+ * File-level discard: put the file back to HEAD — index *and* working
+ * tree — and report only what actually happened.
+ *
+ * The old implementation ran `git checkout -- <path>`, which rewrites the
+ * working tree *from the index*. For a fully-staged change the two already
+ * agree, so it was a no-op — and the caller announced `Discarded: <file>`
+ * regardless (#2318). `git restore --source=HEAD --staged --worktree`
+ * covers every shape the panel can show: a plain modification, a staged
+ * add (which `git checkout HEAD -- <path>` cannot touch, the path not
+ * being in HEAD at all), a staged delete, and a rename's two paths.
+ *
+ * The result is then verified against `git status` rather than against the
+ * command's exit code alone, so a discard that silently changes nothing
+ * can never again be reported as success.
+ */
+async function discardFileToHead(f: FileEntry): Promise<{ ok: boolean; detail: string }> {
+    const cwd = gitCwd();
+    const paths = discardPathsOf(f);
+
+    if (f.category === 'untracked') {
+        const rm = await editor.spawnProcess("rm", ["--", ...paths], cwd);
+        if (rm.exit_code !== 0) return { ok: false, detail: firstErrorLine(rm.stderr) };
+    } else {
+        const res = await editor.spawnProcess(
+            "git",
+            ["restore", "--source=HEAD", "--staged", "--worktree", "--", ...paths],
+            cwd,
+        );
+        if (res.exit_code !== 0) return { ok: false, detail: firstErrorLine(res.stderr) };
+    }
+
+    const clean = await fileIsClean(paths);
+    if (clean === null) return { ok: false, detail: tr("status.discard_unverified") ?? "could not verify" };
+    if (!clean) return { ok: false, detail: tr("status.discard_still_changed") ?? "the change is still there" };
+    return { ok: true, detail: "" };
+}
+
+/**
+ * The prompt for `D`.
+ *
+ * The wording ("Discard changes in <file>", "Permanently lose changes",
+ * "This cannot be undone") describes a discard of the *file*, and that is
+ * now what the action does — index and working tree both go back to HEAD.
+ * When the file also has staged content the description spells that out,
+ * because a file can be listed under UNSTAGED while carrying a staged
+ * change the user would not expect this key to touch.
+ */
+function startDiscardFilePrompt(f: FileEntry): void {
+    pendingDiscardFile = f;
+    // A file the repo has never had — untracked, or added to the index —
+    // is not restored by this, it is removed. `git restore --source=HEAD`
+    // on a path HEAD does not carry deletes it, so the prompt has to say
+    // "Delete": "discard changes in" describes an edit surviving as a
+    // file, which is not what happens.
+    //
+    // Asked of the *path*, not of the row under the cursor. `git status`
+    // reports an added-then-edited file (`AM`) as two entries, and the
+    // unstaged one carries `M` — so a row-local test called `D` on it a
+    // discard of changes and then deleted the file, which is the same
+    // dialog/action mismatch #2318 is about, one row over.
+    const removesFile = f.category === 'untracked'
+        || state.files.some(o => o.path === f.path && o.category === 'staged'
+            && (o.status === 'A' || o.status === 'C'));
+    const action = removesFile ? "Delete" : "Discard changes in";
+    // `git status` reports a file changed on both sides as two entries, so
+    // the same path can sit under STAGED and under UNSTAGED. Whichever row
+    // the cursor is on, the discard takes both — so the warning has to name
+    // the *other* row, the one the user is not looking at. (Comparing
+    // against `f.category` rather than a fixed 'staged' also stops the
+    // staged row matching itself and warning about what the user just
+    // asked for.)
+    const collateral = f.category === 'untracked'
+        ? null
+        : state.files.find(o => o.path === f.path && o.category !== f.category
+            && o.category !== 'untracked')?.category ?? null;
+    const description = collateral === 'staged'
+        ? (tr("prompt.discard_file_scope") ?? "Discards the staged changes too — back to HEAD")
+        : collateral === 'unstaged'
+            ? (tr("prompt.discard_file_scope_unstaged")
+                ?? "Discards the unstaged changes too — back to HEAD")
+            : (tr("prompt.discard_file_lose") ?? "Permanently lose changes");
+    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
+    const suggestions: PromptSuggestion[] = [
+        { text: `${action} file`, description, value: "discard" },
+        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+}
+
 /** Always-file-level discard (D). Acts on the file the cursor is in. */
 function review_discard_file_only() {
     if (state.files.length === 0) return;
     const f = fileHeaderUnderCursor() ?? currentFileFromCursor();
     if (!f) return;
-    pendingDiscardFile = f;
     rememberPendingHunkAnchor(null);
-    const action = f.category === 'untracked' ? "Delete" : "Discard changes in";
-    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
-    const suggestions: PromptSuggestion[] = [
-        { text: `${action} file`, description: "Permanently lose changes", value: "discard" },
-        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
-    ];
-    editor.setPromptSuggestions(suggestions);
+    startDiscardFilePrompt(f);
 }
 registerHandler("review_discard_file_only", review_discard_file_only);
 
@@ -4036,15 +4167,8 @@ function review_discard_file() {
     if (!f) return;
 
     // Show confirmation prompt — discard is destructive and irreversible
-    pendingDiscardFile = f;
     rememberPendingHunkAnchor(null);
-    const action = f.category === 'untracked' ? "Delete" : "Discard changes in";
-    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
-    const suggestions: PromptSuggestion[] = [
-        { text: `${action} file`, description: "Permanently lose changes", value: "discard" },
-        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
-    ];
-    editor.setPromptSuggestions(suggestions);
+    startDiscardFilePrompt(f);
 }
 registerHandler("review_discard_file", review_discard_file);
 
@@ -4080,24 +4204,123 @@ function setReviewConfirmation(text: string): void {
 }
 
 /**
- * Refresh file list and diffs using the new git status approach, then re-render.
+ * An incremental djb2 over a sequence of fields, with a separator mixed in
+ * after each so `["ab","c"]` and `["a","bc"]` don't collide. Values are only
+ * ever compared against other values from the same builder.
  */
-async function refreshMagitData() {
+function makeHasher(): { field(s: string): void; value(): string } {
+    let h = 5381;
+    return {
+        field(s: string): void {
+            for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+            h = ((h * 33) ^ 0x1f) >>> 0;
+        },
+        value(): string { return String(h); },
+    };
+}
+
+/**
+ * A fingerprint of everything the stream draws from: which files are in
+ * which section, and the exact text of every hunk line.
+ *
+ * The auto-refresh poll re-reads git on a timer and has to decide whether
+ * anything actually moved. File paths and `+N / -M` counts are not enough
+ * — an external edit can rewrite a line without changing either — so the
+ * hunk bodies go into the hash as well. A hash rather than the strings
+ * themselves because this is held across ticks for the lifetime of the
+ * session.
+ */
+function worktreeDataSignature(
+    files: FileEntry[],
+    hunks: Hunk[],
+    emptyState: EmptyStateReason,
+): string {
+    const h = makeHasher();
+    h.field(emptyState ?? '');
+    for (const f of files) {
+        h.field(f.path); h.field(f.category); h.field(f.status); h.field(f.origPath ?? '');
+    }
+    for (const hk of hunks) {
+        h.field(hk.id); h.field(hk.file); h.field(hk.gitStatus ?? '');
+        for (const line of hk.lines) h.field(line);
+    }
+    return h.value();
+}
+
+/** Signature of the data the stream currently shows; see `worktreeDataSignature`. */
+let lastDataSignature: string | null = null;
+
+/**
+ * The refresh queue.
+ *
+ * Every refresh re-reads git, then assigns `state.files`/`state.hunks`
+ * wholesale, rebuilds, and consumes the single `pendingHunkAnchor`. Two
+ * overlapping ones therefore interleave badly whichever way round they
+ * start: the one that finishes last repaints from *its* snapshot, so a
+ * poll that began before a stage can put the pre-stage diff back on screen
+ * and record its signature as current, and the first to finish eats the
+ * anchor, dropping the other's cursor at hunk 0.
+ *
+ * A flag that only the poll consulted could not fix that — the poll
+ * yielded to a keystroke, but a keystroke never yielded to an in-flight
+ * poll. So the runs are serialized instead: every caller chains onto the
+ * last, and only one `refreshMagitDataInner` is ever in progress.
+ * `refreshPending` counts callers rather than tracking a single run, so a
+ * refresh finishing cannot clear the flag out from under another that is
+ * still queued behind it.
+ */
+let refreshQueue: Promise<unknown> = Promise.resolve();
+let refreshPending = 0;
+
+/**
+ * Refresh file list and diffs using the new git status approach, then re-render.
+ *
+ * `onlyIfChanged` is for the auto-refresh poll: it still re-reads git (that
+ * is the only way to find out), but leaves the panel — and the reader's
+ * cursor, folds and status line — completely alone when the answer is the
+ * same as last time. Returns whether the display was rebuilt.
+ */
+async function refreshMagitData(opts?: { onlyIfChanged?: boolean }): Promise<boolean> {
+    refreshPending++;
+    const run = refreshQueue.then(
+        () => refreshMagitDataInner(opts),
+        // A predecessor that threw must not cancel the refreshes behind it.
+        () => refreshMagitDataInner(opts),
+    );
+    refreshQueue = run.then(() => undefined, () => undefined);
+    try {
+        return await run;
+    } finally {
+        refreshPending--;
+    }
+}
+
+async function refreshMagitDataInner(opts?: { onlyIfChanged?: boolean }): Promise<boolean> {
+    let files: FileEntry[];
+    let hunks: Hunk[];
+    let emptyState: EmptyStateReason;
+    if (state.mode === 'range' && state.range) {
+        const range = await fetchRangeDiff(state.range);
+        files = range.files;
+        hunks = range.hunks;
+        emptyState = null;
+    } else {
+        const status = await getGitStatus();
+        files = status.files;
+        emptyState = status.emptyReason;
+        hunks = await fetchDiffsForFiles(status.files);
+    }
+    const signature = worktreeDataSignature(files, hunks, emptyState);
+    if (opts?.onlyIfChanged && signature === lastDataSignature) return false;
+    lastDataSignature = signature;
+
     // A rebuild supersedes whatever the last action confirmed: `r` and the
     // watch-driven refreshes should land on the summary, not on a stale
     // "Lines discarded" from several actions ago.
     reviewConfirmation = null;
-    if (state.mode === 'range' && state.range) {
-        const { hunks, files } = await fetchRangeDiff(state.range);
-        state.hunks = hunks;
-        state.files = files;
-        state.emptyState = null;
-    } else {
-        const status = await getGitStatus();
-        state.files = status.files;
-        state.emptyState = status.emptyReason;
-        state.hunks = await fetchDiffsForFiles(status.files);
-    }
+    state.files = files;
+    state.hunks = hunks;
+    state.emptyState = emptyState;
     state.diffCursorRow = 1;
     // The hunks and files under every cached view have just been replaced.
     // A hunk-range signature can miss a file whose content changed without
@@ -4107,6 +4330,7 @@ async function refreshMagitData() {
     updateMagitDisplay();
     restoreCursorAfterRebuild();
     updateReviewStatus();
+    return true;
 }
 
 /**
@@ -4767,9 +4991,11 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
         state.centerComposite = composite;
         state.compositePane = 0;
         editor.setBufferGroupPanelBuffer(state.groupId, "diff", composite.compositeBufId);
-        editor.focusBufferGroupPanel(state.groupId, "diff");
-        if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
-            editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+        if (reviewGroupIsActive()) {
+            editor.focusBufferGroupPanel(state.groupId, "diff");
+            if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
+                editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+            }
         }
         editor.flushLayout();
         return;
@@ -4856,10 +5082,14 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     // createCompositeBuffer registers the composite as the active buffer of
     // the host split; re-focus the group panel so the review group stays the
     // active tab and the sidebar/comments/toolbar remain visible — then hand
-    // focus back to whichever panel the user was actually in.
-    editor.focusBufferGroupPanel(state.groupId, "diff");
-    if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
-        editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+    // focus back to whichever panel the user was actually in. (Which is
+    // also why no refresh the user did not ask for is allowed to reach
+    // here while a composite is up — see the watch handlers.)
+    if (reviewGroupIsActive()) {
+        editor.focusBufferGroupPanel(state.groupId, "diff");
+        if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
+            editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+        }
     }
     if (prev) {
         try {
@@ -4876,6 +5106,30 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
  *  file text buffer (interleaved, syntax-highlighted, inline comment boxes).
  *  Comment-add / staging dispatch on `state.centerComposite` (set iff the
  *  composite is showing). */
+/**
+ * Is the review the thing the user is looking at right now?
+ *
+ * `state.focusPanel` says which of the review's own panels holds the keys
+ * *within* the review; it knows nothing about whether the review's tab is
+ * the active one. Claiming focus for the diff panel while the user is in
+ * another buffer activates the review's tab — which is how a refresh that
+ * fires on every save (the watch is on by default) yanked people out of
+ * the file they had just saved. So before any refresh-driven focus call,
+ * ask the host which buffer is active and only proceed if it is one of
+ * ours.
+ */
+function reviewGroupIsActive(): boolean {
+    const active = editor.getActiveBufferId();
+    for (const id of Object.values(state.panelBuffers)) {
+        if (id === active) return true;
+    }
+    const cc = state.centerComposite;
+    if (cc && (active === cc.compositeBufId || active === cc.oldBufId || active === cc.newBufId)) {
+        return true;
+    }
+    return false;
+}
+
 function renderCenter(): void {
     if (state.groupId === null) return;
     syncFocusMode();
@@ -4893,9 +5147,10 @@ function renderCenter(): void {
         mountStreamContent();
         // Only claim focus when the diff is where focus belongs. Rebuilding
         // the centre happens for reasons that have nothing to do with focus
-        // — a filter keystroke in the sidebar, a comment added — and
-        // stealing it there sends the next keystroke to the wrong panel.
-        if (state.focusPanel === 'diff') {
+        // — a filter keystroke in the sidebar, a comment added, a save in
+        // some other buffer that the watch noticed — and stealing it there
+        // sends the next keystroke to the wrong panel, or to the wrong tab.
+        if (state.focusPanel === 'diff' && reviewGroupIsActive()) {
             editor.focusBufferGroupPanel(state.groupId, "diff");
         }
     }
@@ -5425,7 +5680,7 @@ async function review_help() {
         "                        (both start hidden; ✕ in a header closes it)",
         " View        a          show / hide inline notes",
         "             /          filter files (empty to clear)",
-        "             W          watch: auto-reload when a file is saved",
+        "             W          watch: auto-refresh on changes (on by default)",
         " Review      c          add comment        x   delete comment",
         "             s / u / d  stage / unstage / discard (hunk or file)",
         "             S / U / D  stage / unstage / discard the whole file",
@@ -5713,18 +5968,63 @@ editor.defineMode(REVIEW_FILTER_MODE, [
     ["Tab", "review_filter_accept"],
 ], true, true, false);
 
-// --- Watch / auto-reload (hunk-style `--watch`, opt-in via `W`) ---
-// When enabled, saving any file in the editor re-runs the diff and rebuilds,
-// preserving focus, comments, and folds. Saves are debounced via a
-// generation counter (QuickJS has no setTimeout). This keys off the editor's
-// own `after_file_save` event rather than a filesystem watch, so it tracks
-// edits made in Fresh (the common review-while-editing loop).
-let reviewWatchEnabled = false;
+// --- Watch / auto-refresh (on by default, toggled with `W`) ---
+//
+// A review of the working tree is a view of state nothing in the editor
+// owns: the change under review can come from a save in Fresh, from a
+// `git` command, or from an agent editing files in another terminal
+// (#3126). So the panel watches on two channels, both gated by the same
+// `W` toggle:
+//
+//   * The editor's own `after_file_save` / `after_file_revert` events —
+//     immediate (debounced by a generation counter), free, and covering
+//     the common review-while-editing loop.
+//   * A `git status` poll on a timer, for everything that happens outside
+//     Fresh. There is no cheaper signal: a filesystem watch over the
+//     worktree would have to be recursive over the whole repo and would
+//     still need the same `git` calls to say what changed. The tick only
+//     re-renders when the data actually differs (see `refreshMagitData`'s
+//     `onlyIfChanged`), so the steady-state cost of a quiet repo is the
+//     three `git` invocations a manual `r` would run, once per interval.
+//
+// It starts on, because a stale diff is not a neutral default — it is a
+// panel quietly disagreeing with the repository. `W` turns both channels
+// off for anyone who would rather not pay for the poll.
+let reviewWatchEnabled = true;
 let reviewWatchGen = 0;
 const WATCH_DEBOUNCE_MS = 200;
 
+/** How often an open worktree review re-reads git looking for outside changes. */
+const WATCH_POLL_MS = 2000;
+
+/**
+ * The share of wall-clock time the watch is allowed to spend inside `git`.
+ *
+ * A tick is not a fixed cost. `fetchDiffsForFiles` batches the staged and
+ * unstaged diffs into one process each, but an untracked file gets its own
+ * `git diff --no-index` — and `git status -uall` lists every untracked file
+ * individually, so an un-ignored `node_modules` or `target/` turns one tick
+ * into hundreds of sequential processes. At a fixed period, once a tick
+ * outlasts its interval the next starts the moment it ends and the editor
+ * sits in a permanent spawn loop, with nothing on screen saying why.
+ *
+ * So the next tick is scheduled from the last one's measured duration
+ * rather than from a constant: a tick that took `d` waits at least
+ * `d * WATCH_POLL_DUTY_DIVISOR`. A normal repo (a few milliseconds a tick)
+ * keeps the 2s cadence; a pathological one degrades to refreshing rarely
+ * instead of to occupying the machine.
+ */
+const WATCH_POLL_DUTY_DIVISOR = 4;
+/** Never back off past this, however slow the repo is. */
+const WATCH_POLL_MAX_MS = 60_000;
+
+let watchPollTimer: number | null = null;
+/** A tick can outlast its period on a big repo; ticks are not queued. */
+let watchPollInFlight = false;
+
 function review_toggle_watch() {
     reviewWatchEnabled = !reviewWatchEnabled;
+    if (reviewWatchEnabled) startWatchPoll(); else stopWatchPoll();
     editor.setStatus(
         reviewWatchEnabled
             ? (editor.t("status.watch_on") || "Watching for changes")
@@ -5733,9 +6033,100 @@ function review_toggle_watch() {
 }
 registerHandler("review_toggle_watch", review_toggle_watch);
 
+/**
+ * One poll tick: re-read git, and rebuild only if what came back differs
+ * from what the panel is showing.
+ *
+ * Skipped while the reader is in the middle of something a rebuild would
+ * yank out from under them — a line selection, the filter field, or the
+ * discard confirmation.
+ */
+async function review_watch_poll(): Promise<void> {
+    watchPollTimer = null;
+    // Whatever this tick decides to do — including deciding to do nothing —
+    // it owes the next one a slot, or the watch stops for good.
+    const startedAt = Date.now();
+    const rearm = (): void => {
+        if (!reviewWatchEnabled || state.groupId === null || state.mode === 'range') return;
+        const spent = Math.max(0, Date.now() - startedAt);
+        scheduleWatchPoll(Math.min(
+            WATCH_POLL_MAX_MS,
+            Math.max(WATCH_POLL_MS, spent * WATCH_POLL_DUTY_DIVISOR),
+        ));
+    };
+    try {
+        await review_watch_tick();
+    } finally {
+        rearm();
+    }
+}
+registerHandler("review_watch_poll", review_watch_poll);
+
+async function review_watch_tick(): Promise<void> {
+    if (!reviewWatchEnabled || state.groupId === null) return;
+    // Range reviews are ref-to-ref; the working tree doesn't affect them.
+    if (state.mode === 'range') return;
+    if (watchPollInFlight || refreshPending > 0) return;
+    // Anything the reader is in the middle of that a rebuild would yank out
+    // from under them: a line selection, the filter field, an open comment,
+    // or the discard confirmation.
+    if (state.lineSelection !== null || filterEditing
+        || pendingDiscardFile !== null || pendingCommentInfo !== null) return;
+    // A composite is the strongest form of "in the middle of something".
+    // A rebuild bumps `dataRevision`, which `compositeSignature` embeds, so
+    // the composite cannot be reused: it is torn down and rebuilt from two
+    // `git show` calls and dropped back at its first hunk — losing the
+    // reader's place in a file that a change elsewhere never touched.
+    // `review_relayout_diff` already refuses to run here for this reason;
+    // a tick nobody asked for has even less claim. The next refresh the
+    // reader *does* ask for (`r`, a stage, leaving the composite) picks the
+    // change up.
+    if (state.centerComposite !== null) return;
+    watchPollInFlight = true;
+    try {
+        // Keep the reader where they were: the rebuild's cursor restore
+        // uses this anchor, so an external change three files away does
+        // not scroll the panel back to the top.
+        //
+        // Only when there *is* a hunk under the cursor. An anchor with no
+        // hunk id and no section — which is what every header, summary and
+        // filler row produces — falls through `restoreCursorAfterRebuild`
+        // to `jumpToGlobalHunk(0)`, so parking on a file header and letting
+        // an agent touch any file would scroll the reader to the top of the
+        // review. No anchor means no jump.
+        const atCursor = getHunkAtDiffCursor();
+        if (atCursor) rememberPendingHunkAnchor(atCursor.id);
+        const rebuilt = await refreshMagitData({ onlyIfChanged: true });
+        if (!rebuilt) pendingHunkAnchor = null;
+    } finally {
+        watchPollInFlight = false;
+    }
+}
+
+function startWatchPoll(): void {
+    if (watchPollTimer !== null || !reviewWatchEnabled) return;
+    if (state.groupId === null || state.mode === 'range') return;
+    scheduleWatchPoll(WATCH_POLL_MS);
+}
+
+/** Arm the next tick. One-shot, re-armed by the tick itself, so the delay
+ *  can answer to what the last one cost. */
+function scheduleWatchPoll(delayMs: number): void {
+    if (watchPollTimer !== null) editor.clearInterval(watchPollTimer);
+    watchPollTimer = editor.setTimeout(delayMs, "review_watch_poll");
+}
+
+function stopWatchPoll(): void {
+    if (watchPollTimer === null) return;
+    editor.clearInterval(watchPollTimer);
+    watchPollTimer = null;
+}
+
 // A save and an external reset (auto-revert reload, e.g. `git checkout
 // <ref> -- <file>` in another terminal) both change the working tree the
-// review diffs against, so they share one refresh handler.
+// review diffs against, so they share one refresh handler. This is the
+// low-latency channel; the poll above is the one that catches everything
+// that never passes through the editor at all.
 for (const event of ["after_file_save", "after_file_revert"] as const) {
     editor.on(event, () => {
         if (!reviewWatchEnabled || state.groupId === null) return true;
@@ -5746,7 +6137,12 @@ for (const event of ["after_file_save", "after_file_revert"] as const) {
             // Superseded by a later change, or the review closed / watch
             // turned off while we waited.
             if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
-            void refreshMagitData();
+            // A composite is rebuilt from scratch by a refresh, and the host
+            // makes the new one the active buffer — so a save in another
+            // tab would land the user back in the review. Same stand-down
+            // as the poll; `r` or leaving the composite picks the change up.
+            if (state.centerComposite !== null) return;
+            void refreshMagitData({ onlyIfChanged: true });
         });
         return true;
     });
@@ -6502,14 +6898,20 @@ editor.on("prompt_confirmed", async (args) => {
     if (response === "discard" || args.selected_index === 0) {
         const f = pendingDiscardFile;
         if (f) {
-            const cwd = gitCwd();
-            if (f.category === 'untracked') {
-                await editor.spawnProcess("rm", ["--", f.path], cwd);
-            } else {
-                await editor.spawnProcess("git", ["checkout", "--", f.path], cwd);
-            }
+            const outcome = await discardFileToHead(f);
             await refreshMagitData();
-            editor.setStatus(`Discarded: ${f.path}`);
+            // Report what git actually did. A failed discard says so —
+            // and says why — instead of the blanket "Discarded" that
+            // used to follow a no-op (#2318).
+            if (outcome.ok) {
+                setReviewConfirmation(
+                    tr("status.file_discarded", { file: f.path }) ?? `Discarded: ${f.path}`,
+                );
+            } else {
+                const failed = tr("status.discard_failed", { file: f.path })
+                    ?? `Discard failed: ${f.path}`;
+                setReviewConfirmation(outcome.detail ? `${failed} — ${outcome.detail}` : failed);
+            }
         }
     } else {
         editor.setStatus("Discard cancelled");
@@ -6573,6 +6975,15 @@ editor.on("prompt_cancelled", (args) => {
         pendingCommentInfo = null;
         editingCommentId = null;
         editor.setStatus(editor.t("status.comment_cancelled"));
+    }
+    // Escape on the discard dialog has to clear the pending file too. The
+    // auto-refresh poll stands down while it is set (a rebuild would move
+    // the ground under an open confirmation), so leaving it set after a
+    // cancel silently stops the panel following the working tree for the
+    // rest of the session — the #3126 symptom, reintroduced.
+    if (args.prompt_type === "review-discard-confirm") {
+        pendingDiscardFile = null;
+        editor.setStatus("Discard cancelled");
     }
     return true;
 });
@@ -6769,6 +7180,16 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
     commentsPanel = state.panelBuffers["comments"] !== undefined
         ? new WidgetPanel(state.panelBuffers["comments"]) : null;
 
+    // Both of these describe the data the caller fetched, and both have to
+    // be in place *before* the first render:
+    //   - the signature, or the first watch tick reads "no signature yet",
+    //     takes that for a change, and rebuilds a panel nobody touched;
+    //   - the revision, because per-session memos key off it, so a reopened
+    //     review must not read the previous session's entry for the same
+    //     file.
+    lastDataSignature = worktreeDataSignature(state.files, state.hunks, state.emptyState);
+    state.dataRevision++;
+
     // The group is created with every panel in its layout; the two side
     // panels are then hidden (the session default) before anything is
     // drawn, so the diff opens at full width without a visible reflow.
@@ -6780,6 +7201,9 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
 
     editor.on("resize", onReviewDiffResize);
     updateReviewStatus();
+    // Worktree reviews watch git for changes made outside the editor
+    // (#3126); range reviews are ref-to-ref and have nothing to watch.
+    startWatchPoll();
     editor.on("buffer_activated", on_review_buffer_activated);
     editor.on("buffer_closed", on_review_buffer_closed);
     editor.on("cursor_moved", on_review_cursor_moved);
@@ -6827,6 +7251,20 @@ function pruneOrphanComments(comments: ReviewComment[], hunks: Hunk[]): ReviewCo
 }
 
 async function start_review_diff() {
+    // Already reviewing the working tree: refresh that panel and focus it.
+    // Opening a second one left the first orphaned — the plugin tracks a
+    // single session, so the old group's tab stayed in the tab bar with
+    // nothing driving it, and repeating the command piled up
+    // `*Review Diff* 1`, `*Review Diff* 2`, … (#3126).
+    if (state.groupId !== null && state.mode === 'worktree') {
+        editor.focusBufferGroupPanel(state.groupId, 'diff');
+        review_refresh();
+        return;
+    }
+    // A *different* review (a range or a stash) is open: that session ends
+    // here rather than leaking, for the same one-session-at-a-time reason.
+    if (state.groupId !== null) stop_review_diff();
+
     editor.setStatus(editor.t("status.generating"));
 
     // Resolve the repo *before* any git call: getGitStatus/fetchDiffsForFiles
@@ -6871,7 +7309,9 @@ function stop_review_diff() {
         state.panelBuffers = {};
     }
     state.reviewBufferId = null;
-    reviewWatchEnabled = false;
+    stopWatchPoll();
+    reviewWatchEnabled = true;
+    lastDataSignature = null;
     editor.setContext("review-mode", false);
     editor.off("resize", onReviewDiffResize);
     editor.off("buffer_activated", on_review_buffer_activated);
@@ -7054,6 +7494,11 @@ async function bootstrapRangeReview(range: ReviewRange): Promise<void> {
         );
         return;
     }
+    // One review session at a time — see `start_review_diff`. Done after
+    // the empty-range check above so a typo'd range doesn't close the
+    // review the user is in the middle of.
+    if (state.groupId !== null) stop_review_diff();
+
     state.mode = 'range';
     state.range = range;
     state.hunks = hunks;
