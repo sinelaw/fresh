@@ -6,6 +6,41 @@
 
 use std::path::{Component, Path, PathBuf};
 
+/// Exact counts for the editor-thread cost of explorer path admission.
+///
+/// `normalize_explorer_plugin_path` exists so ordinary already-canonical
+/// paths never touch the filesystem: a plugin sending 25 000 decorations
+/// pays one lexical prefix check each, not 25 000 canonicalizations. A
+/// duration cannot pin that in CI — it moves with the machine, the build
+/// profile and the runner's load — but whether the canonical fallback ran
+/// is exact, so a test can assert the shape directly (see the `stats`
+/// tests below, the same doctrine as `PerfCounters`).
+///
+/// Thread-local, because the editor dispatches plugin commands on one
+/// thread and tests run one editor per thread. Counted only with debug
+/// assertions on; the release build pays nothing.
+pub(crate) mod stats {
+    #[cfg(debug_assertions)]
+    use std::cell::Cell;
+
+    #[cfg(debug_assertions)]
+    thread_local! {
+        static CANONICAL_FALLBACKS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    pub(crate) fn note_canonical_fallback() {
+        #[cfg(debug_assertions)]
+        CANONICAL_FALLBACKS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// The canonical fallbacks since the last call, which resets the count.
+    #[cfg(all(test, debug_assertions))]
+    pub(crate) fn take_canonical_fallbacks() -> u64 {
+        CANONICAL_FALLBACKS.with(|c| c.replace(0))
+    }
+}
+
 /// Normalize a plugin-supplied explorer path so it matches the native paths
 /// stored on file-tree nodes.
 ///
@@ -18,6 +53,7 @@ pub(crate) fn normalize_explorer_plugin_path(path: &Path, root: &Path) -> PathBu
     if path.starts_with(root) {
         return path;
     }
+    stats::note_canonical_fallback();
     let root_key = explorer_path_key(root);
 
     for candidate in explorer_path_candidates(&path) {
@@ -168,5 +204,42 @@ mod tests {
     fn normalize_path_resolves_dot_segments() {
         let path = Path::new("/foo/./bar/../baz");
         assert_eq!(normalize_path(path), PathBuf::from("/foo/baz"));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn in_root_paths_skip_the_canonical_fallback() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+
+        stats::take_canonical_fallbacks();
+        for i in 0..25_000 {
+            let path = normalize_explorer_plugin_path(&src.join(format!("gen_{i}.rs")), &root);
+            assert!(path.starts_with(&root));
+        }
+        assert_eq!(
+            stats::take_canonical_fallbacks(),
+            0,
+            "already-canonical paths paid the canonical fallback: the lexical \
+             fast path regressed, so a plugin decoration batch costs a \
+             filesystem canonicalization per path again"
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn off_root_and_alias_paths_still_use_the_fallback() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let outside = temp.path().join("elsewhere").join("a.rs");
+
+        stats::take_canonical_fallbacks();
+        normalize_explorer_plugin_path(&outside, &root);
+        assert!(
+            stats::take_canonical_fallbacks() > 0,
+            "a path outside the root must keep the canonical fallback available"
+        );
     }
 }

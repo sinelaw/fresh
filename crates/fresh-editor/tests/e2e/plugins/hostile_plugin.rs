@@ -118,7 +118,12 @@ if (dash) {
     )
     .expect("harness");
     harness.editor_mut().fire_ready_hook();
-    let started = Instant::now();
+    // A full decoration batch through the command handler, exercising the
+    // fast-path admission + cache rebuild the fix owns. Not timed here: a
+    // single-shot duration assert is what CI load moves (the batch's own
+    // unit test in `app/path_utils.rs` pins the shape with an exact
+    // fallback counter instead), and the median loop below is where this
+    // test judges responsiveness.
     let modified = fresh_core::file_explorer::FileExplorerDecoration {
         path: root.join("src/gen_0.rs"),
         symbol: "M".to_string(),
@@ -134,7 +139,6 @@ if (dash) {
             decorations: vec![modified; 25_000],
         })
         .unwrap();
-    assert!(started.elapsed() < Duration::from_millis(500));
 
     // Dashboard open with the hostile sections registered and painting.
     harness
