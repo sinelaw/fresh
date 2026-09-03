@@ -143,22 +143,13 @@ fn handle_main_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keybind
             KeybindingEditorAction::Consumed
         }
 
-        // Delete binding
+        // Delete binding: gone, the key falls through to whatever else binds it
         (KeyCode::Char('d'), KeyModifiers::NONE) | (KeyCode::Delete, _) => {
-            match editor.delete_selected() {
-                DeleteResult::CustomRemoved => KeybindingEditorAction::StatusMessage(
-                    t!("keybinding_editor.status_binding_removed").to_string(),
-                ),
-                DeleteResult::KeymapOverridden => KeybindingEditorAction::StatusMessage(
-                    t!("keybinding_editor.status_keymap_overridden").to_string(),
-                ),
-                DeleteResult::CannotDelete | DeleteResult::NothingSelected => {
-                    KeybindingEditorAction::StatusMessage(
-                        t!("keybinding_editor.status_cannot_delete").to_string(),
-                    )
-                }
-            }
+            delete_status(editor.delete_selected())
         }
+
+        // Disable binding: a noop override, the key does nothing in that context
+        (KeyCode::Char('x'), KeyModifiers::NONE) => delete_status(editor.disable_selected()),
 
         // Context filter
         (KeyCode::Char('c'), KeyModifiers::NONE) => {
@@ -237,6 +228,19 @@ fn handle_search_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keybi
             }
         },
     }
+}
+
+/// The status line for a delete or disable outcome.
+fn delete_status(result: DeleteResult) -> KeybindingEditorAction {
+    let key = match result {
+        DeleteResult::CustomRemoved => "keybinding_editor.status_binding_removed",
+        DeleteResult::KeymapRemoved => "keybinding_editor.status_keymap_removed",
+        DeleteResult::Disabled => "keybinding_editor.status_keymap_overridden",
+        DeleteResult::CannotDelete | DeleteResult::NothingSelected => {
+            "keybinding_editor.status_cannot_delete"
+        }
+    };
+    KeybindingEditorAction::StatusMessage(t!(key).to_string())
 }
 
 fn handle_edit_dialog_input(

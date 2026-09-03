@@ -7,7 +7,7 @@ pub mod async_bridge;
 pub mod authority;
 pub mod clipboard;
 pub mod completion;
-pub mod counters;
+pub use fresh_editor_core::counters;
 pub mod editorconfig;
 pub mod env_provider;
 pub mod file_watcher;
@@ -17,12 +17,14 @@ pub mod gpm;
 /// Outbound HTTP(S); the only place `ureq`/TLS is used (gated by `http`).
 pub mod http;
 pub mod live_grep_state;
-pub mod log_dirs;
+pub use fresh_editor_core::log_dirs;
 pub mod lsp;
-pub mod packages;
+pub use fresh_editor_core::packages;
 pub mod plugins;
-pub mod process_hidden;
-pub mod process_limits;
+pub use fresh_editor_core::process_hidden;
+// Lives in `fresh-editor-core`: the impl blocks hang off `types::ProcessLimits`,
+// which is defined down there.
+pub use fresh_editor_core::process_limits;
 pub mod recovery;
 pub mod release_checker;
 pub mod remote;

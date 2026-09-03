@@ -218,6 +218,35 @@ The macOS keymap disables Alt+0-9 bindings because these key combinations are us
 
 If you find that certain Alt combinations insert characters instead of triggering editor commands, ensure your terminal's Option key is configured as Meta (see above).
 
+## Chord (Multi-Key) Bindings
+
+A binding can be a *sequence* of key presses instead of a single combination — the emacs keymap's `C-x C-s` for save, or `M-g g` for go-to-line. In `config.json`, a chord uses `keys` (an array of key presses) in place of `key`/`modifiers`:
+
+```json
+{
+  "keybindings": [
+    {
+      "keys": [
+        { "key": "x", "modifiers": ["ctrl"] },
+        { "key": "l", "modifiers": [] }
+      ],
+      "action": "goto_line",
+      "when": "normal"
+    }
+  ]
+}
+```
+
+Each entry in `keys` takes the same `key` and `modifiers` as a single-key binding. After the first key is pressed the editor waits for the rest of the sequence; a key that doesn't continue any chord ends it.
+
+A few rules worth knowing:
+
+- **Your bindings win.** A single-key binding you add outranks any *built-in* chord that starts with the same key, so binding `Alt+G` on the emacs keymap fires even though the keymap has `Alt+G G`. Only a chord you wrote yourself keeps its prefix over your own single-key binding.
+- **Removing a chord frees its first key.** Delete (`d`) a keymap chord in the keybinding editor — or write `"action": "unbind"` with the same `keys` in `config.json` — and once no live chord starts with that key, it is free to bind on its own.
+- **The keybinding editor lists, edits, deletes and disables chords, but can't record a new one yet** — its key field captures a single combination, so write new chords in `config.json` by hand. Recording sequences in the editor is tracked in [#3173](https://github.com/sinelaw/fresh/issues/3173).
+
+See the [keybinding editor](../features/keybinding-editor.md) page for the full binding format, contexts, and the difference between removing and disabling a binding.
+
 ## Debugging Keyboard Issues
 
 If keybindings aren't working as expected, use **Help → Debug Keyboard Events** to see exactly what your terminal sends. See [Troubleshooting: Debug Keyboard Events](/troubleshooting#debug-keyboard-events) for details.

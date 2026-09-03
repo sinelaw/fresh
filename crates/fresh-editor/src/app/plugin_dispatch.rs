@@ -718,6 +718,13 @@ impl Editor {
             PluginCommand::SetSplitScroll { split_id, top_byte } => {
                 self.handle_set_split_scroll(split_id, top_byte);
             }
+            PluginCommand::ScrollToWidget {
+                buffer_id,
+                key,
+                align,
+            } => {
+                self.handle_scroll_to_widget(buffer_id, &key, align);
+            }
             PluginCommand::RequestHighlights {
                 buffer_id,
                 range,
@@ -1352,6 +1359,8 @@ impl Editor {
                 show_cursors,
                 editing_disabled,
                 hidden_from_tabs,
+                background,
+                highlight_current_line,
                 initial_cursor_line,
                 indentation_guide,
                 request_id,
@@ -1365,6 +1374,8 @@ impl Editor {
                     show_cursors,
                     editing_disabled,
                     hidden_from_tabs,
+                    background,
+                    highlight_current_line,
                     initial_cursor_line,
                     indentation_guide,
                     request_id,
@@ -1914,9 +1925,10 @@ impl Editor {
                 panel_id,
                 buffer_id,
                 spec,
+                options,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
-                self.handle_mount_widget_panel(key, buffer_id, spec);
+                self.handle_mount_widget_panel(key, buffer_id, spec, options);
             }
 
             PluginCommand::UpdateWidgetPanel {
@@ -1975,6 +1987,19 @@ impl Editor {
                     closable,
                     start_blurred,
                 );
+            }
+
+            PluginCommand::MountSidebarSection {
+                plugin,
+                panel_id,
+                spec,
+                title,
+                rows,
+                closable,
+                start_blurred,
+            } => {
+                let key = crate::widgets::PanelKey::new(plugin, panel_id);
+                self.handle_mount_sidebar_section(key, spec, title, rows, closable, start_blurred);
             }
 
             PluginCommand::UpdateFloatingWidget {
@@ -3555,6 +3580,8 @@ impl Editor {
         show_cursors: bool,
         editing_disabled: bool,
         hidden_from_tabs: bool,
+        background: bool,
+        highlight_current_line: Option<bool>,
         initial_cursor_line: Option<u32>,
         indentation_guide: Option<bool>,
         request_id: Option<u64>,
@@ -3603,7 +3630,16 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .get_mut(&active_split)
             {
-                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+                let bs = view_state.ensure_buffer_state(buffer_id);
+                bs.show_line_numbers = show_line_numbers;
+                // Both the live value and the override: the live one is
+                // what this frame paints, the override is what survives
+                // `apply_config_defaults` re-resolving the view against the
+                // editor setting on the next config change.
+                if let Some(lit) = highlight_current_line {
+                    bs.highlight_current_line = lit;
+                    bs.highlight_current_line_override = Some(lit);
+                }
             }
         } else if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             meta.hidden_from_tabs = true;
@@ -3614,8 +3650,12 @@ impl Editor {
             Ok(()) => {
                 tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
                 // Switch to the new buffer to display it — but only when it's
-                // attached (a detached hidden buffer must not steal the view).
-                if !hidden_from_tabs {
+                // attached (a detached hidden buffer must not steal the view)
+                // and the caller did not ask for a background tab. A
+                // `background` buffer is already in the tab bar by now:
+                // `create_virtual_buffer` adds it and seeds its view state,
+                // and only this line makes it the one on screen.
+                if !hidden_from_tabs && !background {
                     self.set_active_buffer(buffer_id);
                     tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
                 }
@@ -4512,6 +4552,10 @@ impl Editor {
         };
         match result {
             Ok((terminal_id, buffer_id, created_split_id)) => {
+                // The spawn may have split the target's grid, and the window
+                // sized its PTYs before the new pane was placed; place the
+                // panes as the grid is now and size them again.
+                self.resize_window_terminals(target_id);
                 if is_active_target {
                     let new_active = self.active_window().active_buffer();
                     if prev_active != Some(new_active) {
@@ -5135,6 +5179,7 @@ impl Editor {
         panel_key: crate::widgets::PanelKey,
         buffer_id: BufferId,
         spec: fresh_core::api::WidgetSpec,
+        options: fresh_core::api::WidgetPanelOptions,
     ) {
         // Mount = clean slate. Instance state and focus key reset
         // so a plugin that re-mounts (e.g. reopening a panel with
@@ -5154,6 +5199,7 @@ impl Editor {
             &prev_focus,
             panel_width,
             avail_height,
+            options.auto_focus_first(),
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
         // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
@@ -5176,6 +5222,7 @@ impl Editor {
             out.tabbable,
             out.painted,
             out.boxes,
+            options.auto_focus_first(),
         );
         // Mark the buffer as hosting an interactive widget panel so the
         // focus/click paths keep routing focus to it even when it opts out
@@ -5238,6 +5285,14 @@ impl Editor {
             .unwrap_or(BufferId(0));
         let panel_width = self.widget_panel_width(buffer_id_for_width);
         let avail_height = self.widget_panel_height(buffer_id_for_width);
+        // The policy the mount set, not a fresh default: a repaint that
+        // resolved focus differently from the mount is exactly the drift
+        // `auto_focus_first` exists to prevent.
+        let auto_focus_first = self
+            .widget_registry
+            .get(panel_key)
+            .map(|p| p.auto_focus_first)
+            .unwrap_or(true);
         let out = self.render_panel_spec(
             &spec,
             &prev,
@@ -5245,6 +5300,7 @@ impl Editor {
             &prev_focus,
             panel_width,
             avail_height,
+            auto_focus_first,
         );
         self.record_widget_panel_render_height(panel_key, avail_height);
         let entries = out.entries;
@@ -5641,12 +5697,20 @@ impl Editor {
         } else {
             super::PanelPlacement::Centered
         };
-        if let Some(existing) = self.panel_opt_mut(slot).take() {
+        if let Some(existing) = self.panel_opt_mut(slot).and_then(|o| o.take()) {
             if existing.panel_key != panel_key {
                 let _ = self.widget_registry.unmount(&existing.panel_key);
             }
         }
-        *self.panel_opt_mut(slot) = Some(FloatingWidgetState {
+        // The same identity mounted as a sidebar section moves here: a
+        // panel is in one slot at a time.
+        if let Some(crate::app::PanelSlot::Sidebar(i)) = self.slot_of_panel(&panel_key) {
+            self.take_panel_from_sidebar(i);
+        }
+        let Some(target) = self.panel_opt_mut(slot) else {
+            return;
+        };
+        *target = Some(FloatingWidgetState {
             panel_key: panel_key.clone(),
             width_pct,
             height_pct,
@@ -5692,6 +5756,9 @@ impl Editor {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
                 }),
+                // Floating and dock slots keep the historical seeding;
+                // only a panel that declared otherwise at mount opts out.
+                true,
             )
         };
         let entries = out.entries;
@@ -5705,6 +5772,11 @@ impl Editor {
             out.tabbable,
             out.painted,
             out.boxes,
+            // Floating and dock panels render through
+            // `render_floating_spec`, which seeds focus unconditionally;
+            // record what they actually rendered under rather than a
+            // policy they do not read.
+            true,
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
@@ -5723,6 +5795,104 @@ impl Editor {
         if as_dock {
             self.relayout();
         }
+    }
+
+    /// `MountSidebarSection`: the dock mount with a different placement.
+    ///
+    /// The panel state is the same `FloatingWidgetState`; what differs is
+    /// where it lives (`Editor::sidebar_sections`, see `app::sidebar`) and
+    /// the sentinel buffer its registry entry names (`PanelSlot::Sidebar`).
+    fn handle_mount_sidebar_section(
+        &mut self,
+        panel_key: crate::widgets::PanelKey,
+        spec: fresh_core::api::WidgetSpec,
+        title: String,
+        rows: u16,
+        closable: bool,
+        start_blurred: bool,
+    ) {
+        // One slot per identity: a dock or centred panel with this key
+        // moves into the section.
+        let existing = match self.slot_of_panel(&panel_key) {
+            Some(super::PanelSlot::Sidebar(i)) => self.take_panel_from_sidebar(i),
+            Some(slot) => self.panel_opt_mut(slot).and_then(|o| o.take()),
+            None => None,
+        };
+        let panel = existing.unwrap_or_else(|| FloatingWidgetState {
+            panel_key: panel_key.clone(),
+            width_pct: 100,
+            height_pct: 100,
+            placement: super::PanelPlacement::SidebarSection { rows },
+            focused: false,
+            entries: Vec::new(),
+            last_inner_rect: None,
+            scrollbar_zone_hovered: false,
+            scrollbar_flash_until: None,
+            fullscreen: false,
+            focus_marker: false,
+            title: None,
+            closable: false,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+        });
+        let index = self.place_panel_in_sidebar(panel, title, rows, closable);
+        let slot = super::PanelSlot::Sidebar(index);
+        if let Some(p) = self.panel_mut(slot) {
+            p.focused = false;
+        }
+        let prev = std::collections::HashMap::new();
+        let prev_painted = std::collections::HashMap::new();
+        let prev_focus = String::new();
+        let panel_width = self.floating_panel_inner_width(slot);
+        let out = {
+            let theme_guard = self.theme.read().unwrap();
+            super::widget_runtime::render_floating_spec(
+                false,
+                &spec,
+                &prev,
+                &prev_painted,
+                &prev_focus,
+                panel_width,
+                self.floating_panel_inner_height(slot),
+                "",
+                "",
+                "",
+                Some(crate::widgets::MarkdownCtx {
+                    theme: &theme_guard,
+                    grammars: Some(self.grammar_registry.as_ref()),
+                }),
+                // As the dock: keep the historical focus seeding.
+                true,
+            )
+        };
+        let entries = out.entries;
+        self.widget_registry.mount(
+            panel_key.clone(),
+            slot.buffer_id(),
+            spec,
+            out.hits,
+            out.instance_states,
+            out.focus_key,
+            out.tabbable,
+            out.painted,
+            out.boxes,
+            // As the dock: `render_floating_spec` seeds focus
+            // unconditionally, so record what was rendered under.
+            true,
+        );
+        if let Some(fwp) = self.panel_mut(slot) {
+            fwp.entries = entries;
+        }
+        if !start_blurred {
+            self.focus_sidebar_section(index);
+        }
+        tracing::debug!(
+            "Mounted sidebar section {} for panel {} ({} rows)",
+            index,
+            panel_key,
+            rows
+        );
     }
 
     fn handle_update_floating_widget(
@@ -5785,6 +5955,9 @@ impl Editor {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
                 }),
+                // Floating and dock slots keep the historical seeding;
+                // only a panel that declared otherwise at mount opts out.
+                true,
             )
         };
         let entries = out.entries;
@@ -5821,7 +5994,13 @@ impl Editor {
             );
             return;
         };
-        *self.panel_opt_mut(slot) = None;
+        // A section goes with its panel: an unmount removes the section,
+        // header and all, rather than leaving a placeholder.
+        if let super::PanelSlot::Sidebar(i) = slot {
+            self.take_panel_from_sidebar(i);
+        } else if let Some(o) = self.panel_opt_mut(slot) {
+            *o = None;
+        }
         let _ = self.widget_registry.unmount(panel_key);
         // Hiding the left dock frees its full-height column. The next
         // frame's `compute_dock_split` already lays the chrome back out
@@ -5873,6 +6052,77 @@ impl Editor {
             self.blur_floating_panel(slot);
             return;
         }
+        // **The ops that move a panel between slots**, resolved before the
+        // in-place ones below: a section is a different slot, so "sidebar"
+        // on a dock or centred panel and "dock" / "center" on a section each
+        // change which `Option` holds the state.
+        let slot = match (op, slot) {
+            ("sidebar", super::PanelSlot::Sidebar(_)) => slot,
+            ("sidebar", from) => {
+                let Some(panel) = self.panel_opt_mut(from).and_then(|o| o.take()) else {
+                    return;
+                };
+                let title = panel
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| panel.panel_key.plugin.clone());
+                let closable = panel.closable;
+                let index =
+                    self.place_panel_in_sidebar(panel, title, arg.max(0.0) as u16, closable);
+                if from == super::PanelSlot::Dock {
+                    self.request_full_redraw();
+                }
+                self.relayout();
+                self.focus_sidebar_section(index);
+                return;
+            }
+            // A section's keyboard has invariants the raw flag does not keep
+            // — the explorer's context and every other section give it up
+            // first, so exactly one chrome region wears the accent (§4.1) —
+            // and `focus_sidebar_section` is where they live. It also fires
+            // the `focus` widget_event the plugin tracks its focus by, which
+            // a bare `focused = true` never would.
+            ("focus", super::PanelSlot::Sidebar(i)) => {
+                self.focus_sidebar_section(i);
+                return;
+            }
+            ("sidebar_rows", super::PanelSlot::Sidebar(i)) => {
+                if let Some(sec) = self.sidebar_sections.get_mut(i) {
+                    let rows = arg.max(0.0) as u16;
+                    if let Some(p) = sec.panel.as_mut() {
+                        p.placement = super::PanelPlacement::SidebarSection { rows };
+                    }
+                    // The user's drag wins over the plugin's request — the
+                    // dock's `dock_width` rule.
+                    if !sec.dragged {
+                        sec.rows = rows;
+                    }
+                }
+                return;
+            }
+            ("sidebar_rows", _) => return,
+            ("dock" | "center", super::PanelSlot::Sidebar(i)) => {
+                let Some(panel) = self.take_panel_from_sidebar(i) else {
+                    return;
+                };
+                let to = if op == "dock" {
+                    super::PanelSlot::Dock
+                } else {
+                    super::PanelSlot::Floating
+                };
+                if let Some(existing) = self.panel_opt_mut(to).and_then(|o| o.take()) {
+                    let _ = self.widget_registry.unmount(&existing.panel_key);
+                }
+                if let Some(st) = self.widget_registry.get_mut(&panel.panel_key) {
+                    st.buffer_id = to.buffer_id();
+                }
+                if let Some(o) = self.panel_opt_mut(to) {
+                    *o = Some(panel);
+                }
+                to
+            }
+            _ => slot,
+        };
         // Clamp the dock width relative to the terminal so it can never
         // swallow the whole chrome. Read before the &mut borrow below.
         // A user-dragged width (`dock_width`) overrides the plugin's
@@ -6656,7 +6906,10 @@ impl Window {
         // Captured before the closure borrows `self`: the panes' rects are
         // derived from the same area the renderer lays out into, so the
         // geometry a plugin reads matches the cells actually drawn.
-        let content_area = self.editor_content_area();
+        // The panes as the last layout placed them, in the tree's order. The
+        // layout funnel refreshes them before this runs on a split, a
+        // resize or a chrome toggle (`relayout` refreshes the snapshot).
+        let laid_out = self.visible_panes();
         self.buffers
             .with_all_mut(|buffers_mut, mgr, vs_map| {
                 if let Some(active_vs) = vs_map.get(&active_split_id) {
@@ -6747,8 +7000,7 @@ impl Window {
                 // instead of guessing from an iteration order that used to be
                 // a HashMap's.
                 snapshot.splits.clear();
-                let laid_out = mgr.get_visible_buffers(content_area);
-                for (leaf_id, _buf, rect) in laid_out {
+                for (leaf_id, _buf, rect) in laid_out.iter().copied() {
                     let Some(vs) = vs_map.get(&leaf_id) else {
                         continue;
                     };

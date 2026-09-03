@@ -10,9 +10,7 @@
 //! These pass with the #2056 fix in place. Plugins are OFF to keep the
 //! core path isolated.
 
-mod common;
-
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use fresh_core::WindowId;
@@ -119,7 +117,7 @@ fn launch_in_project_roots_rendered_ui_at_project() {
     let mut h = EditorTestHarness::create(
         100,
         40,
-        common::harness::HarnessOptions::new()
+        crate::common::harness::HarnessOptions::new()
             .with_working_dir(project.clone())
             .with_shared_dir_context(dir_context)
             .with_config(config)

@@ -682,6 +682,7 @@ impl Editor {
                 ui.set_store(shell_store);
                 ui
             }),
+            pending_panel_tree_focus: None,
             shell_pointer_event: None,
             shell_key_event: None,
             shell_interior_took_key: None,
@@ -714,6 +715,8 @@ impl Editor {
             dock: None,
             dock_width: None,
             dock_resizing: false,
+            sidebar_sections: vec![sidebar::SidebarSection::explorer()],
+            sidebar_drag: None,
             widget_text_drag: None,
             split_widget_scrollbar_tracks: Vec::new(),
             split_widget_scrollbar_mouse: Default::default(),
@@ -1564,6 +1567,12 @@ impl Editor {
             .copied()
             .filter(|id| *id != editor.active_window)
             .collect();
+
+        // Where the panes are, before anything asks: a terminal opened before
+        // the first frame is sized to its pane, and the snapshot below
+        // carries the panes' rects. One `layout_only` of the frame, the
+        // same pass the layout funnel runs.
+        editor.refresh_pane_rects();
 
         #[cfg(feature = "plugins")]
         {

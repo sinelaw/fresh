@@ -8,8 +8,6 @@
 // - Multiple scattered edits
 // - Empty files and edge cases
 
-mod common;
-
 use fresh::model::buffer::TextBuffer;
 use fresh::model::filesystem::StdFileSystem;
 use proptest::prelude::*;

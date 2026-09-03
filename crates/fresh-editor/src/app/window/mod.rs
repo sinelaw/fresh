@@ -302,6 +302,17 @@ pub struct Window {
     /// than the workspace on it.
     pub stable_id: String,
 
+    /// Whether this window ever adopted an on-disk workspace snapshot.
+    ///
+    /// Set by `apply_workspace_layout`, which is the one door every
+    /// restore path goes through. It answers the single question the
+    /// issue-#2027 save guard could not: an all-virtual snapshot from a
+    /// window that *did* restore is the user having closed everything
+    /// and must be written; the same snapshot from a window that never
+    /// restored is a shell that never held the real content and must
+    /// not overwrite it. Both look identical without this.
+    pub workspace_restored: bool,
+
     /// Canonical absolute path of the project root. Read-only after
     /// construction; closing a window and creating a new one is the
     /// way to "rename" the root.
@@ -633,6 +644,25 @@ pub struct Window {
     /// real placement and `relayout` recomputes this from it.
     pub(crate) dock_cols: u16,
 
+    /// Where the last layout put this window's panes.
+    ///
+    /// **A record from layout, not of a paint.** The painter records nothing
+    /// a layout could answer (the E.1 rule); this is the layout's own answer,
+    /// kept for the callers that ask *between* frames — a terminal's PTY
+    /// sized to its pane, a tab strip's width, the plugin snapshot, the pane
+    /// beside this one — which cannot read the shell tree themselves: it is
+    /// the editor's, it describes only the active window, and a frame may be
+    /// holding it. Every layout that places this window's panes writes it:
+    /// `Editor::render`, `Editor::recompute_layout`,
+    /// `Editor::refresh_pane_rects`, and the layout funnel
+    /// (`Editor::push_layout_geometry`), which lays the active window's frame
+    /// out and every other window's grid offscreen before anything reads
+    /// them. Read through [`Self::visible_panes`] or [`Self::pane_rects`].
+    ///
+    /// Empty until the first layout. `Editor::with_options` runs one, so a
+    /// window that exists has been laid out at least once.
+    pub(crate) pane_rects: crate::view::shell::geometry::PaneRects,
+
     /// Editor-global resources shared by `Arc` clone (config, theme
     /// registry, keybindings, command registry, filesystem authority,
     /// the buffer-id allocator, …). See [`WindowResources`] for the
@@ -833,6 +863,18 @@ pub struct Window {
     /// window's LspManager (running, errored, restarting, …).
     pub lsp_server_statuses:
         HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
+
+    /// Most recent request timeout per `(language, method)`, so a feature
+    /// that came back empty can say *why* it is empty. A request that
+    /// expires is delivered to the feature as "no result", which is how
+    /// issue #2197 got its "F12 reports No definition found" symptom — the
+    /// server never answered at all.
+    ///
+    /// Keyed by method, and consumed once, because the editor also makes
+    /// requests the user did not: without that, a background `inlayHint`
+    /// expiring at t=0 would explain a `definition` the server answered
+    /// correctly and promptly with `[]` at t=2s.
+    pub lsp_request_timeouts: HashMap<(String, String), LspRequestTimeoutRecord>,
 
     /// Plugin-contributed menu items merged into the LSP-Servers popup
     /// (the one opened by clicking the LSP indicator). Keyed by
@@ -1142,18 +1184,41 @@ pub struct Window {
     pub process_groups: ProcessGroups,
 }
 
+/// The last LSP request that expired for a language.
+#[derive(Debug, Clone)]
+pub struct LspRequestTimeoutRecord {
+    /// The server the request was sent to.
+    ///
+    /// The record is keyed by the label the server registered under, which
+    /// for a universal server is `"universal"` rather than any language —
+    /// so the lookup has to be able to ask whether that server's scope
+    /// accepts the buffer's language, the way `is_lsp_server_ready` does.
+    pub server_name: String,
+    /// When the timeout was reported.
+    pub at: std::time::Instant,
+    /// How long it waited.
+    pub timeout: std::time::Duration,
+    /// Timeouts in a row on that server, including this one.
+    pub consecutive: u32,
+}
+
+impl LspRequestTimeoutRecord {
+    /// Whether this timeout is recent enough to explain a request that
+    /// just came back empty. Requests are answered (or expire) one at a
+    /// time, so a few seconds is a generous window.
+    pub fn explains_empty_result(&self) -> bool {
+        self.at.elapsed() < std::time::Duration::from_secs(5)
+    }
+}
+
 /// Apply language-server configuration to a freshly-created
 /// [`LspManager`]: per-language configs, the universal (global)
 /// servers, and the Deno auto-detection override. Shared by every
 /// window's construction so the server set is identical regardless of
 /// how the window came to exist (boot, orchestrator new-session,
 /// disk-restored shell).
-pub(crate) fn configure_lsp_servers(
-    lsp: &mut LspManager,
-    root: &std::path::Path,
-    config: &crate::config::Config,
-) {
-    use crate::types::{LspServerConfig, ProcessLimits};
+pub(crate) fn configure_lsp_servers(lsp: &mut LspManager, config: &crate::config::Config) {
+    use crate::types::LspServerConfig;
 
     // Global master switch — gates auto-start of every server below.
     lsp.set_globally_enabled(config.lsp_enabled);
@@ -1172,24 +1237,9 @@ pub(crate) fn configure_lsp_servers(
         .collect();
     lsp.set_universal_configs(universal_servers);
 
-    // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
-    // window root, override JS/TS LSP to use `deno lsp` (#1191). Checked
-    // against the window's own root so each workspace gets the detection for
-    // its actual project rather than the process cwd.
-    if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
-        tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
-        let deno_config = LspServerConfig {
-            command: "deno".to_string(),
-            args: Some(vec!["lsp".to_string()]),
-            enabled: true,
-            auto_start: false,
-            process_limits: ProcessLimits::default(),
-            initialization_options: Some(serde_json::json!({"enable": true})),
-            ..Default::default()
-        };
-        lsp.set_language_config("javascript".to_string(), deno_config.clone());
-        lsp.set_language_config("typescript".to_string(), deno_config);
-    }
+    // Project conventions that pick a different server for a language —
+    // `deno lsp` for a workspace with a `deno.json` — live in plugins
+    // (`plugins/deno_lsp.ts`), not here (#2981).
 }
 
 /// Build the [`LspManager`] every window owns: rooted at the window's
@@ -1225,7 +1275,7 @@ pub(crate) fn build_window_lsp(
     lsp.set_path_translation(authority.path_translation.clone());
     lsp.set_workspace_trust(authority.workspace_trust.clone());
 
-    configure_lsp_servers(&mut lsp, root, &resources.config);
+    configure_lsp_servers(&mut lsp, &resources.config);
     lsp
 }
 
@@ -2247,6 +2297,7 @@ impl Window {
             id,
             label,
             stable_id: crate::workspace::generate_stable_id(),
+            workspace_restored: false,
             root,
             authority,
             file_explorer: None,
@@ -2310,6 +2361,7 @@ impl Window {
             terminal_width: 80,
             terminal_height: 24,
             dock_cols: 0,
+            pane_rects: Default::default(),
             preview: None,
             terminal_link_hover: None,
             seen_byte_ranges: HashMap::new(),
@@ -2360,6 +2412,7 @@ impl Window {
             diagnostic_result_ids: HashMap::new(),
             lsp_progress: HashMap::new(),
             lsp_server_statuses: HashMap::new(),
+            lsp_request_timeouts: HashMap::new(),
             lsp_menu_contributions: HashMap::new(),
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),
@@ -2584,7 +2637,7 @@ impl Window {
     pub fn split_tabs_width(&self, split_id: LeafId) -> u16 {
         match self.buffers.splits() {
             Some((mgr, _)) => {
-                let visible = mgr.get_visible_buffers(self.editor_content_area());
+                let visible = self.visible_panes();
                 let Some((_, _, area)) = visible.iter().find(|(id, _, _)| *id == split_id) else {
                     return self.effective_tabs_width();
                 };
@@ -2603,6 +2656,77 @@ impl Window {
             }
             None => self.effective_tabs_width(),
         }
+    }
+
+    /// Where the last layout put this window's panes. See the field.
+    pub fn pane_rects(&self) -> &crate::view::shell::geometry::PaneRects {
+        &self.pane_rects
+    }
+
+    /// Retain `rects` as where this window's panes are. Called by every
+    /// layout that placed them; see the field.
+    pub(crate) fn set_pane_rects(&mut self, rects: crate::view::shell::geometry::PaneRects) {
+        self.pane_rects = rects;
+    }
+
+    /// The visible leaves, each with the box the last layout gave it, in the
+    /// tree's order — first child before second, so left to right and top to
+    /// bottom.
+    ///
+    /// The shape `SplitManager::get_visible_buffers` used to answer in, which
+    /// laid the grid out again to say so: only the maximized pane when one is
+    /// maximized, at the whole body; a leaf the layout did not place gets a
+    /// zero rectangle. Which leaves is the model's answer
+    /// (`SplitManager::visible_leaves`); where they are is the retained
+    /// layout's ([`Self::pane_rects`]).
+    pub fn visible_panes(&self) -> Vec<(LeafId, BufferId, ratatui::layout::Rect)> {
+        match self.buffers.splits() {
+            Some((mgr, _)) => self.pane_rects.visible(&mgr.visible_leaves()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Lay this window's grid out offscreen, at the body this window's
+    /// chrome leaves it, and retain where its panes are.
+    ///
+    /// For a window the retained tree does not hold: the shell describes the
+    /// active window's frame only, and the layout funnel sizes every other
+    /// window's terminals too, so their panes come off one offscreen layout
+    /// of the same description the frame would mount (`PaneRects::offscreen`,
+    /// as the session preview does). The body is `editor_content_area`, the
+    /// window's own derivation of the frame's body from its chrome flags —
+    /// the box the scratch grid was laid out in, for every window.
+    ///
+    /// The pane *boxes* are what is read off this. The content slots come
+    /// out too, but without the plugin panel interiors the editor would mount
+    /// (those are the editor's, not the window's), so they are the slots of
+    /// a pane showing a buffer; nothing reads a non-active window's content
+    /// slots.
+    pub(crate) fn layout_panes_offscreen(&mut self) {
+        use crate::view::shell::splits::{PaneChrome, PaneControls, Splits};
+        let Some((mgr, _)) = self.buffers.splits() else {
+            self.pane_rects = Default::default();
+            return;
+        };
+        let is_maximized = mgr.is_maximized();
+        let several = mgr.visible_leaves().len() > 1;
+        let splits = Splits {
+            root: mgr.root().clone(),
+            maximized: mgr.maximized_split().map(LeafId),
+            chrome: self.pane_chrome(PaneChrome {
+                tabs: self.tab_bar_visible,
+                vscroll: self.resources.config.editor.show_vertical_scrollbar,
+                hscroll: self.resources.config.editor.show_horizontal_scrollbar,
+            }),
+            controls: PaneControls {
+                maximize: several || is_maximized,
+                close: several && !is_maximized,
+            },
+            groups: self.pane_groups(),
+            interiors: Default::default(),
+        };
+        self.pane_rects =
+            crate::view::shell::geometry::PaneRects::offscreen(&splits, self.editor_content_area());
     }
 
     /// The split id whose `SplitViewState` owns the currently-focused
@@ -2897,13 +3021,7 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return HashMap::new();
         };
-        mgr.visible_leaves()
-            .into_iter()
-            .filter_map(|(leaf, _)| {
-                let group = vs_map.get(&leaf)?.active_group_tab?;
-                Some((leaf, self.grouped_subtrees.get(&group)?.clone()))
-            })
-            .collect()
+        mgr.pane_groups(vs_map, &self.grouped_subtrees)
     }
 
     /// Which chrome each of this window's visible panes has, by leaf.

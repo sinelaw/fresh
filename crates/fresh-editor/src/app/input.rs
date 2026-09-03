@@ -394,33 +394,58 @@ impl Editor {
                 Some(Ok(()))
             }
             ModeKeyDisposition::Forward(action) => Some(self.handle_action(action)),
-            ModeKeyDisposition::WidgetSelection(mv) => {
+            ModeKeyDisposition::WidgetSelection { mv, extend } => {
                 // Always consumed on a focused widget Text — a no-op move
                 // (already at a boundary) is still the correct shortcut
-                // behaviour.
+                // behaviour. `extend` distinguishes Shift+nav, which grows
+                // the selection, from a plain move, which collapses it.
                 if let Some(panel_id) = focused_widget_panel {
-                    let _ = match mv {
-                        WidgetSelectionMove::WordLeft => self
+                    let _ = match (mv, extend) {
+                        (WidgetSelectionMove::WordLeft, true) => self
                             .with_focused_text_editor(&panel_id, |e| e.move_word_left_selecting()),
-                        WidgetSelectionMove::WordRight => self
+                        (WidgetSelectionMove::WordRight, true) => self
                             .with_focused_text_editor(&panel_id, |e| e.move_word_right_selecting()),
-                        WidgetSelectionMove::Left => {
+                        (WidgetSelectionMove::Left, true) => {
                             self.with_focused_text_editor(&panel_id, |e| e.move_left_selecting())
                         }
-                        WidgetSelectionMove::Right => {
+                        (WidgetSelectionMove::Right, true) => {
                             self.with_focused_text_editor(&panel_id, |e| e.move_right_selecting())
                         }
-                        WidgetSelectionMove::Up => {
+                        (WidgetSelectionMove::Up, true) => {
                             self.with_focused_text_editor(&panel_id, |e| e.move_up_selecting())
                         }
-                        WidgetSelectionMove::Down => {
+                        (WidgetSelectionMove::Down, true) => {
                             self.with_focused_text_editor(&panel_id, |e| e.move_down_selecting())
                         }
-                        WidgetSelectionMove::Home => {
+                        (WidgetSelectionMove::Home, true) => {
                             self.with_focused_text_editor(&panel_id, |e| e.move_home_selecting())
                         }
-                        WidgetSelectionMove::End => {
+                        (WidgetSelectionMove::End, true) => {
                             self.with_focused_text_editor(&panel_id, |e| e.move_end_selecting())
+                        }
+                        (WidgetSelectionMove::WordLeft, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_word_left())
+                        }
+                        (WidgetSelectionMove::WordRight, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_word_right())
+                        }
+                        (WidgetSelectionMove::Left, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_left())
+                        }
+                        (WidgetSelectionMove::Right, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_right())
+                        }
+                        (WidgetSelectionMove::Up, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_up())
+                        }
+                        (WidgetSelectionMove::Down, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_down())
+                        }
+                        (WidgetSelectionMove::Home, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_home())
+                        }
+                        (WidgetSelectionMove::End, false) => {
+                            self.with_focused_text_editor(&panel_id, |e| e.move_end())
                         }
                     };
                 }
@@ -522,6 +547,7 @@ impl Editor {
                 self.panel(slot).map(|f| f.placement),
                 Some(super::PanelPlacement::LeftDock { .. })
             ),
+            is_sidebar: matches!(slot, super::PanelSlot::Sidebar(_)),
             focus_key: self
                 .widget_registry
                 .focus_key(&panel_key)
@@ -574,7 +600,9 @@ impl Editor {
                     "cancel".to_string(),
                     serde_json::json!({}),
                 );
-                *self.panel_opt_mut(slot) = None;
+                if let Some(o) = self.panel_opt_mut(slot) {
+                    *o = None;
+                }
                 let _ = self.widget_registry.unmount(&panel_key);
                 true
             }

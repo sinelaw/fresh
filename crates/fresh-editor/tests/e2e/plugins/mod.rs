@@ -81,3 +81,4 @@ pub mod trust_lockdown;
 pub mod unified_keybindings;
 pub mod vi_mode_autostart;
 pub mod watch_path;
+pub mod welcome_screen;

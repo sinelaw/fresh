@@ -402,7 +402,7 @@ one change.
 
 | | Lines | What it is |
 |---|---|---|
-| **C.1–C.4** | **~17,200** | `crates/fresh-editor/src/widgets/`: `render.rs` alone is 7,832, `kinds/*` another 7,000, plus `registry`, `actions`, `layout_box`, `text_click`. This is a complete widget runtime — layout, paint, hit-testing, focus and event routing — and C.1 replaces it rather than adapting it. |
+| **C.1–C.4** | **~17,200** | `crates/fresh-editor-core/src/widgets/`: `render.rs` alone is 7,832, `kinds/*` another 7,000, plus `registry`, `actions`, `layout_box`, `text_click`. This is a complete widget runtime — layout, paint, hit-testing, focus and event routing — and C.1 replaces it rather than adapting it. |
 | **B.1–B.3** | **~24,000** | Settings (`view/settings/`, ~20k with `render.rs` at 4,040 and `widget_map.rs` at 1,303), the keybinding editor, the calibration wizard. |
 
 **And they are not independent — B.1 largely rides on C.1.** Settings'
@@ -3051,6 +3051,26 @@ list.
 
    A three-pane grid costs ~38µs cold in a debug build, against callers that
    run once a frame or on resize.
+
+   **And then removed (Stage 2b).** Once the frame read its panes off the
+   tree it laid out (`view::shell::geometry::PaneRects`, Stage 2), the
+   scratch grid was a second layout of the same grid for the action paths
+   only — a terminal sized to its pane, a tab strip's width, the plugin
+   snapshot, the pane beside this one, the viewport seeds on resize.
+   `get_leaves_with_rects` and `get_visible_buffers` are gone. Each window
+   retains the `PaneRects` of the last layout that placed its panes
+   (`Window::pane_rects`, read through `Window::visible_panes`), written by
+   every frame, by `recompute_layout`, and by the layout funnel:
+   `push_layout_geometry` lays the active window's frame out once with
+   `layout_only` (`Editor::refresh_pane_rects`) and every other window's grid
+   offscreen (`PaneRects::offscreen`, the session preview's mechanism) before
+   any window seeds its viewports or sizes its PTYs. Every grid mutation
+   already ended in `relayout`; the one that did not (the dock split
+   `handle_open_terminal_in_dock` creates) goes through
+   `Editor::resize_visible_terminals`, which refreshes first. The parity
+   tests keep `reference_leaves_with_rects` — the original walk, `cfg(test)`
+   — as their oracle; `tests/retained_pane_rects.rs` pins that the retained
+   rects are the frame's and are refreshed by an action before its frame.
 
    What this buys is the next step, and the first of it has landed: **the
    dividers are gestures.** A divider node knows which container it is, so

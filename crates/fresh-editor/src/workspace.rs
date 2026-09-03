@@ -448,6 +448,11 @@ pub struct FileExplorerState {
     /// Show gitignored files (fixes #569)
     #[serde(default)]
     pub show_gitignored: bool,
+    /// The sidebar's sections, top to bottom. Empty — every workspace
+    /// written before sections existed — restores as exactly one explorer
+    /// section filling the column.
+    #[serde(default)]
+    pub sections: Vec<SectionState>,
 }
 
 impl Default for FileExplorerState {
@@ -460,8 +465,33 @@ impl Default for FileExplorerState {
             scroll_offset: 0,
             show_hidden: false,
             show_gitignored: false,
+            sections: Vec::new(),
         }
     }
+}
+
+/// One sidebar section as the workspace file records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SectionState {
+    pub kind: SectionStateKind,
+    /// A plugin section's title, so a section whose plugin has not loaded
+    /// can still show its header.
+    #[serde(default)]
+    pub title: String,
+    /// Requested body rows; `0` shares the remainder.
+    #[serde(default)]
+    pub rows: u16,
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+/// What a persisted section holds: the explorer, or a plugin panel by its
+/// composite `(plugin, id)` identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SectionStateKind {
+    Explorer,
+    Panel { plugin: String, id: u64 },
 }
 
 /// Per-workspace input histories
@@ -765,65 +795,23 @@ pub fn get_workspaces_dir() -> io::Result<PathBuf> {
     Ok(get_data_dir()?.join("workspaces"))
 }
 
-/// Encode a path into a filesystem-safe filename using percent encoding
-///
-/// Keeps alphanumeric chars, `-`, `.`, `_` as-is.
-/// Replaces `/` with `_` for readability.
-/// Percent-encodes other special characters as %XX.
-///
-/// Example: `/home/user/my project` -> `home_user_my%20project`
-pub fn encode_path_for_filename(path: &Path) -> String {
-    let path_str = path.to_string_lossy();
-    let mut result = String::with_capacity(path_str.len() * 2);
-
-    for c in path_str.chars() {
-        match c {
-            // Path separators become underscores for readability
-            '/' | '\\' => result.push('_'),
-            // Safe chars pass through
-            c if c.is_ascii_alphanumeric() => result.push(c),
-            '-' | '.' => result.push(c),
-            // Underscore needs special handling to avoid collision with /
-            '_' => result.push_str("%5F"),
-            // Everything else gets percent-encoded
-            c => {
-                for byte in c.to_string().as_bytes() {
-                    result.push_str(&format!("%{:02X}", byte));
-                }
-            }
-        }
-    }
-
-    // Remove leading underscores (from leading /)
-    let result = result.trim_start_matches('_').to_string();
-
-    // Collapse multiple underscores
-    let mut final_result = String::with_capacity(result.len());
-    let mut last_was_underscore = false;
-    for c in result.chars() {
-        if c == '_' {
-            if !last_was_underscore {
-                final_result.push(c);
-            }
-            last_was_underscore = true;
-        } else {
-            final_result.push(c);
-            last_was_underscore = false;
-        }
-    }
-
-    if final_result.is_empty() {
-        final_result = "root".to_string();
-    }
-
-    final_result
-}
+// The encoder lives in `fresh-editor-core` (`config_io` needs it to name
+// per-workspace config files); re-exported here so the old path resolves.
+pub use fresh_editor_core::path_encode::encode_path_for_filename;
 
 /// Decode a filename back to the original path (for debugging/tooling)
 #[allow(dead_code)]
 pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
     if encoded == "root" {
         return Some(PathBuf::from("/"));
+    }
+    // A name the encoder had to fold to fit `NAME_MAX` keeps only the head of
+    // the path plus a digest, so there is no path to give back. The encoder
+    // can never emit a literal `~` (a real one becomes `%7E`), which is what
+    // makes its presence a reliable answer rather than a guess. Callers
+    // already handle `None` by falling back to the name itself.
+    if encoded.contains('~') {
+        return None;
     }
 
     let mut result = String::with_capacity(encoded.len() + 1);
@@ -1755,6 +1743,7 @@ mod tests {
             scroll_offset: 5,
             show_hidden: true,
             show_gitignored: false,
+            sections: Vec::new(),
         };
 
         let json = serde_json::to_string(&state).unwrap();
@@ -1778,6 +1767,7 @@ mod tests {
             scroll_offset: 0,
             show_hidden: false,
             show_gitignored: false,
+            sections: Vec::new(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let restored: FileExplorerState = serde_json::from_str(&json).unwrap();

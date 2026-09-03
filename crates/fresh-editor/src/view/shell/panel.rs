@@ -331,6 +331,8 @@ pub fn interior_key(slot: super::widgets::Slot) -> Key {
         super::widgets::Slot::Settings => 2,
         super::widgets::Slot::SettingsEntry => 3,
         super::widgets::Slot::Pane(_) => 4,
+        // Past the fixed slots, one per section.
+        super::widgets::Slot::Sidebar(i) => 16 + i as u64,
     };
     Key::Pair("panel_interior".into(), n)
 }
@@ -1011,6 +1013,7 @@ mod tests {
             bare: false,
             full_width: false,
             hover_style: None,
+            style: None,
         };
         let mut p = panel(Spot::Centered {
             width_pct: 60,

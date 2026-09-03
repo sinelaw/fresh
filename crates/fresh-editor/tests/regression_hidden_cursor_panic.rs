@@ -2,8 +2,7 @@
 // which is gated behind the `plugins` feature.
 #![cfg(feature = "plugins")]
 
-mod common;
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use fresh::primitives::text_property::TextPropertyEntry;
 use fresh::services::plugins::api::PluginCommand;
 use std::collections::HashMap;
@@ -32,6 +31,8 @@ fn reproduce_cursor_panic() {
         show_cursors: false, // <--- The trigger: hiding cursors
         editing_disabled: false,
         hidden_from_tabs: false,
+        background: false,
+        highlight_current_line: None,
         initial_cursor_line: None,
         indentation_guide: None,
         request_id: None,

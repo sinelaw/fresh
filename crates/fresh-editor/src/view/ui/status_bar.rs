@@ -239,6 +239,8 @@ pub enum LspIndicatorState {
     On,
     Off,
     OffDismissed,
+    /// Server is up but not answering requests (issue #2197).
+    Warning,
     Error,
 }
 
@@ -1425,6 +1427,10 @@ impl StatusBarRenderer {
                     LspIndicatorState::Error => {
                         (theme.diagnostic_error_fg, theme.diagnostic_error_bg)
                     }
+                    LspIndicatorState::Warning => (
+                        theme.status_warning_indicator_fg,
+                        theme.status_warning_indicator_bg,
+                    ),
                     LspIndicatorState::Off => (
                         theme.status_lsp_actionable_fg,
                         theme.status_lsp_actionable_bg,
@@ -1573,6 +1579,10 @@ impl StatusBarRenderer {
             ),
             ElementKind::Lsp => match lsp_state {
                 LspIndicatorState::Error => ("diagnostic.error_fg", "diagnostic.error_bg"),
+                LspIndicatorState::Warning => (
+                    "ui.status_warning_indicator_fg",
+                    "ui.status_warning_indicator_bg",
+                ),
                 LspIndicatorState::Off => {
                     ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg")
                 }

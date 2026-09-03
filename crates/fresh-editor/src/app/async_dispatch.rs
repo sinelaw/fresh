@@ -19,6 +19,38 @@ use super::Editor;
 /// only a flood is deferred.
 const ASYNC_MESSAGE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
 
+/// Whether an LSP request was made by the editor rather than asked for by
+/// the user.
+///
+/// Background traffic is debounced and re-issued on every edit, so a stuck
+/// server produces a steady stream of expiries from it; user-invoked
+/// requests are one per keypress and are exactly what the user is waiting
+/// on. Only the latter are worth the status bar (issue #2197).
+fn is_background_lsp_request(method: &str) -> bool {
+    method.starts_with("textDocument/semanticTokens")
+        || matches!(
+            method,
+            "textDocument/inlayHint"
+                | "textDocument/diagnostic"
+                | "textDocument/foldingRange"
+                | "textDocument/documentSymbol"
+                | "textDocument/codeLens"
+                | "textDocument/documentHighlight"
+                | "workspace/diagnostic"
+                // Completion and signature help read as user-invoked but are
+                // issued by the editor: `maybe_trigger_completion` fires on
+                // every trigger character and on a timer for every word
+                // character, and signature help fires on `(` and `,`. Against
+                // a wedged server, typing a line queues one per keystroke and
+                // 30s later each one would claim the status bar — the very
+                // flood this carve-out exists to prevent. An explicitly
+                // invoked completion that expires still shows up in the
+                // indicator.
+                | "textDocument/completion"
+                | "textDocument/signatureHelp"
+        )
+}
+
 impl Editor {
     /// Resolve the `attachRemoteAgent` promise behind `request_id` — the
     /// session (authority + window) is fully constructed. Resolves with `null`;
@@ -198,6 +230,21 @@ impl Editor {
                     capabilities,
                 } => {
                     self.handle_lsp_initialized(language, server_name, capabilities);
+                }
+                AsyncMessage::LspRequestTimeout {
+                    language,
+                    server_name,
+                    method,
+                    timeout,
+                    consecutive,
+                } => {
+                    self.handle_lsp_request_timeout(
+                        language,
+                        server_name,
+                        method,
+                        timeout,
+                        consecutive,
+                    );
                 }
                 AsyncMessage::LspError {
                     language,
@@ -659,6 +706,76 @@ impl Editor {
         // didn't advertise the capability are skipped.
         self.request_inlay_hints_for_language(&language);
         self.pull_diagnostics_for_language(&language);
+    }
+
+    /// Handle a request that expired without an answer.
+    ///
+    /// Requests time out after 30s and are cancelled; before this, that
+    /// happened entirely silently — hover and go-to-definition just did
+    /// nothing while the status bar kept reading "ready" (issue #2197).
+    /// Every timeout now says so on the status bar, and the server's
+    /// `Unresponsive` status (sent alongside once they start repeating)
+    /// takes the indicator off "on".
+    fn handle_lsp_request_timeout(
+        &mut self,
+        language: String,
+        server_name: String,
+        method: String,
+        timeout: std::time::Duration,
+        consecutive: u32,
+    ) {
+        tracing::warn!(
+            "LSP request '{}' on '{}' ({}) timed out after {:?} ({} in a row)",
+            method,
+            server_name.as_str(),
+            language,
+            timeout,
+            consecutive,
+        );
+
+        // The status bar is for requests the *user* made. The editor also
+        // asks for inlay hints, diagnostics, semantic tokens and folds on
+        // its own, several per edit; announcing those would overwrite
+        // whatever the user was reading every 30s for as long as a stuck
+        // server stayed stuck. They still count towards the streak, so the
+        // indicator carries the news instead (issue #2197).
+        if !is_background_lsp_request(&method) {
+            let message = if consecutive > 1 {
+                format!(
+                    "LSP ({}): '{}' timed out after {}s — {} requests unanswered; server not responding",
+                    language,
+                    method,
+                    timeout.as_secs(),
+                    consecutive,
+                )
+            } else {
+                format!(
+                    "LSP ({}): '{}' timed out after {}s",
+                    language,
+                    method,
+                    timeout.as_secs(),
+                )
+            };
+            self.active_window_mut().status_message = Some(message);
+        }
+
+        // Remember it so a feature whose request expired can explain the
+        // empty result it is about to report instead of claiming there was
+        // nothing to find.
+        self.active_window_mut().lsp_request_timeouts.insert(
+            (language, method),
+            crate::app::window::LspRequestTimeoutRecord {
+                server_name,
+                at: std::time::Instant::now(),
+                timeout,
+                consecutive,
+            },
+        );
+
+        // No popup refresh here: this message is delivered *before* the
+        // `Unresponsive` status update that accompanies it, so refreshing
+        // now would re-render the popup from the old status. The status
+        // handler owns that refresh.
     }
 
     /// Handle an LSP server crash/spawn failure: surface it, fire the

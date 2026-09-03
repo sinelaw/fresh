@@ -512,7 +512,7 @@ a loop and asserts the viewport scrolls and the selection extends on **every** s
 drags and dock-resize drags crossing row 0 were affected the same way, and the
 `chrome_drag_active` guard that exists precisely to stop this class of problem
 (`mouse_input.rs:160-171`) is computed *after* `shell_dispatch`. Worth confirming that the
-working tree's change makes `cargo test -p fresh-editor --test e2e_tests issue_3006` green
+working tree's change makes `cargo test -p fresh-editor --test all_tests issue_3006` green
 again before committing.
 
 #### Q5.3 The replacement leaks, because a hover message is not a hover position
@@ -751,7 +751,7 @@ Ordered. Each is scoped to be a single commit.
    Then add the two structural guards from §Q5.4: never report `Move` as claimed, and do
    not offer a pointer event to the tree while a legacy `pointer_grab` is active
    (`chrome_drag_active`, `mouse_input.rs:160`). Add a hover-within-one-label test and
-   confirm `cargo test -p fresh-editor --test e2e_tests issue_3006` is green.
+   confirm `cargo test -p fresh-editor --test all_tests issue_3006` is green.
 
 3. **Fix the `was_active` toggle.** Move the toggle decision off a build-time snapshot
    consumed one event later (§Q4.2), and add a test that renders between press and

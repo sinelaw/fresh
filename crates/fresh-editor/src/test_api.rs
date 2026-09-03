@@ -29,6 +29,11 @@
 // one-directional contract documented in §2.1 of the design doc.
 pub use crate::input::keybindings::Action;
 
+// The text pipeline's frame-cost counters (`view::ui::split_rendering::instrument`):
+// how many panes a frame placed, formatted and built rows for. The e2e harness
+// asserts the three agree around every frame.
+pub use crate::view::ui::split_rendering::instrument::{snapshot as frame_counters, FrameCounters};
+
 /// A test-side projection of `crate::model::cursor::Cursor`.
 ///
 /// Carries only the fields that semantic tests typically assert on

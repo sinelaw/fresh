@@ -33,7 +33,14 @@ use crate::services::async_bridge::AsyncMessage;
 /// that can read or mutate editor state.
 pub(crate) struct OffLoop {
     pub filesystem: Arc<dyn FileSystem + Send + Sync>,
-    pub runtime: Arc<tokio::runtime::Runtime>,
+    /// A *borrow* of the runtime, never an owning `Arc<Runtime>`. The handle
+    /// travels into the spawned task, so an owning reference here would be
+    /// dropped on a runtime worker whenever a task outlived the editor's own
+    /// reference — which is exactly what quitting does. Dropping the last
+    /// `Arc<Runtime>` from inside the runtime panics ("Cannot drop a runtime
+    /// in a context where blocking is not allowed"), so ownership stays with
+    /// the editor and this side only ever holds a handle.
+    pub handle: tokio::runtime::Handle,
     pub sender: std::sync::mpsc::Sender<AsyncMessage>,
 }
 
@@ -85,8 +92,8 @@ pub(crate) struct GrepProjectRequest {
 /// the runtime, and every stage re-checks `cancel` so a superseded request
 /// stops doing work instead of running to completion.
 pub(crate) fn grep_project(cap: OffLoop, req: GrepProjectRequest) {
-    let runtime = Arc::clone(&cap.runtime);
-    runtime.spawn(async move {
+    let handle = cap.handle.clone();
+    handle.spawn(async move {
         let GrepProjectRequest {
             pattern,
             opts,
@@ -313,8 +320,8 @@ pub(crate) struct BaselineLoadRequest {
 pub(crate) fn load_diff_baseline(cap: OffLoop, req: BaselineLoadRequest) {
     use crate::app::diff_baselines::{BaselineContent, BaselineSpec};
 
-    let runtime = Arc::clone(&cap.runtime);
-    runtime.spawn(async move {
+    let handle = cap.handle.clone();
+    handle.spawn(async move {
         let text: Result<String, String> = match &req.spec {
             // Saved baselines never load content; the editor thread
             // resolves them synchronously and never sends them here.
@@ -447,12 +454,12 @@ mod tests {
     }
 
     fn run_grep(root: PathBuf, cancel: Arc<AtomicBool>) -> Result<String, String> {
-        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         grep_project(
             OffLoop {
                 filesystem: Arc::new(StdFileSystem),
-                runtime,
+                handle: runtime.handle().clone(),
                 sender: tx,
             },
             GrepProjectRequest {
@@ -486,6 +493,92 @@ mod tests {
             result.contains("a.txt"),
             "the match should be reported: {result}"
         );
+    }
+
+    /// A baseline load runs on a runtime the capability only *borrows*: the
+    /// editor keeps ownership, so the task settling on a worker thread (which
+    /// is what quitting under load looks like — the editor releases its
+    /// reference while the load is still in flight) never drops the runtime
+    /// itself. Dropping a runtime from inside one panics with "Cannot drop a
+    /// runtime in a context where blocking is not allowed", which is why
+    /// [`OffLoop`] holds a `Handle` and not an `Arc<Runtime>`.
+    #[test]
+    fn baseline_load_settles_on_a_borrowed_runtime_handle() {
+        use crate::app::diff_baselines::{BaselineEntry, BaselineSpec, BaselineStore};
+        use crate::services::env_provider::EnvProvider;
+        use crate::services::remote::LocalProcessSpawner;
+        use crate::services::workspace_trust::WorkspaceTrust;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("baseline.txt");
+        std::fs::write(&path, "reference\n").unwrap();
+
+        // The editor owns the runtime; the capability only borrows a handle.
+        // Held as an `Arc` here so the count below can prove that.
+        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let store = BaselineStore::default();
+        store.inner.lock().unwrap().entries.insert(
+            7,
+            BaselineEntry {
+                buffer_id: BufferId(1),
+                spec: BaselineSpec::Disk { path: path.clone() },
+                generation: 0,
+                content: None,
+            },
+        );
+
+        load_diff_baseline(
+            OffLoop {
+                filesystem: Arc::new(StdFileSystem),
+                handle: runtime.handle().clone(),
+                sender: tx,
+            },
+            BaselineLoadRequest {
+                baseline_id: 7,
+                spec: BaselineSpec::Disk { path },
+                spawner: Arc::new(LocalProcessSpawner::new(
+                    Arc::new(EnvProvider::inactive()),
+                    Arc::new(WorkspaceTrust::permissive()),
+                )),
+                store: store.clone(),
+                callback_id: JsCallbackId::new(1),
+                is_registration: true,
+            },
+        );
+
+        assert_eq!(
+            Arc::strong_count(&runtime),
+            1,
+            "off-loop work must not hold an owning reference to the runtime: \
+             a task outliving the editor's own reference would drop the runtime \
+             on a worker thread, which panics"
+        );
+
+        let result = match rx.recv().expect("the load must settle exactly once") {
+            AsyncMessage::Plugin(PluginAsyncMessage::OffLoopSettled { result, .. }) => result,
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert_eq!(
+            result.expect("a readable baseline file should resolve"),
+            "7",
+            "registration resolves with the baseline id"
+        );
+        let inner = store.inner.lock().unwrap();
+        let entry = inner
+            .entries
+            .get(&7)
+            .expect("the entry must still be there");
+        assert_eq!(
+            entry.content.as_ref().map(|c| c.text.as_str()),
+            Some("reference\n"),
+            "the loaded content should be installed in the store"
+        );
+        drop(inner);
+
+        // The editor owns the runtime, so shutting it down happens here, on a
+        // thread where blocking is allowed.
+        drop(runtime);
     }
 
     /// A superseded grep stopped partway, so the matches it happened to collect

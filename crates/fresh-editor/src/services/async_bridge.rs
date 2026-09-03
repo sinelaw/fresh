@@ -140,6 +140,22 @@ pub enum AsyncMessage {
         capabilities: crate::services::lsp::manager::ServerCapabilitySummary,
     },
 
+    /// A request to an initialized LSP server expired without a reply.
+    ///
+    /// Emitted per timeout so the editor can tell the user that the
+    /// server is not answering, rather than leaving the status bar on
+    /// "ready" while features silently do nothing (issue #2197).
+    LspRequestTimeout {
+        language: String,
+        server_name: String,
+        /// The LSP method that timed out, e.g. `textDocument/hover`.
+        method: String,
+        /// How long the request waited before being cancelled.
+        timeout: std::time::Duration,
+        /// Timeouts on this server since its last answered request.
+        consecutive: u32,
+    },
+
     /// LSP server crashed or failed
     LspError {
         language: String,
@@ -559,6 +575,14 @@ pub enum LspServerStatus {
     Starting,
     Initializing,
     Running,
+    /// Initialized and alive, but requests are timing out.
+    ///
+    /// A server can complete `initialize` and then answer nothing — pyright
+    /// 1.1.408 does exactly that (issue #2197) — and the editor used to
+    /// keep reporting "ready" while every hover, definition and diagnostic
+    /// request silently expired after 30s. This status is what makes that
+    /// visible; it reverts to `Running` as soon as a request is answered.
+    Unresponsive,
     Error,
     Shutdown,
 }

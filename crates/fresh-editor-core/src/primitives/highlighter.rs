@@ -1,0 +1,636 @@
+//! Syntax highlighting with tree-sitter
+//!
+//! # Design
+//! - **Whole-file parsing for normal files**: Buffers at or below
+//!   `MAX_PARSE_BYTES` are parsed from offset 0, because a parse that starts
+//!   at an arbitrary mid-file offset can begin inside a multi-line construct
+//!   (a block comment or template literal) and mis-highlight everything after
+//!   it — e.g. a backtick inside chopped JSDoc text opens a phantom template
+//!   literal that swallows the whole viewport as a string. Matches the policy
+//!   of the syntect-based `TextMateEngine`.
+//! - **Viewport-only parsing for large files**: Above `MAX_PARSE_BYTES`, only
+//!   the viewport plus `context_bytes` of surrounding text is parsed, keeping
+//!   a jump into a 1GB file instant at the cost of best-effort accuracy.
+//! - **Lazy initialization**: Parsing happens on first render
+
+use crate::model::buffer::Buffer;
+use crate::theme::Theme;
+use fresh_languages::tree_sitter_highlight::{
+    HighlightConfiguration, HighlightEvent, Highlighter as TSHighlighter,
+};
+pub use fresh_languages::{HighlightCategory, Language};
+use ratatui::style::Color;
+use std::ops::Range;
+
+/// Maximum bytes to parse in a single operation (for viewport highlighting).
+///
+/// This is a highlighter-internal budget that bounds how much text tree-sitter
+/// parses per pass — a distinct concern from the large-file *loading* threshold
+/// (`editor.large_file_threshold_bytes`), so it has its own constant rather
+/// than tracking that setting.
+const MAX_PARSE_BYTES: usize = 1024 * 1024; // 1 MB
+
+/// Get the color for a highlight category from the theme
+pub fn highlight_color(category: HighlightCategory, theme: &Theme) -> Color {
+    match category {
+        HighlightCategory::Attribute => theme.syntax_constant, // No specific attribute color, use constant
+        HighlightCategory::Comment => theme.syntax_comment,
+        HighlightCategory::Constant => theme.syntax_constant,
+        HighlightCategory::Function => theme.syntax_function,
+        HighlightCategory::Keyword => theme.syntax_keyword,
+        HighlightCategory::Number => theme.syntax_constant,
+        HighlightCategory::Operator => theme.syntax_operator,
+        HighlightCategory::PunctuationBracket => theme.syntax_punctuation_bracket,
+        HighlightCategory::PunctuationDelimiter => theme.syntax_punctuation_delimiter,
+        HighlightCategory::Property => theme.syntax_variable, // Properties are like variables
+        HighlightCategory::String => theme.syntax_string,
+        HighlightCategory::Type => theme.syntax_type,
+        HighlightCategory::Variable => theme.syntax_variable,
+        HighlightCategory::VariableBuiltin => theme.syntax_variable_builtin,
+        // Diff categories are a background wash; foreground stays at
+        // the editor default so cells keep readable contrast.
+        HighlightCategory::Inserted | HighlightCategory::Deleted | HighlightCategory::Changed => {
+            theme.editor_fg
+        }
+    }
+}
+
+/// Optional background color for a highlight category.
+///
+/// Returns `Some(..)` only for the diff categories — those scope an
+/// entire line and want a row-wide bg wash. Every other category is
+/// foreground-only (`None`), preserving the current per-token render
+/// path.
+pub fn highlight_bg(category: HighlightCategory, theme: &Theme) -> Option<Color> {
+    match category {
+        HighlightCategory::Inserted => Some(theme.diff_add_bg),
+        HighlightCategory::Deleted => Some(theme.diff_remove_bg),
+        HighlightCategory::Changed => Some(theme.diff_modify_bg),
+        _ => None,
+    }
+}
+
+/// A highlighted span of text
+#[derive(Debug, Clone)]
+pub struct HighlightSpan {
+    /// Byte range in the buffer
+    pub range: Range<usize>,
+    /// Foreground color for this span
+    pub color: Color,
+    /// Optional background color. `Some(..)` only for diff categories
+    /// (Inserted, Deleted, Changed); `None` for the existing fg-only
+    /// scopes. When set on a category whose
+    /// `HighlightCategory::bg_extends_to_line_end()` is true, the
+    /// renderer fills the remainder of the visible row with this bg.
+    pub bg: Option<Color>,
+    /// The highlight category that produced this span (for theme inspection)
+    pub category: Option<HighlightCategory>,
+}
+
+/// Internal span used for caching (stores category instead of color)
+#[derive(Debug, Clone)]
+struct CachedSpan {
+    /// Byte range in the buffer
+    range: Range<usize>,
+    /// Highlight category for this span
+    category: HighlightCategory,
+}
+
+/// Cache of highlighted spans for a specific byte range
+#[derive(Debug, Clone)]
+struct HighlightCache {
+    /// Byte range this cache covers
+    range: Range<usize>,
+    /// Highlighted spans within this range (stores categories for theme-independent caching)
+    spans: Vec<CachedSpan>,
+}
+
+/// Syntax highlighter with incremental viewport-based parsing
+pub struct Highlighter {
+    /// Tree-sitter highlighter instance
+    ts_highlighter: TSHighlighter,
+    /// Language being highlighted
+    language: Language,
+    /// Highlight configuration for the language
+    config: HighlightConfiguration,
+    /// Cache of highlighted spans (only for visible viewport)
+    cache: Option<HighlightCache>,
+    /// Last known buffer length (for detecting complete buffer changes)
+    last_buffer_len: usize,
+}
+
+impl Highlighter {
+    /// Create a new highlighter for the given language
+    pub fn new(language: Language) -> Result<Self, String> {
+        let config = language.highlight_config()?;
+        Ok(Self {
+            ts_highlighter: TSHighlighter::new(),
+            language,
+            config,
+            cache: None,
+            last_buffer_len: 0,
+        })
+    }
+
+    /// Highlight the visible viewport range
+    ///
+    /// This only parses the visible lines for instant performance with large files.
+    /// Returns highlighted spans for the requested byte range, colored according to the theme.
+    ///
+    /// `context_bytes` controls how far before/after the viewport to parse for accurate
+    /// highlighting of multi-line constructs (strings, comments, nested blocks).
+    pub fn highlight_viewport(
+        &mut self,
+        buffer: &Buffer,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &Theme,
+        context_bytes: usize,
+    ) -> Vec<HighlightSpan> {
+        // Check if cache is valid for this range
+        if let Some(cache) = &self.cache {
+            if cache.range.start <= viewport_start
+                && cache.range.end >= viewport_end
+                && self.last_buffer_len == buffer.len()
+            {
+                // Cache hit! Filter spans to the requested range and resolve colors from theme
+                return cache
+                    .spans
+                    .iter()
+                    .filter(|span| {
+                        span.range.start < viewport_end && span.range.end > viewport_start
+                    })
+                    .map(|span| HighlightSpan {
+                        range: span.range.clone(),
+                        color: highlight_color(span.category, theme),
+                        bg: None,
+                        category: Some(span.category),
+                    })
+                    .collect();
+            }
+        }
+
+        // Cache miss - need to parse.
+        //
+        // For buffers up to MAX_PARSE_BYTES, parse the whole file: starting a
+        // parse mid-file can land inside a multi-line construct (block
+        // comment, template literal) and derail highlighting for everything
+        // that follows. Larger buffers fall back to the viewport window plus
+        // `context_bytes` of context, which is best-effort.
+        let (parse_start, parse_end) = if buffer.len() <= MAX_PARSE_BYTES {
+            (0, buffer.len())
+        } else {
+            (
+                viewport_start.saturating_sub(context_bytes),
+                (viewport_end + context_bytes).min(buffer.len()),
+            )
+        };
+        let parse_range = parse_start..parse_end;
+
+        // Limit parse size for safety
+        if parse_range.len() > MAX_PARSE_BYTES {
+            tracing::warn!(
+                "Parse range too large: {} bytes, truncating to {}",
+                parse_range.len(),
+                MAX_PARSE_BYTES
+            );
+            // Just return empty spans if the range is too large
+            return Vec::new();
+        }
+
+        // Extract source bytes from buffer
+        let source = buffer.slice_bytes(parse_range.clone());
+
+        // Highlight the source - store categories for theme-independent caching.
+        //
+        // Tree-sitter-highlight emits highlights as a *stack*: outer
+        // captures wrap inner ones, and a `HighlightEnd` event pops back
+        // to the enclosing highlight. We have to keep that stack
+        // intact — collapsing it to a single `Option` (as we used to)
+        // strips the parent highlight off any `Source` event that
+        // follows a closing inner capture. Concrete failure: in
+        // `` `${expr}` ``, the @string capture wraps the whole template
+        // and @variable captures `expr`. When @variable ends, the
+        // closing `}` and `` ` `` are still inside @string, but a
+        // single-slot tracker would mark them as "no highlight" and
+        // the editor would render them with the surrounding default
+        // foreground (the trailing variable colour, in practice).
+        let mut cached_spans = Vec::new();
+        match self.ts_highlighter.highlight(
+            &self.config,
+            &source,
+            None,     // cancellation flag
+            |_| None, // injection callback
+        ) {
+            Ok(highlights) => {
+                let mut highlight_stack: Vec<usize> = Vec::new();
+
+                for event in highlights {
+                    match event {
+                        Ok(HighlightEvent::Source { start, end }) => {
+                            let span_start = parse_start + start;
+                            let span_end = parse_start + end;
+
+                            if let Some(&highlight_idx) = highlight_stack.last() {
+                                if let Some(category) =
+                                    self.language.highlight_category(highlight_idx)
+                                {
+                                    cached_spans.push(CachedSpan {
+                                        range: span_start..span_end,
+                                        category,
+                                    });
+                                }
+                            }
+                        }
+                        Ok(HighlightEvent::HighlightStart(s)) => {
+                            highlight_stack.push(s.0);
+                        }
+                        Ok(HighlightEvent::HighlightEnd) => {
+                            highlight_stack.pop();
+                        }
+                        Err(e) => {
+                            tracing::warn!("Highlight error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to highlight: {}", e);
+            }
+        }
+
+        // Update cache
+        self.cache = Some(HighlightCache {
+            range: parse_range,
+            spans: cached_spans.clone(),
+        });
+        self.last_buffer_len = buffer.len();
+
+        // Filter to requested viewport and resolve colors from theme
+        cached_spans
+            .into_iter()
+            .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
+            .map(|span| {
+                let cat = span.category;
+                HighlightSpan {
+                    range: span.range,
+                    color: highlight_color(cat, theme),
+                    bg: None,
+                    category: Some(cat),
+                }
+            })
+            .collect()
+    }
+
+    /// Invalidate cache for an edited range
+    ///
+    /// Call this when the buffer is edited to mark the cache as stale.
+    pub fn invalidate_range(&mut self, edit_range: Range<usize>) {
+        if let Some(cache) = &self.cache {
+            // If edit intersects cache, invalidate it
+            if edit_range.start < cache.range.end && edit_range.end > cache.range.start {
+                self.cache = None;
+            }
+        }
+    }
+
+    /// Invalidate entire cache
+    pub fn invalidate_all(&mut self) {
+        self.cache = None;
+    }
+
+    /// Get the highlight category at a byte position from the cache.
+    ///
+    /// Returns the category if the position falls within a cached highlight span.
+    /// The position must be within the last highlighted viewport range for a result.
+    pub fn category_at_position(&self, position: usize) -> Option<HighlightCategory> {
+        let cache = self.cache.as_ref()?;
+        cache
+            .spans
+            .iter()
+            .find(|span| span.range.start <= position && position < span.range.end)
+            .map(|span| span.category)
+    }
+
+    /// Get the current language
+    pub fn language(&self) -> &Language {
+        &self.language
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::buffer::Buffer;
+    use crate::theme;
+
+    #[test]
+    fn test_language_detection() {
+        let path = std::path::Path::new("test.rs");
+        assert!(matches!(Language::from_path(path), Some(Language::Rust)));
+
+        let path = std::path::Path::new("test.py");
+        assert!(matches!(Language::from_path(path), Some(Language::Python)));
+
+        let path = std::path::Path::new("test.js");
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::JavaScript)
+        ));
+
+        let path = std::path::Path::new("test.jsx");
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::JavaScript)
+        ));
+
+        let path = std::path::Path::new("test.ts");
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::TypeScript)
+        ));
+
+        let path = std::path::Path::new("test.tsx");
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::TypeScript)
+        ));
+
+        let path = std::path::Path::new("test.html");
+        assert!(matches!(Language::from_path(path), Some(Language::HTML)));
+
+        let path = std::path::Path::new("test.css");
+        assert!(matches!(Language::from_path(path), Some(Language::CSS)));
+
+        let path = std::path::Path::new("test.c");
+        assert!(matches!(Language::from_path(path), Some(Language::C)));
+
+        let path = std::path::Path::new("test.h");
+        assert!(matches!(Language::from_path(path), Some(Language::C)));
+
+        let path = std::path::Path::new("test.cpp");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.hpp");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.cc");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.hh");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.cxx");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.hxx");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.go");
+        assert!(matches!(Language::from_path(path), Some(Language::Go)));
+
+        let path = std::path::Path::new("test.json");
+        assert!(matches!(Language::from_path(path), Some(Language::Json)));
+
+        let path = std::path::Path::new("test.java");
+        assert!(matches!(Language::from_path(path), Some(Language::Java)));
+
+        let path = std::path::Path::new("test.cs");
+        assert!(matches!(Language::from_path(path), Some(Language::CSharp)));
+
+        let path = std::path::Path::new("test.php");
+        assert!(matches!(Language::from_path(path), Some(Language::Php)));
+
+        let path = std::path::Path::new("test.rb");
+        assert!(matches!(Language::from_path(path), Some(Language::Ruby)));
+
+        let path = std::path::Path::new("test.sh");
+        assert!(matches!(Language::from_path(path), Some(Language::Bash)));
+
+        let path = std::path::Path::new("test.bash");
+        assert!(matches!(Language::from_path(path), Some(Language::Bash)));
+
+        let path = std::path::Path::new("test.lua");
+        assert!(matches!(Language::from_path(path), Some(Language::Lua)));
+
+        let path = std::path::Path::new("test.pas");
+        assert!(matches!(Language::from_path(path), Some(Language::Pascal)));
+
+        let path = std::path::Path::new("test.p");
+        assert!(matches!(Language::from_path(path), Some(Language::Pascal)));
+
+        let path = std::path::Path::new("home.templ");
+        assert!(matches!(Language::from_path(path), Some(Language::Templ)));
+
+        // Markdown disabled due to tree-sitter version conflict
+        // let path = std::path::Path::new("test.md");
+        // assert!(matches!(Language::from_path(path), Some(Language::Markdown)));
+
+        let path = std::path::Path::new("test.txt");
+        assert!(Language::from_path(path).is_none());
+    }
+
+    #[test]
+    fn test_highlighter_basic() {
+        let buffer = Buffer::from_str_test("function main() {\n    console.log(\"Hello\");\n}");
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // Highlight entire buffer
+        let spans = highlighter.highlight_viewport(&buffer, 0, buffer.len(), &theme, 100_000);
+
+        // Should have some highlighted spans
+        assert!(!spans.is_empty());
+
+        // Keywords like "fn" should be highlighted with the theme's keyword color
+        let has_keyword = spans.iter().any(|s| s.color == theme.syntax_keyword);
+        assert!(has_keyword, "Should highlight keywords");
+    }
+
+    #[test]
+    fn test_highlighter_templ() {
+        // Reproducer for #463: opening a `.templ` file should produce
+        // highlighted spans (templ is Go + components/HTML/CSS), not
+        // fall back to plain text.
+        let source = "package main\n\
+                      \n\
+                      templ Greet(name string) {\n\
+                      \t<div class=\"hello\">Hello, { name }</div>\n\
+                      }\n";
+        let buffer = Buffer::from_str_test(source);
+        let mut highlighter = Highlighter::new(Language::Templ).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        let spans = highlighter.highlight_viewport(&buffer, 0, buffer.len(), &theme, 100_000);
+
+        assert!(
+            !spans.is_empty(),
+            "Templ file should produce highlighted spans"
+        );
+
+        let has_keyword = spans.iter().any(|s| s.color == theme.syntax_keyword);
+        assert!(
+            has_keyword,
+            "Templ file should highlight at least one keyword (`package` from Go or `templ`)"
+        );
+    }
+
+    #[test]
+    fn test_highlighter_viewport_only() {
+        // Create a large buffer
+        let mut content = String::new();
+        for i in 0..1000 {
+            content.push_str(&format!("function function_{i}() {{}}\n"));
+        }
+        let buffer = Buffer::from_str_test(&content);
+
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // Highlight only a small viewport in the middle
+        let viewport_start = 10000;
+        let viewport_end = 10500;
+        let spans =
+            highlighter.highlight_viewport(&buffer, viewport_start, viewport_end, &theme, 100_000);
+
+        // Should have some spans in the viewport
+        assert!(!spans.is_empty());
+
+        // All spans should be within or near the viewport
+        for span in &spans {
+            assert!(
+                span.range.start < viewport_end + 2000,
+                "Span start {} should be near viewport end {}",
+                span.range.start,
+                viewport_end
+            );
+        }
+    }
+
+    #[test]
+    fn test_jump_open_mid_file_matches_whole_file_parse() {
+        // Regression test: opening a file directly at a line (`fresh
+        // file.ts:1118`) used to start the parse at `viewport_start -
+        // context_bytes`, an arbitrary byte offset. When that offset fell
+        // inside a block comment containing a backtick, tree-sitter read the
+        // backtick as opening a template literal that ran until the next
+        // backtick in a later comment, highlighting the entire viewport —
+        // real code — as one giant string.
+        let mut content = String::from("/**\n");
+        for _ in 0..120 {
+            content.push_str(" * plain filler line without special punctuation.\n");
+        }
+        content.push_str(" * a stray backtick ` lives here.\n");
+        for _ in 0..10 {
+            content.push_str(" * more filler after the backtick.\n");
+        }
+        content.push_str(" */\n");
+        let comment_end = content.len();
+        for i in 0..40 {
+            content.push_str(&format!(
+                "function f{i}(x: number): number {{ return x + {i}; }}\n"
+            ));
+        }
+        content.push_str("// the matching backtick ` closes the phantom template here\n");
+        for i in 40..60 {
+            content.push_str(&format!(
+                "function f{i}(x: number): number {{ return x + {i}; }}\n"
+            ));
+        }
+        let buffer = Buffer::from_str_test(&content);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // Ground truth: parse from the start of the file.
+        let mut full = Highlighter::new(Language::TypeScript).unwrap();
+        let full_spans = full.highlight_viewport(&buffer, 0, content.len(), &theme, content.len());
+
+        // Jump-open: viewport over the code, positioned so the pre-fix parse
+        // window (viewport_start - context_bytes) started inside the comment,
+        // after which exactly one backtick preceded the code.
+        let viewport_start = comment_end + 500;
+        let viewport_end = comment_end + 1500;
+        let mut jump = Highlighter::new(Language::TypeScript).unwrap();
+        let jump_spans =
+            jump.highlight_viewport(&buffer, viewport_start, viewport_end, &theme, 2000);
+
+        let clip = |spans: &[HighlightSpan]| -> Vec<(usize, usize, Option<HighlightCategory>)> {
+            spans
+                .iter()
+                .filter(|s| s.range.start < viewport_end && s.range.end > viewport_start)
+                .map(|s| {
+                    (
+                        s.range.start.max(viewport_start),
+                        s.range.end.min(viewport_end),
+                        s.category,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            clip(&full_spans),
+            clip(&jump_spans),
+            "viewport highlighting after a jump-open must match a whole-file parse"
+        );
+    }
+
+    #[test]
+    fn test_cache_invalidation() {
+        let buffer = Buffer::from_str_test("function main() {\n    console.log(\"Hello\");\n}");
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // First highlight
+        highlighter.highlight_viewport(&buffer, 0, buffer.len(), &theme, 100_000);
+        assert!(highlighter.cache.is_some());
+
+        // Invalidate a range
+        highlighter.invalidate_range(5..10);
+        assert!(highlighter.cache.is_none());
+
+        // Highlight again to rebuild cache
+        highlighter.highlight_viewport(&buffer, 0, buffer.len(), &theme, 100_000);
+        assert!(highlighter.cache.is_some());
+
+        // Invalidate all
+        highlighter.invalidate_all();
+        assert!(highlighter.cache.is_none());
+    }
+
+    #[test]
+    fn test_theme_affects_colors() {
+        let buffer = Buffer::from_str_test("function main() {\n    console.log(\"Hello\");\n}");
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
+
+        // Highlight with dark theme
+        let dark_theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let dark_spans =
+            highlighter.highlight_viewport(&buffer, 0, buffer.len(), &dark_theme, 100_000);
+
+        // Highlight with light theme (cache should still work, colors should change)
+        let light_theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let light_spans =
+            highlighter.highlight_viewport(&buffer, 0, buffer.len(), &light_theme, 100_000);
+
+        // Both should have spans
+        assert!(!dark_spans.is_empty());
+        assert!(!light_spans.is_empty());
+
+        // Keywords should have different colors in different themes
+        let dark_keyword = dark_spans
+            .iter()
+            .find(|s| s.color == dark_theme.syntax_keyword);
+        let light_keyword = light_spans
+            .iter()
+            .find(|s| s.color == light_theme.syntax_keyword);
+
+        assert!(dark_keyword.is_some(), "Dark theme should have keyword");
+        assert!(light_keyword.is_some(), "Light theme should have keyword");
+
+        // The keyword colors should be different between themes
+        assert_ne!(
+            dark_theme.syntax_keyword, light_theme.syntax_keyword,
+            "Themes should have different keyword colors"
+        );
+    }
+}

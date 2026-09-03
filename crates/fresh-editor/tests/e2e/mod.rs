@@ -19,6 +19,7 @@ pub mod capslock_shortcuts;
 pub mod cargo_config_editing;
 pub mod code_tour_dock;
 pub mod command_palette;
+pub mod conceal_spanning_line_break;
 pub mod config_language_selector;
 pub mod copy_buffer_path;
 pub mod crash_repro;
@@ -27,6 +28,7 @@ pub mod csi_u_session_input;
 pub mod ctrl_slash_legacy_terminal;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
+pub mod deno_lsp_plugin;
 pub mod dispatch_precedence;
 pub mod dock_create_terminal_resize;
 #[cfg(feature = "plugins")]
@@ -57,6 +59,7 @@ pub mod flash;
 #[cfg(feature = "plugins")]
 pub mod floating_modal_frame_chrome;
 pub mod folding;
+pub mod frame_once_per_pane;
 pub mod glob_language_detection;
 #[cfg(feature = "gui")]
 pub mod gui;
@@ -91,6 +94,7 @@ pub mod issue_2035_preview_renders_buffer_groups;
 pub mod issue_2111_find_next_with_search_bar_open;
 pub mod issue_2119_wheel_scroll;
 pub mod issue_2124_quickfix_enter;
+pub mod issue_2197_lsp_timeout_visible;
 pub mod issue_2283_dock_last_tab_close;
 pub mod issue_2345_language_settings;
 pub mod issue_2357_shebang_interpreter;
@@ -108,6 +112,7 @@ pub mod issue_2797_selection_visibility;
 #[cfg(feature = "plugins")]
 pub mod issue_2810_session_escape_flush;
 pub mod issue_2843_single_line_viewport;
+pub mod issue_2859_explorer_scrollbar;
 pub mod issue_2876_prompt_input_hscroll;
 pub mod issue_2878_split_cursor_independence;
 pub mod issue_2893_replace_all_many_matches;
@@ -118,13 +123,20 @@ pub mod issue_3006_drag_beyond_text_area;
 pub mod issue_3006_shift_select_at_buffer_edges;
 pub mod issue_3021_diff_hunk_header_bg;
 pub mod issue_3031_stale_fold_hides_block_header;
+pub mod issue_3077_tab_padding_markers;
+pub mod issue_3079_guide_and_tab_marker;
+pub mod issue_3090_angle_brackets_not_rainbow;
+pub mod issue_3148_block_selection_tabs;
 pub mod issue_623_prompt_dropdown_scrollbar;
+pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
 pub mod language_dialog_esc_cancels_edit;
 pub mod language_dialog_tab_size;
 pub mod language_textmate_grammar;
 pub mod mouse_session_input;
+#[cfg(feature = "plugins")]
+pub mod placeholder_window_embed;
 pub mod suspend_process;
 
 pub mod close_buffer_shared_split_cursor;
@@ -202,6 +214,8 @@ pub mod markdown_compose_scrollbar_markers;
 pub mod markdown_compose_table_border;
 pub mod markdown_compose_table_structure;
 pub mod markdown_fenced_code_highlighting;
+#[cfg(feature = "plugins")]
+pub mod markdown_toc;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;
@@ -290,6 +304,8 @@ pub mod settings_ui_usability;
 pub mod settings_widget_controls;
 pub mod shell_command;
 pub mod shift_backspace;
+#[cfg(feature = "plugins")]
+pub mod sidebar_sections;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod smart_home;
@@ -342,6 +358,8 @@ pub mod vertical_scrollbar_cursor_extent;
 pub mod vi_mode;
 #[cfg(feature = "plugins")]
 pub mod vi_mode_bugs;
+#[cfg(feature = "plugins")]
+pub mod virtual_buffer_repaint;
 pub mod virtual_space;
 pub mod visual_regression;
 pub mod warning_indicators;

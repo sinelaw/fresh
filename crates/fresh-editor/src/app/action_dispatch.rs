@@ -898,6 +898,9 @@ impl Editor {
             Action::DumpConfig => {
                 self.dump_config();
             }
+            Action::DumpUiTree => {
+                self.dump_ui_tree();
+            }
             Action::RedrawScreen => {
                 self.request_full_redraw();
             }
@@ -1193,6 +1196,7 @@ impl Editor {
             Action::ResetBufferSettings => self.reset_buffer_settings(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.active_window_mut().focus_editor(),
+            Action::FocusNextSidebarSection => self.focus_next_sidebar_section(),
             Action::ToggleDockFocus => {
                 // Bounce keyboard focus between the editor/explorer area and
                 // the orchestrator dock. `dock` is `Some` whenever the dock is
@@ -1485,9 +1489,8 @@ impl Editor {
                     if events.len() > 1 {
                         // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²))
                         let description = "Delete backward".to_string();
-                        if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description)
-                        {
-                            self.active_event_log_mut().append(bulk_edit);
+                        if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+                            self.active_event_log_mut().append(applied);
                         }
                     } else {
                         for event in events {
@@ -2103,7 +2106,9 @@ impl Editor {
         // created via `create_terminal_buffer_detached` (empty scrollback set),
         // so it is live in this split; focus the terminal pane.
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
-        self.active_window_mut().resize_visible_terminals();
+        // The dock leaf was just split off; size its PTY to the pane the
+        // grid gives it now, not the pane list of the last frame.
+        self.resize_visible_terminals();
 
         let exit_key = self
             .keybindings

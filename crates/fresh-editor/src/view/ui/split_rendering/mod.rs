@@ -17,6 +17,7 @@ mod char_style;
 mod folding;
 pub(crate) use folding::fold_skip_set;
 mod gutter;
+pub mod instrument;
 pub(crate) mod layout;
 mod orchestration;
 
@@ -26,8 +27,8 @@ mod orchestration;
 // rectangle is the one layout gave it.
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
 pub(crate) use orchestration::{
-    paint_leaf, paint_separators, prepare_content, record_scrollbar_theme_runs, ContentPass,
-    FrameFacts, PaneAreas, Stores,
+    paint_leaf, paint_separators, prepare_content, reconcile_panes, record_scrollbar_theme_runs,
+    ContentPass, FrameFacts, PaneAreas, Stores,
 };
 mod post_pass;
 pub(crate) mod scrollbar;
@@ -216,7 +217,7 @@ impl SplitRenderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn compute_content_layout(
-        area: Rect,
+        rects: &crate::view::shell::geometry::PaneRects,
         split_manager: &SplitManager,
         buffers: &mut HashMap<BufferId, EditorState>,
         split_view_states: &mut HashMap<LeafId, crate::view::split::SplitViewState>,
@@ -228,13 +229,12 @@ impl SplitRenderer {
         use_terminal_bg: bool,
         session_mode: bool,
         software_cursor_only: bool,
-        pane_chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         diagnostics_inline_text: bool,
         show_tilde: bool,
         bracket_highlight: BracketHighlightSettings,
     ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
         orchestration::compute_content_layout(
-            area,
+            rects,
             split_manager,
             buffers,
             split_view_states,
@@ -246,7 +246,6 @@ impl SplitRenderer {
             use_terminal_bg,
             session_mode,
             software_cursor_only,
-            pane_chrome,
             diagnostics_inline_text,
             show_tilde,
             bracket_highlight,
@@ -294,7 +293,21 @@ impl SplitRenderer {
         // - pending_hardware_cursor: the preview must not move the
         //   terminal's hardware cursor away from the prompt input.
         let mut sink: Option<(u16, u16)> = None;
-        orchestration::render_buffer_in_split(
+        // The leaf is outside the split tree, so the frame's pre-paint
+        // reconcile never saw it: place it here, immediately before its
+        // text pass. Only the formatter's half — this pane never ran the
+        // byte-oriented sync, and does not now.
+        orchestration::reconcile::place_pane(
+            state,
+            viewport,
+            cursors,
+            folds,
+            &view_mode,
+            compose_width,
+            show_line_numbers,
+            area,
+        );
+        let text = orchestration::render_buffer_in_split(
             buf,
             state,
             cursors,
@@ -320,7 +333,11 @@ impl SplitRenderer {
             cell_theme_map,
             screen_width,
             &mut sink,
-        )
+        );
+        // No horizontal scrollbar here; store the column the rows were
+        // drawn with.
+        orchestration::reconcile::settle_pane(state, viewport, text.left_column, false);
+        text.view_line_mappings
     }
 
     /// Public wrapper for building base tokens - used by render.rs for the
@@ -529,6 +546,7 @@ mod tests {
         let mut dummy_theme_map = Vec::new();
         let output = render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -641,6 +659,7 @@ mod tests {
         let mut dummy_theme_map = Vec::new();
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -1007,8 +1026,12 @@ mod tests {
         let (output, _, _, _) =
             render_output_for_with_indentation_guide("\tchild\n\t\tgrand\n", 0, 0);
 
-        assert_eq!(rendered_line_text(&output, 0), "▏   child");
-        assert_eq!(rendered_line_text(&output, 1), "▏   ▏   grand");
+        // The guide keeps the tab stop and the tab's marker takes the next
+        // column of the expansion. This used to read `▏   child`: the guide
+        // simply overwrote the marker, and with guides on there was then no
+        // way to tell a tab indent from a space indent (issue #3079).
+        assert_eq!(rendered_line_text(&output, 0), "▏→  child");
+        assert_eq!(rendered_line_text(&output, 1), "▏→  ▏→  grand");
     }
 
     #[test]
@@ -1143,10 +1166,12 @@ mod tests {
             IndentationGuideMode::Active,
         );
 
-        // Tab cells that are not replaced by the active guide retain the
-        // existing leading-tab whitespace indicator.
+        // Tab cells the active guide does not claim keep their marker where
+        // it is; the one it does claim hands the marker the next column of
+        // the expansion rather than swallowing it (issue #3079) — this line
+        // used to read `→   ▏   grand`.
         assert_eq!(rendered_line_text(&output, 0), "→   child");
-        assert_eq!(rendered_line_text(&output, 1), "→   ▏   grand");
+        assert_eq!(rendered_line_text(&output, 1), "→   ▏→  grand");
     }
 
     #[test]
@@ -3303,6 +3328,7 @@ mod tests {
 
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,

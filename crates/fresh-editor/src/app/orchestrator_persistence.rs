@@ -663,8 +663,19 @@ fn migrate_legacy_windows(
             Ok(e) => e,
             Err(_) => continue,
         };
-        let project_path = crate::workspace::decode_filename_to_path(&dir_name)
-            .unwrap_or_else(|| PathBuf::from(dir_name.clone()));
+        // **A directory name that does not decode leaves `project_path`
+        // unset, rather than storing the filename as if it were one.**
+        //
+        // `decode_filename_to_path` declines a name the encoder had to fold to
+        // fit `NAME_MAX` — the head plus a digest is not a path, and the deep
+        // orchestrator roots this migration walks are exactly where folding
+        // happens. The old `unwrap_or_else` would have written
+        // `…deep-directory-six~18289b17dcb27c00` into every migrated window as
+        // a relative path naming nothing, and unlike a display fallback that
+        // value is *persisted*. Left unset, the window still migrates and
+        // whoever needs a project path resolves it the way it is resolved for
+        // any entry that never carried one.
+        let project_path = crate::workspace::decode_filename_to_path(&dir_name);
 
         let mut local_renum: HashMap<u64, u64> = HashMap::new();
         for mut w in env.windows.into_iter() {
@@ -672,7 +683,7 @@ fn migrate_legacy_windows(
             // the entry already carries one (a partial migration
             // re-running on the same data).
             if w.project_path.is_none() {
-                w.project_path = Some(project_path.clone());
+                w.project_path = project_path.clone();
             }
             if used_ids.contains(&w.id) {
                 let new_id = merged_next_id;

@@ -970,6 +970,9 @@ impl Editor {
         match slot {
             crate::app::PanelSlot::Floating => self.floating_widget_panel.as_ref(),
             crate::app::PanelSlot::Dock => self.dock.as_ref(),
+            crate::app::PanelSlot::Sidebar(i) => {
+                self.sidebar_sections.get(i).and_then(|s| s.panel.as_ref())
+            }
         }
     }
 
@@ -981,17 +984,29 @@ impl Editor {
         match slot {
             crate::app::PanelSlot::Floating => self.floating_widget_panel.as_mut(),
             crate::app::PanelSlot::Dock => self.dock.as_mut(),
+            crate::app::PanelSlot::Sidebar(i) => self
+                .sidebar_sections
+                .get_mut(i)
+                .and_then(|s| s.panel.as_mut()),
         }
     }
 
     /// Mutable handle to the slot *option* itself (for take/assign).
+    ///
+    /// `None` only for a sidebar index with no section — the two fixed
+    /// slots always exist. Emptying a sidebar slot leaves its section as a
+    /// header over a placeholder; dropping the section is
+    /// `Editor::close_sidebar_section`.
     pub(crate) fn panel_opt_mut(
         &mut self,
         slot: crate::app::PanelSlot,
-    ) -> &mut Option<crate::app::FloatingWidgetState> {
+    ) -> Option<&mut Option<crate::app::FloatingWidgetState>> {
         match slot {
-            crate::app::PanelSlot::Floating => &mut self.floating_widget_panel,
-            crate::app::PanelSlot::Dock => &mut self.dock,
+            crate::app::PanelSlot::Floating => Some(&mut self.floating_widget_panel),
+            crate::app::PanelSlot::Dock => Some(&mut self.dock),
+            crate::app::PanelSlot::Sidebar(i) => {
+                self.sidebar_sections.get_mut(i).map(|s| &mut s.panel)
+            }
         }
     }
 
@@ -1020,7 +1035,10 @@ impl Editor {
         {
             Some(crate::app::PanelSlot::Dock)
         } else {
-            None
+            self.sidebar_sections
+                .iter()
+                .position(|s| s.panel.as_ref().is_some_and(|f| &f.panel_key == panel_key))
+                .map(crate::app::PanelSlot::Sidebar)
         }
     }
 
@@ -1031,7 +1049,9 @@ impl Editor {
         } else if buffer_id == crate::app::DOCK_PANEL_BUFFER_ID {
             Some(crate::app::PanelSlot::Dock)
         } else {
-            None
+            let base = crate::app::SIDEBAR_PANEL_BUFFER_BASE.0;
+            (buffer_id.0 <= base && buffer_id.0 > base - crate::app::SIDEBAR_PANEL_BUFFER_SPAN)
+                .then(|| crate::app::PanelSlot::Sidebar(base - buffer_id.0))
         }
     }
 

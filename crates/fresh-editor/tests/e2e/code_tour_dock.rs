@@ -1719,7 +1719,7 @@ fn test_panel_layout_spends_its_rows_on_prose() {
 // (`frames/` + `showcase.json`, both gitignored; the committed artifact is
 // `showcase.gif`). `#[ignore]`d — it writes into docs/, so it runs on request:
 //
-//   cargo nextest run -p fresh-editor --test e2e_tests \
+//   cargo nextest run -p fresh-editor --test all_tests \
 //       code_tour_showcase -- --ignored --nocapture
 //   scripts/frames-to-gif.sh docs/blog/productivity/code-tour --colors 64 --dither none
 

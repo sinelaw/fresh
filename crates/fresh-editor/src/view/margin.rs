@@ -630,14 +630,28 @@ impl MarginManager {
     /// Update the left margin width based on buffer size.
     /// Only adjusts width when `show_line_numbers` is true.
     pub fn update_width_for_buffer(&mut self, buffer_total_lines: usize, show_line_numbers: bool) {
-        if show_line_numbers {
-            let digits = if buffer_total_lines == 0 {
-                1
-            } else {
-                ((buffer_total_lines as f64).log10().floor() as usize) + 1
-            };
-            self.left_config.width = digits.max(MIN_LINE_NUMBER_DIGITS);
-        }
+        update_left_width_for_buffer(&mut self.left_config, buffer_total_lines, show_line_numbers);
+    }
+
+    /// What [`Self::configure_for_line_numbers`] followed by
+    /// [`Self::update_width_for_buffer`] would leave `left_config` as —
+    /// computed without writing it.
+    ///
+    /// The margin state is per *buffer* while line-number visibility is per
+    /// *split*, so two panes showing one buffer can want two gutters in the
+    /// same frame. The render path resolves each pane's gutter from this and
+    /// reads only the value; the pre-frame reconcile writes it back so the
+    /// readers between frames (mouse mapping, `left_total_width`) see the
+    /// last pane's, as they always did.
+    pub fn resolved_left_config(
+        &self,
+        show_line_numbers: bool,
+        buffer_total_lines: usize,
+    ) -> MarginConfig {
+        let mut cfg = self.left_config.clone();
+        configure_left_for_line_numbers(&mut cfg, show_line_numbers);
+        update_left_width_for_buffer(&mut cfg, buffer_total_lines, show_line_numbers);
+        cfg
     }
 
     /// Get the total width of the left margin (including separator)
@@ -655,26 +669,11 @@ impl MarginManager {
     ///
     /// This adjusts `left_config.enabled` and `left_config.width` so that
     /// `left_total_width()` returns the correct gutter size for the given
-    /// `show_line_numbers` setting. Called at render time with the per-split
-    /// line number state.
+    /// `show_line_numbers` setting. Called with the per-split line number
+    /// state — by the pre-frame reconcile on the render path, and by the
+    /// appliers that flip the setting between frames.
     pub fn configure_for_line_numbers(&mut self, show_line_numbers: bool) {
-        if !show_line_numbers {
-            // Hide the line-number digits and the separator, but keep the gutter
-            // enabled with a zero-width number column so the 1-char indicator
-            // slot survives. This lets diagnostic / git / fold indicators still
-            // render in compose mode (issue #2146) without showing line numbers
-            // or the `│` separator. The render layer draws this slot in the
-            // compose desk margin so it doesn't shrink the text width.
-            self.left_config.width = 0;
-            self.left_config.enabled = true;
-            self.left_config.show_separator = false;
-        } else {
-            self.left_config.enabled = true;
-            self.left_config.show_separator = true;
-            if self.left_config.width == 0 {
-                self.left_config.width = MIN_LINE_NUMBER_DIGITS;
-            }
-        }
+        configure_left_for_line_numbers(&mut self.left_config, show_line_numbers);
     }
 
     /// Get the number of annotations in a position
@@ -683,6 +682,43 @@ impl MarginManager {
             MarginPosition::Left => self.left_annotations.values().map(|v| v.len()).sum(),
             MarginPosition::Right => self.right_annotations.values().map(|v| v.len()).sum(),
         }
+    }
+}
+
+/// Body of [`MarginManager::configure_for_line_numbers`], on a config value.
+fn configure_left_for_line_numbers(cfg: &mut MarginConfig, show_line_numbers: bool) {
+    if !show_line_numbers {
+        // Hide the line-number digits and the separator, but keep the gutter
+        // enabled with a zero-width number column so the 1-char indicator
+        // slot survives. This lets diagnostic / git / fold indicators still
+        // render in compose mode (issue #2146) without showing line numbers
+        // or the `│` separator. The render layer draws this slot in the
+        // compose desk margin so it doesn't shrink the text width.
+        cfg.width = 0;
+        cfg.enabled = true;
+        cfg.show_separator = false;
+    } else {
+        cfg.enabled = true;
+        cfg.show_separator = true;
+        if cfg.width == 0 {
+            cfg.width = MIN_LINE_NUMBER_DIGITS;
+        }
+    }
+}
+
+/// Body of [`MarginManager::update_width_for_buffer`], on a config value.
+fn update_left_width_for_buffer(
+    cfg: &mut MarginConfig,
+    buffer_total_lines: usize,
+    show_line_numbers: bool,
+) {
+    if show_line_numbers {
+        let digits = if buffer_total_lines == 0 {
+            1
+        } else {
+            ((buffer_total_lines as f64).log10().floor() as usize) + 1
+        };
+        cfg.width = digits.max(MIN_LINE_NUMBER_DIGITS);
     }
 }
 

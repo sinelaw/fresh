@@ -258,6 +258,27 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 
 Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
 
+### Contents Panel
+
+The `markdown_toc` plugin adds a **Contents** section to the sidebar, under the file explorer, listing the headings of the active Markdown file as a tree — one row per heading, indented by level, with the `#` markers stripped. Headings inside fenced code blocks are not listed. The section opens when a Markdown file becomes active and closes when the active file is not Markdown; "Markdown: Toggle Table of Contents" opens or closes it by hand.
+
+- The highlighted row is the heading whose section contains the cursor. When the pane showing the file is not focused (you are in the sidebar, or reading the file in another split), the row follows the top of the viewport instead. "Markdown: Contents — Follow Cursor/Scroll" pins one or the other for the session.
+- Click a row to put the cursor on that heading and centre it in the pane; focus stays in the sidebar. Press Enter on a row to jump and move focus to the pane. Up/Down browse the rows, Left/Right fold and unfold them.
+- The disclosure glyphs collapse and expand the outline. With `foldBuffer` on, collapsing a heading also folds its section in the buffer.
+
+The panel works the same way in source and compose mode: compose conceals the markers and re-flows the text but does not move it, so the rows, the highlight and the jump target are identical in both.
+
+Settings live under *Plugin Settings → markdown_toc* (`plugins.markdown_toc.settings` in `config.json`):
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `follow` | `"cursor"` | `"cursor"` highlights the heading containing the cursor; `"scroll"` the one at the top of the viewport |
+| `foldBuffer` | `false` | Collapsing a heading in the panel also folds its section in the buffer |
+| `autoOpen` | `true` | Open the panel for Markdown files and close it for other files automatically |
+| `rows` | `10` | Rows the section asks for; dragging the section divider overrides it |
+
+Files above the `editor.large_file_threshold_bytes` limit keep the headings last scanned and the section title reads "Contents (stale)".
+
 ## Shell Integration
 
 Run shell commands on your buffer or selection:

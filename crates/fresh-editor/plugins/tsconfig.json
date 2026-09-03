@@ -28,6 +28,7 @@
     "code-tour.ts",
     "csharp_support.ts",
     "dashboard.ts",
+    "deno_lsp.ts",
     "devcontainer.ts",
     "diagnostics_panel.ts",
     "diff_nav.ts",
@@ -48,6 +49,7 @@
     "lsp_navigation.ts",
     "markdown_compose.ts",
     "markdown_source.ts",
+    "markdown_toc.ts",
     "merge_conflict.ts",
     "path_complete.ts",
     "pkg.ts",
@@ -56,6 +58,7 @@
     "test_i18n.ts",
     "theme_editor.ts",
     "vi_mode.ts",
-    "welcome.ts"
+    "welcome.ts",
+    "welcome_screen.ts"
   ]
 }

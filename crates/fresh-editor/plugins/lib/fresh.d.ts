@@ -1731,6 +1731,23 @@ type WidgetSpec = {
 	* check in their renderer.
 	*/
 	hoverStyle?: Partial<OverlayOptions>;
+	/**
+	* How the button looks at rest — not focused, not hovered,
+	* not disabled. `None` (the default) keeps the look its
+	* `intent` gives it.
+	*
+	* The sibling of `hover_style`, and the answer to the same
+	* question one state earlier: `hover_style` could say what a
+	* control looks like under the pointer, but nothing could say
+	* that it is a control at all. A bare button is just its
+	* label, so without this the only way to mark a word as
+	* clickable was to spend a colour on it — and `intent` offers
+	* three fixed looks, none of them an underline.
+	*
+	* Focus, hover and disabled each still win over it, in that
+	* order of immediacy.
+	*/
+	style?: Partial<OverlayOptions>;
 } | {
 	"kind": "spacer";
 	cols: number;
@@ -2010,7 +2027,30 @@ type WidgetSpec = {
 	* equal-split path.
 	*/
 	widthPct?: number | null;
+	/**
+	* When this section is a Block child of a Row, request exactly
+	* this many columns. Takes precedence over `width_pct`.
+	*
+	* A percent cannot express "a third of the row": the integer
+	* rounding does not divide, so three equal siblings either
+	* overflow the panel — and the host wraps the last one onto a
+	* line of its own — or leave a ragged remainder that all lands
+	* on one side. Columns are what a caller with a measure in mind
+	* actually has, and asking in them is exact.
+	*/
+	widthCols?: number | null;
 	key?: string | null;
+	/**
+	* How the section's own chrome — its border and its legend —
+	* looks while `key` is the hovered widget.
+	*
+	* A section emits no hit area of its own, so it never becomes
+	* the hovered widget by being pointed at. Give it the key of
+	* the control inside it and the frame answers with that
+	* control: a card whose rows share one key lights as a card
+	* rather than one row at a time.
+	*/
+	hoverStyle?: Partial<OverlayOptions>;
 } | {
 	"kind": "windowEmbed";
 	/**
@@ -2058,6 +2098,27 @@ type WidgetSpec = {
 	*/
 	screenSpace: boolean;
 };
+type WidgetPanelOptions = {
+	/**
+	* When the focus key names no tabbable widget, fall back to the
+	* first one.
+	*
+	* True is the historical behaviour and stays the default. A panel
+	* for which *nothing focused* is a real resting state must say so:
+	* otherwise clearing focus does not clear it, because the next
+	* repaint silently re-seeds it onto whatever happens to be first.
+	* The plugin's own record of focus then disagrees with the host's,
+	* and a key meant for no one is delivered to that widget — on the
+	* welcome screen, leaving its file finder put focus on "Show this
+	* screen on startup", so the next Space turned the page off with
+	* nothing on screen to say why.
+	*
+	* `None` is what every plugin written before this field said, and
+	* reads as `true`.
+	*/
+	autoFocusFirst?: boolean;
+};
+type ScrollAlign = "top" | "minimal";
 type WidgetAction = {
 	"kind": "focusAdvance";
 	delta: number;
@@ -2388,6 +2449,28 @@ type CreateVirtualBufferOptions = {
 	* Hide from tab bar (default: false)
 	*/
 	hiddenFromTabs?: boolean;
+	/**
+	* Open as a tab without taking the view (default: false).
+	*
+	* Creating a virtual buffer otherwise makes it the active buffer, and
+	* there is no quiet way back: switching away afterwards is a second
+	* visible switch, and the layout the panel composed while it briefly
+	* held the pane is not the one it gets later. Set this when the buffer
+	* is one the editor offers rather than one the reader asked for — a
+	* startup page beside a restored session — and it appears in the tab
+	* bar with the current buffer left alone.
+	*
+	* Ignored together with `hiddenFromTabs`, which has no tab bar to be
+	* background in.
+	*/
+	background?: boolean;
+	/**
+	* Current-line highlight for this buffer (default: follow the editor
+	* setting). Pass `false` for a page whose rows are laid out by a widget
+	* panel — the caret's line means nothing to the reader there, and a
+	* lit band across a centred wordmark is noise.
+	*/
+	highlightCurrentLine?: boolean;
 	/**
 	* Initial content as **spans, concatenated verbatim** — a span is a run
 	* of text with optional styling, not a line. Nothing inserts newlines
@@ -4141,6 +4224,24 @@ interface EditorAPI {
 	*/
 	activeWindow(): number;
 	/**
+	* Scroll a widget-panel buffer so the widget with `key` sits at the
+	* top of its split, with the cursor on it.
+	* 
+	* The panel already knows where it painted every keyed widget, so
+	* a page navigating to its own content asks rather than derives.
+	* Deriving means painting, reading the buffer text back, matching
+	* your own captions as strings and converting line numbers to byte
+	* offsets — which is what this replaces, and which broke twice in
+	* the welcome screen before it did.
+	* 
+	* A widget spanning several rows (a card whose rows share one key)
+	* anchors at its top. Unknown keys are a no-op.
+	* 
+	* Queued like every layout mutation: `await editor.flush()` before
+	* reading back.
+	*/
+	scrollToWidget(bufferId: number, key: string, align?: ScrollAlign): boolean;
+	/**
 	* Set the scroll position of a split.
 	* 
 	* Queued, like every layout mutation: the returned bool only reports that
@@ -4278,7 +4379,10 @@ interface EditorAPI {
 	/**
 	* Enable or disable indentation guides for a buffer, overriding the global
 	* `editor.indentation_guide` setting. Tool views that render non-editable
-	* content (e.g. the Git Log commit-detail diff) disable them.
+	* content (e.g. the Git Log commit-detail diff) disable them, and so does
+	* markdown compose mode. `null` withdraws the override rather than forcing
+	* guides on, so a buffer leaving compose gets back whatever the user's own
+	* settings resolve to — the same shape `setFoldIndicators` uses.
 	*/
 	setIndentationGuide(bufferId: number, enabled: boolean | null): boolean;
 	/**
@@ -4523,7 +4627,7 @@ interface EditorAPI {
 	* Returns true on successful queue, false if the IPC channel is
 	* closed.
 	*/
-	mountWidgetPanel(panelId: number, bufferId: number, specObj: unknown): boolean;
+	mountWidgetPanel(panelId: number, bufferId: number, specObj: unknown, optionsObj?: WidgetPanelOptions): boolean;
 	/**
 	* Replace the spec of a previously-mounted widget panel.
 	* No-op if the panel id was never mounted.
@@ -4559,6 +4663,33 @@ interface EditorAPI {
 	*/
 	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean): boolean;
 	/**
+	* Mount a declarative widget panel as a **sidebar section**: a titled,
+	* collapsible section of the file explorer's column, appended after
+	* the explorer and any section already there. The sidebar is shown if
+	* it was hidden.
+	* 
+	* `rows` is the section's requested body height in rows (`0` shares the
+	* column with the explorer); a divider the user has dragged overrides
+	* it. `opts.closable` (default `true`) puts a `×` on the header that
+	* removes the section and fires the panel's `cancel` `widget_event`;
+	* `opts.startBlurred` (default `false`) mounts without taking keyboard
+	* focus.
+	* 
+	* The section is an ordinary panel: `updateFloatingWidget(panelId, spec)`
+	* replaces its content, `unmountFloatingWidget(panelId)` removes the
+	* section, `widgetMutate` / `widgetCommand` apply, and its hits arrive
+	* through the `widget_event` hook with this `panelId` unchanged.
+	* `floatingPanelControl(panelId, "sidebar_rows", n)` changes the
+	* requested rows, `"focus"` / `"blur"` work as for the dock, and
+	* `"dock"` / `"center"` re-anchor the panel out of the sidebar (with
+	* `"sidebar"` bringing a dock or centered panel in). Mounting an id that
+	* is already a section replaces its content in place.
+	*/
+	mountSidebarSection(panelId: number, specObj: unknown, title: string, rows: number, opts?: {
+		closable?: boolean;
+		startBlurred?: boolean;
+	}): boolean;
+	/**
 	* Replace the spec of the currently-mounted floating widget panel.
 	*/
 	updateFloatingWidget(panelId: number, specObj: unknown): boolean;
@@ -4570,8 +4701,11 @@ interface EditorAPI {
 	* Control a mounted floating panel's placement / focus without
 	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
 	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-	* centered panel cover the whole frame over the dock). See
-	* `PluginCommand::FloatingPanelControl`.
+	* centered panel cover the whole frame over the dock), "sidebar"
+	* (`arg` = requested rows; re-anchors the panel as a sidebar section
+	* under the file explorer — "dock" / "center" re-anchor it back out),
+	* "sidebar_rows" (`arg` = requested rows for a section; a divider the
+	* user has dragged wins). See `PluginCommand::FloatingPanelControl`.
 	*/
 	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**

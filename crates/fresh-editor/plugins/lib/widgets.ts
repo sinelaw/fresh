@@ -338,6 +338,14 @@ export function button(
      * editor's shared "close affordance under the pointer" look — the
      * tab `×` and the file explorer's `×` both use it. */
     hoverStyle?: Partial<OverlayOptions>;
+    /** How the button looks at rest — not focused, not hovered, not
+     * disabled. Omit to keep the look its `intent` gives it.
+     *
+     * The sibling of `hoverStyle`, one state earlier: `hoverStyle` can
+     * say what a control looks like under the pointer, but only this
+     * can say that a word IS a control. `{ underline: true }` is the
+     * conventional mark. */
+    style?: Partial<OverlayOptions>;
   },
 ): WidgetSpec {
   const spec: WidgetSpec = {
@@ -355,6 +363,7 @@ export function button(
   // present `undefined` into JSON `null`, which fails to deserialize
   // as the host's `Option<OverlayOptions>`.
   if (options?.hoverStyle !== undefined) spec.hoverStyle = options.hoverStyle;
+  if (options?.style !== undefined) spec.style = options.style;
   return spec;
 }
 
@@ -750,7 +759,9 @@ export function textInput(
  * reserved rectangle.
  *
  * `windowId` of 0 (or any unknown id) renders the placeholder
- * blanks without dispatching the per-window paint. */
+ * blanks without dispatching the per-window paint — which is also
+ * what a `windowId` that names no window at all is normalised to,
+ * see below. */
 export function windowEmbed(options: {
   windowId: number;
   rows: number;
@@ -758,7 +769,30 @@ export function windowEmbed(options: {
 }): WidgetSpec {
   return {
     kind: "windowEmbed",
-    windowId: options.windowId,
+    // **A window id the host cannot hold is "no window", not a broken
+    // panel.** The host reads this field as a `u32`, so a negative or
+    // fractional id fails to deserialise — and it fails for the *whole
+    // spec*, which the host then drops: `updateFloatingWidget` logs
+    // `invalid spec` and the panel keeps painting whatever it last
+    // showed. A plugin that embeds a placeholder row therefore froze
+    // its own panel, and the user saw a stuck card that only unstuck on
+    // the next keystroke that happened to produce a valid spec
+    // (sinelaw/fresh#1971: the orchestrator's synthetic ids for
+    // workspaces that have no window yet, which left the picker on
+    // "Archiving… / Waiting for git…" after the archive had finished).
+    //
+    // "No window" is a state this widget already has a value for, and
+    // that value is 0. Mapping to it keeps a placeholder rendering as
+    // the blanks it is meant to render, instead of taking the panel
+    // down with it.
+    // The range is closed at *both* ends: `u32` has a top as well as a
+    // bottom, and an id above it fails to deserialise exactly as a negative
+    // one does — same rejected spec, same frozen panel.
+    windowId: Number.isFinite(options.windowId) &&
+        options.windowId > 0 &&
+        options.windowId <= 0xffff_ffff
+      ? Math.trunc(options.windowId)
+      : 0,
     rows: options.rows,
     key: options.key,
   };
@@ -781,21 +815,36 @@ export function windowEmbed(options: {
 export function labeledSection(options: {
   label?: string;
   child: WidgetSpec;
+  /** How the section's own chrome — border and legend — looks while
+   * `key` is the hovered widget. A section emits no hit of its own, so
+   * give it the key of a control inside it and the frame answers with
+   * that control: a card whose rows share one key lights as a card. */
+  hoverStyle?: Partial<OverlayOptions>;
   /** When this section is a Block child of a Row, request a
    * specific share of the row's width as a percentage (1..=100).
    * Out-of-range values fall back to the equal-split default.
    * Useful for picker-style layouts: a narrow list pane next to
    * a wide preview pane. */
   widthPct?: number;
+  /** When this section is a Block child of a Row, request exactly this
+   * many columns. Takes precedence over `widthPct`, and is what you
+   * want whenever you have a measure in mind: a percent is an integer,
+   * so "a third of the row" does not divide — three equal siblings
+   * either overflow the panel, and the host wraps the last onto its own
+   * line, or leave a remainder that all lands on one side. */
+  widthCols?: number;
   key?: string;
 }): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "labeledSection",
     label: options.label ?? "",
     child: options.child,
     widthPct: options.widthPct,
     key: options.key,
   };
+  if (options.widthCols !== undefined) spec.widthCols = options.widthCols;
+  if (options.hoverStyle !== undefined) spec.hoverStyle = options.hoverStyle;
+  return spec;
 }
 
 /** Float `child` over the rest of the layout instead of consuming
@@ -914,10 +963,22 @@ export class WidgetPanel {
   private mounted = false;
   private readonly panelId: number;
   private readonly bufferId: number;
+  private readonly options: WidgetPanelOptions | undefined;
 
-  constructor(bufferId: number, panelId?: number) {
+  /** `options` are host behaviours the spec does not describe, applied
+   *  at mount and kept for the panel's life — see `WidgetPanelOptions`.
+   *  Pass `{ autoFocusFirst: false }` when "nothing focused" is a real
+   *  resting state for the panel, or clearing focus will not clear it:
+   *  the next repaint re-seeds it onto whichever widget happens to be
+   *  first in the tab order. */
+  constructor(
+    bufferId: number,
+    panelId?: number,
+    options?: WidgetPanelOptions,
+  ) {
     this.bufferId = bufferId;
     this.panelId = panelId ?? allocatePanelId();
+    this.options = options;
   }
 
   /** Returns the plugin-allocated panel id, useful for routing
@@ -933,7 +994,12 @@ export class WidgetPanel {
     const editor = (globalThis as any).editor;
     if (!this.mounted) {
       this.mounted = true;
-      return editor.mountWidgetPanel(this.panelId, this.bufferId, spec);
+      return editor.mountWidgetPanel(
+        this.panelId,
+        this.bufferId,
+        spec,
+        this.options,
+      );
     }
     return editor.updateWidgetPanel(this.panelId, spec);
   }

@@ -1538,6 +1538,34 @@ impl Editor {
         );
     }
 
+    /// Size the active window's visible terminal PTYs to their panes — as
+    /// the grid is *now*, laid out before the window reads it.
+    ///
+    /// The editor-side counterpart of `Window::resize_visible_terminals`,
+    /// for the callers that have just changed the grid (a dock split
+    /// created, a terminal split opened, a window dived into) and cannot
+    /// wait for the frame that would place the new pane: the window's
+    /// retained rects are refreshed with one `layout_only` of the frame
+    /// first (`refresh_pane_rects`), then read.
+    pub(crate) fn resize_visible_terminals(&mut self) {
+        self.resize_window_terminals(self.active_window);
+    }
+
+    /// [`Self::resize_visible_terminals`] for `window`, active or not: the
+    /// active window's panes are placed off the frame, another window's off
+    /// one offscreen layout of its own grid — the same two ways the layout
+    /// funnel places them — and then its visible PTYs are sized to them.
+    pub(crate) fn resize_window_terminals(&mut self, window: fresh_core::WindowId) {
+        if window == self.active_window {
+            self.refresh_pane_rects();
+        } else if let Some(w) = self.windows.get_mut(&window) {
+            w.layout_panes_offscreen();
+        }
+        if let Some(w) = self.windows.get_mut(&window) {
+            w.resize_visible_terminals();
+        }
+    }
+
     pub fn open_terminal(&mut self) {
         let Some((terminal_id, buffer_id)) = self.active_window_mut().open_terminal_in_window()
         else {
@@ -1653,7 +1681,7 @@ impl Editor {
         // is live in this new split; other splits keep their own per-split
         // mode, so closing this split later restores them correctly (#2485).
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
-        self.active_window_mut().resize_visible_terminals();
+        self.resize_visible_terminals();
 
         // A new split changes every sibling pane's size. Reflow through the
         // single layout funnel so existing terminals fit their new panes.
@@ -2011,14 +2039,25 @@ impl Editor {
                     .get(&terminal_id)
                 {
                     if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
-                        if let Ok(state) = handle.state.lock() {
-                            let truncate_pos = state.backing_file_history_end();
-                            // Always truncate to remove appended visible screen
-                            // (even if truncate_pos is 0, meaning no scrollback yet)
-                            if let Err(e) =
-                                terminal_backing_fs().set_file_length(backing_path, truncate_pos)
-                            {
-                                tracing::warn!("Failed to truncate terminal backing file: {}", e);
+                        if let Ok(mut state) = handle.state.lock() {
+                            // Truncate only when a visible-screen tail is
+                            // actually there. Truncating unconditionally used
+                            // to be harmless because the tail was assumed to
+                            // be the only thing past the history end — but the
+                            // PTY read loop appends there too, and cutting at
+                            // a history end that predates its writes deleted
+                            // live scrollback for good (fresh#3151).
+                            if state.backing_file_has_tail() {
+                                let truncate_pos = state.backing_file_history_end();
+                                match terminal_backing_fs()
+                                    .set_file_length(backing_path, truncate_pos)
+                                {
+                                    Ok(()) => state.set_backing_file_has_tail(false),
+                                    Err(e) => tracing::warn!(
+                                        "Failed to truncate terminal backing file: {}",
+                                        e
+                                    ),
+                                }
                             }
                         }
                     }
@@ -2033,7 +2072,7 @@ impl Editor {
             }
 
             // Ensure terminal PTY is sized correctly for current split dimensions
-            self.active_window_mut().resize_visible_terminals();
+            self.resize_visible_terminals();
 
             self.set_status_message(t!("status.terminal_mode_enabled").to_string());
         }
@@ -2278,15 +2317,15 @@ impl Window {
 
     /// Resize all this window's visible terminal PTYs to match their
     /// current split dimensions, and re-pin the scroll-back view's grid
-    /// wrap column to the same pane width. Reads the window's cached
-    /// `terminal_width` / `terminal_height` for the screen size.
+    /// wrap column to the same pane width. Reads the panes as the last
+    /// layout placed them ([`Self::visible_panes`]); an editor-side caller
+    /// that has just changed the grid goes through
+    /// `Editor::resize_visible_terminals`, which lays it out first.
     pub fn resize_visible_terminals(&mut self) {
-        let editor_area = self.editor_content_area();
-
-        let Some((mgr, _)) = self.buffers.splits() else {
+        if self.buffers.splits().is_none() {
             return;
-        };
-        let visible_buffers = mgr.get_visible_buffers(editor_area);
+        }
+        let visible_buffers = self.visible_panes();
 
         // (split, terminal buffer, pty cols, pty rows, grid cols). Collected
         // first because applying it needs `&mut self` for both the terminal
@@ -2387,10 +2426,28 @@ impl Window {
         let mut grid_cols: Option<usize> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
-                use std::io::BufWriter;
+                use std::io::{BufWriter, Write};
 
                 let (cols, _) = state.size();
                 grid_cols = Some(cols as usize);
+
+                // An earlier visit (or a session checkpoint) may have left its
+                // visible-screen tail in the file. It is rewritten below, so
+                // remove it first: leaving it in place would bake a stale
+                // screen into the scrollback prefix, and — since the tail is
+                // what the truncation on the way back to live mode cuts at —
+                // would also leave real scrollback stranded past that point
+                // (fresh#3151).
+                if state.backing_file_has_tail() {
+                    let history_end = state.backing_file_history_end();
+                    match terminal_backing_fs().set_file_length(&backing_file, history_end) {
+                        Ok(()) => state.set_backing_file_has_tail(false),
+                        Err(e) => tracing::error!(
+                            "Failed to drop stale terminal visible-screen tail: {}",
+                            e
+                        ),
+                    }
+                }
 
                 // Flush any scrollback that has scrolled off but isn't in the
                 // file yet — in particular the lines a resize spilled from the
@@ -2414,8 +2471,18 @@ impl Window {
                 // Open backing file in append mode to add visible screen
                 if let Ok(mut file) = terminal_backing_fs().open_file_for_append(&backing_file) {
                     let mut writer = BufWriter::new(&mut *file);
-                    match state.append_visible_screen(&mut writer) {
-                        Ok(head) => prepended = head,
+                    // Claim the tail *before* writing it. `BufWriter` spills
+                    // to the file as soon as its buffer fills, so a failure
+                    // part-way through still leaves bytes past the history
+                    // end; the flag is what tells a later path to cut them
+                    // back off, so it has to err towards "something may be
+                    // there" rather than "the write succeeded".
+                    state.set_backing_file_has_tail(true);
+                    let appended = state.append_visible_screen(&mut writer);
+                    match appended.and_then(|head| writer.flush().map(|()| head)) {
+                        Ok(head) => {
+                            prepended = head;
+                        }
                         Err(e) => {
                             tracing::error!(
                                 "Failed to append visible screen to backing file: {}",
@@ -2788,6 +2855,9 @@ pub mod render {
                 // Apply modifiers
                 if cell.bold {
                     style = style.add_modifier(Modifier::BOLD);
+                }
+                if cell.dim {
+                    style = style.add_modifier(Modifier::DIM);
                 }
                 if cell.italic {
                     style = style.add_modifier(Modifier::ITALIC);

@@ -8,7 +8,8 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 
 | Plugin | Description |
 |--------|-------------|
-| `welcome.ts` | Displays welcome message on startup |
+| `welcome_screen.ts` | The welcome screen: a scrollable onboarding buffer shown when there is nothing else open |
+| `welcome.ts` | Plugin-API demo commands (say hello, insert time) |
 | `manual_help.ts` | Manual page and keyboard shortcuts display |
 | `diagnostics_panel.ts` | LSP diagnostics panel with navigation |
 | `lsp_help.ts` | Install instructions when a language server is missing (all languages whose helper only offers install help) |
@@ -38,6 +39,7 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 | Plugin | Description |
 |--------|-------------|
 | `markdown_compose.ts` | Semi-WYSIWYG markdown editing with soft breaks |
+| `markdown_toc.ts` | Markdown table of contents as a sidebar section (headings tree, cursor sync, click to jump) |
 | `merge_conflict.ts` | 3-way merge conflict resolution |
 
 ### Development/Testing

@@ -12,9 +12,7 @@
 //   4. After each operation verify: buffer content == shadow content,
 //      and every cursor position matches
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use proptest::prelude::*;
 

@@ -1806,6 +1806,70 @@ pub enum MenuPosition {
 // IPC shape.
 // ===========================================================================
 
+/// Where a widget should land when a plugin scrolls to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ScrollAlign {
+    /// Put the widget on the split's top row. A jump: "take me to
+    /// this". The default, and what this command has always done.
+    #[default]
+    Top,
+    /// Scroll only as far as it takes to bring the widget into view —
+    /// the editor's ordinary cursor reveal, which respects the user's
+    /// `scroll_offset` and so leaves that much context around the
+    /// target rather than stopping exactly at the edge.
+    ///
+    /// This is what following focus wants. `Top` moves the view on
+    /// every step, so tabbing between two controls of the same card
+    /// scrolled the page, and the control that gained focus landed on
+    /// the top row with its own card title pushed off above it — a
+    /// button whose label you can no longer read. It also made Tab and
+    /// Shift+Tab stop being inverses, because a jump forgets where it
+    /// came from.
+    Minimal,
+}
+
+/// How the host should treat a mounted panel, beyond rendering its
+/// spec.
+///
+/// Grows by adding fields, so every field is optional in both
+/// directions: `Option<T>` with `#[ts(optional)]`, so adding one is not
+/// a TypeScript break for plugins that already construct the bag; and
+/// no `deny_unknown_fields`, so a plugin written against a newer host
+/// does not fail to deserialize wholesale on an older one and silently
+/// lose the options it *did* set. Each unspecified field reads as what
+/// the host did before that field existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WidgetPanelOptions {
+    /// When the focus key names no tabbable widget, fall back to the
+    /// first one.
+    ///
+    /// True is the historical behaviour and stays the default. A panel
+    /// for which *nothing focused* is a real resting state must say so:
+    /// otherwise clearing focus does not clear it, because the next
+    /// repaint silently re-seeds it onto whatever happens to be first.
+    /// The plugin's own record of focus then disagrees with the host's,
+    /// and a key meant for no one is delivered to that widget — on the
+    /// welcome screen, leaving its file finder put focus on "Show this
+    /// screen on startup", so the next Space turned the page off with
+    /// nothing on screen to say why.
+    ///
+    /// `None` is what every plugin written before this field said, and
+    /// reads as `true`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub auto_focus_first: Option<bool>,
+}
+
+impl WidgetPanelOptions {
+    /// Whether to seed focus onto the first tabbable when the focus key
+    /// names none. Unspecified is the historical `true`.
+    pub fn auto_focus_first(&self) -> bool {
+        self.auto_focus_first.unwrap_or(true)
+    }
+}
+
 /// One entry in a `HintBar` — a key chord plus its label.
 /// Renders as `<keys> <label>` with the key portion styled by the
 /// `ui.help_key_fg` theme key.
@@ -2291,6 +2355,23 @@ pub enum WidgetSpec {
         #[ts(type = "Partial<OverlayOptions>")]
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hover_style: Option<OverlayOptions>,
+        /// How the button looks at rest — not focused, not hovered,
+        /// not disabled. `None` (the default) keeps the look its
+        /// `intent` gives it.
+        ///
+        /// The sibling of `hover_style`, and the answer to the same
+        /// question one state earlier: `hover_style` could say what a
+        /// control looks like under the pointer, but nothing could say
+        /// that it is a control at all. A bare button is just its
+        /// label, so without this the only way to mark a word as
+        /// clickable was to spend a colour on it — and `intent` offers
+        /// three fixed looks, none of them an underline.
+        ///
+        /// Focus, hover and disabled each still win over it, in that
+        /// order of immediacy.
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<OverlayOptions>,
     },
     /// Horizontal whitespace eater. In a `Row`, produces `cols`
     /// spaces (or fills remaining width if `flex: true`); in a
@@ -2688,8 +2769,30 @@ pub enum WidgetSpec {
         /// equal-split path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width_pct: Option<u32>,
+        /// When this section is a Block child of a Row, request exactly
+        /// this many columns. Takes precedence over `width_pct`.
+        ///
+        /// A percent cannot express "a third of the row": the integer
+        /// rounding does not divide, so three equal siblings either
+        /// overflow the panel — and the host wraps the last one onto a
+        /// line of its own — or leave a ragged remainder that all lands
+        /// on one side. Columns are what a caller with a measure in mind
+        /// actually has, and asking in them is exact.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width_cols: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
+        /// How the section's own chrome — its border and its legend —
+        /// looks while `key` is the hovered widget.
+        ///
+        /// A section emits no hit area of its own, so it never becomes
+        /// the hovered widget by being pointed at. Give it the key of
+        /// the control inside it and the frame answers with that
+        /// control: a card whose rows share one key lights as a card
+        /// rather than one row at a time.
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hover_style: Option<OverlayOptions>,
     },
     /// Reserve a rectangle in the widget layout for the host to
     /// natively paint the editor `Window` identified by
@@ -4141,6 +4244,21 @@ pub enum PluginCommand {
         editing_disabled: bool,
         /// Whether this buffer should be hidden from tabs (for composite source buffers)
         hidden_from_tabs: bool,
+        /// Open the buffer as a tab in the active split *without* making it
+        /// the active buffer. Creation otherwise switches to the new buffer,
+        /// which is right for a panel the reader just asked for and wrong for
+        /// one the editor offers unbidden — a startup page, say, which should
+        /// be there to turn to without displacing the file being restored.
+        /// Ignored when `hidden_from_tabs` is set: a detached buffer is not
+        /// in a tab bar to be background *in*.
+        #[serde(default)]
+        background: bool,
+        /// Per-buffer current-line highlight. `None` follows the editor's
+        /// `highlight_current_line` setting; `Some(false)` switches it off
+        /// for a buffer where a lit row is noise — a page laid out by a
+        /// widget panel, where the caret's line means nothing to the reader.
+        #[serde(default)]
+        highlight_current_line: Option<bool>,
         /// Optional initial cursor line (0-indexed). Applied before the
         /// new buffer becomes the active buffer, so plugins can land the
         /// cursor atomically with creation rather than chasing a race
@@ -4464,6 +4582,19 @@ pub enum PluginCommand {
 
     /// Set the scroll position of a specific split
     SetSplitScroll { split_id: SplitId, top_byte: usize },
+
+    /// Scroll a widget-panel buffer to the widget with this key, and
+    /// put the cursor on it. `align` chooses where it lands.
+    ///
+    /// The panel already knows where it painted every keyed widget.
+    /// Without this, a plugin scrolling to its own content has to read
+    /// the painted buffer back and match its own text as strings.
+    ScrollToWidget {
+        buffer_id: BufferId,
+        key: String,
+        #[serde(default)]
+        align: ScrollAlign,
+    },
 
     /// Request syntax highlights for a buffer range
     RequestHighlights {
@@ -5322,6 +5453,10 @@ pub enum PluginCommand {
         panel_id: u64,
         buffer_id: BufferId,
         spec: WidgetSpec,
+        /// Host behaviours the spec does not describe. Absent in an
+        /// older plugin's payload, which is why it defaults.
+        #[serde(default)]
+        options: WidgetPanelOptions,
     },
 
     /// Replace the spec of a previously-mounted widget panel.
@@ -5406,6 +5541,34 @@ pub enum PluginCommand {
         start_blurred: bool,
     },
 
+    /// Mount a declarative widget panel as a **sidebar section**: a
+    /// titled, collapsible section of the file explorer's column, appended
+    /// after the explorer (and after any section already there). The
+    /// sidebar is shown if it was hidden. `rows` is the section's requested
+    /// body height; a divider the user has dragged overrides it. The panel
+    /// is the same registry entry a floating or dock mount makes, so
+    /// `UpdateFloatingWidget`, `UnmountFloatingWidget`, `WidgetMutate`,
+    /// `WidgetCommand` and the `widget_event` hook all apply to it
+    /// unchanged. Mounting an identity that is already a section replaces
+    /// its content in place.
+    MountSidebarSection {
+        plugin: String,
+        panel_id: u64,
+        spec: WidgetSpec,
+        /// The section header's title.
+        title: String,
+        /// Requested body rows; `0` shares the remainder with the explorer.
+        rows: u16,
+        /// Whether the header carries a `×` that removes the section
+        /// (firing the panel's `cancel` `widget_event`). Default `true`.
+        #[serde(default = "default_true")]
+        closable: bool,
+        /// Mount without taking keyboard focus. Default `false`: the
+        /// section takes the keys, as a dock mount does.
+        #[serde(default)]
+        start_blurred: bool,
+    },
+
     /// Replace the spec of the currently-mounted floating widget
     /// panel. No-op when no floating panel is mounted, or when the
     /// `panel_id` doesn't match the mounted one.
@@ -5431,6 +5594,12 @@ pub enum PluginCommand {
     /// - "fullscreen" — a centered panel renders over the *entire* frame
     ///   (covering the dimmed dock) when `arg != 0`, instead of laying
     ///   into the chrome area beside the dock. No-op when no dock is up.
+    /// - "sidebar" — re-anchor a dock or centered panel as a sidebar
+    ///   section under the file explorer; `arg` is the requested body
+    ///   rows. "dock" and "center" re-anchor a section back out.
+    /// - "sidebar_rows" — set a sidebar section's requested body rows to
+    ///   `arg`, without touching focus. A divider the user has dragged
+    ///   wins. No-op unless the panel is a section.
     FloatingPanelControl {
         plugin: String,
         panel_id: u64,
@@ -5947,6 +6116,28 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "hiddenFromTabs")]
     #[ts(optional, rename = "hiddenFromTabs")]
     pub hidden_from_tabs: Option<bool>,
+    /// Open as a tab without taking the view (default: false).
+    ///
+    /// Creating a virtual buffer otherwise makes it the active buffer, and
+    /// there is no quiet way back: switching away afterwards is a second
+    /// visible switch, and the layout the panel composed while it briefly
+    /// held the pane is not the one it gets later. Set this when the buffer
+    /// is one the editor offers rather than one the reader asked for — a
+    /// startup page beside a restored session — and it appears in the tab
+    /// bar with the current buffer left alone.
+    ///
+    /// Ignored together with `hiddenFromTabs`, which has no tab bar to be
+    /// background in.
+    #[serde(default)]
+    #[ts(optional)]
+    pub background: Option<bool>,
+    /// Current-line highlight for this buffer (default: follow the editor
+    /// setting). Pass `false` for a page whose rows are laid out by a widget
+    /// panel — the caret's line means nothing to the reader there, and a
+    /// lit band across a centred wordmark is noise.
+    #[serde(default, rename = "highlightCurrentLine")]
+    #[ts(optional, rename = "highlightCurrentLine")]
+    pub highlight_current_line: Option<bool>,
     /// Initial content as **spans, concatenated verbatim** — a span is a run
     /// of text with optional styling, not a line. Nothing inserts newlines
     /// for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
@@ -7064,6 +7255,8 @@ impl PluginApi {
             show_cursors: true,
             editing_disabled: false,
             hidden_from_tabs: false,
+            background: false,
+            highlight_current_line: None,
             initial_cursor_line: None,
             indentation_guide: None,
             request_id: None,
@@ -7111,6 +7304,21 @@ impl PluginApi {
     /// Switch the current split to display a buffer
     pub fn show_buffer(&self, buffer_id: BufferId) -> Result<(), String> {
         self.send_command(PluginCommand::ShowBuffer { buffer_id })
+    }
+
+    /// Scroll to the keyed widget. See [`ScrollAlign`] for where it
+    /// lands; `Top` is the historical behaviour.
+    pub fn scroll_to_widget(
+        &self,
+        buffer_id: BufferId,
+        key: String,
+        align: ScrollAlign,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::ScrollToWidget {
+            buffer_id,
+            key,
+            align,
+        })
     }
 
     /// Set the scroll position of a specific split

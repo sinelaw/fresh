@@ -42,8 +42,8 @@ pub struct Viewport {
     pub scroll_offset: usize,
 
     /// True while the row-space pass places this viewport vertically — set
-    /// each frame by the render path when a wrap index exists for the split's
-    /// geometry. While set, the byte-oriented `ensure_visible` yields its
+    /// each frame by the pre-frame reconcile (`orchestration::reconcile`)
+    /// when a wrap index exists for the split's geometry. While set, the byte-oriented `ensure_visible` yields its
     /// vertical half entirely: two passes deciding vertical placement is
     /// fresh#1574, and the byte pass's wrap counting is the one that
     /// disagrees with what is drawn. It stays for two jobs only — horizontal
@@ -124,10 +124,11 @@ pub struct Viewport {
     /// Updated incrementally as visible lines are rendered, avoiding full-file scans.
     pub max_line_length_seen: usize,
 
-    /// When true, the next render pass should scroll to show the last line at
-    /// the bottom of the viewport.  Set by same-buffer scroll sync when the
-    /// active split is at the end of the document.  Consumed (cleared) during
-    /// rendering after the adjustment is applied.
+    /// When true, the next frame should scroll to show the last line at the
+    /// bottom of the viewport.  Set by same-buffer scroll sync when the
+    /// active split is at the end of the document.  Consumed (cleared) by the
+    /// pre-frame reconcile, which applies it in row space
+    /// ([`Self::scroll_to_end_in_rows`]).
     pub sync_scroll_to_end: bool,
 
     /// Small per-viewport row-count cache used by the scroll hot paths
@@ -1251,10 +1252,13 @@ impl Viewport {
     /// rows are built.
     ///
     /// The layout-based [`Self::ensure_visible_in_layout`] can only run *after*
-    /// `build_view_data`, so the frame has to build rows to discover it needs to
-    /// scroll and then rebuild because it did — the up-to-three builds per frame
-    /// in `compute_buffer_layout`. Deciding in row space needs no rows at all:
-    /// the wrap index answers "which row is the cursor on" with a binary search.
+    /// `build_view_data`, so a frame that placed there had to build rows to
+    /// discover it needed to scroll and then rebuild because it did — the
+    /// up-to-three builds per frame `compute_buffer_layout` used to carry.
+    /// Deciding in row space needs no rows at all: the wrap index answers
+    /// "which row is the cursor on" with a binary search. This runs from the
+    /// pre-frame reconcile (`orchestration::reconcile::place_pane`), before
+    /// anything is built.
     ///
     /// Returns whether this pass **owns vertical placement** for the frame —
     /// not whether it moved anything. The caller forwards it to
@@ -1400,40 +1404,55 @@ impl Viewport {
         render_width: usize,
         gutter_width: usize,
     ) -> bool {
-        // Check if we should skip sync due to session restore
-        // This prevents the restored scroll position from being overwritten
-        if self.should_skip_resize_sync() {
-            return false;
-        }
+        self.left_column =
+            self.layout_column_scroll(view_lines, cursor, render_width, gutter_width);
+        // The pure form above reads the resize-sync flag; this, the writing
+        // form, consumes it as the layout pass always has.
+        let _ = self.should_skip_resize_sync();
+        false
+    }
 
-        // Check if we should skip ensure_visible due to scroll action
-        // This prevents scroll actions (Ctrl+Up/Down) from being immediately undone
-        if self.should_skip_ensure_visible() {
-            tracing::trace!("ensure_visible_in_layout: SKIPPING due to skip_ensure_visible flag");
-            return false;
+    /// The horizontal scroll this frame's rows call for — the pure form of
+    /// [`Self::ensure_visible_in_layout`].
+    ///
+    /// Returns the `left_column` the frame should draw with, from the rows
+    /// that were built: the cursor's visual column needs the row's own
+    /// char→column map (tabs, wide characters, spliced inlay hints), so this
+    /// is the one placement decision that cannot move ahead of the build.
+    /// Nothing is written; the pane's paint stores the value afterwards, with
+    /// [`Self::should_skip_resize_sync`] consumed then, so the frame paints
+    /// what the writing form used to paint.
+    pub(crate) fn layout_column_scroll(
+        &self,
+        view_lines: &[ViewLine],
+        cursor: &Cursor,
+        render_width: usize,
+        gutter_width: usize,
+    ) -> usize {
+        // A restored session keeps its scroll position for one frame, and a
+        // scroll action keeps its own (Ctrl+Up/Down); neither is undone here.
+        if self.skip_resize_sync || self.skip_ensure_visible {
+            tracing::trace!("layout_column_scroll: SKIPPING (skip flag set)");
+            return self.left_column;
         }
-        tracing::trace!(
-            "ensure_visible_in_layout: NOT skipping, skip_ensure_visible={}",
-            self.skip_ensure_visible
-        );
 
         let viewport_height = self.visible_line_count();
         if view_lines.is_empty() || viewport_height == 0 {
             tracing::trace!(
-                "ensure_visible_in_layout: early-out, view_lines.len={} viewport_height={} cursor_pos={} top_byte={}",
+                "layout_column_scroll: early-out, view_lines.len={} viewport_height={} cursor_pos={} top_byte={}",
                 view_lines.len(),
                 viewport_height,
                 cursor.position,
                 self.top_byte(),
             );
-            return false;
+            return self.left_column;
         }
 
         // Find the cursor's absolute view line position (in the full view_lines array)
         let cursor_view_line = self.find_view_line_for_byte(view_lines, cursor.position);
 
         tracing::trace!(
-            "ensure_visible_in_layout: enter cursor_pos={} cursor_view_line={} top_view_line_offset={} top_byte={} viewport_height={} view_lines.len={} line_wrap_enabled={}",
+            "layout_column_scroll: cursor_pos={} cursor_view_line={} top_view_line_offset={} top_byte={} viewport_height={} view_lines.len={} line_wrap_enabled={}",
             cursor.position,
             cursor_view_line,
             self.top_view_line_offset(),
@@ -1447,30 +1466,30 @@ impl Viewport {
         // `ensure_visible_in_rows`, which runs before anything is built and
         // decides in absolute rows; this pass sees only the window it was
         // handed and cannot reach past it, which is what made the two disagree.
-        self.scroll_cursor_column_into_view(
+        self.column_scroll_for_cursor_row(
             view_lines,
             cursor,
             cursor_view_line,
             render_width,
             gutter_width,
-        );
-        false
+        )
     }
 
-    /// Adjust horizontal scroll so the cursor's column stays on screen.
+    /// The horizontal scroll that keeps the cursor's column on screen.
     ///
-    /// Does nothing when the cursor is on a line not present in `view_lines`
-    /// (e.g. a newly inserted line) — `ensure_visible` already handled that.
-    fn scroll_cursor_column_into_view(
-        &mut self,
+    /// Returns the current `left_column` unchanged when the cursor is on a
+    /// line not present in `view_lines` (e.g. a newly inserted line) —
+    /// `ensure_visible` already handled that.
+    fn column_scroll_for_cursor_row(
+        &self,
         view_lines: &[ViewLine],
         cursor: &Cursor,
         cursor_view_line: usize,
         render_width: usize,
         gutter_width: usize,
-    ) {
+    ) -> usize {
         if cursor_view_line >= view_lines.len() {
-            return;
+            return self.left_column;
         }
 
         let line = &view_lines[cursor_view_line];
@@ -1494,7 +1513,7 @@ impl Viewport {
 
         // Only handle horizontal scroll if the cursor is actually within this line.
         if cursor.position >= line_end_byte {
-            return;
+            return self.left_column;
         }
 
         // Visual column of the cursor, taken from the canonical
@@ -1517,27 +1536,27 @@ impl Viewport {
         let line_visual_width = line
             .visual_width()
             .saturating_sub(usize::from(line.ends_with_newline));
-        self.ensure_column_visible_simple(
+        self.column_visible_simple(
             cursor_visual_col,
             line_visual_width,
             render_width,
             gutter_width,
-        );
+        )
     }
 
-    /// Renderer/layout-only column visibility check using laid-out line geometry.
-    fn ensure_column_visible_simple(
-        &mut self,
+    /// Renderer/layout-only column visibility check using laid-out line
+    /// geometry. Returns the `left_column` that shows `column`.
+    fn column_visible_simple(
+        &self,
         column: usize,
         line_length: usize,
         render_width: usize,
         gutter_width: usize,
-    ) {
+    ) -> usize {
         // Skip if line wrapping is enabled (all columns visible via wrapping)
         // or if this view never scrolls sideways (a widget panel).
         if self.line_wrap_enabled || !self.horizontal_scroll_enabled {
-            self.left_column = 0;
-            return;
+            return 0;
         }
 
         // `render_width` is the geometry used to build and draw these lines.
@@ -1546,29 +1565,31 @@ impl Viewport {
         let visible_width = render_width.saturating_sub(gutter_width);
 
         if visible_width == 0 {
-            return;
+            return self.left_column;
         }
 
         let effective_offset = self.horizontal_scroll_offset.min(visible_width / 2);
         let ideal_left = self.left_column + effective_offset;
         let ideal_right = self.left_column + visible_width.saturating_sub(effective_offset);
 
+        let mut left_column = self.left_column;
         if column < ideal_left {
-            self.left_column = column.saturating_sub(effective_offset);
+            left_column = column.saturating_sub(effective_offset);
         } else if column >= ideal_right {
             let target_position = visible_width
                 .saturating_sub(effective_offset)
                 .saturating_sub(1);
-            self.left_column = column.saturating_sub(target_position);
+            left_column = column.saturating_sub(target_position);
         }
 
         // Limit scroll to line length
         if line_length > 0 {
             let max_left_column = line_length.saturating_sub(visible_width.saturating_sub(1));
-            if self.left_column > max_left_column {
-                self.left_column = max_left_column;
+            if left_column > max_left_column {
+                left_column = max_left_column;
             }
         }
+        left_column
     }
 
     /// Set top_byte with automatic scroll limit enforcement
@@ -1780,25 +1801,41 @@ impl Viewport {
         self.set_top_byte_with_limit(buffer, &[], &[], target_position);
     }
 
-    /// Scroll so the last view line sits at the bottom of the viewport.
-    ///
-    /// Works in view-line space (soft-break-aware) — the same coordinate system
-    /// used by `ensure_visible_in_layout`.  Returns `true` if the viewport was
-    /// actually adjusted.
-    pub fn scroll_to_end_of_view(&mut self, view_lines: &[ViewLine]) -> bool {
+    /// Scroll so the document's last row sits at the bottom of the viewport,
+    /// decided in absolute rows from the wrap index — the row-space form of
+    /// [`Self::scroll_to_end_of_view`], which needed the rows built to count
+    /// them. Same clamp as [`Self::scroll_visual_rows`]: the last full page.
+    /// Returns `true` if the viewport moved.
+    pub fn scroll_to_end_in_rows(
+        &mut self,
+        index: &crate::view::wrap_index::WrapIndex,
+        buffer: &Buffer,
+    ) -> bool {
         let viewport_height = self.visible_line_count();
-        if view_lines.is_empty() || viewport_height == 0 {
+        if viewport_height == 0 {
             return false;
         }
-        let max_top = view_lines.len().saturating_sub(viewport_height);
-        if self.top_view_line_offset() == max_top {
+        let top_line = buffer.get_line_number(self.top_byte());
+        let top_row = index.line_first_row(top_line) as usize + self.top_view_line_offset();
+        let max_top = (index.total_rows() as usize).saturating_sub(viewport_height);
+        if top_row == max_top {
             return false;
         }
-        self.set_top_view_line_offset(max_top);
-        if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, max_top) {
-            self.set_top_byte(new_top_byte);
-        }
+        let addr = index.byte_of_row(buffer, max_top as u32);
+        self.set_top_byte(buffer.line_start_offset(addr.line).unwrap_or(0));
+        self.set_top_view_line_offset(addr.row_in_line);
         true
+    }
+
+    /// [`Self::scroll_to_end_in_rows`] for a buffer with no wrap index (one
+    /// beyond the index's size ceilings): propose the end of the buffer as
+    /// the top and let the scroll limit back it up to the last full page,
+    /// the way a wheel scroll to the bottom lands. Byte-based, so the walk
+    /// is bounded by one screen of lines.
+    pub fn scroll_to_end_unindexed(&mut self, buffer: &mut Buffer) {
+        self.set_top_view_line_offset(0);
+        let end = buffer.len();
+        self.set_top_byte_with_limit(buffer, &[], &[], end);
     }
 
     /// Mark viewport as needing synchronization with cursor positions
@@ -2895,16 +2932,16 @@ mod tests {
     }
 
     #[test]
-    fn ensure_column_visible_simple_uses_explicit_render_width() {
+    fn column_visible_simple_uses_explicit_render_width() {
         // Compose mode can render a narrow centered page inside a wide viewport.
         let mut vp = Viewport::new(80, 24);
         vp.line_wrap_enabled = false;
         vp.horizontal_scroll_offset = 0;
 
-        vp.ensure_column_visible_simple(12, 13, 6, 0);
+        let left_column = vp.column_visible_simple(12, 13, 6, 0);
 
         assert_eq!(
-            vp.left_column, 7,
+            left_column, 7,
             "the layout path must use its passed render width, not viewport width"
         );
     }

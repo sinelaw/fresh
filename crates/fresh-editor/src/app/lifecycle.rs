@@ -413,8 +413,24 @@ impl Editor {
         // editor-global, so every window — not just the active one —
         // sizes its terminals for the post-dock chrome, ready for a
         // dive without a stale first frame.
+        //
+        // In two steps, because where a window's panes are is a function of
+        // the screen size and the dock width it is about to adopt: every
+        // window adopts them first, then its grid is laid out at that size,
+        // and only then does it seed its viewports and size its PTYs from the
+        // result. The active window's grid is the frame's, laid out once with
+        // `layout_only`; every other window's grid the retained tree does not
+        // hold, so it is laid out offscreen from the same description.
         for window in self.windows.values_mut() {
-            window.apply_layout(width, height, dock_cols);
+            window.adopt_screen(width, height, dock_cols);
+        }
+        self.refresh_pane_rects();
+        let active = self.active_window;
+        for (id, window) in self.windows.iter_mut() {
+            if *id != active {
+                window.layout_panes_offscreen();
+            }
+            window.apply_layout();
         }
     }
 
@@ -517,31 +533,34 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
-    /// Adopt the geometry handed down by [`Editor::relayout`]: cache the
-    /// screen dimensions and the editor-global dock width, reseed every
+    /// Adopt the screen dimensions and the editor-global dock width handed
+    /// down by [`Editor::relayout`] — the first half of what `apply_layout`
+    /// did, split off because the layout that places this window's panes
+    /// runs between the two: it is laid out at the size adopted here, and
+    /// [`Self::apply_layout`] reads the result.
+    pub fn adopt_screen(&mut self, width: u16, height: u16, dock_cols: u16) {
+        self.terminal_width = width;
+        self.terminal_height = height;
+        self.dock_cols = dock_cols;
+    }
+
+    /// Adopt the geometry handed down by [`Editor::relayout`]: reseed every
     /// split viewport against the pane rect that split will actually be
     /// painted into, and resize the visible terminal PTYs. Per-split
     /// viewport dimensions are refined again at paint time by
     /// `sync_viewport_to_content` (which subtracts each pane's own chrome —
     /// gutter, tab bar, scrollbars); terminals have no such paint-time sync,
     /// which is why their PTY size must be pushed here.
-    pub fn apply_layout(&mut self, width: u16, height: u16, dock_cols: u16) {
-        self.terminal_width = width;
-        self.terminal_height = height;
-        self.dock_cols = dock_cols;
+    ///
+    /// Reads the pane rects the funnel just laid out for this window
+    /// ([`Self::visible_panes`]), after [`Self::adopt_screen`].
+    pub fn apply_layout(&mut self) {
+        let height = self.terminal_height;
 
-        // Per-split pane rects, derived from the same content area the
-        // renderer and `resize_visible_terminals` lay out against — so the
-        // file explorer's columns (and a sibling split's) are already carved
-        // out of them.
-        let visible: Vec<(
-            crate::model::event::LeafId,
-            crate::model::event::BufferId,
-            ratatui::layout::Rect,
-        )> = match self.buffers.splits() {
-            Some((mgr, _)) => mgr.get_visible_buffers(self.editor_content_area()),
-            None => Vec::new(),
-        };
+        // Per-split pane rects, off the layout the funnel just ran at the
+        // adopted size — so the file explorer's columns (and a sibling
+        // split's) are already carved out of them.
+        let visible = self.visible_panes();
 
         // Seed each visible split's viewport from its own pane rect. Seeding
         // every split with the whole post-dock editor width instead — which is

@@ -59,6 +59,15 @@ const DID_OPEN_GRACE_PERIOD_MS: u64 = 200;
 /// answers) from leaving features wedged in their loading state forever.
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
+/// Timeouts in a row (no answered request in between) before a server is
+/// reported as unresponsive in the UI.
+///
+/// One expiry can be a single pathological request; two in a row means the
+/// server has stopped answering this session and "ready" is a lie — see
+/// issue #2197, where every request expired after 30s while the status bar
+/// stayed on `LSP (python) ready`.
+const UNRESPONSIVE_TIMEOUT_STREAK: u32 = 2;
+
 /// LSP error codes that should not surface as user-visible warnings.
 ///
 /// From [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/):
@@ -969,6 +978,54 @@ enum LspCommand {
     Shutdown,
 }
 
+/// How many requests have expired on a server since it last answered one.
+///
+/// Split out from [`LspState`] so the transition rules are testable without
+/// a live server: they decide when the editor stops calling a server ready
+/// (issue #2197), and getting them wrong either cries wolf on a healthy
+/// server or leaves a dead one looking fine.
+#[derive(Debug, Default)]
+struct TimeoutStreak {
+    consecutive: u32,
+}
+
+/// What a timeout or an answer changes about how the server is reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreakTransition {
+    /// Nothing to report beyond the timeout itself.
+    None,
+    /// This expiry is the one that makes the server unresponsive.
+    BecameUnresponsive,
+    /// The server answered after having been reported unresponsive.
+    Recovered,
+}
+
+impl TimeoutStreak {
+    /// Record an expired request. Returns the new streak length and whether
+    /// it just crossed into "unresponsive" — only on the crossing, so a
+    /// server that keeps timing out is reported once, not once per request.
+    fn record_timeout(&mut self) -> (u32, StreakTransition) {
+        self.consecutive = self.consecutive.saturating_add(1);
+        let transition = if self.consecutive == UNRESPONSIVE_TIMEOUT_STREAK {
+            StreakTransition::BecameUnresponsive
+        } else {
+            StreakTransition::None
+        };
+        (self.consecutive, transition)
+    }
+
+    /// Record an answered request, clearing the streak.
+    fn record_answer(&mut self) -> StreakTransition {
+        let was_unresponsive = self.consecutive >= UNRESPONSIVE_TIMEOUT_STREAK;
+        self.consecutive = 0;
+        if was_unresponsive {
+            StreakTransition::Recovered
+        } else {
+            StreakTransition::None
+        }
+    }
+}
+
 /// Mutable state for LSP command processing.
 ///
 /// All mutable fields use interior mutability (Arc/atomics) so this struct
@@ -1008,6 +1065,20 @@ struct LspState {
     /// Mapping from editor request_id to LSP JSON-RPC id for cancellation
     /// Key: editor request_id, Value: LSP JSON-RPC id
     active_requests: Arc<std::sync::Mutex<HashMap<u64, i64>>>,
+
+    /// Requests that expired since this server last answered one.
+    ///
+    /// A server that keeps the connection open but never replies looks
+    /// exactly like a healthy one from the outside, so the count is what
+    /// the editor uses to stop calling it "ready" (issue #2197). Reset by
+    /// the first answered request.
+    ///
+    /// Behind a mutex rather than an atomic because the decision and the
+    /// status message it produces have to stay in the same order: with two
+    /// independently-atomic updates, a timeout and an answer racing could
+    /// deliver "unresponsive" *after* "running" and leave the indicator
+    /// stuck with a counter that no longer agrees with it.
+    timeout_streak: Arc<Mutex<TimeoutStreak>>,
 
     /// Extension-to-languageId overrides for textDocument/didOpen
     language_id_overrides: Arc<HashMap<String, String>>,
@@ -1209,6 +1280,53 @@ impl LspState {
         .await
     }
 
+    /// Record that a request expired: tell the editor so the UI can stop
+    /// claiming the server is ready, and mark the server unresponsive once
+    /// a second request in a row goes unanswered.
+    ///
+    /// One timeout is a bad request or a slow index; a second one with no
+    /// answer in between means the server has stopped serving this session
+    /// (issue #2197 — pyright 1.1.408 completes `initialize` and then
+    /// answers nothing at all).
+    ///
+    /// The lock is held across the sends so a timeout and an answer racing
+    /// cannot deliver their status updates in the opposite order to the
+    /// decisions that produced them.
+    fn note_request_timed_out(&self, method: &str, timeout: Duration) {
+        let mut streak = self.timeout_streak.lock().unwrap();
+        let (consecutive, transition) = streak.record_timeout();
+
+        let _ = self.async_tx.send(AsyncMessage::LspRequestTimeout {
+            language: (*self.language).clone(),
+            server_name: (*self.server_name).clone(),
+            method: method.to_string(),
+            timeout,
+            consecutive,
+        });
+
+        if transition == StreakTransition::BecameUnresponsive {
+            let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
+                language: (*self.language).clone(),
+                server_name: (*self.server_name).clone(),
+                status: LspServerStatus::Unresponsive,
+                message: None,
+            });
+        }
+    }
+
+    /// Record that a request was answered, clearing any unresponsive state.
+    fn note_request_answered(&self) {
+        let mut streak = self.timeout_streak.lock().unwrap();
+        if streak.record_answer() == StreakTransition::Recovered {
+            let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
+                language: (*self.language).clone(),
+                server_name: (*self.server_name).clone(),
+                status: LspServerStatus::Running,
+                message: None,
+            });
+        }
+    }
+
     /// Send a request, awaiting the response with a per-request timeout.
     ///
     /// On timeout: drops the pending oneshot, sends `$/cancelRequest` to the
@@ -1260,7 +1378,16 @@ impl LspState {
         );
 
         let response_result = match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(inner)) => inner,
+            Ok(Ok(inner)) => {
+                // The server replied — even an LSP error reply counts, it
+                // means the connection is serving again — so drop any "not
+                // responding" state it is in.
+                self.note_request_answered();
+                inner
+            }
+            // The pending entry was dropped rather than answered (a
+            // superseded request we cancelled ourselves, or shutdown):
+            // that says nothing about whether the server is answering.
             Ok(Err(_)) => Err("Response channel closed".to_string()),
             Err(_) => {
                 // Timed out: forget the pending entry, ask the server to cancel.
@@ -1273,6 +1400,7 @@ impl LspState {
                     self.language.as_str(),
                     timeout
                 );
+                self.note_request_timed_out(method, timeout);
                 let _ = self.send_cancel_request(id).await;
                 Err(format!(
                     "Request '{}' timed out after {:?}",
@@ -1316,6 +1444,9 @@ impl LspState {
             }]
         });
 
+        // Pushed again after `initialized`, see below.
+        let settings = initialization_options.clone();
+
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Some(std::process::id()),
@@ -1341,6 +1472,21 @@ impl LspState {
         // Send initialized notification
         self.send_notification::<Initialized>(InitializedParams {})
             .await?;
+
+        // Push the settings once, as VS Code, Neovim and Helix do right after
+        // `initialized`. The spec does not require it, but servers are written
+        // against those clients and some only finish setting up on receiving
+        // it: pyright 1.1.408 never resolved its workspace when the client
+        // advertised `workspaceFolders`, and this notification was the only
+        // thing that unblocked it (microsoft/pyright#11239). The payload is
+        // the same object `workspace/configuration` is answered from, so a
+        // server sees one consistent configuration whichever way it asks.
+        self.send_notification::<lsp_types::notification::DidChangeConfiguration>(
+            lsp_types::DidChangeConfigurationParams {
+                settings: settings.unwrap_or_else(|| serde_json::json!({})),
+            },
+        )
+        .await?;
 
         self.initialized.store(true, Ordering::SeqCst);
 
@@ -2840,8 +2986,22 @@ impl LspState {
         self.write_message(&notification).await
     }
 
-    /// Cancel a request by editor request_id
-    async fn handle_cancel_request(&self, request_id: u64) -> Result<(), String> {
+    /// Cancel a request by editor request_id.
+    ///
+    /// Withdrawing the pending entry is part of cancelling, not an
+    /// optimisation: the entry owns the oneshot the requester is parked on,
+    /// so leaving it in place means a server that never answers a cancelled
+    /// request keeps that requester waiting the full 30s and the expiry is
+    /// then indistinguishable from a server that has stopped answering
+    /// (issue #2197 — the editor cancels superseded completion, definition
+    /// and semantic-token requests on ordinary cursor movement, so those
+    /// would have counted towards "not responding" on a healthy server).
+    /// Dropping the sender resolves the requester immediately instead.
+    async fn handle_cancel_request(
+        &self,
+        request_id: u64,
+        pending: &PendingRequests,
+    ) -> Result<(), String> {
         let lsp_id = self.active_requests.lock().unwrap().remove(&request_id);
         if let Some(lsp_id) = lsp_id {
             tracing::info!(
@@ -2849,6 +3009,7 @@ impl LspState {
                 request_id,
                 lsp_id
             );
+            pending.lock().unwrap().remove(&lsp_id);
             self.send_cancel_request(lsp_id).await
         } else {
             tracing::trace!(
@@ -3149,6 +3310,7 @@ impl LspTask {
             server_name: Arc::new(self.server_name.clone()),
             active_requests: Arc::new(Mutex::new(HashMap::new())),
             language_id_overrides: Arc::new(self.language_id_overrides.clone()),
+            timeout_streak: Arc::new(Mutex::new(TimeoutStreak::default())),
         };
 
         let pending = Arc::new(Mutex::new(self.pending));
@@ -3782,7 +3944,7 @@ impl LspTask {
                 LspCommand::CancelRequest { request_id } => {
                     tracing::info!("Processing CancelRequest for editor_id={}", request_id);
                     // Notification: inline so cancels reach the server promptly.
-                    let _ = state.handle_cancel_request(request_id).await;
+                    let _ = state.handle_cancel_request(request_id, &pending).await;
                 }
                 LspCommand::PluginRequest {
                     request_id,
@@ -5440,6 +5602,65 @@ impl Drop for LspHandle {
 
 #[cfg(test)]
 mod tests {
+    use super::{StreakTransition, TimeoutStreak, UNRESPONSIVE_TIMEOUT_STREAK};
+
+    /// Issue #2197: one expiry is not enough to call a server unresponsive —
+    /// a single pathological request should not take the indicator off
+    /// "on" for an otherwise healthy server.
+    #[test]
+    fn a_single_timeout_does_not_make_a_server_unresponsive() {
+        let mut streak = TimeoutStreak::default();
+        assert_eq!(streak.record_timeout(), (1, StreakTransition::None));
+    }
+
+    /// The second expiry with nothing answered in between is the one that
+    /// flips it, and it flips exactly once however long the server stays
+    /// silent — otherwise every subsequent request re-reports the same news.
+    #[test]
+    fn the_streak_reports_becoming_unresponsive_exactly_once() {
+        let mut streak = TimeoutStreak::default();
+        for _ in 1..UNRESPONSIVE_TIMEOUT_STREAK {
+            assert_eq!(streak.record_timeout().1, StreakTransition::None);
+        }
+        assert_eq!(
+            streak.record_timeout().1,
+            StreakTransition::BecameUnresponsive
+        );
+        assert_eq!(streak.record_timeout(), (3, StreakTransition::None));
+        assert_eq!(streak.record_timeout(), (4, StreakTransition::None));
+    }
+
+    /// An answer clears the streak, so the count is "since the server last
+    /// answered", not "since it started".
+    #[test]
+    fn an_answer_clears_the_streak_without_reporting_recovery() {
+        let mut streak = TimeoutStreak::default();
+        assert_eq!(streak.record_timeout(), (1, StreakTransition::None));
+        assert_eq!(streak.record_answer(), StreakTransition::None);
+        assert_eq!(
+            streak.record_timeout(),
+            (1, StreakTransition::None),
+            "the count restarts after an answer"
+        );
+    }
+
+    /// Recovery is reported only when the server had actually been reported
+    /// unresponsive, so a server that never went quiet does not emit a
+    /// spurious "running" on every answered request.
+    #[test]
+    fn recovery_is_reported_only_after_being_unresponsive() {
+        let mut streak = TimeoutStreak::default();
+        for _ in 0..UNRESPONSIVE_TIMEOUT_STREAK {
+            streak.record_timeout();
+        }
+        assert_eq!(streak.record_answer(), StreakTransition::Recovered);
+        assert_eq!(
+            streak.record_answer(),
+            StreakTransition::None,
+            "already recovered — nothing more to report"
+        );
+    }
+
     use super::*;
     use crate::services::lsp::manager::LanguageScope;
     use crate::services::remote::LocalLongRunningSpawner;

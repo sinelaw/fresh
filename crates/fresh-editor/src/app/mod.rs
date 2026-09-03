@@ -84,6 +84,7 @@ mod settings_actions;
 mod settings_prompts;
 mod shell_command;
 pub(crate) mod shell_host;
+pub(crate) mod sidebar;
 mod smart_home;
 mod split_actions;
 mod stdin_stream;
@@ -97,6 +98,7 @@ mod text_ops;
 mod theme_inspect;
 mod toggle_actions;
 pub mod types;
+mod ui_tree_dump;
 mod undo_actions;
 mod view_actions;
 mod virtual_buffers;
@@ -1182,6 +1184,34 @@ pub struct Editor {
     /// keeping `app` and `ui` side by side in `main`.
     pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
 
+    /// A panel focus move the host decided **before the tree could carry it**,
+    /// held for the one frame it takes the description to catch up.
+    ///
+    /// `Editor::focus_panel_widget_in_tree` is the imperative half of the
+    /// focus mirror: it moves the tree's focus to the widget the registry has
+    /// just been told holds the panel's. It can only move focus to an element
+    /// that *exists*, and the two writes a plugin makes when it opens an
+    /// in-panel dropdown — a new spec, then `setFocusKey` onto a row of it —
+    /// are both applied before the next frame describes that spec. So the
+    /// element the second write names is one the tree will not have until the
+    /// frame after, and the move found nothing to do.
+    ///
+    /// Nothing then re-tried it, and the mirror's *other* direction wrote the
+    /// disagreement back: the tree still held the widget focus never left, so
+    /// its `FocusGained` fact re-pointed the registry at that one and the
+    /// dropdown lost the keyboard it had just been handed. That is #3137 — the
+    /// dock's "Move to Folder…" popup, whose first ↓ dismissed it, moved the
+    /// session list underneath and live-switched the workspace.
+    ///
+    /// Recorded here instead, and replayed by
+    /// `Editor::retry_pending_panel_tree_focus` immediately after the frame
+    /// that builds the element, where the gain it raises is queued *after* the
+    /// stale one and so is the one the next dispatch settles on. One replay,
+    /// never a standing request: the frame that follows the write is built
+    /// from the very spec the write was aimed at, so a widget still absent
+    /// there is not coming.
+    pub(crate) pending_panel_tree_focus: Option<(crate::widgets::PanelKey, String)>,
+
     /// Where the shell tree's `Persisted` values live, and the handle that can
     /// drop a window's.
     ///
@@ -1460,6 +1490,11 @@ pub struct Editor {
     pub(crate) dock_width: Option<u16>,
     /// True while the user is dragging the dock's right border to resize.
     pub(crate) dock_resizing: bool,
+    /// The sidebar's sections, top to bottom; section 0 is the explorer.
+    /// Editor-global for the same reason the dock is — see `app::sidebar`.
+    pub(crate) sidebar_sections: Vec<sidebar::SidebarSection>,
+    /// The divider drag in progress, if a section header holds the pointer.
+    pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
     /// In-flight mouse drag-to-select on a widget markdown/text document:
     /// armed by the press that placed the caret, extended on every Drag,
     /// cleared on button-up. `anchor_flat` is the press position as a
@@ -1508,6 +1543,14 @@ pub(crate) const FLOATING_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX);
 /// time. See `Editor::dock` and `PanelSlot`.
 pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 
+/// Sentinel `BufferId` of sidebar section 0's panel slot; section `i`'s is
+/// `SIDEBAR_PANEL_BUFFER_BASE - i`, so every section has its own, below the
+/// two above and above anything a real buffer could be allocated. See
+/// `PanelSlot::Sidebar`.
+pub(crate) const SIDEBAR_PANEL_BUFFER_BASE: BufferId = BufferId(usize::MAX - 2);
+/// How many sidebar sections the sentinel range spans.
+pub(crate) const SIDEBAR_PANEL_BUFFER_SPAN: usize = 256;
+
 /// Selects which of the two coexisting widget-panel slots an operation
 /// targets: the centered modal overlay (`Floating`, the picker /
 /// new-session form / plugin modals) or the persistent editor-global
@@ -1516,6 +1559,9 @@ pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 pub(crate) enum PanelSlot {
     Floating,
     Dock,
+    /// A section of the sidebar column, by section index (section 0 is the
+    /// explorer, so a panel's index is at least 1). See `app::sidebar`.
+    Sidebar(usize),
 }
 
 impl PanelSlot {
@@ -1523,6 +1569,7 @@ impl PanelSlot {
         match self {
             PanelSlot::Floating => FLOATING_PANEL_BUFFER_ID,
             PanelSlot::Dock => DOCK_PANEL_BUFFER_ID,
+            PanelSlot::Sidebar(i) => BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - i),
         }
     }
 }
@@ -1557,6 +1604,11 @@ pub(crate) enum PanelPlacement {
     /// Still input-modal via the `FloatingModal` layer: keys route to it
     /// and a click outside dismisses it.
     Anchored { x: u16, y: u16 },
+    /// A section of the sidebar column under the file explorer, `rows`
+    /// body rows tall as the plugin requested it — the user's drag
+    /// overrides that (`sidebar::SidebarSection::dragged`). Non-modal like
+    /// the dock; see `app::sidebar`.
+    SidebarSection { rows: u16 },
 }
 
 #[derive(Debug, Clone)]
@@ -4307,9 +4359,10 @@ mod tests {
         // Split vertically into two side-by-side panes.
         editor.split_pane_vertical();
 
+        // The panes as the split's relayout placed them.
         let panes: Vec<(crate::model::event::LeafId, u16)> = editor
-            .split_manager()
-            .get_visible_buffers(editor.active_window().editor_content_area())
+            .active_window()
+            .visible_panes()
             .into_iter()
             .map(|(leaf, _buf, area)| (leaf, area.width))
             .collect();
@@ -4332,6 +4385,101 @@ mod tests {
                 full_width
             );
         }
+    }
+
+    /// A pane created by an action is placed before the frame that would
+    /// paint it: the split's relayout lays the frame out once and the
+    /// window retains where the panes are, so the neighbour query — which
+    /// pane is beside this one, by geometry — answers off the grid as it is.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_new_pane_is_beside_its_source_before_any_frame() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        let source = editor.active_split_id();
+        assert_eq!(
+            editor.pane_beside(source),
+            None,
+            "one pane has no neighbour"
+        );
+
+        let _ = stats::take();
+        editor.split_pane_vertical();
+        // The split reflowed through the funnel: one `layout_only` of the
+        // frame, no grid laid out alone.
+        assert_eq!(
+            stats::take(),
+            stats::LayoutCounts {
+                shell: 1,
+                offscreen_grids: 0,
+            }
+        );
+
+        let panes = editor.active_window().visible_panes();
+        assert_eq!(panes.len(), 2);
+        let (left, right) = (panes[0], panes[1]);
+        assert_eq!(left.0, source, "the source keeps the first slot");
+        assert_eq!(left.2.y, right.2.y);
+        assert_eq!(left.2.height, right.2.height);
+        assert_eq!(
+            right.2.x,
+            left.2.x + left.2.width + 1,
+            "the new pane sits past the source and the separator"
+        );
+        assert_eq!(editor.pane_beside(source), Some(right.0));
+        assert_eq!(editor.pane_beside(right.0), Some(source));
+    }
+
+    /// Every window's panes are placed by the layout funnel, not only the
+    /// active window's: the active window's off the frame, another window's
+    /// off one offscreen layout of its own grid at its own body.
+    #[test]
+    fn the_funnel_places_every_windows_panes() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        let other_root = tempfile::tempdir().unwrap();
+        let other = editor.create_window_at(other_root.path().to_path_buf(), "other".into());
+        assert_ne!(other, editor.active_window);
+
+        let _ = stats::take();
+        editor.relayout();
+        assert_eq!(
+            stats::take(),
+            stats::LayoutCounts {
+                shell: 1,
+                offscreen_grids: 1,
+            },
+            "the frame once for the active window, one offscreen grid for the other"
+        );
+
+        let active = editor.active_window().visible_panes();
+        let theirs = editor.windows[&other].visible_panes();
+        assert_eq!(active.len(), 1);
+        assert_eq!(theirs.len(), 1);
+        // The other window's one pane fills its own body, which is the same
+        // chrome at the same screen size.
+        assert_eq!(theirs[0].2, editor.windows[&other].editor_content_area());
+        assert_eq!(theirs[0].2, active[0].2);
     }
 
     /// Regression for sinelaw/fresh#2229.

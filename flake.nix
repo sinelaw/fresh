@@ -72,11 +72,15 @@
               ./crates/fresh-editor/web-ui
               # Runtime assets in crates/fresh-editor
               ./crates/fresh-editor/docs
-              ./crates/fresh-editor/keymaps
-              ./crates/fresh-editor/locales
               ./crates/fresh-editor/plugins
-              ./crates/fresh-editor/themes
               ./crates/fresh-editor/types
+              # Runtime assets in crates/fresh-editor-core, which owns config,
+              # the theme types and their build-script generators. Enumerated
+              # as trees because they are .json, and unlike .sublime-syntax and
+              # .scm there is no repo-wide extension filter for that.
+              ./crates/fresh-editor-core/keymaps
+              ./crates/fresh-editor-core/locales
+              ./crates/fresh-editor-core/themes
               # Test files
               ./crates/fresh-editor/tests
               # Documentation
@@ -117,8 +121,8 @@
               # are compiled in, so they don't need a disk copy.
               postInstall = ''
                 mkdir -p $out/share/fresh-editor
-                cp -r crates/fresh-editor/queries $out/share/fresh-editor/
-                cp -r crates/fresh-editor/keymaps $out/share/fresh-editor/
+                cp -r crates/fresh-editor-core/queries $out/share/fresh-editor/
+                cp -r crates/fresh-editor-core/keymaps $out/share/fresh-editor/
 
                 # Provenance receipt (belt-and-suspenders alongside the embedded
                 # channel); <prefix>/share/fresh resolves from $out/bin/fresh.

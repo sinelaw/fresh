@@ -168,6 +168,13 @@
         "tree_indicator_expanded": "▼"
       }
     },
+    "sidebar": {
+      "description": "The sidebar column the file explorer is the first section of.",
+      "$ref": "#/$defs/SidebarConfig",
+      "default": {
+        "accordion": "free"
+      }
+    },
     "file_browser": {
       "description": "File browser settings (Open File dialog)",
       "$ref": "#/$defs/FileBrowserConfig",
@@ -1256,6 +1263,32 @@
         "right"
       ]
     },
+    "SidebarConfig": {
+      "description": "Sidebar configuration: the column that holds the file explorer and any\nplugin sections mounted under it.",
+      "type": "object",
+      "properties": {
+        "accordion": {
+          "description": "Whether sections open freely (`free`) or one at a time (`exclusive`).\nDefault: free",
+          "$ref": "#/$defs/SidebarAccordion",
+          "default": "free"
+        }
+      }
+    },
+    "SidebarAccordion": {
+      "description": "How the sidebar's sections share the column.",
+      "oneOf": [
+        {
+          "description": "Any number of sections may be open at once; collapsing one gives its\nrows to the sections still open.",
+          "type": "string",
+          "const": "free"
+        },
+        {
+          "description": "One section open at a time: opening a section collapses every other\none, and the dividers are inert.",
+          "type": "string",
+          "const": "exclusive"
+        }
+      ]
+    },
     "FileBrowserConfig": {
       "description": "File browser configuration (for Open File dialog)",
       "type": "object",
@@ -1385,7 +1418,7 @@
           }
         },
         "action": {
-          "description": "Action to perform (e.g., \"insert_char\", \"move_left\")",
+          "description": "Action to perform (e.g., \"insert_char\", \"move_left\"), or \"unbind\" to\nremove the built-in binding for this key instead of binding anything.",
           "type": "string"
         },
         "args": {

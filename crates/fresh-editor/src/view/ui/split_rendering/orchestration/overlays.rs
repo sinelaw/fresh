@@ -234,7 +234,10 @@ pub(crate) fn decoration_context(
 
     // Update bracket highlight overlays. Both toggles are re-read from the
     // config every frame, so flipping one in the settings UI takes effect on
-    // the next render for every buffer.
+    // the next render for every buffer. Whether `<`/`>` are brackets is not a
+    // toggle but the buffer's language — resolved here, the one place that
+    // knows which buffer is being drawn (issue #3090).
+    let bracket_highlight = bracket_highlight.with_language(state.highlighter.language());
     state.bracket_highlight_overlay.update(
         &state.buffer,
         &mut state.overlays,

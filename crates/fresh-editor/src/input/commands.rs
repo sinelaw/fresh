@@ -966,6 +966,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.focus_next_sidebar_section",
+        desc_key: "cmd.focus_next_sidebar_section_desc",
+        action: || Action::FocusNextSidebarSection,
+        contexts: &[Normal, FileExplorer, Terminal, CompositeBuffer, Dock],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.explorer_refresh",
         desc_key: "cmd.explorer_refresh_desc",
         action: || Action::FileExplorerRefresh,
@@ -1426,6 +1433,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.dump_config",
         desc_key: "cmd.dump_config_desc",
         action: || Action::DumpConfig,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.dump_ui_tree",
+        desc_key: "cmd.dump_ui_tree_desc",
+        action: || Action::DumpUiTree,
         contexts: &[],
         custom_contexts: &[],
     },

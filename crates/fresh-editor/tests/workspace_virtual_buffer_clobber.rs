@@ -10,14 +10,12 @@
 //! buffer set and call save_workspace a second time. The on-disk
 //! file is what we assert against.
 
-mod common;
-
 use fresh::config::Config;
 use fresh::workspace::{find_workspace_file_by_root, Workspace};
 use std::path::Path;
 use tempfile::TempDir;
 
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 
 fn read_workspace(working_dir: &Path) -> Option<Workspace> {
     let path = find_workspace_file_by_root(working_dir).ok()??;
@@ -286,5 +284,75 @@ fn closing_real_files_without_virtual_buffer_overwrites_workspace() {
         "closing the real file (no virtual buffers present) must remove it from \
          the saved workspace, but once.txt is still listed: {:#?}",
         after.split_states
+    );
+}
+
+/// The other half of the #2027 guard: a window that *did* restore its
+/// on-disk workspace and is now all-virtual is the user having closed
+/// their files, and that must be written.
+///
+/// Without the `workspace_restored` gate the guard could not tell this
+/// from the case above — both present as an all-virtual snapshot over a
+/// non-empty file — so it refused the save, the stale snapshot survived
+/// every save and checkpoint for the rest of the session, and the next
+/// launch resurrected the files the user had just closed. The welcome
+/// screen made this the common path rather than a corner: it is a
+/// virtual buffer, so closing the last file lands in exactly this shape.
+#[test]
+fn restored_window_going_all_virtual_does_write() {
+    let temp = TempDir::new().unwrap();
+    let project_dir = temp.path().to_path_buf();
+    let kept = project_dir.join("kept.txt");
+    std::fs::write(&kept, b"real content\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir.clone(),
+    )
+    .unwrap();
+    harness.editor_mut().open_file(&kept).unwrap();
+    close_unnamed_buffers(&mut harness);
+    harness.editor_mut().save_workspace().unwrap();
+    assert!(
+        !read_workspace(&project_dir).unwrap().has_no_real_content(),
+        "precondition: the on-disk workspace holds a real file"
+    );
+
+    // Restore it, which is what marks the window as continuing this
+    // workspace rather than being a shell that never held it.
+    harness.editor_mut().try_restore_workspace().unwrap();
+    assert!(
+        harness.editor().active_window().workspace_restored,
+        "restoring a workspace must mark the window as restored"
+    );
+
+    // The user closes everything; the welcome screen (a virtual buffer)
+    // takes over. The serializer strips it, so the snapshot is empty.
+    let _virtual_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("Welcome".to_string(), "welcome".to_string(), true);
+    close_unnamed_buffers(&mut harness);
+    let real_ids: Vec<_> = harness
+        .editor()
+        .active_window()
+        .buffer_metadata
+        .iter()
+        .filter(|(_, m)| m.file_path().is_some())
+        .map(|(id, _)| *id)
+        .collect();
+    for id in real_ids {
+        harness.editor_mut().force_close_buffer(id).unwrap();
+    }
+
+    harness.editor_mut().save_workspace().unwrap();
+
+    let after = read_workspace(&project_dir).expect("workspace file must still exist");
+    assert!(
+        after.has_no_real_content(),
+        "a restored window that the user emptied must persist as empty, or the next \
+         launch resurrects the files they closed (issue #2027 gate)"
     );
 }

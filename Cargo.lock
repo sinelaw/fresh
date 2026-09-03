@@ -1436,6 +1436,7 @@ dependencies = [
  "dirs",
  "encoding_rs",
  "fresh-core",
+ "fresh-editor-core",
  "fresh-gui",
  "fresh-i18n",
  "fresh-input-parser",
@@ -1483,9 +1484,44 @@ dependencies = [
  "ureq",
  "uuid",
  "vt100",
+ "vte",
  "which",
  "windows-sys 0.61.2",
  "winresource",
+]
+
+[[package]]
+name = "fresh-editor-core"
+version = "0.4.10"
+dependencies = [
+ "anyhow",
+ "chardetng",
+ "chrono",
+ "crossterm",
+ "dirs",
+ "encoding_rs",
+ "fresh-core",
+ "fresh-i18n",
+ "fresh-languages",
+ "jsonc-parser",
+ "libc",
+ "nix 0.31.2",
+ "once_cell",
+ "proptest",
+ "pulldown-cmark",
+ "ratatui",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syntect",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "unicode-segmentation",
+ "unicode-width",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1592,6 +1628,7 @@ version = "0.4.10"
 dependencies = [
  "crossterm",
  "proptest",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

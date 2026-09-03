@@ -51,6 +51,151 @@ LTO, `codegen-units = 1`). Two extra knobs are available for producing a
    cargo build --release        # default features, full functionality
    ```
 
+## Dev Build Speed
+
+The default (`dev`/`test`) profile is tuned for build speed, because in this
+workspace the tests *are* the build: `crates/fresh-editor/tests` alone is 59
+integration-test files, and cargo compiles and links each one into its own
+binary that statically contains the whole editor and its dependency graph
+(78 such binaries across the workspace).
+
+**`debug = 0`** is set in `[profile.dev]`. Measured on a 4-core Linux box,
+`fresh-editor` plus 10 of its integration tests, from a cold `target/`:
+
+| | `debug = 2` (cargo default) | `debug = 0` |
+| --- | --- | --- |
+| deps + lib compile | 208s | **153s** |
+| compile + link 10 test binaries | 168s | **126s** |
+| those 10 test binaries on disk | 5586 MB | **1236 MB** |
+| whole `target/` | 12868 MB | **4879 MB** |
+| touch `lib.rs`, rebuild the 10 | 33.2s | **23.6s** |
+
+Disk is not a footnote here. At cargo's default, `cargo build --tests` over
+the whole workspace needs well past 40GB of `target/` and fails with
+"No space left on device" on a machine with 29GB free.
+
+The trade is that debug builds have no line tables, so a panic or a debugger
+gives you function names but not `file:line`. Ask for it per-invocation
+instead of putting it back for everyone:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p fresh-editor --test all_tests
+CARGO_PROFILE_DEV_DEBUG=2 cargo build     # full DWARF
+```
+
+`debug-assertions` and `overflow-checks` are untouched and stay on.
+
+**The git hash is release-only.** `crates/fresh-editor/build.rs` embeds the
+short commit hash, but registering `.git/HEAD` and `.git/refs` as build
+inputs meant every commit, branch switch, rebase or `git pull` invalidated
+the build script and relinked all 59 test binaries. On a warm `target/` with
+10 tests built, a true no-op rebuild is 0.44s while one touched git ref cost
+24.26s. Debug builds now report `dev` and register no git dependency;
+release builds are unchanged and still embed the real hash.
+
+Two things that look like wins here but are **not**, both checked:
+
+- *A faster linker.* Since Rust 1.9x, `rustc` already passes
+  `-B<sysroot>/.../gcc-ld -fuse-ld=lld` by default on
+  `x86_64-unknown-linux-gnu`. `lld` is already in use; a `.cargo/config.toml`
+  selecting it changes nothing.
+- *Dropping the `opt-level = 3` overrides on `oxc_*` / `rquickjs*`.* They cost
+  only ~28s of a 279s cold build (~11%), and removing them makes the
+  incremental loop **slower** (touch-rebuild 23.6s -> 27.8s), because the
+  unoptimized rlibs are larger and take longer to link. They also exist to
+  keep plugin tests from timing out. Leave them alone.
+
+**Integration tests are one binary.** `fresh-editor` used to have 59 test
+roots under `tests/`, and cargo builds a separate binary per root, each
+statically linking the whole editor. `autotests = false` turns that
+auto-discovery off; `tests/all_tests.rs` pulls every root in as a module
+(the same shape `e2e_tests.rs` and `semantic_tests.rs` already used for
+their 321 and 106 files). Measured over all of `fresh-editor`'s tests:
+
+| | 59 binaries | 1 binary |
+| --- | --- | --- |
+| compile + link all test targets | 182.4s | **120.7s** (-34%) |
+| touch `lib.rs`, rebuild all tests | 58.4s | **23.3s** (-60%) |
+| `target/` after building tests | 10970 MB | **4651 MB** (-58%) |
+
+Test count is unchanged: 4709 before, 4709 after, with every name accounted
+for one-to-one. The old total of 5264 counted the 15 helper tests inside
+`tests/common/` once per binary that declared `mod common;` -- 15 x 37
+redundant copies = the 555 difference. They now compile and run once.
+
+One consequence to know about:
+
+- **`cargo test --test <name>` is now a filter, not a target.** Use
+  `cargo nextest run -E 'test(/^orchestrator_pending_local::/)'` or
+  `cargo test --test all_tests -- orchestrator_pending_local::`.
+
+Under `cargo nextest` each test still gets its own process, so isolation is
+unchanged; under plain `cargo test` they share one process, which is what
+`tests/common/global_state.rs` already exists to handle.
+
+**Adding a test file needs no bookkeeping.** `autotests = false` turns off
+cargo's own discovery, and it is all-or-nothing: a root that nothing names
+compiles into nothing, and its tests never run -- no error, no warning. So
+discovery moved into `build.rs`, which scans `tests/` and generates the `mod`
+declarations that `all_tests.rs` includes. Drop a file in `tests/` and it is
+picked up.
+
+Two things that follow from how that is wired:
+
+- The generated `#[path]`s are absolute, because `#[path]` inside an
+  `include!`d file resolves against *that* file's directory (`$OUT_DIR`), not
+  against the file including it. So `file!()` is an absolute path for these
+  roots. Nothing depends on it being relative -- the insta snapshots live under
+  `tests/common/`, reached by a plain `mod common;`.
+- A root that must be its own target (feature-gated, like `scene_parity`) is
+  excluded in two places that have to stay in step: `SEPARATE_TARGETS` in
+  `build.rs` and the same constant in `all_tests.rs`.
+
+`generated_root_list_matches_the_directory` compares the generated list
+against `tests/` at run time, so a build script that failed to re-run still
+fails loudly rather than quietly dropping coverage.
+
+**The data layer is its own crate.** `fresh-editor` was 409k lines in one
+compilation unit. `fresh-editor-core` holds the bottom 85k (20.8%) --
+`config`, `model`, `primitives`, `widgets`, `theme` -- and cannot name
+`app`, `view`, `services`, `input`, `workspace` or the servers. Every old
+path still resolves: `fresh::config`, `fresh::model`, `fresh::primitives`,
+`fresh::widgets`, `fresh::view::theme` and friends are `pub use`
+re-exports, so plugins and tests see no API change.
+
+Measured on the same 4-core box, `--all-targets` over the workspace:
+
+| | one crate | split |
+| --- | --- | --- |
+| edit in `app/`, `cargo build` | 26.3s / 27.6s | **21.9s / 21.5s** (-19%) |
+| edit in `app/`, `cargo check` | 14.7 / 14.6 / 15.2s | **12.2 / 12.9 / 11.9s** (-17%) |
+| edit in `model/`, `cargo build` | 26.4s | 25.5s (-3%) |
+| clean rebuild of all `fresh-*` | 137.4s | 135.4s (unchanged) |
+| `target/` | 8437 MB | **7790 MB** (-8%) |
+
+Read that table honestly: the split buys nothing on a **clean** build, and
+it never could. `core` -> `editor` -> `all_tests` is a strictly sequential
+chain, so cutting the crate in two redistributes the same frontend work
+rather than removing it. What it buys is the **edit loop**, and only for
+edits above the cut -- which is where most edits land. An edit inside the
+data layer still cascades through both crates and is unchanged.
+
+Two rules follow from the boundary:
+
+- **The dependency edge runs one way.** Nothing in `fresh-editor-core` may
+  reference `crate::app`, `crate::view`, `crate::services`, `crate::input`
+  or `crate::workspace`. If the data layer needs something from above,
+  move that thing down (it was probably in the wrong place) rather than
+  reaching up.
+- **`#[cfg(test)]` does not cross the boundary.** A helper in
+  `fresh-editor-core` gated on `cfg(test)` is invisible to tests in
+  `fresh-editor`. Make it `#[doc(hidden)] pub` (as `Buffer::from_str_test`
+  is) or gate it on `debug_assertions` when it costs something in release
+  (as `widgets::render::ROWS_FORMATTED` is). Do **not** add a
+  `test-support` feature: a feature enabled through a dev-dependency forks
+  the dependency graph between `cargo build` and `cargo test`, which is the
+  exact trap the `vte` entry in `crates/fresh-editor/Cargo.toml` documents.
+
 ## Commit Hygiene
 
 - Commit messages must describe the **motivation / goal** of each commit, not just what changed
@@ -94,7 +239,7 @@ LTO, `codegen-units = 1`). Two extra knobs are available for producing a
 
 9. **Narrow recovery paths**: When you add a fallback or retry, trigger it on the *specific* error it was designed for, not on `Err(_)` or catch-all branches. Broad recovery silently hides correctness bugs.
 
-10. **Locale keys go in every locale**: i18n `t!()` keys - update *all* files under `crates/fresh-editor/locales/` with real translations. Don't commit English placeholders.
+10. **Locale keys go in every locale**: i18n `t!()` keys - update *all* files under `crates/fresh-editor-core/locales/` with real translations. Don't commit English placeholders.
 
 11. **Re-read through the owner, not a stale snapshot**: After changing state others cache (config, layout, cursor-derived values), it's usually safest to refresh it through the path that owns it before reading the effect. If a test can't see the change on screen, treat it as suspect.
 

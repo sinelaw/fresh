@@ -17,7 +17,7 @@
 //! let msg = t!("file.saved_as", path = "/path/to/file");
 //! ```
 
-pub mod embedded;
+pub use fresh_editor_core::i18n_embedded as embedded;
 
 pub use fresh_i18n::{register_plugin_strings, translate_plugin_string, unregister_plugin_strings};
 
@@ -174,7 +174,7 @@ mod tests {
         use std::path::Path;
 
         // Read the English locale file as the schema
-        let locales_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
+        let locales_dir = Path::new(embedded::LOCALES_DIR);
         let en_content =
             fs::read_to_string(locales_dir.join("en.json")).expect("Failed to read en.json");
         let en_json: serde_json::Value =

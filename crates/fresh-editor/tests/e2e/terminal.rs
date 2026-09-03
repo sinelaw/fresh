@@ -5220,3 +5220,243 @@ fn test_tab_drag_split_resizes_terminal() {
         screen
     );
 }
+
+/// fresh#3151: scrollback that streams to the backing file *while the
+/// scroll-back view is open* must survive the return to live mode.
+///
+/// The backing file is `[streamed scrollback][temporary visible-screen tail]`,
+/// and returning to live mode truncates it back to the scrollback end. But the
+/// PTY read loop keeps appending scrolled-off lines the whole time, and those
+/// land past the tail — so the truncation deleted them, permanently: the
+/// stream pointer had already counted them as persisted, so no later flush
+/// re-emitted them. The symptom is a gap in the scroll-back exactly where the
+/// live screen used to start.
+///
+/// Drives: fill history with a first batch, split so one pane keeps rendering
+/// live output, drop the focused pane into scroll-back, print a second batch
+/// (which streams past the tail), return to live (the truncation), then read
+/// the whole scroll-back back by paging through it. Every line printed must
+/// still be there.
+///
+/// The split is what makes this deterministic without a timer: the focused
+/// pane stays parked in scroll-back while the *other* pane renders the second
+/// batch, so the test can wait for that batch on screen before triggering the
+/// truncation. A lost line is by construction one that scrolled off, so it can
+/// never be on the live pane's grid — the sweep below cannot pass on the live
+/// pane's rendering.
+#[test]
+#[cfg(not(windows))] // Uses a Unix shell
+fn test_scrollback_survives_output_during_a_scrollback_visit() {
+    const FIRST: usize = 60;
+    const SECOND: usize = 60;
+
+    let mut harness = harness_or_return!(100, 30);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Stay in scroll-back while the shell keeps producing output; the manual
+    // Ctrl+Space below is what returns to live, so the truncation happens at a
+    // point the test controls.
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // First batch: pushes plenty of lines into streamed scrollback.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(format!("for i in $(seq 1 {FIRST}); do echo B_$i; done\n").as_bytes());
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&format!("B_{FIRST}")))
+        .unwrap();
+
+    // Split vertically: both panes show the same terminal, both live.
+    harness.editor_mut().split_pane_vertical();
+    harness.render().unwrap();
+
+    // Drop the focused pane into read-only scroll-back. This appends the
+    // temporary visible-screen tail to the backing file.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Ctrl+Space should drop the focused split into read-only scrollback"
+    );
+
+    // Second batch, printed while the scroll-back view is open: the PTY read
+    // loop streams it into the backing file past that tail. The other (live)
+    // pane is what puts it on screen, so waiting for it needs no timer.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(
+            format!("for i in $(seq 1 {SECOND}); do echo A_$i; done\n").as_bytes(),
+        );
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&format!("A_{SECOND}")))
+        .unwrap();
+
+    // Back to live — this is the truncation.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Ctrl+Space should return the focused split to the live grid"
+    );
+
+    // ...and back into scroll-back to read the history, from the very top.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let missing = missing_markers_in_scrollback(
+        &mut harness,
+        (1..=FIRST)
+            .map(|i| format!("B_{i}"))
+            .chain((1..=SECOND).map(|i| format!("A_{i}"))),
+    );
+    assert!(
+        missing.is_empty(),
+        "{} printed lines are unreachable in scroll-back: {:?}",
+        missing.len(),
+        missing
+    );
+}
+
+/// Page down through the scroll-back view from wherever it is parked,
+/// collecting everything rendered on the way, and return the `markers` that
+/// never showed up.
+///
+/// Only rendered output is inspected, so a marker counts as reachable exactly
+/// when a user scrolling the pane would see it.
+///
+/// Two limits worth knowing before reusing this:
+///
+/// * Entering scroll-back re-appends the current visible screen, so a marker
+///   that survives *only* in that temporary tail still scores as reachable.
+///   Fine for callers whose missing lines are older than the last screenful;
+///   not a way to tell "durably in the scrollback" from "in the volatile tail".
+/// * The sweep stops when a page renders identically to the one before it,
+///   which is end-of-buffer for dense numbered output but would stop early on
+///   a run of blank rows or a repeated frame. That direction is fail-safe — it
+///   reports markers as missing rather than passing vacuously.
+fn missing_markers_in_scrollback(
+    harness: &mut EditorTestHarness,
+    markers: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    let mut seen = harness.screen_to_string();
+    // Each page advances by at least one row, so a page per row of content is
+    // a safe ceiling; the loop normally stops much earlier, when the view
+    // stops moving.
+    let mut pages_left = 10_000;
+    loop {
+        let before = harness.screen_to_string();
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        let after = harness.screen_to_string();
+        seen.push_str(&after);
+        if after == before {
+            break;
+        }
+        pages_left -= 1;
+        assert!(pages_left > 0, "scroll-back paging did not terminate");
+    }
+
+    markers
+        .into_iter()
+        .filter(|m| !contains_marker(&seen, m))
+        .collect()
+}
+
+/// Whether `marker` appears in `text` as a whole token — `A_1` must not be
+/// satisfied by `A_10`.
+fn contains_marker(text: &str, marker: &str) -> bool {
+    text.match_indices(marker).any(|(idx, _)| {
+        text[idx + marker.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_ascii_digit())
+    })
+}
+
+/// fresh#3151, the trigger that needs no scroll-back visit at all: resuming a
+/// terminal that is *already* live still truncated its backing file.
+///
+/// "Focus Terminal" (and the tab-switch path behind `focus_terminal_buffer`)
+/// call `enter_terminal_mode` unconditionally — the split need not have been
+/// in scroll-back — and that cut the backing file back to the recorded end of
+/// scrollback. The PTY read loop recorded that end from `metadata()` *before*
+/// flushing its own `BufWriter`, so every recorded end was one batch short and
+/// the truncation ate the lines that had most recently scrolled off: exactly
+/// the rows just above the top of the screen.
+///
+/// Drives: print a batch into scrollback, run Focus Terminal on the live
+/// terminal, then read the scroll-back back by paging through it.
+#[test]
+#[cfg(not(windows))] // Uses a Unix shell
+fn test_focusing_an_already_live_terminal_keeps_its_scrollback() {
+    const LINES: usize = 60;
+
+    let mut harness = harness_or_return!(100, 30);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(format!("for i in $(seq 1 {LINES}); do echo L_$i; done\n").as_bytes());
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&format!("L_{LINES}")))
+        .unwrap();
+
+    // Resume a terminal that is already live, via the command palette. No
+    // scroll-back view is ever opened before this point.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Focus Terminal").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Focus Terminal should leave the terminal live. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Now read the history back.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let missing =
+        missing_markers_in_scrollback(&mut harness, (1..=LINES).map(|i| format!("L_{i}")));
+    assert!(
+        missing.is_empty(),
+        "{} printed lines are unreachable in scroll-back: {:?}",
+        missing.len(),
+        missing
+    );
+}

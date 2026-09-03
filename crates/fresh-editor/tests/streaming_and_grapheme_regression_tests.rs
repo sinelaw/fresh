@@ -12,9 +12,7 @@
 //!   containing cluster's start, and stepping `prev_boundary` from it
 //!   overshoots.
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 
 /// `extend_streaming` appends content and must bump `buffer.version()`
 /// like every other mutation path — layout caches key on the version,

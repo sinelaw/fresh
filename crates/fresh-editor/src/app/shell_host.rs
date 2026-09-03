@@ -30,11 +30,12 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use crate::app::Editor;
-use crate::model::event::LeafId;
+use crate::model::event::{BufferId, LeafId};
+use crate::view::shell::geometry::PaneRects;
 use crate::view::shell::splits::PaneChrome;
 use crate::view::ui::split_rendering::{
-    paint_leaf, paint_separators, prepare_content, record_scrollbar_theme_runs, ContentPass,
-    FrameFacts, Stores,
+    paint_leaf, paint_separators, prepare_content, reconcile_panes, record_scrollbar_theme_runs,
+    ContentPass, FrameFacts, Stores,
 };
 use crate::view::ui::{EditorRenderConfig, RenderStyle};
 
@@ -154,6 +155,28 @@ pub struct BodyPainter<'a> {
     /// [`crate::view::ui::split_rendering::orchestration::paint_leaf`] to skip
     /// the text pass. See `FrameFacts::described_panes`.
     described_panes: HashSet<LeafId>,
+    /// Where the frame put every pane, read off the tree `render` just laid
+    /// out — the same tree whose display list this painter is folded over.
+    ///
+    /// The body's pass used to ask the split manager for this, which laid
+    /// the grid out a second time in a scratch `Ui<()>`; a pane's box came
+    /// from that grid and its `Host` rect from the tree, and only a parity
+    /// test said the two agreed. Now there is one answer, and [`Self::pane`]
+    /// asserts the fold's rect is it.
+    rects: PaneRects,
+    /// The grid as [`reconcile_body`] prepared it for this frame, taken by
+    /// [`Self::body`] so the panes are prepared once per frame — preparing
+    /// them again would resize a buffer group's inner panels back to their
+    /// panel rects after the reconcile sized them to their content rects,
+    /// and the text pass would wrap at a width nobody placed for.
+    prepared: Option<PreparedGrid>,
+}
+
+/// What [`reconcile_body`] prepared: the frame's panes, in paint order, and
+/// the split manager's leaves the separators are drawn between.
+pub struct PreparedGrid {
+    base_visible: Vec<(LeafId, BufferId, Rect)>,
+    pass: ContentPass,
 }
 
 impl<'a> BodyPainter<'a> {
@@ -161,23 +184,10 @@ impl<'a> BodyPainter<'a> {
         editor: &'a mut Editor,
         state: BodyState,
         pane_chrome: std::collections::HashMap<LeafId, PaneChrome>,
+        rects: PaneRects,
+        prepared: Option<PreparedGrid>,
     ) -> Self {
-        let scrollback = editor
-            .windows
-            .get(&editor.active_window)
-            .and_then(|win| {
-                win.buffers.splits().map(|(_, vs_map)| {
-                    vs_map
-                        .iter()
-                        .filter(|(leaf, svs)| {
-                            win.split_terminal_scrollback(**leaf, svs.active_buffer)
-                        })
-                        .map(|(leaf, _)| *leaf)
-                        .collect()
-                })
-            })
-            .unwrap_or_default();
-        let described_panes = editor.described_panes();
+        let (scrollback, described_panes) = frame_pane_sets(editor);
         Self {
             editor,
             state,
@@ -187,6 +197,8 @@ impl<'a> BodyPainter<'a> {
             pane_chrome,
             scrollback,
             described_panes,
+            rects,
+            prepared,
         }
     }
 
@@ -223,6 +235,12 @@ impl<'a> BodyPainter<'a> {
     fn body(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state;
         self.screen_width = buf.area.width;
+        // The pass keeps its own copy: a `ContentPass` is what the preview
+        // path builds for a grid with no painter, so it owns its rects.
+        let rects = self.rects.clone();
+        // The reconcile prepared the grid for this frame; prepare it again
+        // only when nothing did (a caller that folds without reconciling).
+        let prepared = self.prepared.take();
         self.pass = with_grid(
             self.editor,
             state,
@@ -231,15 +249,20 @@ impl<'a> BodyPainter<'a> {
             &self.scrollback,
             &self.described_panes,
             |facts, stores, mgr, window_chrome| {
-                let base_visible = mgr.get_visible_buffers(area);
-                let pass = prepare_content(
-                    &base_visible,
-                    mgr,
-                    stores.split_view_states.as_deref_mut(),
-                    facts.grouped_subtrees,
-                    facts.pane_chrome,
-                    window_chrome,
-                );
+                let PreparedGrid { base_visible, pass } = prepared.unwrap_or_else(|| {
+                    // The panes at the boxes the tree placed them in — not a
+                    // second layout of the grid into `area`.
+                    let base_visible = rects.visible(&mgr.visible_leaves());
+                    let pass = prepare_content(
+                        rects,
+                        &base_visible,
+                        mgr,
+                        stores.split_view_states.as_deref_mut(),
+                        facts.grouped_subtrees,
+                        window_chrome,
+                    );
+                    PreparedGrid { base_visible, pass }
+                });
                 paint_separators(buf, area, mgr, &base_visible, facts, stores);
                 pass
             },
@@ -266,6 +289,13 @@ impl<'a> BodyPainter<'a> {
         let Some(mut pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
             return;
         };
+        // The fold's rect is the pane's node's, and the pass's rect was read
+        // off the same node before the fold: one layout, one answer.
+        debug_assert_eq!(
+            self.rects.pane(leaf),
+            Some(rect),
+            "pane {leaf:?}: the fold's rect is not the one the tree placed it at"
+        );
         pane.3 = rect;
         let state = self.state;
         let out = &mut self.out;
@@ -281,6 +311,69 @@ impl<'a> BodyPainter<'a> {
             },
         );
     }
+}
+
+/// The two per-frame sets every pane's paint reads: the splits showing a
+/// terminal in read-only scrollback, and the panes the tree describes instead
+/// of painting. Gathered once per frame — a `paint_host` call is per pane.
+fn frame_pane_sets(editor: &Editor) -> (HashSet<LeafId>, HashSet<LeafId>) {
+    let scrollback = editor
+        .windows
+        .get(&editor.active_window)
+        .and_then(|win| {
+            win.buffers.splits().map(|(_, vs_map)| {
+                vs_map
+                    .iter()
+                    .filter(|(leaf, svs)| win.split_terminal_scrollback(**leaf, svs.active_buffer))
+                    .map(|(leaf, _)| *leaf)
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    (scrollback, editor.described_panes())
+}
+
+/// Reconcile every text pane of the frame about to be painted — see
+/// `orchestration::reconcile`.
+///
+/// **Before the frame's paint, at the frame's rectangles.** `rects` is where
+/// the tree just laid out put every pane, and each pane is settled at the
+/// content rect the painter will format it into. `render` calls this once
+/// the tree is laid out and before the `lines_changed` hooks, so everything
+/// after it in the frame reads a settled viewport.
+///
+/// Returns the prepared grid for [`BodyPainter::new`], so the fold paints
+/// the panes this reconciled rather than preparing them a second time.
+pub fn reconcile_body(
+    editor: &mut Editor,
+    state: BodyState,
+    rects: &PaneRects,
+    screen_width: u16,
+    pane_chrome: &std::collections::HashMap<LeafId, PaneChrome>,
+) -> Option<PreparedGrid> {
+    let (scrollback, described_panes) = frame_pane_sets(editor);
+    let rects = rects.clone();
+    with_grid(
+        editor,
+        state,
+        screen_width,
+        pane_chrome,
+        &scrollback,
+        &described_panes,
+        |facts, stores, mgr, window_chrome| {
+            let base_visible = rects.visible(&mgr.visible_leaves());
+            let pass = prepare_content(
+                rects,
+                &base_visible,
+                mgr,
+                stores.split_view_states.as_deref_mut(),
+                facts.grouped_subtrees,
+                window_chrome,
+            );
+            reconcile_panes(&pass, facts, stores);
+            PreparedGrid { base_visible, pass }
+        },
+    )
 }
 
 /// Assemble the grid's borrows off the editor and hand them to `f`.
@@ -1576,6 +1669,9 @@ impl Editor {
                 let slot = match slot {
                     crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
+                    crate::view::shell::widgets::Slot::Sidebar(i) => {
+                        crate::app::PanelSlot::Sidebar(i)
+                    }
                     // Not a plugin panel: the same `WidgetSpec`s, whose hits
                     // are settings actions rather than a plugin's
                     // `widget_event`.
@@ -1634,9 +1730,10 @@ impl Editor {
                     // A pane-mounted panel has no pop-over yet: its dropdown
                     // rows come with the rest of C.5's second step.
                     Slot::Pane(_) => {}
-                    Slot::Dock | Slot::Floating => {
+                    Slot::Dock | Slot::Floating | Slot::Sidebar(_) => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
+                            Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                             _ => crate::app::PanelSlot::Floating,
                         };
                         // **Asked of the spec and the state, not of a field
@@ -1695,6 +1792,7 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     _ => return,
                 };
                 let Some(key) = self.panel(panel).map(|p| p.panel_key.clone()) else {
@@ -1728,6 +1826,7 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     _ => return,
                 };
                 let Some(key) = self.panel(panel).map(|p| p.panel_key.clone()) else {
@@ -1785,6 +1884,7 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     // The settings dialog's rows raise no plugin menu.
                     _ => return,
                 };
@@ -1792,6 +1892,9 @@ impl Editor {
                     && self.dock.as_ref().is_some_and(|f| !f.focused)
                 {
                     self.refocus_floating_panel(crate::app::PanelSlot::Dock);
+                }
+                if let crate::app::PanelSlot::Sidebar(i) = panel {
+                    self.focus_sidebar_section(i);
                 }
                 self.fire_widget_context(panel, &hit, x, y);
             }
@@ -1809,9 +1912,10 @@ impl Editor {
                     }
                     // As above: no pop-over on a pane-mounted panel yet.
                     Slot::Pane(_) => {}
-                    Slot::Dock | Slot::Floating => {
+                    Slot::Dock | Slot::Floating | Slot::Sidebar(_) => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
+                            Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                             _ => crate::app::PanelSlot::Floating,
                         };
                         let panel_key = match self.panel(panel) {
@@ -2212,6 +2316,15 @@ impl Editor {
                 }
             }
             UiFact::ExplorerClose => self.toggle_file_explorer(),
+            // A section header's press, move and release, and the two things
+            // the header does besides dividing. See `app::sidebar`.
+            UiFact::SectionResizeBegin { index, y } => {
+                self.begin_sidebar_section_drag(index, y);
+            }
+            UiFact::SectionToggle { index } => self.toggle_sidebar_section(index),
+            UiFact::SectionClose { index } => self.close_sidebar_section(index),
+            UiFact::SectionFocus { index } => self.focus_sidebar_section(index),
+            UiFact::SidebarBlur => self.blur_sidebar_panels(),
             UiFact::ExplorerResizeBegin { x, y } => {
                 let w = self.active_window().file_explorer_width;
                 let st = &mut self.active_window_mut().mouse_state;
@@ -2283,6 +2396,7 @@ impl Editor {
                             tracing::warn!("explorer width drag failed: {e}");
                         }
                     }
+                    Grip::SectionDivider(_) => self.drag_sidebar_section(y),
                     Grip::DockWidth => {}
                 }
             }
@@ -2310,6 +2424,10 @@ impl Editor {
                         ms.dragging_file_explorer = false;
                         ms.drag_start_explorer_width = None;
                     }
+                    // A release where the press landed is a click, and a click
+                    // on a header toggles the section; either way the drag is
+                    // over and the rows it set stay set.
+                    Grip::SectionDivider(_) => self.end_sidebar_section_drag(),
                 }
             }
             UiFact::DockBlur => {
@@ -2615,6 +2733,7 @@ impl Editor {
                 let slot = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
+                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     // The settings surfaces reuse the widget vocabulary but
                     // are not panels and never raise this layer. Neither does
                     // a pane-mounted panel: its keys are the buffer's, and the
@@ -2665,6 +2784,21 @@ impl Editor {
                         {
                             tracing::warn!("dock focus toggle failed: {e}");
                         }
+                        self.shell_interior_took_key = Some(true);
+                        return;
+                    }
+                }
+                // The same for a sidebar section and the cycle that leaves it:
+                // resolved ahead of the panel, or the blur-and-fall-through
+                // would cycle from the editor rather than from the section.
+                if let crate::app::PanelSlot::Sidebar(_) = slot {
+                    let ctx = self.get_key_context();
+                    let resolved = self.keybindings.read().ok().map(|kb| kb.resolve(&ev, ctx));
+                    if matches!(
+                        resolved,
+                        Some(crate::input::keybindings::Action::FocusNextSidebarSection)
+                    ) {
+                        self.focus_next_sidebar_section();
                         self.shell_interior_took_key = Some(true);
                         return;
                     }

@@ -480,13 +480,30 @@ impl Editor {
             return Ok(());
         }
 
-        let workspace = win.capture_workspace();
+        let mut workspace = win.capture_workspace();
+        // The sidebar's sections are editor state (see `app::sidebar`), so
+        // the window's snapshot does not know them; they ride in its file.
+        workspace.file_explorer.sections = self.sidebar_section_states();
 
         // Refuse to overwrite a non-empty on-disk workspace with an
         // all-virtual snapshot (issue #2027). The protection is for
         // FILE/unnamed content only — terminals are live runtime state, so
         // a terminal-only on-disk workspace must NOT block this save.
-        if workspace.has_no_real_content() && win.has_any_virtual_buffer() {
+        //
+        // Only for a window that never restored. The guard exists for an
+        // instance that boots straight to a virtual surface without ever
+        // reading the workspace — it must not wipe content it never held.
+        // A window that *did* restore and is now all-virtual is the user
+        // having closed their files, and refusing that save resurrected
+        // them on the next launch: the welcome screen is a virtual
+        // buffer, so closing the last file left exactly the shape this
+        // guard rejects, and the stale snapshot survived every save and
+        // every checkpoint for the rest of the session (issue #2027's
+        // guard also sits on `checkpoint_window_workspace`).
+        if !win.workspace_restored
+            && workspace.has_no_real_content()
+            && win.has_any_virtual_buffer()
+        {
             let root = win.root.clone();
             let on_disk = Workspace::load(&root).ok().flatten();
             if let Some(existing) = on_disk {
@@ -601,6 +618,13 @@ impl Editor {
             built.plugin_state = pstate;
             built.authority_spec = workspace.authority_spec.clone();
             self.windows.insert(id, built);
+        }
+
+        // Active-window only, because the sections are editor-global (see
+        // `app::sidebar`): the active window's file is the one whose layout
+        // the column shows.
+        if id == self.active_window {
+            self.restore_sidebar_sections(&workspace.file_explorer.sections);
         }
 
         // Active-window only: the restored active buffer never went through a
@@ -2110,7 +2134,7 @@ impl crate::app::window::Window {
     /// Sync this window's active terminal visible screens to their
     /// backing files (so the snapshot captures complete terminal state).
     pub(crate) fn sync_terminal_backing_files(&self) {
-        use std::io::BufWriter;
+        use std::io::{BufWriter, Write};
 
         let terminals_to_sync: Vec<_> = self
             .terminal_buffers
@@ -2126,6 +2150,25 @@ impl crate::app::window::Window {
         for (terminal_id, backing_path) in terminals_to_sync {
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
+                    // Drop a visible-screen tail an earlier checkpoint or
+                    // scroll-back visit left behind: this snapshot writes a
+                    // fresh one below, and scrollback appended past a tail is
+                    // cut away by the truncation that ends the next scroll-back
+                    // visit (fresh#3151).
+                    if state.backing_file_has_tail() {
+                        let history_end = state.backing_file_history_end();
+                        match crate::app::terminal::terminal_backing_fs()
+                            .set_file_length(&backing_path, history_end)
+                        {
+                            Ok(()) => state.set_backing_file_has_tail(false),
+                            Err(e) => tracing::warn!(
+                                "Failed to drop terminal {:?} visible-screen tail: {}",
+                                terminal_id,
+                                e
+                            ),
+                        }
+                    }
+
                     // Persist any scrolled-off lines not yet in the file (e.g.
                     // lines a resize spilled into history on a terminal that was
                     // never viewed before quitting) so a restored workspace keeps
@@ -2143,16 +2186,30 @@ impl crate::app::window::Window {
                         }
                     }
 
+                    // Record the scrollback end before the tail goes in, so
+                    // the next writer knows where to cut it back off.
+                    if let Ok(metadata) =
+                        crate::app::terminal::terminal_backing_fs().metadata(&backing_path)
+                    {
+                        state.set_backing_file_history_end(metadata.size);
+                    }
+
                     if let Ok(mut file) = crate::app::terminal::terminal_backing_fs()
                         .open_file_for_append(&backing_path)
                     {
                         let mut writer = BufWriter::new(&mut *file);
-                        if let Err(e) = state.append_visible_screen(&mut writer) {
-                            tracing::warn!(
+                        // Claim the tail before writing it: a part-written
+                        // tail still leaves bytes past the history end, and
+                        // the flag is what gets them cut back off later.
+                        state.set_backing_file_has_tail(true);
+                        let appended = state.append_visible_screen(&mut writer);
+                        match appended.and_then(|_| writer.flush()) {
+                            Ok(()) => {}
+                            Err(e) => tracing::warn!(
                                 "Failed to sync terminal {:?} to backing file: {}",
                                 terminal_id,
                                 e
-                            );
+                            ),
                         }
                     }
                 }
@@ -2491,6 +2548,10 @@ impl crate::app::window::Window {
             workspace.split_states.len()
         );
 
+        // This window now continues an on-disk workspace, which is what
+        // licenses a later all-virtual save to overwrite it.
+        self.workspace_restored = true;
+
         // Adopt the snapshot's durable identity: the window continues the
         // persisted workspace rather than starting a new one, so saves keep
         // landing in the same id-keyed file instead of minting a sibling on
@@ -2765,6 +2826,7 @@ impl crate::app::window::Window {
                 scroll_offset: explorer.get_scroll_offset(),
                 show_hidden: explorer.ignore_patterns().show_hidden(),
                 show_gitignored: explorer.ignore_patterns().show_gitignored(),
+                sections: Vec::new(),
             }
         } else {
             FileExplorerState {
@@ -2775,6 +2837,7 @@ impl crate::app::window::Window {
                 scroll_offset: 0,
                 show_hidden: false,
                 show_gitignored: false,
+                sections: Vec::new(),
             }
         };
 

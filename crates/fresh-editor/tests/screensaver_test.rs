@@ -5,9 +5,8 @@
 // takes the elapsed idle duration explicitly. These tests drive that
 // method with explicit durations — no sleeping, no wall-clock timing — and
 // assert on the resulting state.
-mod common;
 
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use std::time::Duration;
 
 /// With the screensaver enabled and a 5-minute threshold, being idle past

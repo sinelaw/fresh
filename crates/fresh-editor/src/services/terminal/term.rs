@@ -466,6 +466,26 @@ pub struct TerminalState {
     pending_reflow_resync: bool,
     /// Byte offset in backing file where scrollback ends (for truncation)
     backing_file_history_end: u64,
+    /// A temporary visible-screen tail (written by `append_visible_screen`)
+    /// currently sits in the backing file past `backing_file_history_end`.
+    ///
+    /// The tail is not scrollback: it is the exit frame the scroll-back view
+    /// anchors to, and it is rewritten on every visit. Anything appended
+    /// *after* it is therefore living on borrowed time — the truncation that
+    /// ends the visit cuts the file back to `backing_file_history_end` and
+    /// takes it along (fresh#3151).
+    ///
+    /// The two writers handle that differently, so read the flag as "a tail is
+    /// there *unless the PTY read loop got there first*":
+    ///
+    /// * The UI-thread paths (scroll-back entry, session checkpoint) rewrite
+    ///   the tail, so they truncate the old one off first.
+    /// * The read loop cannot truncate — a scroll-back view may be reading the
+    ///   file — so when it streams scrollback while the flag is set it instead
+    ///   *adopts* the tail as scrollback and clears the flag, leaving nothing
+    ///   for a later truncation to cut at. That costs one duplicated screen
+    ///   per overlap, permanently; losing the lines would be worse.
+    backing_file_has_tail: bool,
     /// Queue of data to write back to the PTY (for DSR responses, etc.)
     pty_write_queue: Arc<Mutex<Vec<String>>>,
     /// Pending title set by the program via OSC 0/1/2 (shared with the
@@ -533,6 +553,7 @@ impl TerminalState {
             history_overrun: false,
             pending_reflow_resync: false,
             backing_file_history_end: 0,
+            backing_file_has_tail: false,
             pty_write_queue,
             pending_title,
             cwd: None,
@@ -804,6 +825,7 @@ impl TerminalState {
             // Check flags
             let flags = cell.flags;
             let bold = flags.contains(Flags::BOLD);
+            let dim = flags.contains(Flags::DIM);
             let italic = flags.contains(Flags::ITALIC);
             let underline = flags.contains(Flags::UNDERLINE);
             let inverse = flags.contains(Flags::INVERSE);
@@ -813,6 +835,7 @@ impl TerminalState {
                 fg,
                 bg,
                 bold,
+                dim,
                 italic,
                 underline,
                 inverse,
@@ -1241,23 +1264,38 @@ impl TerminalState {
             let bg = color_to_rgb(&cell.bg);
             let flags = cell.flags;
             let bold = flags.contains(Flags::BOLD);
+            let dim = flags.contains(Flags::DIM);
             let italic = flags.contains(Flags::ITALIC);
             let underline = flags.contains(Flags::UNDERLINE);
 
             let fg_changed = fg != sgr.fg;
             let bg_changed = bg != sgr.bg;
             let bold_changed = bold != sgr.bold;
+            let dim_changed = dim != sgr.dim;
             let italic_changed = italic != sgr.italic;
             let underline_changed = underline != sgr.underline;
 
-            if fg_changed || bg_changed || bold_changed || italic_changed || underline_changed {
+            if fg_changed
+                || bg_changed
+                || bold_changed
+                || dim_changed
+                || italic_changed
+                || underline_changed
+            {
                 let mut codes: Vec<String> = Vec::new();
 
                 // A turned-off attribute requires a full reset + reapply.
-                if (sgr.bold && !bold) || (sgr.italic && !italic) || (sgr.underline && !underline) {
+                if (sgr.bold && !bold)
+                    || (sgr.dim && !dim)
+                    || (sgr.italic && !italic)
+                    || (sgr.underline && !underline)
+                {
                     codes.push("0".to_string());
                     if bold {
                         codes.push("1".to_string());
+                    }
+                    if dim {
+                        codes.push("2".to_string());
                     }
                     if italic {
                         codes.push("3".to_string());
@@ -1274,6 +1312,9 @@ impl TerminalState {
                 } else {
                     if bold_changed && bold {
                         codes.push("1".to_string());
+                    }
+                    if dim_changed && dim {
+                        codes.push("2".to_string());
                     }
                     if italic_changed && italic {
                         codes.push("3".to_string());
@@ -1304,6 +1345,7 @@ impl TerminalState {
                 sgr.fg = fg;
                 sgr.bg = bg;
                 sgr.bold = bold;
+                sgr.dim = dim;
                 sgr.italic = italic;
                 sgr.underline = underline;
             }
@@ -1327,6 +1369,24 @@ impl TerminalState {
         self.backing_file_history_end = offset;
     }
 
+    /// Whether the backing file currently carries a temporary visible-screen
+    /// tail past [`Self::backing_file_history_end`].
+    ///
+    /// A writer that appends scrollback must clear the tail first (truncate
+    /// the file back to the history end), or its lines land past the
+    /// truncation point and are lost when the scroll-back visit ends.
+    pub fn backing_file_has_tail(&self) -> bool {
+        self.backing_file_has_tail
+    }
+
+    /// Record whether a temporary visible-screen tail is present in the
+    /// backing file: `true` right after [`Self::append_visible_screen`] was
+    /// written to it, `false` right after it was truncated back to
+    /// [`Self::backing_file_history_end`].
+    pub fn set_backing_file_has_tail(&mut self, present: bool) {
+        self.backing_file_has_tail = present;
+    }
+
     /// Get the number of scrollback lines that have been synced to the backing file.
     pub fn synced_history_lines(&self) -> usize {
         self.synced_history_lines
@@ -1338,6 +1398,7 @@ impl TerminalState {
         self.synced_logical_lines = 0;
         self.pending_reflow_resync = false;
         self.backing_file_history_end = 0;
+        self.backing_file_has_tail = false;
     }
 }
 
@@ -1352,6 +1413,8 @@ pub struct TerminalCell {
     pub bg: Option<(u8, u8, u8)>,
     /// Bold flag
     pub bold: bool,
+    /// Dim (faint) flag — SGR 2
+    pub dim: bool,
     /// Italic flag
     pub italic: bool,
     /// Underline flag
@@ -1367,6 +1430,7 @@ impl Default for TerminalCell {
             fg: None,
             bg: None,
             bold: false,
+            dim: false,
             italic: false,
             underline: false,
             inverse: false,
@@ -1381,13 +1445,19 @@ struct SgrState {
     fg: Option<(u8, u8, u8)>,
     bg: Option<(u8, u8, u8)>,
     bold: bool,
+    dim: bool,
     italic: bool,
     underline: bool,
 }
 
 impl SgrState {
     fn has_style(&self) -> bool {
-        self.fg.is_some() || self.bg.is_some() || self.bold || self.italic || self.underline
+        self.fg.is_some()
+            || self.bg.is_some()
+            || self.bold
+            || self.dim
+            || self.italic
+            || self.underline
     }
 }
 
@@ -1474,6 +1544,45 @@ mod tests {
         let state = TerminalState::new(80, 24);
         assert_eq!(state.size(), (80, 24));
         assert!(state.is_dirty());
+    }
+
+    /// SGR 2 must survive the grid: alacritty records it as `Flags::DIM`, and
+    /// both readback paths — the live cell grid and the ANSI serialization
+    /// used for scrollback — have to carry it, or dim text renders at full
+    /// brightness and is indistinguishable from normal text (issue #3123).
+    #[test]
+    fn dim_attribute_survives_the_grid() {
+        let mut state = TerminalState::new(40, 4);
+        state.process_output(b"\x1b[2mDIM\x1b[0m|\x1b[1mBOLD\x1b[0m|PLAIN");
+
+        let cells = state.get_line(0);
+        // "DIM" is dim and not bold; "BOLD" is bold and not dim.
+        for (i, c) in "DIM".chars().enumerate() {
+            assert_eq!(cells[i].c, c);
+            assert!(cells[i].dim, "cell {i} lost its dim attribute");
+            assert!(!cells[i].bold);
+        }
+        assert!(!cells[3].dim, "the reset after DIM was not honoured");
+        for (i, c) in "BOLD".chars().enumerate() {
+            let cell = &cells[4 + i];
+            assert_eq!(cell.c, c);
+            assert!(cell.bold);
+            assert!(!cell.dim);
+        }
+
+        // The serialized form emits `ESC[2m` — the same shape bold already
+        // got, which is what made the loss specific to SGR 2.
+        let mut out = Vec::new();
+        state
+            .append_visible_screen(&mut out)
+            .expect("serialization failed");
+        let text = String::from_utf8(out).expect("not utf-8");
+        let first = text.lines().next().unwrap_or_default();
+        assert!(
+            first.contains("\x1b[2m") && first.contains("DIM"),
+            "dim was dropped on serialization: {first:?}"
+        );
+        assert!(first.contains("\x1b[1m"), "bold regressed: {first:?}");
     }
 
     #[test]

@@ -3532,6 +3532,7 @@ pub fn action_to_events(
         | Action::FocusFileExplorer
         | Action::FocusEditor
         | Action::ToggleDockFocus
+        | Action::FocusNextSidebarSection
         | Action::SetBackground
         | Action::SetBackgroundBlend
         | Action::FileExplorerUp
@@ -3585,6 +3586,7 @@ pub fn action_to_events(
         | Action::ToggleScrollSync
         | Action::ToggleMouseCapture
         | Action::DumpConfig
+        | Action::DumpUiTree
         | Action::RedrawScreen
         | Action::Search
         | Action::FindInSelection

@@ -12,6 +12,18 @@ pub(crate) struct BottomRowFlags {
     pub prompt_row_visible: bool,
 }
 
+/// The explorer as the frame builds it: its content and the chrome its
+/// section wears, before the column it sits in has been assembled.
+struct ExplorerSection {
+    kind: crate::view::shell::file_explorer::Explorer,
+    title: String,
+    title_theme: String,
+    border_theme: String,
+    close_theme: String,
+    rows: u16,
+    focused: bool,
+}
+
 /// How far the `lines_changed` walk will go to close a run of non-blank lines
 /// for a composing buffer, in either direction.
 ///
@@ -367,25 +379,22 @@ impl Editor {
         // the top — is read off the column that laid the cards out.
         self.refresh_settings_body_window();
         let shell = self.shell_frame((dock_area, chrome_area));
-        // The shell's tree is retained across frames — element state, focus and
-        // the dirty set live on it — so it is moved out for the duration of the
-        // frame rather than borrowed from `self`. See `Editor::shell_ui`.
-        // `expect`, not `unwrap_or_default`: silently substituting a fresh
-        // `Ui` would discard every element's state, the focus position and the
-        // dirty set, and the frame would still render — the retained tree's
-        // whole point, lost without a symptom. If this is ever `None` a
-        // re-entrant path took it and did not put it back, which is a bug in
-        // that path.
-        let mut ui = self
+        self.lay_out_shell_tree(shell.clone(), fresh_ui::Size::new(size.width, size.height));
+        let ui = self
             .shell_ui
-            .take()
+            .as_ref()
             .expect("the shell tree is taken and returned within one frame");
-        ui.frame(
-            crate::view::shell::frame::frame_tree(shell.clone()),
-            fresh_ui::Size::new(size.width, size.height),
-        );
-        let regions = crate::view::shell::frame::regions_of(&ui, size);
-        self.shell_ui = Some(ui);
+        let regions = crate::view::shell::frame::regions_of(ui, size);
+        // **The frame's one geometry pass, for the panes.** Every pane's box
+        // and content slot, off the tree just laid out. The plugin hooks below,
+        // the body painter's pass and the pane `Host`s all read this; nothing
+        // on the render path lays the grid out again to ask where a pane is.
+        // See `view::shell::geometry`.
+        let pane_rects =
+            crate::view::shell::geometry::PaneRects::read(ui, self.window_panes_leaves(), size);
+        // Retained for the callers that ask between frames where a pane is —
+        // the same rects this frame paints with. See `Window::pane_rects`.
+        self.active_window_mut().set_pane_rects(pane_rects.clone());
         let region = |r: crate::view::shell::frame::HostRegion| -> ratatui::layout::Rect {
             regions
                 .iter()
@@ -413,6 +422,36 @@ impl Editor {
         use crate::view::shell::frame::HostRegion;
         let status_bar_area = region(HostRegion::StatusBar);
         let editor_content_area = region(HostRegion::Body);
+
+        // The chrome each pane has, resolved with the shell's description of
+        // the same grid — read by the reconcile below and by the body's
+        // painter further down, so both lay the panes out the same way.
+        let pane_chrome = shell
+            .splits
+            .as_ref()
+            .map(|s| s.chrome.clone())
+            .unwrap_or_default();
+
+        // **Every text pane is reconciled here, before anything reads it.**
+        // The viewport's size, the byte and row placement of the cursor, the
+        // buffer's margins and its wrap index used to be brought up to date
+        // *inside* the paint, pane by pane, which is what made the formatter
+        // write the model and build its rows up to three times. Now the tree
+        // is laid out and `pane_rects` says where every pane is, so each pane
+        // is settled once at the content rect it will be painted at — the
+        // `lines_changed` hooks below offer the lines the frame will draw,
+        // and the fold's text pass is a read. The `BodyState` here is the
+        // painter's hover and caret state, which the reconcile does not read.
+        let prepared_grid = {
+            let _s = tracing::info_span!("reconcile_panes").entered();
+            crate::app::shell_host::reconcile_body(
+                self,
+                crate::app::shell_host::BodyState::default(),
+                &pane_rects,
+                size.width,
+                &pane_chrome,
+            )
+        };
         // Where the sidebar wants the hardware caret (its selected row) when it
         // owns the keyboard.
         //
@@ -436,10 +475,15 @@ impl Editor {
         // Committed at the very end of this draw, with the editor's caret, so
         // overlays painted after the sidebar can suppress it instead of having
         // it blink through them.
-        let explorer_hardware_cursor = shell.explorer.as_ref().and_then(|e| {
-            let area = region(HostRegion::Explorer);
-            Some((area.x + 1, area.y + 1 + e.caret_row? as u16))
-        });
+        let explorer_hardware_cursor =
+            shell
+                .sidebar
+                .as_ref()
+                .and_then(|s| s.explorer())
+                .and_then(|e| {
+                    let area = region(HostRegion::Explorer);
+                    Some((area.x + 1, area.y + 1 + e.caret_row? as u16))
+                });
 
         // Note: Tabs are now rendered within each split by SplitRenderer
 
@@ -459,14 +503,17 @@ impl Editor {
         if plugins_active.unwrap_or(false) {
             let _s = tracing::info_span!("render_plugin_hooks").entered();
             let hooks_start = std::time::Instant::now();
-            // Get visible buffers and their areas
-            let visible_buffers = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .get_visible_buffers(editor_content_area);
+            // Get visible buffers and their areas — the boxes the tree placed
+            // them in.
+            let visible_buffers = pane_rects.visible(
+                &self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .visible_leaves(),
+            );
 
             let mut total_new_lines = 0usize;
             for (split_id, buffer_id, split_area) in visible_buffers {
@@ -889,12 +936,13 @@ impl Editor {
         // editor for the painter to find. One producer, one consumer, one
         // frame — a field for that is a value that could not be threaded, and
         // it is the same map the description above already carries.
-        let pane_chrome = shell
-            .splits
-            .as_ref()
-            .map(|s| s.chrome.clone())
-            .unwrap_or_default();
-        let mut body = crate::app::shell_host::BodyPainter::new(self, body_state, pane_chrome);
+        let mut body = crate::app::shell_host::BodyPainter::new(
+            self,
+            body_state,
+            pane_chrome,
+            pane_rects,
+            prepared_grid,
+        );
         let mut provenance = FoldProvenance { runs: Vec::new() };
         let pending_hardware_cursor = crate::view::shell::fold::fold_band(
             ui.spec(),
@@ -3126,6 +3174,7 @@ impl Editor {
                 hint(" Enter", t!("keybinding_editor.footer_edit").to_string()),
                 hint("a", t!("keybinding_editor.footer_add").to_string()),
                 hint("d", t!("keybinding_editor.footer_delete").to_string()),
+                hint("x", t!("keybinding_editor.footer_disable").to_string()),
                 hint("/", t!("keybinding_editor.footer_search").to_string()),
                 hint("r", t!("keybinding_editor.footer_record_key").to_string()),
                 hint("c", t!("keybinding_editor.footer_context").to_string()),
@@ -3290,6 +3339,10 @@ impl Editor {
                     l(
                         "  d / Delete",
                         t!("keybinding_editor.help_delete_binding").to_string(),
+                    ),
+                    l(
+                        "  x",
+                        t!("keybinding_editor.help_disable_binding").to_string(),
                     ),
                     gap(),
                     head(&t!("keybinding_editor.help_filters")),
@@ -3487,16 +3540,16 @@ impl Editor {
     /// `padding`, `trailing_slot_screen_bounds`: all gone, replaced by a flex
     /// spacer with a floor.
     ///
-    /// `height` is the panel's, which the caller derives from the same rule
+    /// `height` is the column's, which the caller derives from the same rule
     /// `Frame::fixed_rows` states — the viewport's row count is model state
     /// (`set_viewport_height` drives scrolling and the web projection), so it
     /// has to be known before the description exists.
-    fn explorer_content(
+    fn sidebar_content(
         &mut self,
-        chrome_width: u16,
+        chrome_area: ratatui::layout::Rect,
         height: u16,
-    ) -> Option<crate::view::shell::file_explorer::Explorer> {
-        use crate::view::shell::file_explorer as fe;
+    ) -> Option<crate::view::shell::sidebar::Sidebar> {
+        use crate::view::shell::sidebar::{Section, SectionKind, Sidebar};
         let should_show = self.file_explorer_visible()
             && (self.file_explorer().is_some()
                 || self.active_window().file_explorer_sync_in_progress);
@@ -3506,11 +3559,96 @@ impl Editor {
         let cols = self
             .active_window()
             .file_explorer_width
-            .to_cols(chrome_width);
+            .to_cols(chrome_area.width);
         let on_left = matches!(
             self.active_window().file_explorer_side,
             FileExplorerSide::Left
         );
+        // Where the column starts, for the blur observer: beside the dock
+        // on the left, or against the frame's edge on the right.
+        let x0 = if on_left {
+            chrome_area.x
+        } else {
+            (chrome_area.x + chrome_area.width).saturating_sub(cols)
+        };
+        let grip_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerBorder));
+        // Squeeze what pressure must and size the rest — app logic keyed on
+        // the column's height, resolved here for the reason
+        // `Frame::resolve_dock` is (see `Editor::resolve_sidebar_sections`).
+        // With one section the explorer's body is the column less its two
+        // border rows, as the panel has always reserved.
+        let rows = self.resolve_sidebar_sections(height);
+        let plan: Vec<(crate::app::sidebar::SidebarSectionKind, bool)> = self
+            .sidebar_sections
+            .iter()
+            .map(|s| (s.kind.clone(), s.collapsed))
+            .collect();
+        let mut sections = Vec::with_capacity(plan.len());
+        for (i, (kind, collapsed)) in plan.into_iter().enumerate() {
+            use crate::app::sidebar::SidebarSectionKind;
+            let rows = rows.get(i).copied().unwrap_or(0);
+            let section = match kind {
+                SidebarSectionKind::Explorer => {
+                    let e = self.explorer_section(rows);
+                    Section {
+                        kind: SectionKind::Explorer(e.kind),
+                        title: e.title,
+                        title_theme: e.title_theme,
+                        border_theme: e.border_theme,
+                        close_theme: e.close_theme,
+                        rows,
+                        collapsed,
+                        focused: e.focused,
+                        closable: true,
+                    }
+                }
+                SidebarSectionKind::Panel {
+                    title, closable, ..
+                } => {
+                    // The same call the dock makes, with the section's slot:
+                    // `None` is a section whose plugin has not mounted it.
+                    let slot = crate::app::PanelSlot::Sidebar(i);
+                    let interior = self.panel_interior(slot);
+                    let focused = interior.is_some() && self.panel(slot).is_some_and(|p| p.focused);
+                    let (title_theme, border_theme) =
+                        crate::view::shell::file_explorer::chrome_themes(false, focused);
+                    let close_hovered = matches!(
+                        self.shell_hover,
+                        Some(HoverTarget::SidebarSectionClose(h)) if h == i
+                    );
+                    Section {
+                        kind: match interior {
+                            Some(p) => SectionKind::Panel(p),
+                            None => SectionKind::Unavailable(
+                                fresh_i18n::t!("explorer.section_unavailable").to_string(),
+                            ),
+                        },
+                        title: format!(" {} ", title.trim()),
+                        title_theme,
+                        border_theme,
+                        close_theme: crate::view::shell::file_explorer::close_theme(close_hovered),
+                        rows,
+                        collapsed,
+                        focused,
+                        closable,
+                    }
+                }
+            };
+            sections.push(section);
+        }
+        Some(Sidebar {
+            cols,
+            on_left,
+            grip_hovered,
+            x0,
+            sections,
+        })
+    }
+
+    /// The explorer as a section: its chrome, and its rows for a body
+    /// `rows` tall.
+    fn explorer_section(&mut self, rows: u16) -> ExplorerSection {
+        use crate::view::shell::file_explorer as fe;
         // The explorer reads as focused only when it actually owns the
         // keyboard — not when a focused orchestrator dock has stolen it out
         // from under the (still-FileExplorer) window context.
@@ -3523,21 +3661,22 @@ impl Editor {
             .unwrap_or(false);
         let (title_theme, border_theme) = fe::chrome_themes(disconnected, focused);
         let close_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerCloseButton));
-        let grip_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerBorder));
         let title = self.explorer_title(remote.as_deref());
-        let body = self.explorer_body(height, focused);
+        let (body, scroll) = self.explorer_body(rows, focused);
         let caret_row = focused.then(|| self.explorer_caret_row()).flatten();
-        Some(fe::Explorer {
-            cols,
-            on_left,
+        ExplorerSection {
+            kind: fe::Explorer {
+                body,
+                caret_row,
+                scroll,
+            },
             title,
             title_theme,
             border_theme,
             close_theme: fe::close_theme(close_hovered),
-            body,
-            caret_row,
-            grip_hovered,
-        })
+            rows,
+            focused,
+        }
     }
 
     /// The panel's title: the search query while an incremental search is
@@ -3589,19 +3728,26 @@ impl Editor {
     /// The viewport height is set here because it is model state: scrolling and
     /// the web projection both read it, and it must be current whether or not
     /// anything paints.
+    #[allow(clippy::type_complexity)]
     fn explorer_body(
         &mut self,
-        height: u16,
+        rows: u16,
         focused: bool,
-    ) -> crate::view::shell::file_explorer::Body {
+    ) -> (
+        crate::view::shell::file_explorer::Body,
+        Option<crate::view::shell::file_explorer::Scroll>,
+    ) {
         use crate::view::shell::file_explorer as fe;
-        // Borders top and bottom, as the panel has always reserved.
-        let viewport_rows = height.saturating_sub(2) as usize;
+        // The body's rows: the section's, borders already taken off.
+        let viewport_rows = rows as usize;
         if let Some(view) = self.file_explorer_mut() {
             view.set_viewport_height(viewport_rows);
         }
         if self.file_explorer().is_none() {
-            return fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string());
+            return (
+                fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string()),
+                None,
+            );
         }
         let unsaved = self.explorer_unsaved_paths();
         let cut: Vec<std::path::PathBuf> = self
@@ -3652,7 +3798,24 @@ impl Editor {
                 )
             })
             .collect();
-        fe::Body::Rows(rows)
+        // The bar's numbers, in tree rows: what the tree holds, what the panel
+        // shows, where the window sits, and how far it can go. `None` when the
+        // whole tree fits, which is the whole of "should there be a bar"
+        // (issue #2859). The ceiling is the model's own — pinned ancestors put
+        // it past `total - rows`, and a bar that assumed otherwise showed the
+        // thumb at the end while the wheel still moved the tree.
+        let scroll = (viewport_rows > 0 && display.len() > viewport_rows).then(|| {
+            let max_offset = view
+                .max_scroll_offset()
+                .min(display.len().saturating_sub(1));
+            fe::Scroll {
+                offset: view.get_scroll_offset().min(max_offset),
+                max_offset,
+                total: display.len(),
+                rows: viewport_rows,
+            }
+        });
+        (fe::Body::Rows(rows), scroll)
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.
@@ -3988,7 +4151,11 @@ impl Editor {
                                 level = WarningLevel::Error;
                                 break;
                             }
-                            LspServerStatus::Starting | LspServerStatus::Initializing
+                            LspServerStatus::Starting
+                            | LspServerStatus::Initializing
+                            // A server that stopped answering requests is
+                            // a warning, not a healthy "on" (issue #2197).
+                            | LspServerStatus::Unresponsive
                                 if level != WarningLevel::Error =>
                             {
                                 level = WarningLevel::Warning;
@@ -4175,6 +4342,53 @@ impl Editor {
     /// rectangle this reads, so taking the size as well would be a second way
     /// to say the same thing — and the two could then disagree, which is the
     /// bug above wearing a different hat.
+    /// Lay the shell's retained tree out for one frame, and settle the focus
+    /// moves that were waiting for it.
+    ///
+    /// **One function because they are one step, and because a test that
+    /// re-spelled the step could not fail when the step changed.** The replay
+    /// has to happen on the frame that first builds the element a
+    /// `setFocusKey` named (see [`Editor::pending_panel_tree_focus`]), so it
+    /// belongs to laying the tree out, not beside it. `render` used to spell
+    /// the sequence inline and the widget-runtime tests spelled it again in a
+    /// helper — two copies, and deleting the replay from `render` left the
+    /// copy passing. Now there is one, and #3137 comes back as a test failure.
+    ///
+    /// The tree is retained across frames — element state, focus and the dirty
+    /// set live on it — so it is moved out for the duration rather than
+    /// borrowed from `self`. `expect`, not `unwrap_or_default`: silently
+    /// substituting a fresh `Ui` would discard every element's state, the
+    /// focus position and the dirty set, and the frame would still render —
+    /// the retained tree's whole point, lost without a symptom. If this is
+    /// ever `None` a re-entrant path took it and did not put it back, which is
+    /// a bug in that path.
+    pub(crate) fn lay_out_shell_tree(
+        &mut self,
+        shell: crate::view::shell::frame::Frame,
+        size: fresh_ui::Size,
+    ) {
+        let mut ui = self
+            .shell_ui
+            .take()
+            .expect("the shell tree is taken and returned within one frame");
+        crate::view::shell::geometry::stats::note_shell_layout();
+        ui.frame(crate::view::shell::frame::frame_tree(shell), size);
+        self.shell_ui = Some(ui);
+        // The gain this raises is queued behind the one the stale holder
+        // already left, and `apply_settled_shell_messages` settles on the last
+        // — which is why the replay belongs here and not at the drain.
+        self.retry_pending_panel_tree_focus();
+    }
+
+    /// The active window's pane leaves, collected so a caller can hold the
+    /// tree borrowed while it asks.
+    fn window_panes_leaves(&self) -> Vec<crate::model::event::LeafId> {
+        self.window_panes()
+            .into_iter()
+            .map(|(leaf, _)| leaf)
+            .collect()
+    }
+
     pub(crate) fn shell_frame(
         &mut self,
         split: (Option<ratatui::layout::Rect>, ratatui::layout::Rect),
@@ -4234,7 +4448,7 @@ impl Editor {
             prompt_row_visible,
         );
         let explorer_h = chrome_area.height.saturating_sub(fixed);
-        let explorer = self.explorer_content(chrome_area.width, explorer_h);
+        let sidebar = self.sidebar_content(chrome_area, explorer_h);
         // The bar's elements, measured from the chrome column it will occupy.
         let status_bar_items = status_row
             .then(|| self.status_bar_description(chrome_area.width))
@@ -4328,7 +4542,7 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|f| f.focused),
             dock: dock_area.map(|d| d.width),
-            explorer,
+            sidebar,
             menu: self.open_context_menu_for_shell(),
             menu_keys,
             menu_bar_items: menu_layout
@@ -6948,31 +7162,20 @@ impl Editor {
         // which is deliberately not comparable, and a hand-picked subset of it
         // is the same "replica of a layout" this call site already got wrong
         // once.
-        let split = self.compute_dock_split(size);
-        let shell = self.shell_frame(split).resolve_dock(size.width);
-        let mut ui = self
-            .shell_ui
-            .take()
+        //
+        // The panes come off this same layout — the shape every frame reads
+        // them in (`render` does the same after its `frame`). What stood here
+        // read the body's region and handed it to a pass that laid the grid
+        // out a third time to find the panes inside it.
+        let pane_rects = self
+            .layout_panes(size)
             .expect("the shell tree is taken and returned within one call");
-        ui.layout_only(
-            crate::view::shell::frame::frame_tree(shell),
-            fresh_ui::Size::new(size.width, size.height),
-        );
-        let regions = crate::view::shell::frame::regions_of(&ui, size);
-        self.shell_ui = Some(ui);
-        let editor_content_area = regions
-            .iter()
-            .find(|(r, _)| *r == crate::view::shell::frame::HostRegion::Body)
-            .map(|(_, rect)| *rect)
-            .unwrap_or_default();
 
         // Compute layout for all visible splits and update cached view_line_mappings.
         // Take one &mut borrow on the active window's splits; destructure into
         // (&SplitManager, &mut HashMap<...>) so both arguments come from the
         // same `&mut self.windows` borrow.
         let active_window_id = self.active_window;
-        // The same resolution the frame's description and the paint both use.
-        let pane_chrome = self.pane_chrome();
         let __win_l = self
             .windows
             .get_mut(&active_window_id)
@@ -6982,7 +7185,7 @@ impl Editor {
             .buffers
             .with_all_mut(|buffers, mgr, vs_map| {
                 SplitRenderer::compute_content_layout(
-                    editor_content_area,
+                    &pane_rects,
                     &*mgr,
                     buffers,
                     vs_map,
@@ -6994,7 +7197,6 @@ impl Editor {
                     self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
                     self.software_cursor_only,
-                    &pane_chrome,
                     self.config.editor.diagnostics_inline_text,
                     self.config.editor.show_tilde,
                     crate::view::bracket_highlight_overlay::BracketHighlightSettings::from_config(
@@ -7005,6 +7207,68 @@ impl Editor {
             .expect("active window must have a populated split layout");
 
         self.active_layout_mut().view_line_mappings = view_line_mappings;
+    }
+
+    /// The frame's geometry pass without the frame: build the shell's
+    /// description, lay it out at `size` with `layout_only`, and read the
+    /// panes off it — the same read `render` does after its `frame`.
+    ///
+    /// Retains the rects on the active window (see `Window::pane_rects`) and
+    /// returns them. `None` when the shell tree is not here to lay out — a
+    /// frame, or an event dispatch, is holding it; the caller inside such a
+    /// pass has the tree's own answer, and the window keeps the rects of the
+    /// last layout, which that pass wrote.
+    ///
+    /// **A geometry pass, not a frame.** `layout_only` builds the description
+    /// and lays it out and stops; a frame goes on to move focus, drain a
+    /// reveal, hand a behavior what arrived for it, and repaint a display list
+    /// nobody will draw. This runs on actions — once per relayout, once per
+    /// replayed macro action — and none of that belongs on an action.
+    /// Counted by `geometry::stats` as a shell layout, because it is one.
+    pub(crate) fn layout_panes(
+        &mut self,
+        size: ratatui::layout::Rect,
+    ) -> Option<crate::view::shell::geometry::PaneRects> {
+        let split = self.compute_dock_split(size);
+        let shell = self.shell_frame(split).resolve_dock(size.width);
+        let mut ui = self.shell_ui.take()?;
+        crate::view::shell::geometry::stats::note_shell_layout();
+        ui.layout_only(
+            crate::view::shell::frame::frame_tree(shell),
+            fresh_ui::Size::new(size.width, size.height),
+        );
+        let pane_rects = crate::view::shell::geometry::PaneRects::read(
+            &ui,
+            self.window_panes().into_iter().map(|(leaf, _)| leaf),
+            size,
+        );
+        self.shell_ui = Some(ui);
+        self.active_window_mut().set_pane_rects(pane_rects.clone());
+        Some(pane_rects)
+    }
+
+    /// The shell tree, when no frame or event dispatch is holding it.
+    ///
+    /// For tests that check a record against the tree that wrote it — the
+    /// pane rects a window retains against the frame's own layout. Not for
+    /// the editor: what it needs off the tree it reads where it lays the
+    /// tree out.
+    pub fn shell_ui(&self) -> Option<&fresh_ui::Ui<crate::view::shell::msg::UiMsg>> {
+        self.shell_ui.as_ref()
+    }
+
+    /// Bring the active window's retained pane rects up to date with the
+    /// grid as it is now, at the screen's current size — one `layout_only` of
+    /// the frame ([`Self::layout_panes`]).
+    ///
+    /// For the callers that ask where a pane is right after changing the
+    /// grid, before the frame that would lay it out: the layout funnel
+    /// (`push_layout_geometry`) runs this first, and so does every
+    /// `Editor::resize_visible_terminals`. A no-op while a frame or an event
+    /// dispatch holds the tree; see [`Self::layout_panes`].
+    pub(crate) fn refresh_pane_rects(&mut self) {
+        let size = ratatui::layout::Rect::new(0, 0, self.terminal_width, self.terminal_height);
+        let _ = self.layout_panes(size);
     }
 
     /// Clear the search history
@@ -8195,8 +8459,10 @@ impl Editor {
                     .unwrap_or(0),
                 content_rows,
             },
-            // The dock panel's frame is the dock column's, not this box's.
-            super::PanelPlacement::LeftDock { .. } => return None,
+            // The dock panel's frame is the dock column's, not this box's —
+            // and a sidebar section's is its column's.
+            super::PanelPlacement::LeftDock { .. }
+            | super::PanelPlacement::SidebarSection { .. } => return None,
         };
         Some(Panel {
             // **`None` means there is no panel mounted in the slot**, and

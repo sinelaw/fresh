@@ -528,6 +528,9 @@ impl Editor {
             tabbable: Vec::new(),
             painted: std::collections::HashMap::new(),
             boxes: Vec::new(),
+            auto_focus_first: true,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
         };
         // Every trigger converges on the kind's activation key; Toggle and
         // Button treat Space and Enter identically.
