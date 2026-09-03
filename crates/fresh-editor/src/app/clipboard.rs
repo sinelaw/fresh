@@ -554,8 +554,8 @@ impl Editor {
             // Apply events with atomic undo using bulk edit for O(n) performance
             if events.len() > 1 {
                 // Use optimized bulk edit for multi-cursor cut
-                if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, "Cut".to_string()) {
-                    self.active_event_log_mut().append(bulk_edit);
+                if let Some(applied) = self.apply_events_as_bulk_edit(events, "Cut".to_string()) {
+                    self.active_event_log_mut().append(applied);
                 }
             } else if let Some(event) = events.into_iter().next() {
                 self.log_and_apply_event(&event);
@@ -610,10 +610,10 @@ impl Editor {
             // Apply events with atomic undo using bulk edit for O(n) performance
             if events.len() > 1 {
                 // Use optimized bulk edit for multi-cursor cut
-                if let Some(bulk_edit) =
+                if let Some(applied) =
                     self.apply_events_as_bulk_edit(events, "Cut line".to_string())
                 {
-                    self.active_event_log_mut().append(bulk_edit);
+                    self.active_event_log_mut().append(applied);
                 }
             } else if let Some(event) = events.into_iter().next() {
                 self.log_and_apply_event(&event);
@@ -1373,8 +1373,8 @@ impl Editor {
         // Apply events with atomic undo using bulk edit for O(n) performance
         if events.len() > 1 {
             // Use optimized bulk edit for multi-cursor paste
-            if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, "Paste".to_string()) {
-                self.active_event_log_mut().append(bulk_edit);
+            if let Some(applied) = self.apply_events_as_bulk_edit(events, "Paste".to_string()) {
+                self.active_event_log_mut().append(applied);
             }
         } else if let Some(event) = events.into_iter().next() {
             self.log_and_apply_event(&event);

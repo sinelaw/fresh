@@ -958,8 +958,8 @@ impl Editor {
 
         // Apply all replacements using BulkEdit for O(n) performance
         let description = format!("Replace all '{}' with '{}'", search, replacement);
-        if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
-            self.active_event_log_mut().append(bulk_edit);
+        if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+            self.active_event_log_mut().append(applied);
         }
 
         // Clear search state since positions are now invalid
@@ -1164,8 +1164,8 @@ impl Editor {
                         "Replace all {} occurrences of '{}' with '{}'",
                         total_count, ir_state.search, ir_state.replacement
                     );
-                    if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
-                        self.active_event_log_mut().append(bulk_edit);
+                    if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+                        self.active_event_log_mut().append(applied);
                     }
 
                     ir_state.replacements_made += total_count;

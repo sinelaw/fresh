@@ -238,19 +238,36 @@ impl Editor {
         }
     }
 
-    /// Apply multiple Insert/Delete events efficiently using bulk edit optimization.
+    /// Apply a multi-event list — typically one keystroke's worth across every
+    /// cursor — and return the single event that represents it, for the caller
+    /// to append to the event log.
     ///
-    /// This avoids O(n²) complexity by:
+    /// # Two shapes of input
+    ///
+    /// **Lists containing `Insert`/`Delete`** take the bulk-edit path, which
+    /// avoids O(n²) complexity by:
     /// 1. Converting events to (position, delete_len, insert_text) tuples
     /// 2. Applying all edits in a single tree pass via apply_bulk_edits
     /// 3. Creating a BulkEdit event for undo (stores tree snapshot via Arc clone = O(1))
     ///
-    /// # Arguments
-    /// * `events` - Vec of Insert/Delete events (sorted by position descending for correct application)
-    /// * `description` - Description for the undo log
+    /// **Lists with no edits at all** — every cursor stepping over an existing
+    /// closing delimiter, a backspace in virtual space that has nothing to
+    /// delete yet — are applied as a single `Event::Batch`. There is nothing
+    /// for the bulk machinery to do, but the cursor moves still have to land.
     ///
     /// # Returns
-    /// The BulkEdit event that was applied, for tracking purposes
+    ///
+    /// `Some(Event::BulkEdit)` for the first shape, `Some(Event::Batch)` for
+    /// the second, and `None` only for an empty list. **Match on the payload at
+    /// your peril:** every caller today just forwards it to
+    /// `active_event_log_mut().append(...)`, and a caller that pattern-matched
+    /// `Some(Event::BulkEdit { .. })` would silently drop the cursor-only case —
+    /// which is the bug this function's own contract used to invite (#3125).
+    ///
+    /// # Arguments
+    /// * `events` - the events to apply. Insert/Delete are sorted by position
+    ///   descending internally, so callers need not pre-sort.
+    /// * `description` - Description for the undo log
     pub fn apply_events_as_bulk_edit(
         &mut self,
         events: Vec<Event>,

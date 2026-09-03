@@ -1489,9 +1489,8 @@ impl Editor {
                     if events.len() > 1 {
                         // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²))
                         let description = "Delete backward".to_string();
-                        if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description)
-                        {
-                            self.active_event_log_mut().append(bulk_edit);
+                        if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+                            self.active_event_log_mut().append(applied);
                         }
                     } else {
                         for event in events {

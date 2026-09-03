@@ -276,8 +276,8 @@ impl Editor {
         let description = "Accept completion".to_string();
         if cursor_data.len() > 1 || events.len() > 1 {
             // Multi-cursor (or replacement = delete+insert): one atomic bulk edit.
-            if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
-                self.active_event_log_mut().append(bulk_edit);
+            if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+                self.active_event_log_mut().append(applied);
             }
         } else {
             for event in events {
@@ -513,8 +513,8 @@ impl Editor {
         {
             if events.len() > 1 {
                 let description = format!("Insert '{}'", c);
-                if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
-                    self.active_event_log_mut().append(bulk_edit);
+                if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+                    self.active_event_log_mut().append(applied);
                 }
             } else {
                 for event in events {
@@ -541,10 +541,10 @@ impl Editor {
             .action_to_events(Action::DeleteBackward)
         {
             if events.len() > 1 {
-                if let Some(bulk_edit) =
+                if let Some(applied) =
                     self.apply_events_as_bulk_edit(events, "Backspace".to_string())
                 {
-                    self.active_event_log_mut().append(bulk_edit);
+                    self.active_event_log_mut().append(applied);
                 }
             } else {
                 for event in events {
