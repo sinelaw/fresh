@@ -485,6 +485,25 @@ pub struct WidgetPanelState {
     /// The hovered ROW's own key, for kinds whose rows share one widget
     /// key (`List`, `Tree`). Empty for everything else.
     pub hovered_item_key: String,
+    /// How far each keyed widget is panned sideways, in display columns,
+    /// from where its rows would rest.
+    ///
+    /// **Not in [`PaintedWindow`], and not in the instance state either.**
+    /// Not the paint's, because a pan is what the *reader* asked for rather
+    /// than what the last paint measured — and a described panel has no
+    /// painted window at all, which is precisely the panel this exists for.
+    /// Not the instance state, because it is per-widget rather than per-kind
+    /// and every kind that draws rows can honour it.
+    ///
+    /// A delta, not an absolute column: each row rests where its own content
+    /// needs it to (see `TreeNode::window_anchor`) and they slide together.
+    /// Clamped per row at paint time, so the value here can outrun the
+    /// content without the rows doing anything strange.
+    ///
+    /// Cleared when the panel's spec is replaced, which is what makes a fresh
+    /// search start back at the resting window; a streaming append does not
+    /// replace the spec, so results arriving do not yank a reader's pan.
+    pub h_pan: HashMap<String, i32>,
 }
 
 impl WidgetPanelState {
@@ -512,6 +531,9 @@ impl WidgetPanelState {
             focus_follows_cursor: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
+            // Nothing a host surface describes is wider than its own panel:
+            // its controls are forms, not rows of somebody else's text.
+            h_pan: HashMap::new(),
         }
     }
 
@@ -554,6 +576,41 @@ impl WidgetPanelState {
                 items: viewport.items,
                 offset: 0,
             })
+    }
+
+    /// How far the keyed widget is panned sideways, in display columns.
+    pub fn h_pan(&self, key: &str) -> i32 {
+        self.h_pan.get(key).copied().unwrap_or(0)
+    }
+
+    /// Move the keyed widget's sideways pan by `delta` columns, or home it
+    /// when `delta` is `None`. Returns whether anything changed.
+    ///
+    /// **Signed, and bounded only nominally.** Zero is where each row's own
+    /// content says it should rest, which for a search result is its match —
+    /// so negative is how a reader gets back to the head of the line and
+    /// positive is how they reach its tail. How far either goes depends on
+    /// the row, which only the paint knows, so the real clamp lives there:
+    /// letting the stored value run past what any one row can use, and
+    /// clamping per row, is what keeps rows of different lengths sliding
+    /// together instead of drifting apart at the ends. The bound here only
+    /// keeps the arithmetic honest.
+    pub fn pan_h(&mut self, key: &str, delta: Option<i32>) -> bool {
+        const LIMIT: i32 = i32::MAX / 2;
+        let cur = self.h_pan(key);
+        let next = match delta {
+            Some(d) => cur.saturating_add(d).clamp(-LIMIT, LIMIT),
+            None => 0,
+        };
+        if next == cur {
+            return false;
+        }
+        if next == 0 {
+            self.h_pan.remove(key);
+        } else {
+            self.h_pan.insert(key.to_string(), next);
+        }
+        true
     }
 
     /// Latch "the user moved this window by hand" on a `List` or `Tree`.
@@ -673,6 +730,36 @@ impl WidgetPanelState {
     }
 }
 
+/// Whether the keyed widget still shows the same rows it did, for the purpose
+/// of keeping a sideways pan across a repaint.
+///
+/// **First key and row count, not the whole list.** A repaint happens
+/// constantly and a streaming search can carry thousands of rows, so comparing
+/// them element-wise would put an O(rows) walk on every frame to answer a
+/// question that only ever changes when the subject does. A list that grew
+/// while keeping its first row is the streaming case; one whose first row
+/// changed, or that shrank, is a new search.
+fn rows_are_the_same_subject(prev: &WidgetSpec, next: &WidgetSpec, key: &str) -> bool {
+    fn identity<'a>(spec: &'a WidgetSpec, key: &str) -> Option<(Option<&'a String>, usize)> {
+        match crate::widgets::find_widget_by_key(spec, key)? {
+            WidgetSpec::Tree {
+                item_keys, nodes, ..
+            } => Some((item_keys.first(), nodes.len())),
+            WidgetSpec::List {
+                item_keys, items, ..
+            } => Some((item_keys.first(), items.len())),
+            _ => None,
+        }
+    }
+    match (identity(prev, key), identity(next, key)) {
+        (Some((prev_first, prev_len)), Some((next_first, next_len))) => {
+            prev_first == next_first && next_len >= prev_len
+        }
+        // The widget is gone, or was never a rows widget: nothing to keep.
+        _ => false,
+    }
+}
+
 /// Global registry of mounted widget panels, keyed by composite
 /// (plugin, panel id) identity — two plugins reusing the same local id
 /// coexist without evicting each other.
@@ -716,6 +803,23 @@ impl WidgetRegistry {
             .get(&panel_key)
             .map(|p| (p.hovered_widget_key.clone(), p.hovered_item_key.clone()))
             .unwrap_or_default();
+        // A sideways pan survives a repaint but not a change of subject: the
+        // reader panned to read *these* rows, and a fresh search that replaces
+        // them would otherwise open mid-line with every row's anchor — the
+        // whole point of the resting window — panned off screen. A streaming
+        // append is not a change of subject, so results arriving under a
+        // reader do not yank the pan; see `rows_are_the_same_subject`.
+        let h_pan = self
+            .panels
+            .get(&panel_key)
+            .map(|prev| {
+                prev.h_pan
+                    .iter()
+                    .filter(|(k, _)| rows_are_the_same_subject(&prev.spec, &spec, k))
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect()
+            })
+            .unwrap_or_default();
         self.panels.insert(
             panel_key,
             WidgetPanelState {
@@ -730,6 +834,7 @@ impl WidgetRegistry {
                 focus_follows_cursor,
                 hovered_widget_key,
                 hovered_item_key,
+                h_pan,
             },
         )
     }
@@ -776,6 +881,13 @@ impl WidgetRegistry {
     ) -> Result<BufferId, ()> {
         match self.panels.get_mut(panel_key) {
             Some(state) => {
+                // A sideways pan survives a repaint but not a change of
+                // subject — see `rows_are_the_same_subject`. This is the path
+                // every repaint takes; `mount` says the same thing for the
+                // first render of a re-mounted panel.
+                state
+                    .h_pan
+                    .retain(|k, _| rows_are_the_same_subject(&state.spec, &spec, k));
                 state.spec = spec;
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;

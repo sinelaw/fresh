@@ -139,6 +139,9 @@ impl Keymap {
 pub struct Interior {
     pub spec: std::rc::Rc<fresh_core::api::WidgetSpec>,
     pub states: std::rc::Rc<std::collections::HashMap<String, crate::widgets::WidgetInstanceState>>,
+    /// How far each keyed rows widget is panned sideways, in display columns.
+    /// See [`super::widgets::Ctx::h_pan`].
+    pub h_pan: std::rc::Rc<std::collections::HashMap<String, i32>>,
     pub focus_key: String,
     /// See [`super::widgets::Ctx::keyboard`].
     pub keyboard: bool,
@@ -744,6 +747,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
             &super::widgets::Ctx {
                 slot: super::widgets::Slot::Floating,
                 states: &i.states,
+                h_pan: &i.h_pan,
                 focus_key: i.focus_key.clone(),
                 keyboard: i.keyboard,
 
@@ -989,6 +993,7 @@ mod tests {
                 key: None,
             }),
             states: Default::default(),
+            h_pan: Default::default(),
             focus_key: "ok".into(),
             keyboard: true,
 
@@ -1227,6 +1232,7 @@ mod tests {
         p.interior = Some(Interior {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
+            h_pan: Default::default(),
             focus_key: String::new(),
             keyboard: true,
 
@@ -1281,6 +1287,7 @@ mod tests {
         p.interior = Some(Interior {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
+            h_pan: Default::default(),
             focus_key: String::new(),
             keyboard: true,
 
@@ -1348,6 +1355,7 @@ mod tests {
         p.interior = Some(Interior {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
+            h_pan: Default::default(),
             focus_key: String::new(),
             keyboard: true,
 
@@ -1404,6 +1412,7 @@ mod tests {
                 key: None,
             }),
             states: Default::default(),
+            h_pan: Default::default(),
             focus_key: String::new(),
             keyboard: true,
 

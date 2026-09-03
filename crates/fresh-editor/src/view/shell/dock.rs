@@ -111,6 +111,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                 &super::widgets::Ctx {
                     slot: super::widgets::Slot::Dock,
                     states: &i.states,
+                    h_pan: &i.h_pan,
                     focus_key: i.focus_key.clone(),
                     keyboard: i.keyboard,
 
@@ -373,6 +374,7 @@ mod tests {
                         key: None,
                     }),
                     states: Rc::new(Default::default()),
+                    h_pan: Default::default(),
                     focus_key: String::new(),
                     keyboard: true,
 
@@ -574,6 +576,7 @@ mod tests {
                 dock_interior: Some(super::super::panel::Interior {
                     spec: Rc::new(spec),
                     states: Rc::new(Default::default()),
+                    h_pan: Default::default(),
                     focus_key: String::new(),
                     keyboard: true,
 

@@ -376,6 +376,7 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
         let cx = super::widgets::Ctx {
             slot: super::widgets::Slot::SettingsEntry,
             states: &states,
+            h_pan: super::widgets::no_pan(),
             focus_key: focus_key.clone(),
             keyboard: true,
             hovered_key: None,

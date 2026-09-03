@@ -442,6 +442,7 @@ fn toolbar_band(c: &Card) -> Node<UiMsg> {
             &super::widgets::Ctx {
                 slot: super::widgets::Slot::PromptToolbar,
                 states: &i.states,
+                h_pan: &i.h_pan,
                 focus_key: i.focus_key.clone(),
                 keyboard: i.keyboard,
                 hovered_key: i.hovered_key.clone(),
@@ -600,6 +601,7 @@ mod tests {
                 key: None,
             }),
             states: Rc::new(Default::default()),
+            h_pan: Rc::new(Default::default()),
             focus_key: String::new(),
             keyboard: true,
             page: None,

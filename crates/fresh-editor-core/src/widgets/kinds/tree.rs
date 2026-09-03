@@ -16,6 +16,15 @@ use crate::widgets::render::{
 
 pub struct Tree;
 
+/// Columns one pan keystroke moves.
+///
+/// `less(1)`'s left/right step, which is the closest thing to a convention a
+/// terminal has for panning by key — and it has to be wider than the wheel's
+/// three-column notch, because a wheel is turned in handfuls and a key is
+/// pressed one press at a time. The extremes have `S-Home` / `S-End`, so this
+/// only has to be comfortable for reading around a match.
+const PAN_COLUMNS: i32 = 8;
+
 impl WidgetImpl for Tree {
     fn on_wheel(
         &self,
@@ -208,6 +217,32 @@ impl WidgetImpl for Tree {
             }
             "Left" | "Right" => {
                 lateral(spec, widget_key, panel, key == "Right", fx);
+            }
+            // Panning. `Left`/`Right` are collapse/expand — the tree meaning
+            // every OS tree widget and the ARIA tree pattern give them — so
+            // sideways takes the one arrow chord whose conventional meaning a
+            // read-only, single-select tree does not have: extend selection.
+            // (`Alt`+arrows are back/forward, `Ctrl`+arrows word-wise; both
+            // are bound.) Issue #1580.
+            "S-Left" | "S-Right" | "S-Home" | "S-End" => {
+                let delta = match key {
+                    "S-Left" => Some(-PAN_COLUMNS),
+                    "S-Right" => Some(PAN_COLUMNS),
+                    // Home is where each row's content says it should rest —
+                    // its own match — not the head of the line. The head is a
+                    // few more `S-Left`s away, and a reader who wants the
+                    // match back should not have to pan to find it.
+                    "S-Home" => None,
+                    // Far enough that the per-row clamp lands every row on
+                    // its own tail; `pan_h` bounds the stored value.
+                    _ => Some(i32::MAX / 4),
+                };
+                if !panel.pan_h(widget_key, delta) {
+                    // Already home, or already at the value asked for: say so,
+                    // so the key can mean something else further out rather
+                    // than being swallowed by a tree that did nothing.
+                    return super::KeyDisposition::Pass;
+                }
             }
             "Enter" => {
                 if let Some(ev) = activate_event(spec, widget_key, panel) {
@@ -667,6 +702,10 @@ fn render_widget_tree(
     // The offset is the *last paint's*, not the tree's: the scroll fold
     // reads back its own previous value and republishes it below.
     let prev_scroll = ctx.painted(tree_key).map(|w| w.offset).unwrap_or(0);
+    // Sideways is the reader's, not the paint's — one delta for the whole
+    // tree, clamped per row against that row's own length so rows of
+    // different lengths slide together rather than drifting apart.
+    let h_pan = ctx.h_pan(tree_key);
 
     // Compute the visible (un-collapsed) flat slice of the
     // full `nodes` list. A node at depth d is visible iff
@@ -851,6 +890,7 @@ fn render_widget_tree(
             card_borders,
             panel_width,
             indent_cols,
+            h_pan,
         );
         let mut entry = rendered.entry;
         let is_selected = abs_idx as i32 == effective_sel_abs;

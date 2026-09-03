@@ -1465,6 +1465,20 @@ type TreeNode = {
 	* Ignored when `item_height == 1`.
 	*/
 	extraLines?: Array<TextPropertyEntry>;
+	/**
+	* The span of `text` this row exists to show, in **chars**.
+	*
+	* A row wider than the panel is windowed by the host, and without this
+	* the window can only start at the head of the line — which is exactly
+	* where a search result's match usually is not (issue #1580). Naming the
+	* span lets the host rest the window on it instead, and the reader pans
+	* away from there.
+	*
+	* Chars rather than columns because that is the unit a plugin can count:
+	* it has the string, not the terminal's width table. The host converts.
+	* Out-of-range values are harmless — they resolve to the end of the text.
+	*/
+	windowAnchor?: TextWindowAnchor | null;
 };
 type WidgetSpec = {
 	"kind": "row";

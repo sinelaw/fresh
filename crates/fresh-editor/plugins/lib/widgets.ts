@@ -487,6 +487,21 @@ export function treeNode(
      * nodes so every card is the same height. Ignored when the tree
      * is single-line (`itemHeight === 1`). */
     extraLines?: TextPropertyEntry[];
+    /** The char range of `text` this row exists to show.
+     *
+     * A row wider than the panel is windowed by the host; without this
+     * the window can only start at the head of the line, which is where
+     * a search result's match usually is not. Name the span and the host
+     * rests the window on it — and the reader pans away from there with
+     * Shift+Left/Right or Shift+wheel.
+     *
+     * `pinned` keeps that many leading chars in place while the rest of the
+     * row slides under them — a row's leading pieces are usually its identity
+     * (`path:line`) rather than its content.
+     *
+     * Chars, not display columns: a plugin has the string, not the
+     * terminal's width table. Out-of-range values resolve to the end. */
+    windowAnchor?: { pinned?: number; start: number; len: number };
   },
 ): TreeNode {
   // `checked` is intentionally Optional<bool>, not a default-false
@@ -502,6 +517,9 @@ export function treeNode(
   };
   if (options?.checked !== undefined) {
     node.checked = options.checked;
+  }
+  if (options?.windowAnchor) {
+    node.windowAnchor = options.windowAnchor;
   }
   if (options?.extraLines && options.extraLines.length > 0) {
     node.extraLines = options.extraLines;

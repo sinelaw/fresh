@@ -1511,6 +1511,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
             &super::widgets::Ctx {
                 slot: super::widgets::Slot::Pane(id),
                 states: &i.states,
+                h_pan: &i.h_pan,
                 focus_key: i.focus_key.clone(),
                 keyboard: active,
                 hovered_key: i.hovered_key.clone(),
