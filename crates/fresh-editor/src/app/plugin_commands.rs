@@ -151,27 +151,68 @@ impl Editor {
     }
 
     /// Handle SetSyntaxRegions: a plugin-composed buffer says where its
-    /// code is and in what language (see `SyntaxRegion`). The buffer's
-    /// highlighter becomes a region host if it is not one yet — it has no
-    /// grammar of its own to lose, only whatever its name happened to
-    /// suggest — and the regions replace the ones it held.
+    /// code is and in what language (see `SyntaxRegion`). Only a virtual
+    /// buffer can be told this — a file has a grammar of its own that a
+    /// plugin must not take away — and each language is resolved here,
+    /// through the catalog, so a region named by a path gets the grammar
+    /// the editor would open that file with.
     pub(super) fn handle_set_syntax_regions(
         &mut self,
         buffer_id: BufferId,
         regions: Vec<fresh_core::api::SyntaxRegion>,
     ) {
-        let syntax_set = self.grammar_registry.syntax_set_arc();
-        if let Some(state) = self
+        use crate::primitives::highlight_engine::{DeclaredRegion, HighlightEngine};
+
+        let registry = std::sync::Arc::clone(&self.grammar_registry);
+        let window = self
             .windows
             .get_mut(&self.active_window)
-            .expect("active window present")
-            .buffer_state_mut(buffer_id)
-        {
-            if !state.highlighter.hosts_syntax_regions() {
+            .expect("active window present");
+        let is_virtual = window
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|meta| meta.is_virtual());
+        if !is_virtual {
+            tracing::warn!(
+                "SetSyntaxRegions: {:?} is not a plugin-composed buffer; ignored",
+                buffer_id
+            );
+            return;
+        }
+        let mut resolved: std::collections::HashMap<String, Option<usize>> =
+            std::collections::HashMap::new();
+        let declared: Vec<DeclaredRegion> = regions
+            .into_iter()
+            .map(|region| {
+                let syntax_index =
+                    *resolved
+                        .entry(region.language)
+                        .or_insert_with_key(|language| {
+                            let found = registry.embedded_syntax_index(language);
+                            if found.is_none() {
+                                tracing::warn!(
+                                    "SetSyntaxRegions: no grammar for {:?}; its rows stay plain",
+                                    language
+                                );
+                            }
+                            found
+                        });
+                DeclaredRegion {
+                    start: region.start,
+                    end: region.end,
+                    syntax_index,
+                    prefix: region.prefix,
+                    streams: region.streams,
+                }
+            })
+            .collect();
+        if let Some(state) = window.buffer_state_mut(buffer_id) {
+            if state.highlighter.hosts_declared_regions() {
+                state.highlighter.set_declared_regions(declared);
+            } else {
                 state.highlighter =
-                    crate::primitives::highlight_engine::HighlightEngine::region_host(syntax_set);
+                    HighlightEngine::declared_region_host(registry.syntax_set_arc(), declared);
             }
-            state.highlighter.set_syntax_regions(regions);
             #[cfg(feature = "plugins")]
             {
                 self.plugin_render_requested = true;

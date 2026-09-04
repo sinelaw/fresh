@@ -594,6 +594,54 @@ export function buildCommitDetailEntries(
 // loaded yet (e.g. during initial render or when the log is empty).
 // =============================================================================
 
+/**
+ * Where the entries from `buildCommitDetailEntries` carry code, for
+ * `editor.setSyntaxRegions`: every `+`, `-` and context row of a hunk,
+ * one marker byte of prefix, in the language of the file the hunk
+ * belongs to. Each hunk's two sides are two parser streams, so a
+ * construct spanning several rows of one side is read as one construct
+ * however the other side's rows interleave with it; a context row feeds
+ * both and is coloured by the new side. Consecutive rows of one file and
+ * stream set share a region.
+ */
+export function commitDetailSyntaxRegions(entries: TextPropertyEntry[]): TsSyntaxRegion[] {
+  const regions: TsSyntaxRegion[] = [];
+  let at = 0;
+  let hunk = -1;
+  let open: TsSyntaxRegion | null = null;
+  let openKey = "";
+  for (const entry of entries) {
+    const start = at;
+    at += byteLength(entry.text);
+    const type = entry.properties?.type as string | undefined;
+    const file = entry.properties?.file as string | undefined;
+    if (type === "detail-hunk-header") hunk++;
+    let streams: number[] | null = null;
+    if (file && hunk >= 0) {
+      const oldSide = 2 * hunk;
+      const newSide = oldSide + 1;
+      if (type === "detail-add") streams = [newSide];
+      else if (type === "detail-remove") streams = [oldSide];
+      else if (type === "detail-context") streams = [newSide, oldSide];
+    }
+    const key = streams && file ? `${file}\0${streams.join(",")}` : "";
+    if (open && key !== "" && key === openKey) {
+      open.end = at;
+      continue;
+    }
+    if (open) {
+      regions.push(open);
+      open = null;
+    }
+    if (streams && file) {
+      open = { start, end: at, language: file, prefix: 1, streams };
+      openKey = key;
+    }
+  }
+  if (open) regions.push(open);
+  return regions;
+}
+
 export function buildDetailPlaceholderEntries(message: string): TextPropertyEntry[] {
   return [
     {

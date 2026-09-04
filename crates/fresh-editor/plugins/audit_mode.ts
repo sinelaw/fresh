@@ -14,6 +14,7 @@ import {
   buildCommitDetailEntries,
   buildCommitLogEntries,
   buildDetailPlaceholderEntries,
+  commitDetailSyntaxRegions,
   fetchCommitShow,
   fetchGitLog,
 } from "./lib/git_history.ts";
@@ -1335,12 +1336,14 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         for (const hunk of fileHunks) {
         // The hunk's two sides are two parser streams for the host's
         // highlighter: its rows interleave, but each side is contiguous
-        // text and is parsed as such. Context rows feed both.
+        // text and is parsed as such. A context row feeds both, and is
+        // coloured by the first it names — the new side, the one the
+        // reader is looking at.
         const oldStream = 2 * (hunkOrdinal.get(hunk) ?? 0);
         const newStream = oldStream + 1;
         const oldSyntax: RowSyntax = { language: hunk.file, streams: [oldStream] };
         const newSyntax: RowSyntax = { language: hunk.file, streams: [newStream] };
-        const bothSyntax: RowSyntax = { language: hunk.file, streams: [oldStream, newStream] };
+        const bothSyntax: RowSyntax = { language: hunk.file, streams: [newStream, oldStream] };
         // Hunk header — always emit the expanded triangle; collapse
         // overlays a `▸` replacement-conceal (see `applyFolds`).
         const headerInner = hunk.contextHeader
@@ -8144,6 +8147,14 @@ function branchByteOffsetOfFirstCommit(): number {
     return branchState.logRowByteOffsets.length > 1 ? branchState.logRowByteOffsets[1] : 0;
 }
 
+/** Tell the host where the detail panel's rows are code, and in what
+ *  (#2871): the `+` / `-` / context rows of each hunk, in the language
+ *  of the file the hunk belongs to. */
+function branchDeclareDetailSyntax(entries: TextPropertyEntry[]): void {
+    if (branchState.detailBufferId === null) return;
+    editor.setSyntaxRegions(branchState.detailBufferId, commitDetailSyntaxRegions(entries));
+}
+
 async function branchRefreshDetail(): Promise<void> {
     if (branchState.groupId === null) return;
     if (branchState.commits.length === 0) {
@@ -8162,6 +8173,7 @@ async function branchRefreshDetail(): Promise<void> {
     if (branchState.detailCache && branchState.detailCache.hash === commit.hash) {
         const entries = buildCommitDetailEntries(commit, branchState.detailCache.output, {});
         editor.setPanelContent(branchState.groupId, "detail", entries);
+        branchDeclareDetailSyntax(entries);
         return;
     }
     const myId = ++branchState.pendingDetailId;
@@ -8176,11 +8188,9 @@ async function branchRefreshDetail(): Promise<void> {
     if (myId !== branchState.pendingDetailId) return;
     if (branchState.groupId === null) return;
     branchState.detailCache = { hash: commit.hash, output };
-    editor.setPanelContent(
-        branchState.groupId,
-        "detail",
-        buildCommitDetailEntries(commit, output, {}),
-    );
+    const entries = buildCommitDetailEntries(commit, output, {});
+    editor.setPanelContent(branchState.groupId, "detail", entries);
+    branchDeclareDetailSyntax(entries);
 }
 
 async function start_branch_log(): Promise<void> {

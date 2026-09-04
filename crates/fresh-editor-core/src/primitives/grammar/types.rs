@@ -1311,6 +1311,37 @@ impl GrammarRegistry {
     /// are indexed directly in `catalog_by_name` during `rebuild_catalog` /
     /// `register_alias` / `apply_language_config`, so a single lookup covers
     /// every case.
+    /// The syntect grammar a declared region's language resolves to (see
+    /// `DeclaredRegion`): the catalog entry for the path, so a region
+    /// named by a file picks the grammar the editor would open that file
+    /// with, user mappings included — or, when that entry has no syntect
+    /// grammar (TypeScript and JavaScript are served by tree-sitter for
+    /// real buffers) or the token is not a path at all (`py`), the grammar
+    /// the token, its basename or its extension names. Plain text is not
+    /// an answer: `None` leaves the rows as they are.
+    pub fn embedded_syntax_index(&self, language: &str) -> Option<usize> {
+        if let Some(index) = self
+            .find_by_path(Path::new(language), None)
+            .and_then(|entry| entry.engines.syntect)
+        {
+            return Some(index);
+        }
+        let plain = self.syntax_set.find_syntax_plain_text();
+        let basename = language.rsplit(['/', '\\']).next().unwrap_or(language);
+        let extension = basename.rsplit_once('.').map(|(_, ext)| ext);
+        std::iter::once(language)
+            .chain((basename != language).then_some(basename))
+            .chain(extension)
+            .find_map(|candidate| self.syntax_set.find_syntax_by_token(candidate))
+            .filter(|found| !std::ptr::eq(*found, plain))
+            .and_then(|found| {
+                self.syntax_set
+                    .syntaxes()
+                    .iter()
+                    .position(|s| std::ptr::eq(s, found))
+            })
+    }
+
     pub fn find_by_name(&self, name: &str) -> Option<&GrammarEntry> {
         self.catalog_by_name
             .get(&name.to_lowercase())

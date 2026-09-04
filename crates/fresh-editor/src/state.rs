@@ -448,7 +448,15 @@ impl EditorState {
     pub fn apply_language(&mut self, detected: DetectedLanguage) {
         self.language = detected.name;
         self.display_name = detected.display_name;
-        self.highlighter = detected.highlighter;
+        // A buffer a plugin composed keeps the regions it declared through
+        // any change of grammar — a Set Language, a config reload: they
+        // describe its rows, not its name.
+        self.highlighter = match self.highlighter.take_declared_regions() {
+            Some((syntax_set, regions)) => {
+                HighlightEngine::declared_region_host(syntax_set, regions)
+            }
+            None => detected.highlighter,
+        };
         if let Some(lang) = &detected.ts_language {
             self.reference_highlighter.set_language(lang);
         }

@@ -43,7 +43,6 @@ use crate::primitives::highlighter::{
     highlight_bg, highlight_color, HighlightCategory, HighlightSpan, Highlighter, Language,
 };
 use crate::theme::Theme;
-use fresh_core::api::SyntaxRegion;
 use fresh_core::hooks::{RegionLine, TableLine, TableRole};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -289,35 +288,44 @@ pub struct TextMateEngine {
     // Scope→Category memo. Syntect Scope atoms are append-only-interned
     // globally, so entries never need invalidation.
     scope_category_cache: HashMap<syntect::parsing::Scope, Option<HighlightCategory>>,
-    // A region host highlights a buffer a plugin composed, whose code
-    // rows the plugin declared (`set_syntax_regions`) rather than a
-    // grammar found. Its own syntax is plain text; every colour comes
-    // from a region's child parser.
-    region_host: bool,
-    // One span marker per declared region, so the bounds follow the text
-    // through edits the way checkpoints do; `regions` holds what each
-    // marker's region parses as.
-    region_markers: MarkerList,
-    regions: HashMap<MarkerId, RegionInfo>,
+    // A host for declared regions highlights a buffer a plugin composed,
+    // whose code rows the plugin declared (`set_declared_regions`) rather
+    // than a grammar found. Its own syntax is plain text; every colour
+    // comes from a region's child parser.
+    declared_host: bool,
+    // The declared regions, sorted by start and disjoint (see
+    // `set_declared_regions`): a row finds its region by binary search,
+    // and an edit shifts them all in one pass.
+    declared: Vec<DeclaredRegion>,
 }
 
-/// What a declared region's rows parse as; see `SyntaxRegion`.
-struct RegionInfo {
-    /// Resolved once, when the region is declared. `None` when nothing in
-    /// the set claims the language, and the rows stay as the plugin
-    /// styled them.
-    syntax_index: Option<usize>,
-    prefix: usize,
-    streams: Arc<[u32]>,
+/// A run of rows a plugin declared as code, as the host resolved it. The
+/// contract the plugin sees is `SyntaxRegion` in the plugin API; this is
+/// its language already looked up in the syntax set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredRegion {
+    /// Byte offset of the first row's first byte.
+    pub start: usize,
+    /// Byte offset one past the last row's newline.
+    pub end: usize,
+    /// Index into the syntax set of the language the rows are written
+    /// in. `None` when nothing in the set claims it, in which case the
+    /// rows keep the styling they have.
+    pub syntax_index: Option<usize>,
+    /// Bytes at the start of every row that are not code.
+    pub prefix: usize,
+    /// Parsers the rows feed, in order; the first colours the row. Empty
+    /// means [`DEFAULT_REGION_STREAM`].
+    pub streams: Vec<u32>,
 }
 
-/// Stream a region that names none feeds; see `SyntaxRegion::streams`.
-const DEFAULT_REGION_STREAM: u32 = u32::MAX;
+/// Stream a region that names none feeds.
+pub const DEFAULT_REGION_STREAM: u32 = 0;
 
-/// Parsers a region host carries between rows. The diff panels interleave
-/// the two sides of one hunk and never need more than that; anything
-/// older is dropped rather than cloned into every checkpoint.
-const MAX_REGION_STREAMS: usize = 4;
+/// Parsers a declared-region host carries between rows. The diff panels
+/// interleave the two sides of one hunk and never need more than that;
+/// anything older is dropped rather than cloned into every checkpoint.
+pub const MAX_REGION_STREAMS: usize = 4;
 
 /// Counters for monitoring highlighting performance in tests.
 #[derive(Debug, Default, Clone)]
@@ -376,6 +384,11 @@ struct EmbeddingSpecDef {
     default_language: Option<&'static str>,
     /// How content rows are presented to the embedded parser.
     content_mode: EmbeddedContentMode,
+    /// Whether one region of this kind can end and the next begin on a
+    /// single line, so the language token has to be watched on every
+    /// line rather than only where a region could open. A unified diff
+    /// does that at each `diff --git`; fences and tags never do.
+    retargets_on_same_line: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -398,6 +411,7 @@ const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[
         language_scope: "constant.other.language-name",
         default_language: None,
         content_mode: EmbeddedContentMode::WholeLine,
+        retargets_on_same_line: false,
     },
     EmbeddingSpecDef {
         host_syntax: "Vue",
@@ -405,6 +419,7 @@ const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[
         language_scope: "constant.other.language-name",
         default_language: Some("js"),
         content_mode: EmbeddedContentMode::WholeLine,
+        retargets_on_same_line: false,
     },
     EmbeddingSpecDef {
         host_syntax: "Vue",
@@ -412,6 +427,7 @@ const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[
         language_scope: "constant.other.language-name",
         default_language: Some("css"),
         content_mode: EmbeddedContentMode::WholeLine,
+        retargets_on_same_line: false,
     },
     EmbeddingSpecDef {
         host_syntax: "Fresh Diff",
@@ -419,6 +435,7 @@ const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[
         language_scope: "constant.other.language-name",
         default_language: None,
         content_mode: EmbeddedContentMode::UnifiedDiff,
+        retargets_on_same_line: true,
     },
 ];
 
@@ -525,6 +542,7 @@ struct EmbeddingSpec {
     language_scope: syntect::parsing::Scope,
     default_language: Option<&'static str>,
     content_mode: EmbeddedContentMode,
+    retargets_on_same_line: bool,
 }
 
 impl EmbeddingSpec {
@@ -538,6 +556,7 @@ impl EmbeddingSpec {
                     language_scope: syntect::parsing::Scope::new(d.language_scope).ok()?,
                     default_language: d.default_language,
                     content_mode: d.content_mode,
+                    retargets_on_same_line: d.retargets_on_same_line,
                 })
             })
             .collect()
@@ -570,8 +589,8 @@ struct ParseSnapshot {
     state: syntect::parsing::ParseState,
     scopes: syntect::parsing::ScopeStack,
     embedded: Option<EmbeddedParseState>,
-    /// A region host's live parsers, most recently fed last; empty for
-    /// every grammar host. See `SyntaxRegion::streams`.
+    /// A declared-region host's live parsers, most recently fed last;
+    /// empty for every grammar host. See `DeclaredRegion::streams`.
     streams: Vec<(u32, EmbeddedParseState)>,
 }
 
@@ -683,16 +702,26 @@ fn prepare_row_content(prepared: &PreparedLine, prefix: usize) -> Option<Prepare
 /// Prepare one unified-diff source row for its embedded language parser.
 ///
 /// Added, removed, and context rows carry a one-byte patch marker that is
-/// not part of the source language. File headers (`+++` / `---`) and all
-/// other diff metadata return `None` so they retain host-grammar styling
-/// without advancing the embedded parser.
-fn prepare_unified_diff_content(prepared: &PreparedLine) -> Option<PreparedLine> {
-    let bytes = prepared.line_for_syntect.as_bytes();
-    let marker = *bytes.first()?;
-    if !matches!(marker, b'+' | b'-' | b' ') {
-        return None;
-    }
-    if bytes.starts_with(b"+++") || bytes.starts_with(b"---") {
+/// not part of the source language. Which rows those are is the diff
+/// grammar's call, read off the row's host spans: a row it scoped as an
+/// insertion or deletion is source, and so is one that begins with the
+/// context marker. File headers (`+++` / `---`), hunk headers and the
+/// rest of the metadata return `None` so they retain host-grammar
+/// styling without advancing the embedded parser — a removed line that
+/// happens to begin `--` is source, not a header, and the grammar knows
+/// the difference because it knows whether it is inside a hunk.
+fn prepare_unified_diff_content(
+    prepared: &PreparedLine,
+    host_spans: &[(usize, usize, HighlightCategory)],
+) -> Option<PreparedLine> {
+    let marker = *prepared.line_for_syntect.as_bytes().first()?;
+    let is_change = host_spans.iter().any(|&(_, _, category)| {
+        matches!(
+            category,
+            HighlightCategory::Inserted | HighlightCategory::Deleted
+        )
+    });
+    if !(is_change || marker == b' ') {
         return None;
     }
     prepare_row_content(prepared, 1)
@@ -950,15 +979,14 @@ impl TextMateEngine {
             host_span_scratch: Vec::new(),
             child_span_scratch: Vec::new(),
             scope_category_cache: HashMap::new(),
-            region_host: false,
-            region_markers: MarkerList::new(),
-            regions: HashMap::new(),
+            declared_host: false,
+            declared: Vec::new(),
         }
     }
 
     /// An engine for a buffer a plugin composed: plain text of its own,
-    /// coloured only where `set_syntax_regions` says there is code.
-    pub fn region_host(syntax_set: Arc<SyntaxSet>) -> Self {
+    /// coloured only where the declared regions say there is code.
+    pub fn declared_region_host(syntax_set: Arc<SyntaxSet>, regions: Vec<DeclaredRegion>) -> Self {
         let plain = syntax_set.find_syntax_plain_text();
         let index = syntax_set
             .syntaxes()
@@ -966,54 +994,99 @@ impl TextMateEngine {
             .position(|s| std::ptr::eq(s, plain))
             .unwrap_or(0);
         let mut engine = Self::new(syntax_set, index);
-        engine.region_host = true;
+        engine.declared_host = true;
+        engine.set_declared_regions(regions);
         engine
     }
 
     /// Whether this engine takes its regions from a plugin rather than a
-    /// grammar (see [`Self::region_host`]).
-    pub fn hosts_syntax_regions(&self) -> bool {
-        self.region_host
+    /// grammar (see [`Self::declared_region_host`]).
+    pub fn hosts_declared_regions(&self) -> bool {
+        self.declared_host
     }
 
-    /// Replace the declared regions (see `SyntaxRegion`). Each becomes a
-    /// span marker, so an edit moves it with the text; the language is
-    /// resolved here, once, and every cached span is dropped since any of
-    /// them may now be wrong.
-    pub fn set_syntax_regions(&mut self, regions: Vec<SyntaxRegion>) {
-        let stale: Vec<MarkerId> = self.regions.keys().copied().collect();
-        for id in stale {
-            self.region_markers.delete(id);
-        }
-        self.regions.clear();
-        for region in regions {
+    /// Replace the declared regions. They are kept sorted and disjoint:
+    /// an empty region, or one that overlaps the region before it, is
+    /// dropped with a warning rather than left to fight over rows. Every
+    /// cached span is dropped, since any of them may now be wrong.
+    pub fn set_declared_regions(&mut self, mut regions: Vec<DeclaredRegion>) {
+        regions.sort_by_key(|region| region.start);
+        let mut kept: Vec<DeclaredRegion> = Vec::with_capacity(regions.len());
+        for mut region in regions {
             if region.end <= region.start {
                 continue;
             }
-            let syntax_index = self.resolve_embedded_syntax(&region.language);
-            let id = self.region_markers.create_span(region.start, region.end);
-            self.regions.insert(
-                id,
-                RegionInfo {
-                    syntax_index,
-                    prefix: region.prefix,
-                    streams: Arc::from(region.streams),
-                },
-            );
+            if let Some(previous) = kept.last() {
+                if region.start < previous.end {
+                    tracing::warn!(
+                        "declared region {}..{} overlaps {}..{}; dropped",
+                        region.start,
+                        region.end,
+                        previous.start,
+                        previous.end
+                    );
+                    continue;
+                }
+            }
+            if region.streams.is_empty() {
+                region.streams.push(DEFAULT_REGION_STREAM);
+            }
+            kept.push(region);
         }
+        self.declared = kept;
         self.invalidate_all();
     }
 
+    /// The declared regions and the syntax set they index, for a caller
+    /// that is replacing this engine and must not lose them.
+    pub fn take_declared_regions(&mut self) -> (Arc<SyntaxSet>, Vec<DeclaredRegion>) {
+        (
+            Arc::clone(&self.syntax_set),
+            std::mem::take(&mut self.declared),
+        )
+    }
+
     /// The declared region a row belongs to, by the row's first byte.
-    /// Regions are meant not to overlap; if they do, the one that starts
-    /// last wins, as an inner overlay would.
-    fn region_at(&self, row_start: usize) -> Option<MarkerId> {
-        self.region_markers
-            .query_range(row_start, row_start + 1)
-            .into_iter()
-            .filter(|&(_, start, end)| start <= row_start && row_start < end)
-            .max_by_key(|&(_, start, _)| start)
-            .map(|(id, _, _)| id)
+    fn declared_region_at(&self, row_start: usize) -> Option<usize> {
+        let index = self
+            .declared
+            .partition_point(|region| region.start <= row_start)
+            .checked_sub(1)?;
+        (row_start < self.declared[index].end).then_some(index)
+    }
+
+    /// Move the declared regions for an insertion, as the buffer's own
+    /// markers would: text inserted at a region's first byte lands before
+    /// it, text inserted anywhere inside it grows it.
+    fn shift_declared_regions_for_insert(&mut self, position: usize, length: usize) {
+        for region in &mut self.declared {
+            if region.start >= position {
+                region.start += length;
+            }
+            if region.end > position {
+                region.end += length;
+            }
+        }
+    }
+
+    /// Move the declared regions for a deletion; a region the deletion
+    /// swallows whole is gone.
+    fn shift_declared_regions_for_delete(&mut self, position: usize, length: usize) {
+        let deleted_end = position + length;
+        let shift = |offset: usize| {
+            if offset <= position {
+                offset
+            } else if offset >= deleted_end {
+                offset - length
+            } else {
+                position
+            }
+        };
+        for region in &mut self.declared {
+            region.start = shift(region.start);
+            region.end = shift(region.end);
+        }
+        self.declared.retain(|region| region.end > region.start);
     }
 
     /// Get performance stats for testing and diagnostics.
@@ -1035,7 +1108,7 @@ impl TextMateEngine {
     /// the cache dirty so the partial-update path runs on next render.
     pub fn notify_insert(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_insert(position, length);
-        self.region_markers.adjust_for_insert(position, length);
+        self.shift_declared_regions_for_insert(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
             for span in &mut cache.spans {
@@ -1058,7 +1131,7 @@ impl TextMateEngine {
     /// Buffer-delete notification. Mirror of `notify_insert`.
     pub fn notify_delete(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_delete(position, length);
-        self.region_markers.adjust_for_delete(position, length);
+        self.shift_declared_regions_for_delete(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
             let delete_end = position + length;
@@ -1245,8 +1318,8 @@ impl TextMateEngine {
         current_offset: usize,
         mut on_span: impl FnMut(usize, usize, HighlightCategory, Option<HighlightCategory>),
     ) -> bool {
-        if self.region_host {
-            return self.parse_region_line(snapshot, prepared, current_offset, on_span);
+        if self.declared_host {
+            return self.parse_declared_row(snapshot, prepared, current_offset, on_span);
         }
         if self.embedding.is_empty() {
             return self
@@ -1262,21 +1335,27 @@ impl TextMateEngine {
         }
 
         let was_in = self.active_region_spec(&snapshot.scopes);
-        // Watch for a language token on every line. Most hosts only emit one
-        // while opening a region; a unified diff can close one file region
-        // and open the next on the same `diff --git` line, leaving the same
-        // region scope active at both line boundaries. Seeing the new token
-        // is what lets us retarget the child parser in that case.
-        // Copy the (deduplicated) language scopes to the stack so no borrow
-        // of self outlives the parse call below.
+        // Watch for a language token on lines that could open a region —
+        // and, for a host whose regions can hand over on a single line (a
+        // unified diff at each `diff --git`), on every line, since the
+        // region scope is active at both ends of that line and only the
+        // new token says the child parser must be retargeted. Copy the
+        // (deduplicated) language scopes to the stack so no borrow of
+        // self outlives the parse call below.
+        let watch_everywhere = self
+            .embedding
+            .iter()
+            .any(|spec| spec.retargets_on_same_line);
         let mut watch_buf = [self.embedding[0].language_scope; MAX_WATCH_SCOPES];
         let mut watch_len = 0;
-        for spec in &self.embedding {
-            if watch_len < MAX_WATCH_SCOPES
-                && !watch_buf[..watch_len].contains(&spec.language_scope)
-            {
-                watch_buf[watch_len] = spec.language_scope;
-                watch_len += 1;
+        if was_in.is_none() || watch_everywhere {
+            for spec in &self.embedding {
+                if watch_len < MAX_WATCH_SCOPES
+                    && !watch_buf[..watch_len].contains(&spec.language_scope)
+                {
+                    watch_buf[watch_len] = spec.language_scope;
+                    watch_len += 1;
+                }
             }
         }
 
@@ -1314,7 +1393,7 @@ impl TextMateEngine {
                 // single line (unified diff file headers). A newly scoped
                 // language token restarts the child for the new region; the
                 // transition line itself remains host-styled.
-                if language_range.is_some() {
+                if language_range.is_some() && self.embedding[i].retargets_on_same_line {
                     snapshot.embedded =
                         self.embedded_state_for_region(prepared, current_offset, language_range, j);
                     for &(start, end, category) in &host_spans {
@@ -1333,7 +1412,7 @@ impl TextMateEngine {
                     let (child_line, child_offset) = match self.embedding[i].content_mode {
                         EmbeddedContentMode::WholeLine => (Some(prepared), current_offset),
                         EmbeddedContentMode::UnifiedDiff => {
-                            stripped = prepare_unified_diff_content(prepared);
+                            stripped = prepare_unified_diff_content(prepared, &host_spans);
                             (stripped.as_ref(), current_offset + 1)
                         }
                     };
@@ -1381,25 +1460,14 @@ impl TextMateEngine {
                                 on_span(start, clipped_end, category, None);
                             }
                         }
-                        let mut covered_to = child_offset;
+                        // The sink is a `RowWash`, and the marker span above
+                        // carries the row's Inserted/Deleted category from
+                        // its first byte, so the wash fills every gap the
+                        // source grammar leaves unscoped and the run after
+                        // the last token. The child spans only need the
+                        // background to ride along on the ranges they claim.
                         for &(start, end, category) in &child_spans {
-                            if let Some(bg_category) = background_category {
-                                if covered_to < start {
-                                    // Source grammars commonly leave plain
-                                    // identifiers/whitespace unscoped. Emit
-                                    // host-category spans for those gaps so
-                                    // the diff background remains continuous.
-                                    on_span(covered_to, start, bg_category, None);
-                                }
-                            }
                             on_span(start, end, category, background_category);
-                            covered_to = covered_to.max(end);
-                        }
-                        if let Some(bg_category) = background_category {
-                            let content_end = child_offset + child_line.line_content_len;
-                            if covered_to < content_end {
-                                on_span(covered_to, content_end, bg_category, None);
-                            }
                         }
                     } else {
                         for &(start, end, category) in &host_spans {
@@ -1440,25 +1508,26 @@ impl TextMateEngine {
         true
     }
 
-    /// One row of a region host (see [`Self::region_host`]). A row inside
-    /// a declared region is handed, prefix removed, to the parser of each
-    /// stream the region names, and coloured by the first; a row outside
-    /// every region is left as the plugin styled it and touches no
-    /// parser, so a header or a comment box between two runs of one
-    /// stream does not break the construct they are in the middle of.
-    fn parse_region_line(
+    /// One row of a declared-region host (see
+    /// [`Self::declared_region_host`]). A row inside a declared region is
+    /// handed, prefix removed, to the parser of each stream the region
+    /// names, and coloured by the first; a row outside every region is
+    /// left as the plugin styled it and touches no parser, so a header or
+    /// a comment box between two runs of one stream does not break the
+    /// construct they are in the middle of.
+    fn parse_declared_row(
         &mut self,
         snapshot: &mut ParseSnapshot,
         prepared: &PreparedLine,
         current_offset: usize,
         mut on_span: impl FnMut(usize, usize, HighlightCategory, Option<HighlightCategory>),
     ) -> bool {
-        let Some(id) = self.region_at(current_offset) else {
+        let Some(index) = self.declared_region_at(current_offset) else {
             return true;
         };
-        let (syntax_index, prefix, streams) = {
-            let info = &self.regions[&id];
-            (info.syntax_index, info.prefix, Arc::clone(&info.streams))
+        let (syntax_index, prefix, stream_count) = {
+            let region = &self.declared[index];
+            (region.syntax_index, region.prefix, region.streams.len())
         };
         let Some(syntax_index) = syntax_index else {
             return true;
@@ -1476,15 +1545,11 @@ impl TextMateEngine {
             }
         };
         let child_offset = current_offset + prefix;
-        let streams: &[u32] = if streams.is_empty() {
-            &[DEFAULT_REGION_STREAM]
-        } else {
-            &streams
-        };
         let mut child_spans = std::mem::take(&mut self.child_span_scratch);
         child_spans.clear();
         let mut ok = true;
-        for (k, &stream) in streams.iter().enumerate() {
+        for k in 0..stream_count {
+            let stream = self.declared[index].streams[k];
             let mut parser = snapshot.take_stream(stream, syntax_index, &self.syntax_set);
             let (child_ok, _) = self.parse_line_into_spans(
                 &mut parser.state,
@@ -2773,24 +2838,36 @@ impl HighlightEngine {
     }
 
     /// An engine for a buffer a plugin composed; see
-    /// [`TextMateEngine::region_host`].
-    pub fn region_host(syntax_set: Arc<SyntaxSet>) -> Self {
-        Self::TextMate(Box::new(TextMateEngine::region_host(syntax_set)))
+    /// [`TextMateEngine::declared_region_host`].
+    pub fn declared_region_host(syntax_set: Arc<SyntaxSet>, regions: Vec<DeclaredRegion>) -> Self {
+        Self::TextMate(Box::new(TextMateEngine::declared_region_host(
+            syntax_set, regions,
+        )))
     }
 
     /// Whether this engine takes its regions from a plugin rather than a
     /// grammar.
-    pub fn hosts_syntax_regions(&self) -> bool {
-        matches!(self, Self::TextMate(h) if h.hosts_syntax_regions())
+    pub fn hosts_declared_regions(&self) -> bool {
+        matches!(self, Self::TextMate(h) if h.hosts_declared_regions())
     }
 
-    /// Replace the regions a plugin declared (see `SyntaxRegion`). A
-    /// no-op for engines that take their regions from a grammar.
-    pub fn set_syntax_regions(&mut self, regions: Vec<SyntaxRegion>) {
+    /// Replace the regions a plugin declared. A no-op for engines that
+    /// take their regions from a grammar.
+    pub fn set_declared_regions(&mut self, regions: Vec<DeclaredRegion>) {
         if let Self::TextMate(h) = self {
-            if h.hosts_syntax_regions() {
-                h.set_syntax_regions(regions);
+            if h.hosts_declared_regions() {
+                h.set_declared_regions(regions);
             }
+        }
+    }
+
+    /// The declared regions and their syntax set, taken out of a host
+    /// that is about to be replaced so the replacement can carry them;
+    /// `None` for every other engine.
+    pub fn take_declared_regions(&mut self) -> Option<(Arc<SyntaxSet>, Vec<DeclaredRegion>)> {
+        match self {
+            Self::TextMate(h) if h.hosts_declared_regions() => Some(h.take_declared_regions()),
+            _ => None,
         }
     }
 
@@ -4870,12 +4947,11 @@ diff --git a/tools/check.py b/tools/check.py
             backtick_cat,
         );
     }
-    fn region_host_for_test() -> (HighlightEngine, Theme) {
+    fn declared_host_for_test() -> (GrammarRegistry, Theme) {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
-        let engine = HighlightEngine::region_host(registry.syntax_set_arc());
         let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
-        (engine, theme)
+        (registry, theme)
     }
 
     fn category_at(
@@ -4890,23 +4966,29 @@ diff --git a/tools/check.py b/tools/check.py
             .and_then(|span| span.category)
     }
 
-    fn region(start: usize, end: usize, prefix: usize, streams: &[u32]) -> SyntaxRegion {
-        SyntaxRegion {
+    fn python_region(
+        registry: &GrammarRegistry,
+        start: usize,
+        end: usize,
+        prefix: usize,
+        streams: &[u32],
+    ) -> DeclaredRegion {
+        DeclaredRegion {
             start,
             end,
-            language: "calc.py".to_string(),
+            syntax_index: registry.embedded_syntax_index("calc.py"),
             prefix,
             streams: streams.to_vec(),
         }
     }
 
-    /// A region host colours the rows a plugin declared, past their
-    /// prefix, and nothing else: the header above them and the comment
-    /// box between them stay uncoloured, and the docstring the box
-    /// interrupts is still one docstring on the row after it.
+    /// A declared-region host colours the rows a plugin declared, past
+    /// their prefix, and nothing else: the header above them and the
+    /// comment box between them stay uncoloured, and the docstring the
+    /// box interrupts is still one docstring on the row after it.
     #[test]
-    fn test_syntax_regions_colour_declared_rows_across_a_gap() {
-        let (mut engine, theme) = region_host_for_test();
+    fn test_declared_regions_colour_declared_rows_across_a_gap() {
+        let (registry, theme) = declared_host_for_test();
         let header = "UNSTAGED\n";
         let code_a = "   1 +def f():\n   2 +    \"\"\"doc\n";
         let note = "  [ a note ]\n";
@@ -4914,10 +4996,13 @@ diff --git a/tools/check.py b/tools/check.py
         let content = format!("{header}{code_a}{note}{code_b}");
         let a = header.len()..header.len() + code_a.len();
         let b = a.end + note.len()..content.len();
-        engine.set_syntax_regions(vec![
-            region(a.start, a.end, 6, &[1]),
-            region(b.start, b.end, 6, &[1]),
-        ]);
+        let mut engine = HighlightEngine::declared_region_host(
+            registry.syntax_set_arc(),
+            vec![
+                python_region(&registry, a.start, a.end, 6, &[1]),
+                python_region(&registry, b.start, b.end, 6, &[1]),
+            ],
+        );
         let buffer = Buffer::from_str(&content, 0, test_fs());
         let spans = engine.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
 
@@ -4950,19 +5035,18 @@ diff --git a/tools/check.py b/tools/check.py
     /// row is still open on the next old-side row, while the new-side
     /// rows between them are code.
     #[test]
-    fn test_syntax_regions_keep_one_parser_per_stream() {
-        let (mut engine, theme) = region_host_for_test();
+    fn test_declared_regions_keep_one_parser_per_stream() {
+        let (registry, theme) = declared_host_for_test();
         let rows = ["-\"\"\"old\n", "+x = 1\n", "-still old\"\"\"\n", "+y = 2\n"];
         let content: String = rows.concat();
         let mut regions = Vec::new();
         let mut at = 0;
-        for (i, row) in rows.iter().enumerate() {
+        for row in &rows {
             let stream = if row.starts_with('-') { 0 } else { 1 };
-            regions.push(region(at, at + row.len(), 1, &[stream]));
+            regions.push(python_region(&registry, at, at + row.len(), 1, &[stream]));
             at += row.len();
-            let _ = i;
         }
-        engine.set_syntax_regions(regions);
+        let mut engine = HighlightEngine::declared_region_host(registry.syntax_set_arc(), regions);
         let buffer = Buffer::from_str(&content, 0, test_fs());
         let spans = engine.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
 
@@ -4983,10 +5067,13 @@ diff --git a/tools/check.py b/tools/check.py
     /// Regions ride the text: an insertion before them moves them, and
     /// the rows they meant are still the ones coloured.
     #[test]
-    fn test_syntax_regions_follow_an_edit() {
-        let (mut engine, theme) = region_host_for_test();
+    fn test_declared_regions_follow_an_edit() {
+        let (registry, theme) = declared_host_for_test();
         let code = "+def f():\n";
-        engine.set_syntax_regions(vec![region(0, code.len(), 1, &[])]);
+        let mut engine = HighlightEngine::declared_region_host(
+            registry.syntax_set_arc(),
+            vec![python_region(&registry, 0, code.len(), 1, &[])],
+        );
         let buffer = Buffer::from_str(code, 0, test_fs());
         let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
         assert_eq!(
@@ -5007,31 +5094,135 @@ diff --git a/tools/check.py b/tools/check.py
         assert_eq!(category_at(&spans, &content, "HEADER"), None);
     }
 
-    /// A language nothing in the set claims leaves the rows as they are,
-    /// and replacing the content's regions with none paints nothing.
+    /// A language nothing in the set claims leaves the rows as they are;
+    /// an overlapping region is dropped rather than fought over; and
+    /// replacing the regions with none paints nothing.
     #[test]
-    fn test_syntax_regions_unknown_language_and_clearing() {
-        let (mut engine, theme) = region_host_for_test();
+    fn test_declared_regions_unknown_language_overlap_and_clearing() {
+        let (registry, theme) = declared_host_for_test();
+        assert_eq!(registry.embedded_syntax_index("notes.nosuchlanguage"), None);
         let code = "+def f():\n";
-        engine.set_syntax_regions(vec![SyntaxRegion {
-            start: 0,
-            end: code.len(),
-            language: "notes.nosuchlanguage".to_string(),
-            prefix: 1,
-            streams: Vec::new(),
-        }]);
+        let mut engine = HighlightEngine::declared_region_host(
+            registry.syntax_set_arc(),
+            vec![DeclaredRegion {
+                start: 0,
+                end: code.len(),
+                syntax_index: None,
+                prefix: 1,
+                streams: Vec::new(),
+            }],
+        );
         let buffer = Buffer::from_str(code, 0, test_fs());
         let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
         assert!(spans.is_empty(), "{spans:?}");
 
-        engine.set_syntax_regions(vec![region(0, code.len(), 1, &[])]);
+        // A second region starting inside the first is dropped; the first
+        // still paints.
+        engine.set_declared_regions(vec![
+            python_region(&registry, 0, code.len(), 1, &[]),
+            DeclaredRegion {
+                start: 2,
+                end: code.len(),
+                syntax_index: None,
+                prefix: 0,
+                streams: Vec::new(),
+            },
+        ]);
         let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
         assert_eq!(
             category_at(&spans, code, "def"),
             Some(HighlightCategory::Keyword)
         );
-        engine.set_syntax_regions(Vec::new());
+
+        engine.set_declared_regions(Vec::new());
         let spans = engine.highlight_viewport(&buffer, 0, code.len(), &theme, 0);
         assert!(spans.is_empty(), "{spans:?}");
+    }
+
+    /// The host resolves a region's language through the catalog first,
+    /// so a path picks the same grammar the editor would open it with,
+    /// and falls back to the grammar a bare token or extension names.
+    #[test]
+    fn test_embedded_syntax_index_resolves_paths_and_tokens() {
+        let (registry, _) = declared_host_for_test();
+        let names =
+            |index: Option<usize>| index.map(|i| registry.syntax_set().syntaxes()[i].name.clone());
+        assert_eq!(
+            names(registry.embedded_syntax_index("src/main.rs")).as_deref(),
+            Some("Rust")
+        );
+        assert_eq!(
+            names(registry.embedded_syntax_index("py")).as_deref(),
+            Some("Python")
+        );
+        // TypeScript is served by tree-sitter for real buffers; a declared
+        // region still gets its TextMate grammar, not plain text.
+        assert_eq!(
+            names(registry.embedded_syntax_index("app.ts")).as_deref(),
+            Some("TypeScript")
+        );
+        assert_eq!(registry.embedded_syntax_index("README"), None);
+    }
+
+    /// Inside a hunk, a removed line beginning `--` or an added one
+    /// beginning `++` is source, not a file header: it is fed to the
+    /// file's parser, so a construct it closes is closed for the rows
+    /// after it.
+    #[test]
+    fn test_diff_hunk_rows_that_look_like_headers_are_source() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let content = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ /* open
+--- close */
++let x = 1;
+";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        assert_eq!(
+            category_at(&spans, content, "let x"),
+            Some(HighlightCategory::Keyword),
+            "the removed `-- close */` row must close the comment for the row after it"
+        );
+        // The real `+++` header, before any hunk, is still a header: it
+        // keeps the metadata category rather than the insertion wash a
+        // hunk row would get.
+        assert_eq!(
+            category_at(&spans, content, "+++ b/src"),
+            Some(HighlightCategory::Type),
+            "a file header outside a hunk keeps its header styling"
+        );
+    }
+
+    /// A `diff --git` header the path rules cannot parse still hands the
+    /// next file its own parser — resolved from the header's tail when
+    /// an extension is in it — rather than running the previous file's.
+    #[test]
+    fn test_diff_unparsed_header_does_not_leak_the_previous_parser() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let content = "\
+diff --git a/src/lib.rs b/src/lib.rs
+@@ -1 +1 @@
++/* open
+diff --git a/has space.py b/has space.py
+@@ -1 +1 @@
++def f():
+";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        assert_eq!(
+            category_at(&spans, content, "def f"),
+            Some(HighlightCategory::Keyword),
+            "the second file must not be parsed by the first file's Rust parser"
+        );
     }
 }
