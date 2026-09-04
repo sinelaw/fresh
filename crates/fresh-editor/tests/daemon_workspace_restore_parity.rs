@@ -19,14 +19,11 @@
 //! Everything is asserted on rendered output, driving the dock with the same
 //! keys a user presses (CONTRIBUTING: "E2E Tests Observe, Not Inspect").
 //!
-//! Lives in its own integration binary because it sets the process-global
-//! `XDG_DATA_HOME` to isolate persistence: workspace save/load key off
-//! `$XDG_DATA_HOME/fresh` while boot discovery reads
-//! `DirectoryContext::data_dir`, so both must name one isolated tree. That
-//! global is also why this is a single `#[test]` — two tests in this binary
-//! would race each other's `set_var`. See `orchestrator_co_tenant_restore.rs`
-//! for the same pattern. Linux-gated: `dirs::data_dir()` ignores
-//! `XDG_DATA_HOME` elsewhere.
+//! Persistence is isolated by `common::global_state::isolated_dir_context`:
+//! workspace save/load resolve through the pinned data dir while boot
+//! discovery reads `DirectoryContext::data_dir`, so both must name one
+//! isolated tree. The pin is thread-local, so the direct-mode and daemon-mode
+//! phases here share a tree that no concurrent test can move.
 #![cfg(target_os = "linux")]
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
@@ -35,22 +32,7 @@ use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use std::path::{Path, PathBuf};
 
-/// Isolate ALL editor persistence into `base`: `$XDG_DATA_HOME/fresh` is where
-/// `Workspace::save`/`load` live, and the returned `DirectoryContext`'s
-/// `data_dir` is the SAME path — so the direct-mode run's saves and the
-/// daemon-mode run's boot discovery agree, inside the test's temp tree.
-fn isolated_dir_context(base: &Path) -> DirectoryContext {
-    let xdg_data = base.join("xdg-data");
-    std::fs::create_dir_all(&xdg_data).unwrap();
-    std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    DirectoryContext {
-        data_dir: xdg_data.join("fresh"),
-        config_dir: base.join("config"),
-        home_dir: Some(base.join("home")),
-        documents_dir: None,
-        downloads_dir: None,
-    }
-}
+use crate::common::global_state::isolated_dir_context;
 
 fn harness_in(project: &Path, dir_context: &DirectoryContext) -> EditorTestHarness {
     let config = Config {
@@ -86,7 +68,7 @@ fn json_files_in(dir: &Path) -> Vec<PathBuf> {
 fn every_invocation_sees_and_opens_the_same_workspaces() {
     fresh::i18n::set_locale("en");
     let sandbox = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(sandbox.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(sandbox.path());
     let workspaces_dir = dir_context.data_dir.join("workspaces");
 
     let mk = |n: &str| {

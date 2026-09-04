@@ -5,9 +5,8 @@
 //! live. (The old blocking flow dove straight into the new terminal window,
 //! so the dock's toolbar chrome never appeared — this times out against it.)
 //!
-//! Single test in this binary: `isolated_dir_context` sets the process-global
-//! `XDG_DATA_HOME` so the session this test creates checkpoints into the
-//! per-test temp tree, never the real user data dir.
+//! `isolated_dir_context` pins this thread's data dir so the session created
+//! here checkpoints into the per-test temp tree, never the real user data dir.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::isolated_dir_context;
@@ -18,7 +17,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 fn local_submit_closes_form_and_shows_dock_row() {
     fresh::i18n::set_locale("en");
     let base = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(base.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(base.path());
     let project = base.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
     let project = project.canonicalize().unwrap();

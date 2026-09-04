@@ -402,7 +402,10 @@ fn test_review_comments_panel_wraps_full_note() {
         .unwrap();
 }
 
-/// §5.12 — `W` toggles watch (auto-reload on save) and reports its state.
+/// §5.12 — `W` toggles watch (auto-refresh on changes) and reports its
+/// state. The watch is on when a review opens (#3126: a panel that does not
+/// follow the working tree is a panel quietly disagreeing with the repo), so
+/// the first press is the one that turns it *off*.
 #[test]
 fn test_review_watch_toggle_status() {
     init_tracing_from_env();
@@ -414,14 +417,14 @@ fn test_review_watch_toggle_status() {
         .send_key(KeyCode::Char('W'), KeyModifiers::SHIFT)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Watching for changes"))
+        .wait_until(|h| h.screen_to_string().contains("Watch off"))
         .unwrap();
 
     harness
         .send_key(KeyCode::Char('W'), KeyModifiers::SHIFT)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Watch off"))
+        .wait_until(|h| h.screen_to_string().contains("Watching for changes"))
         .unwrap();
 }
 

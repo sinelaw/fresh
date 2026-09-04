@@ -2258,6 +2258,66 @@ fn test_type_over_auto_closed_paren_with_multiple_cursors() {
     harness.assert_screen_contains("a.open();");
 }
 
+/// A cursor stepping over an auto-closed `)` must land past it even when
+/// another cursor, on an earlier line, has no `)` to step over and inserts
+/// one instead (#3166).
+///
+/// The skip-over's `MoveCursor` was emitted in pre-edit coordinates while
+/// the bulk applier took it as post-edit (the cursor owns no `Insert`), so
+/// the earlier cursor's inserted byte left the skipping cursor one short:
+/// `a(;)`. The reverse ordering — the skipping cursor on the earlier line —
+/// already worked and must keep working.
+#[test]
+fn test_type_over_auto_closed_paren_when_earlier_cursor_inserts() {
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+
+    // `a()` first: `End` lands after the `)`, so one `Left` puts the cursor
+    // between the parens before the second cursor is added below it.
+    for (fixture, a_first, expected) in [
+        ("xx\na()\n", false, "xx);\na();\n"),
+        ("a()\nxx\n", true, "a();\nxx);\n"),
+    ] {
+        let mut config = Config::default();
+        config.editor.auto_indent = true;
+        config.editor.auto_close = true;
+        let mut harness =
+            EditorTestHarness::create(100, 24, HarnessOptions::new().with_config(config)).unwrap();
+        harness
+            .load_buffer_from_text_named("mix.cpp", fixture)
+            .unwrap();
+
+        // Column 3 of line 1 — the end of `xx`, or between `(` and `)` of
+        // `a()` — then a second cursor on line 2 at the same column, which
+        // is the other of the two.
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        if a_first {
+            harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+        }
+        harness.assert_screen_contains("Ln 1, Col 3");
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+            .unwrap();
+        harness.assert_screen_contains("2 cursors");
+
+        // One cursor inserts the `)`, the other steps over its own. The
+        // buffer looks the same on master (only the stepping cursor's
+        // position differs), so this is a guard on the setup, not the
+        // evidence: that is the `;` below.
+        harness.type_text(")").unwrap();
+        let after_paren = fixture.replacen("xx", "xx)", 1);
+        harness.assert_buffer_content(&after_paren);
+
+        // Which only shows once the next character lands: after the parens
+        // on both lines, not inside them on one.
+        harness.type_text(";").unwrap();
+        harness.assert_buffer_content(expected);
+        harness.assert_screen_contains("a();");
+        harness.assert_screen_contains("xx);");
+    }
+}
+
 /// A plain click ends multi-cursor editing; a Shift-click, which extends
 /// the selection, does not (#3125).
 ///

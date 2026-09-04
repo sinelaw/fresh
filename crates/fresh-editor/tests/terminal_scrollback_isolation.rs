@@ -23,9 +23,9 @@
 //! opens its transcript `BackingMode::Fresh` (truncating) so leftovers can't
 //! survive into it.
 //!
-//! Own integration binary because it sets the process-global `XDG_DATA_HOME`
-//! to isolate workspace persistence; Linux-gated for the same reason as
-//! `orchestrator_co_tenant_restore.rs` (`dirs::data_dir()` ignores
+//! Workspace persistence is isolated by
+//! `common::global_state::isolated_dir_context`; Linux-gated for the same
+//! reason as `orchestrator_co_tenant_restore.rs` (`dirs::data_dir()` ignores
 //! `XDG_DATA_HOME` elsewhere). Skips when the environment has no PTY.
 #![cfg(target_os = "linux")]
 
@@ -35,21 +35,7 @@ use fresh::model::filesystem::StdFileSystem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Isolate all editor persistence (workspaces, terminal transcripts) into
-/// `base`, with the returned context's `data_dir` pointing at the same tree
-/// the editor's own boot discovery will read.
-fn isolated_dir_context(base: &Path) -> DirectoryContext {
-    let xdg_data = base.join("xdg-data");
-    std::fs::create_dir_all(&xdg_data).unwrap();
-    std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    DirectoryContext {
-        data_dir: xdg_data.join("fresh"),
-        config_dir: base.join("config"),
-        home_dir: Some(base.join("home")),
-        documents_dir: None,
-        downloads_dir: None,
-    }
-}
+use crate::common::global_state::isolated_dir_context;
 
 fn editor_in(project: &Path, dir_context: &DirectoryContext) -> fresh::app::Editor {
     let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
@@ -107,10 +93,10 @@ fn read_to_string(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Both scenarios run from one `#[test]`: each sets the process-global
-/// `XDG_DATA_HOME`, so running them as separate (concurrent) test functions
-/// would let one scenario's sandbox move out from under the other's
-/// workspace save.
+/// Both scenarios run from one `#[test]`. They are independent now that each
+/// pins its own data dir (the pin is thread-local, and they run in sequence on
+/// this thread); the pairing is kept because the shared PTY-availability skip
+/// above belongs to both.
 #[test]
 fn a_new_terminal_never_shows_another_terminals_scrollback() {
     if !pty_available() {
@@ -123,7 +109,7 @@ fn a_new_terminal_never_shows_another_terminals_scrollback() {
 
 fn new_terminal_does_not_adopt_a_restored_terminal_transcript() {
     let sandbox = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(sandbox.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(sandbox.path());
     let project = sandbox.path().join("project");
     std::fs::create_dir(&project).unwrap();
     let project = project.canonicalize().unwrap();
@@ -173,7 +159,7 @@ fn new_terminal_does_not_adopt_a_restored_terminal_transcript() {
 
 fn new_terminal_discards_a_leftover_transcript_on_its_path() {
     let sandbox = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(sandbox.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(sandbox.path());
     let project = sandbox.path().join("project");
     std::fs::create_dir(&project).unwrap();
     let project = project.canonicalize().unwrap();

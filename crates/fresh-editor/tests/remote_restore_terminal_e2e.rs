@@ -29,11 +29,11 @@
 //! python agent on the remote) and is Linux-only; it *skips* (no-op) when any
 //! are missing.
 //!
-//! This is a standalone integration binary (not part of `e2e_tests`) so it can
-//! point `$XDG_DATA_HOME` at an isolated temp dir: the editor's workspace
-//! persistence keys off `$XDG_DATA_HOME/fresh`, and we build the harness's
-//! `DirectoryContext` to match, so save / discovery / promote-restore all share
-//! one isolated directory. A single test per binary keeps the `set_var` safe.
+//! Editor persistence is pinned at an isolated temp dir
+//! (`common::global_state::isolated_dir_context`): workspace save/load resolve
+//! through the pinned data dir, and the harness's `DirectoryContext` names the
+//! same path, so save / discovery / promote-restore all share one isolated
+//! directory.
 //!
 //! Gated on the `plugins` feature: the remote-connect machinery (and the
 //! `SetActiveWindow` dive that drives it) is plugins-gated, so without it there
@@ -49,7 +49,6 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
-use fresh::config_io::DirectoryContext;
 use fresh::services::authority::{RemoteAgentSpec, RemoteTransportSpec, SessionAuthoritySpec};
 use fresh_core::api::PluginCommand;
 
@@ -269,21 +268,13 @@ fn restored_remote_terminal_reconnects_over_ssh_after_restart() -> anyhow::Resul
 
     let base = tempfile::tempdir()?;
 
-    // Isolate ALL editor persistence into the temp tree: `$XDG_DATA_HOME/fresh`
-    // is where workspace save/load (hence promote-restore) live, and we build
-    // the harness's `DirectoryContext` so its `data_dir` is the SAME path — so
-    // save, boot discovery, and promote all agree. Single test per binary, so
-    // this process-global `set_var` races nothing.
-    let xdg_data = base.path().join("xdg-data");
-    std::fs::create_dir_all(&xdg_data)?;
-    std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    let dir_context = DirectoryContext {
-        data_dir: xdg_data.join("fresh"), // == get_data_dir()
-        config_dir: base.path().join("config"),
-        home_dir: Some(base.path().join("home")),
-        documents_dir: None,
-        downloads_dir: None,
-    };
+    // Isolate ALL editor persistence into the temp tree: the pinned data dir is
+    // where workspace save/load (hence promote-restore) live, and the harness's
+    // `DirectoryContext` names the SAME path — so save, boot discovery, and
+    // promote all agree. The pin is thread-local, so it isolates this test
+    // without moving any concurrent test's store.
+    let (dir_context, _data_dir_pin) =
+        crate::common::global_state::isolated_dir_context(base.path());
 
     let project = canonical_mkdir(base.path(), "project")?;
     let remote_a = canonical_mkdir(base.path(), "remoteA")?;

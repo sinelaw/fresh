@@ -296,16 +296,30 @@ A sample project for testing.
         self.git_commit("Add many files");
     }
 
-    /// Change current directory to this repository
-    pub fn change_to_repo_dir(&self) -> PathBuf {
-        // Try to get current dir, but if it fails (e.g., directory was deleted),
-        // use a safe fallback like /tmp
-        let original_dir = std::env::current_dir().unwrap_or_else(|_| {
-            // If current dir doesn't exist, use /tmp as a safe default
-            std::path::PathBuf::from("/tmp")
-        });
+    /// Change the process's current directory to this repository, until the
+    /// returned [`DirGuard`] drops.
+    ///
+    /// The guard also holds [`cwd_lock`], so only one test at a time is inside
+    /// a `change_to_repo_dir`. That is what makes "the directory to go back
+    /// to" a meaningful thing to record: the caller used to snapshot
+    /// `current_dir()` unsynchronised, and with ~130 tests doing this in
+    /// parallel a test routinely captured a *sibling's* repository as its
+    /// "original", then restored the process into it on the way out. The
+    /// checkout root was never restored after that, and every later test in
+    /// the process resolved relative paths against a stray temp directory —
+    /// one that its owner's `TempDir` had by then deleted.
+    #[must_use = "the process cwd reverts as soon as the guard is dropped"]
+    pub fn change_to_repo_dir(&self) -> DirGuard {
+        let lock = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        // With the lock held this really is "the directory nobody else is
+        // moving". It can still be missing if a *previous* run of the suite
+        // left the process somewhere deleted, so keep the fallback.
+        let original_dir = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
         std::env::set_current_dir(&self.path).expect("Failed to change directory");
-        original_dir
+        DirGuard {
+            original_dir,
+            _lock: lock,
+        }
     }
 
     /// Set up git plugins by copying them from the project's plugins directory
@@ -490,19 +504,76 @@ A sample project for testing.
     }
 }
 
-/// Helper to restore original directory
-pub struct DirGuard {
-    original_dir: PathBuf,
+/// Serializes every `change_to_repo_dir`, so the process cwd has exactly one
+/// owner at a time.
+///
+/// The cwd is process-global and there is no per-test version of it, so a lock
+/// is the only way these tests can share it. It is held only for the body of a
+/// test that needs `git` to run *in* its repository; the rest of the suite
+/// keeps running in parallel.
+pub fn cwd_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
-impl DirGuard {
-    pub fn new(original_dir: PathBuf) -> Self {
-        Self { original_dir }
-    }
+/// Restores the directory the process was in before
+/// [`GitTestRepo::change_to_repo_dir`], and releases the cwd lock.
+pub struct DirGuard {
+    original_dir: PathBuf,
+    _lock: std::sync::MutexGuard<'static, ()>,
 }
 
 impl Drop for DirGuard {
     fn drop(&mut self) {
         let _ = std::env::set_current_dir(&self.original_dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Concurrent `change_to_repo_dir` calls must leave the process where they
+    /// found it.
+    ///
+    /// Without [`cwd_lock`] each thread snapshots `current_dir()` while its
+    /// siblings are mid-`set_current_dir`, so a thread routinely records a
+    /// *sibling's* repository as the directory to go back to and restores the
+    /// process into it. Nothing puts the checkout back after that, and every
+    /// later test in the binary resolves relative paths against a temp
+    /// directory its owner has since deleted — which is how the visual
+    /// regression captures started failing on an unwritable
+    /// `docs/visual-regression/screenshots`.
+    #[test]
+    fn concurrent_repo_dir_changes_restore_the_process_directory() {
+        // Read the cwd through the same lock the guards take, so this never
+        // observes a *legitimately* moved directory: a sibling test elsewhere
+        // in the binary may be inside its own `change_to_repo_dir` right now.
+        let observe = || {
+            let _lock = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+            std::env::current_dir()
+        };
+        let before = observe().expect("a valid cwd to start from");
+        // Several rounds: one interleaving is enough to strand the process, but
+        // whether it happens in any single round is up to the scheduler.
+        for _ in 0..4 {
+            let repos: Vec<GitTestRepo> = (0..3).map(|_| GitTestRepo::new()).collect();
+            std::thread::scope(|scope| {
+                for repo in &repos {
+                    scope.spawn(move || {
+                        let _guard = repo.change_to_repo_dir();
+                        // Widen the window a racing sibling would snapshot in.
+                        for _ in 0..64 {
+                            std::thread::yield_now();
+                        }
+                    });
+                }
+            });
+            assert_eq!(
+                observe().expect("cwd survives the guards"),
+                before,
+                "a repo-dir guard restored the process into someone else's directory"
+            );
+        }
     }
 }

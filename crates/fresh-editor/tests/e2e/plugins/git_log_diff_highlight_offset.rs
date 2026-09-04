@@ -22,7 +22,7 @@
 //! `Enter` uses to turn the cursor's byte offset into a file and line — which
 //! counted UTF-16 units the same way and so opened the file at the wrong line.
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -119,8 +119,7 @@ fn git_log_diff_colours_stay_on_their_lines_after_non_ascii() {
 
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = harness_with_highlighting(120, 40, repo.path.clone());
 
@@ -229,8 +228,7 @@ fn git_log_enter_opens_the_line_under_the_cursor_after_non_ascii() {
 
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Wide enough that no diff row wraps in the 40%-width detail panel — the
     // cursor is walked down by display rows below, so a wrapped row would
