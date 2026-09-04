@@ -36,6 +36,10 @@ mod tests {
 
     #[test]
     fn test_auto_close_single_quote_markdown() {
+        // Note: `languages.markdown.auto_close` defaults to false, so a real
+        // Markdown buffer passes `auto_close = false` here and nothing pairs.
+        // These cases cover a user who turns auto-close back on for Markdown.
+
         // In Markdown, single quotes should NOT auto-close (used as apostrophes)
         assert_eq!(get_auto_close_char('\'', true, "markdown"), None);
 

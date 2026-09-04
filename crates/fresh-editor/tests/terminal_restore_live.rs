@@ -18,9 +18,9 @@
 //! what the user sees but not what the editor can be asked: after a restore,
 //! the focused terminal must be live and its buffer must accept input.
 //!
-//! Own integration binary because it sets the process-global `XDG_DATA_HOME`
-//! to isolate workspace persistence; Linux-gated for the same reason as
-//! `orchestrator_co_tenant_restore.rs`. Skips when there is no PTY.
+//! Workspace persistence is isolated by
+//! `common::global_state::isolated_dir_context`; Linux-gated for the same
+//! reason as `orchestrator_co_tenant_restore.rs`. Skips when there is no PTY.
 #![cfg(target_os = "linux")]
 
 use fresh::config::Config;
@@ -30,18 +30,7 @@ use fresh::model::filesystem::StdFileSystem;
 use std::path::Path;
 use std::sync::Arc;
 
-fn isolated_dir_context(base: &Path) -> DirectoryContext {
-    let xdg_data = base.join("xdg-data");
-    std::fs::create_dir_all(&xdg_data).unwrap();
-    std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    DirectoryContext {
-        data_dir: xdg_data.join("fresh"),
-        config_dir: base.join("config"),
-        home_dir: Some(base.join("home")),
-        documents_dir: None,
-        downloads_dir: None,
-    }
-}
+use crate::common::global_state::isolated_dir_context;
 
 fn editor_in(project: &Path, dir_context: &DirectoryContext) -> fresh::app::Editor {
     let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
@@ -86,7 +75,7 @@ fn a_restored_terminal_comes_back_live() {
     }
 
     let sandbox = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(sandbox.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(sandbox.path());
     let project = sandbox.path().join("project");
     std::fs::create_dir(&project).unwrap();
     let project = project.canonicalize().unwrap();

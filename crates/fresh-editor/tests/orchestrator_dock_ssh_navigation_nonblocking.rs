@@ -11,12 +11,14 @@
 //! switch, arrowing onto an unreachable host would stall the whole UI — the
 //! bug reported against the dock.
 //!
-//! Single test in this binary: the fake-ssh PATH shim and
-//! `isolated_dir_context`'s process-global `XDG_DATA_HOME` must not leak.
+//! The fake-ssh PATH shim rides a `PathPin` and persistence a thread-local
+//! data-dir pin (`isolated_dir_context`), so neither leaks into a concurrent
+//! test — importantly including the *other* ssh shims, which also provide a
+//! program called `ssh`.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::{
-    canonical_mkdir, ensure_hanging_fake_ssh_on_path, isolated_dir_context,
+    canonical_mkdir, hanging_fake_ssh_on_path, isolated_dir_context,
     persist_previous_session,
 };
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
@@ -25,11 +27,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[test]
 fn arrow_nav_into_disconnected_remote_is_non_blocking() {
     crate::common::tracing::init_tracing_from_env();
-    ensure_hanging_fake_ssh_on_path();
+    let _fake_ssh = hanging_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 
     let base = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(base.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(base.path());
     let project = canonical_mkdir(base.path(), "project");
     let remote_root = canonical_mkdir(base.path(), "remote-root");
 

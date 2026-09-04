@@ -636,6 +636,12 @@ impl EditorTestHarness {
         if !config_was_provided {
             config.editor.auto_indent = false; // Disable for simpler testing
             config.editor.auto_close = false; // Disable for simpler testing
+                                              // Auto-surround is a distinct behaviour (typing a delimiter over a
+                                              // selection wraps it) and has to be turned off explicitly. It used
+                                              // to be disabled as a side effect of `auto_close = false`, because
+                                              // the surround path resolved its pair through the auto-close
+                                              // table; it no longer does.
+            config.editor.auto_surround = false; // Disable for simpler testing
             config.editor.animations = false;
         }
         // Always force the prompt line to be visible in tests so layout-
