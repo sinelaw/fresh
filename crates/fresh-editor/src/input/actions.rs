@@ -1574,6 +1574,18 @@ fn handle_insert_newline(
                 _ => {
                     if let Some(w) = rules_indent(state, indent_position, tab_size) {
                         Some(w)
+                    } else if state.highlighter.language().is_some() {
+                        // A language with neither a bundled grammar nor
+                        // rules — Rust under a plugin grammar, say — keeps
+                        // the code fallback; only a buffer with no language
+                        // at all treats a blank line as prose (#3165).
+                        Some(
+                            crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
+                                &state.buffer,
+                                indent_position,
+                                tab_size,
+                            ),
+                        )
                     } else {
                         Some(
                             crate::primitives::indent::IndentCalculator::calculate_indent_no_language(

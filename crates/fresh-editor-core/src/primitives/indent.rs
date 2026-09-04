@@ -18,12 +18,13 @@
 //!   a pragmatic last-resort heuristic, since its `{`/`[`/`(`/`:` triggers
 //!   line up with those languages' block openers.
 //!
-//! For files **without** any tree-sitter grammar (`.txt`, `.ini`, `Dockerfile`,
-//! `Makefile`, …) — and without regex indent rules, which the caller tries
-//! first — [`IndentCalculator::calculate_indent_no_language`] keeps the
-//! cursor's column on a blank line or in leading whitespace and otherwise
-//! uses the C-family pattern heuristic directly — without an AST there is
-//! nothing better to do.
+//! For a language **without** a bundled tree-sitter grammar — and without
+//! regex indent rules, which the caller tries first —
+//! [`IndentCalculator::calculate_indent_no_grammar`] uses the C-family
+//! pattern heuristic directly; without an AST there is nothing better to do.
+//! A buffer with no language at all (`.txt`, an unknown extension, …) uses
+//! [`IndentCalculator::calculate_indent_no_language`], which is the same
+//! except that a blank line keeps the cursor's column.
 //!
 //! # Performance
 //! - Parses up to 2000 bytes before cursor (balances accuracy vs speed).
@@ -251,38 +252,59 @@ impl IndentCalculator {
         )
     }
 
-    /// Calculate indent without language/tree-sitter support
-    /// Uses pattern matching and current line copying as fallback
-    /// This is used for files without syntax highlighting (e.g., .txt files)
+    /// Calculate indent for a buffer whose language has neither a bundled
+    /// tree-sitter grammar nor regex indent rules — Rust highlighted by a
+    /// plugin grammar is the everyday case, since the rules tier keys on the
+    /// syntect syntax name and a tree-sitter engine has none. Pattern
+    /// matching and current-line copying, as the code fallback in
+    /// [`calculate_indent`] does without an AST: a blank line at the end of
+    /// an unclosed block keeps the block's indent.
+    pub fn calculate_indent_no_grammar(buffer: &Buffer, position: usize, tab_size: usize) -> usize {
+        // See `calculate_indent` for the rationale (#1425).
+        if let Some(indent) = Self::indent_for_cursor_in_leading_ws(buffer, position, tab_size) {
+            return indent;
+        }
+        Self::pattern_indent_or_current_line(buffer, position, tab_size)
+    }
+
+    /// Calculate indent for a buffer with no language at all (`.txt`, an
+    /// unknown extension, …).
+    ///
+    /// The same as [`calculate_indent_no_grammar`] except on a blank line,
+    /// where the new line keeps the cursor's column (#3165): a cursor with
+    /// nothing but whitespace before it on its line keeps its column
+    /// whether content follows (#1425, the rule every path applies) or not
+    /// (this path only). At column 0 of an empty line the new line gets no
+    /// indent; at the end of the whitespace a previous Enter inserted it
+    /// gets the same indent, so typing an indented block is unchanged; in
+    /// the middle it keeps the split. Without the blank-line half, the
+    /// pattern scan reached past the blank line to the previous non-empty
+    /// one and copied its indent — its forward look-ahead corrects that
+    /// when a less-indented line follows, but a blank last line has
+    /// nothing to look ahead to, so Enter there landed under the block
+    /// above. In prose a blank line ends what came before it, whether or
+    /// not anything follows.
+    ///
+    /// Deliberately **not** applied to buffers that have a language, even
+    /// one Fresh has no grammar or rules for: there the pattern scan is the
+    /// fallback for code, where a blank line at the end of an unclosed
+    /// block *should* keep the block's indent
+    /// (`test_indent_after_empty_line_incomplete_syntax`,
+    /// `e2e::auto_indent::test_indent_after_empty_line_in_function_body`).
     pub fn calculate_indent_no_language(
         buffer: &Buffer,
         position: usize,
         tab_size: usize,
     ) -> usize {
-        // A cursor with nothing but whitespace before it on its line keeps
-        // its column, whether content follows (#1425, the rule the language
-        // path applies too) or not (#3165, this path only): at column 0 of
-        // an empty line the new line gets no indent; at the end of the
-        // whitespace a previous Enter inserted it gets the same indent, so
-        // typing an indented block is unchanged; in the middle it keeps the
-        // split. Without the blank-line half, the pattern scan below reached
-        // past the blank line to the previous non-empty one and copied its
-        // indent — its forward look-ahead corrects that when a less-indented
-        // line follows, but a blank last line has nothing to look ahead to,
-        // so Enter there landed under the block above. In prose a blank
-        // line ends what came before it, whether or not anything follows.
-        //
-        // The language path keeps the content-only half on purpose: there
-        // the pattern scan is the fallback for code tree-sitter cannot parse
-        // yet, where a blank line at the end of an unclosed block *should*
-        // keep the block's indent (`test_indent_after_empty_line_incomplete_syntax`).
         if let Some((column, _)) = Self::leading_whitespace_column(buffer, position, tab_size) {
             return column;
         }
+        Self::pattern_indent_or_current_line(buffer, position, tab_size)
+    }
 
-        // Pattern-based indent (for incomplete syntax). Only reached with
-        // content before the cursor, so its blank-line branch (and the #1425
-        // look-ahead) serve the language path's fallback alone.
+    /// The AST-less tail shared by the two fallbacks above.
+    fn pattern_indent_or_current_line(buffer: &Buffer, position: usize, tab_size: usize) -> usize {
+        // Pattern-based indent (for incomplete syntax)
         if let Some(indent) = Self::calculate_indent_pattern(buffer, position, tab_size) {
             return indent;
         }
@@ -313,9 +335,9 @@ impl IndentCalculator {
     /// matches the behaviour of VS Code, Sublime Text, and similar editors.
     /// Returns `None` when the cursor is past any non-whitespace character on
     /// the line, or when the line has no content (empty / whitespace-only).
-    /// On the language path the regular smart-indent logic then takes over;
-    /// the no-language path keeps the column on a blank line too (#3165), so
-    /// it uses [`leading_whitespace_column`] directly.
+    /// The regular smart-indent logic then takes over, except for a buffer
+    /// with no language at all, which keeps the column on a blank line too
+    /// (#3165) and so uses [`leading_whitespace_column`] directly.
     fn indent_for_cursor_in_leading_ws(
         buffer: &Buffer,
         position: usize,
@@ -332,7 +354,7 @@ impl IndentCalculator {
     /// same line. `None` when the cursor is past content on the line.
     ///
     /// The one predicate behind both [`indent_for_cursor_in_leading_ws`]
-    /// (content must follow) and the no-language blank-line rule in
+    /// (content must follow) and the blank-line rule in
     /// [`calculate_indent_no_language`] (content or not).
     fn leading_whitespace_column(
         buffer: &Buffer,
@@ -779,13 +801,13 @@ impl IndentCalculator {
     ///
     /// This function is the heuristic used:
     ///
-    /// 1. By [`calculate_indent_no_language`] — files without a tree-sitter
-    ///    grammar or regex indent rules (`.txt`, `.ini`, `Dockerfile`,
-    ///    `Makefile`, …). Without an AST there is nothing better to do. That
-    ///    caller only gets here with content before the cursor: a cursor in
-    ///    leading whitespace, or on a blank line, keeps its column instead
-    ///    (#1425, #3165), so the empty-line branch below and its forward
-    ///    look-ahead are exercised only through `calculate_indent`.
+    /// 1. By [`calculate_indent_no_grammar`] — a language without a bundled
+    ///    tree-sitter grammar or regex indent rules — and by
+    ///    [`calculate_indent_no_language`] — no language at all (`.txt`,
+    ///    …). Without an AST there is nothing better to do. The latter only
+    ///    gets here with content before the cursor: a cursor in leading
+    ///    whitespace, or on a blank line, keeps its column instead (#1425,
+    ///    #3165), so for it the empty-line branch below never runs.
     /// 2. By [`calculate_indent`] **only** for tree-sitter-backed C-family
     ///    languages (Rust, JS/TS, C/C++, Java, Go, Python, JSON, HTML, CSS,
     ///    PHP, C#, Odin) when tree-sitter cannot decide — typically because
@@ -1955,6 +1977,14 @@ mod tests {
             indent, 0,
             "Enter at column 0 of the blank last line must not inherit the previous block's indent"
         );
+        // A buffer that has a language but no grammar keeps the code
+        // behaviour: a blank line at the end of an unclosed block keeps the
+        // block's indent, and this fixture is indistinguishable from one.
+        let indent = IndentCalculator::calculate_indent_no_grammar(&buffer, position, 4);
+        assert_eq!(
+            indent, 8,
+            "a language without a grammar keeps the previous indent"
+        );
 
         // The rule is the cursor's own column, so the "keep typing the
         // indented block" flow — Enter at the end of the whitespace the
@@ -2003,8 +2033,8 @@ mod tests {
         // Since #3165 the no-language path answers this from the blank-line
         // rule (`leading_whitespace_column`) before the pattern heuristic
         // runs, so this fixture no longer reaches the forward look-ahead
-        // (`next_non_empty_line_indent_unless_closer`); that stays live for
-        // `calculate_indent`'s fallback on code tree-sitter cannot parse.
+        // (`next_non_empty_line_indent_unless_closer`) here; it still does
+        // through `calculate_indent_no_grammar`, checked below.
         let buffer = Buffer::from_str_test(
             "    line1\n    line2\n        line3\n        line4\n\nunindented line",
         );
@@ -2017,6 +2047,11 @@ mod tests {
         assert_eq!(
             indent, 0,
             "Enter on a blank line whose following non-empty line is unindented must not inherit the previous block's indent"
+        );
+        let indent = IndentCalculator::calculate_indent_no_grammar(&buffer, position, 4);
+        assert_eq!(
+            indent, 0,
+            "the look-ahead still answers for a language without a grammar"
         );
     }
 
