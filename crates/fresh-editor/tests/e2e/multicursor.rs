@@ -2317,3 +2317,54 @@ fn test_type_over_auto_closed_paren_when_earlier_cursor_inserts() {
         harness.assert_screen_contains("xx);");
     }
 }
+
+/// A plain click ends multi-cursor editing; a Shift-click, which extends
+/// the selection, does not (#3125).
+///
+/// Before, a click moved only the primary cursor and kept the others —
+/// possibly off-screen — so the next keystroke still edited every one of
+/// them.
+#[test]
+fn test_plain_click_collapses_multiple_cursors() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // ≥100 columns so the status bar has room for "N cursors".
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness
+        .load_buffer_from_text("foo bar\nfoo baz\nfoo qux\n")
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
+
+    // Shift-click extends the primary's selection and keeps both cursors.
+    let (col, row) = harness.find_text_on_screen("foo baz").unwrap();
+    harness.mouse_shift_click(col + 3, row).unwrap();
+    harness.assert_screen_contains("2 cursors");
+    harness.assert_screen_contains("Ln 2, Col 4");
+
+    // A plain click elsewhere collapses to one cursor, at the click.
+    let (col, row) = harness.find_text_on_screen("foo qux").unwrap();
+    harness.mouse_click(col + 3, row).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("cursors"),
+        "expected a single cursor after a plain click, got:\n{screen}"
+    );
+    harness.assert_screen_contains("Ln 3, Col 4");
+
+    // Which is what makes the next keystroke land in exactly one place.
+    harness.type_text("Z").unwrap();
+    harness.assert_buffer_content("foo bar\nfoo baz\nfooZ qux\n");
+    harness.assert_screen_contains("fooZ qux");
+
+    // The survivor is a normal cursor: adding below it works. (It is the
+    // lowest id, as after Esc; a kept higher id would be overwritten by
+    // the next add, whose id is allocated from the cursor count.)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
+}
