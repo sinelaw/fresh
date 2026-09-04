@@ -32,6 +32,8 @@ pub(crate) enum ThreadOutcome {
 /// All state for one active stdin-streaming session.
 struct ActiveStream {
     temp_path: PathBuf,
+    /// Reads the spool that `temp_path` names; see `StdinStream::filesystem`.
+    filesystem: std::sync::Arc<dyn fresh_editor_core::model::filesystem::FileSystem + Send + Sync>,
     buffer_id: BufferId,
     last_known_size: usize,
     complete: bool,
@@ -60,9 +62,21 @@ impl StdinStream {
         self.active.as_ref().map(|s| s.buffer_id)
     }
 
-    /// Path to the temp file being tailed.
+    /// Key of the spool being tailed.
     pub(crate) fn temp_path(&self) -> Option<&Path> {
         self.active.as_ref().map(|s| s.temp_path.as_path())
+    }
+
+    /// The filesystem that can read the spool.
+    ///
+    /// The spool has no name, so the editor's own filesystem cannot see it;
+    /// this is the decorated view from `services::stdin_spool` and it is the
+    /// only thing that can answer for the path above.
+    pub(crate) fn filesystem(
+        &self,
+    ) -> Option<&std::sync::Arc<dyn fresh_editor_core::model::filesystem::FileSystem + Send + Sync>>
+    {
+        self.active.as_ref().map(|s| &s.filesystem)
     }
 
     /// Last observed size in bytes. Returns 0 when no stream is active.
@@ -80,6 +94,9 @@ impl StdinStream {
     pub(crate) fn start(
         &mut self,
         temp_path: PathBuf,
+        filesystem: std::sync::Arc<
+            dyn fresh_editor_core::model::filesystem::FileSystem + Send + Sync,
+        >,
         buffer_id: BufferId,
         initial_size: usize,
         thread_handle: Option<JoinHandle<anyhow::Result<()>>>,
@@ -87,6 +104,7 @@ impl StdinStream {
         let complete = thread_handle.is_none();
         self.active = Some(ActiveStream {
             temp_path,
+            filesystem,
             buffer_id,
             last_known_size: initial_size,
             complete,
@@ -141,10 +159,23 @@ impl StdinStream {
 
 #[cfg(test)]
 mod tests {
+    /// These tests only exercise the bookkeeping, never a read, so any
+    /// filesystem will do.
+    fn test_fs(
+    ) -> std::sync::Arc<dyn fresh_editor_core::model::filesystem::FileSystem + Send + Sync> {
+        std::sync::Arc::new(fresh_editor_core::model::filesystem::StdFileSystem)
+    }
+
     use super::*;
 
     fn start_without_thread(s: &mut StdinStream, size: usize) {
-        s.start(PathBuf::from("/tmp/stream.txt"), BufferId(7), size, None);
+        s.start(
+            PathBuf::from("/tmp/stream.txt"),
+            test_fs(),
+            BufferId(7),
+            size,
+            None,
+        );
     }
 
     #[test]
@@ -197,6 +228,7 @@ mod tests {
         // Simulate a stream with a handle that never completes.
         s.active = Some(ActiveStream {
             temp_path: PathBuf::from("/tmp/x"),
+            filesystem: test_fs(),
             buffer_id: BufferId(1),
             last_known_size: 0,
             complete: false,
@@ -217,7 +249,7 @@ mod tests {
     #[test]
     fn temp_path_reflects_start_argument() {
         let mut s = StdinStream::default();
-        s.start(PathBuf::from("/tmp/foo"), BufferId(0), 0, None);
+        s.start(PathBuf::from("/tmp/foo"), test_fs(), BufferId(0), 0, None);
         assert_eq!(s.temp_path(), Some(Path::new("/tmp/foo")));
     }
 }

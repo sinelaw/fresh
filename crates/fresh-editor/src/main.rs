@@ -640,62 +640,58 @@ struct SetupState {
     terminal_modes: TerminalModes,
 }
 
-/// State for stdin streaming in background
-#[cfg(unix)]
+/// State for stdin streaming in background.
+///
+/// The spool the pipe is drained into has no name — see
+/// `services::stdin_spool` — so this is the only handle on it, and the
+/// filesystem the buffer must use to read it back travels with it.
 pub struct StdinStreamState {
-    /// Path to temp file where stdin is being written
-    pub temp_path: PathBuf,
+    /// The nameless spool, and the filesystem view that can read it.
+    pub spool: std::sync::Arc<fresh::services::stdin_spool::StdinSpool>,
     /// Handle to background thread (None if completed)
     pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
 }
 
-/// Start streaming stdin to temp file in background.
-/// Returns immediately with streaming state. Editor can start while data streams in.
-/// Must be called BEFORE enabling raw terminal mode.
-#[cfg(unix)]
+/// Start streaming stdin to the spool in the background.
+///
+/// Returns immediately; the editor starts while data is still arriving.
+/// Must be called BEFORE enabling raw terminal mode, because it reopens
+/// stdin from `/dev/tty` once the pipe has been handed to the drain thread.
 fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
-    use std::fs::File;
-    use std::os::unix::io::{AsRawFd, FromRawFd};
+    use std::sync::Arc;
 
-    // Duplicate stdin fd BEFORE reopening it as TTY
-    // This preserves access to the pipe for background reading
-    let stdin_fd = io::stdin().as_raw_fd();
-    let pipe_fd = unsafe { libc::dup(stdin_fd) };
-    if pipe_fd == -1 {
-        anyhow::bail!("Failed to dup stdin: {}", io::Error::last_os_error());
-    }
+    // Take the pipe before stdin is reopened as the terminal, so the drain
+    // thread keeps reading what was piped in.
+    let pipe = take_stdin_pipe()?;
 
-    // Create empty temp file
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(format!("fresh-stdin-{}.tmp", std::process::id()));
-    File::create(&temp_path)?;
+    let (spool, mut writer) = fresh::services::stdin_spool::StdinSpool::create()
+        .context("Failed to create the stdin spool")?;
+    let spool = Arc::new(spool);
 
-    // Reopen stdin from /dev/tty so crossterm can use it for keyboard input
+    // Reopen stdin from the terminal so crossterm can read keys from it.
     reopen_stdin_from_tty()?;
     tracing::info!("Reopened stdin from /dev/tty for terminal input");
 
-    // Spawn background thread to drain pipe into temp file
-    let temp_path_clone = temp_path.clone();
-    let thread_handle = std::thread::spawn(move || {
+    let thread_handle = std::thread::spawn(move || -> anyhow::Result<()> {
         use std::io::{Read, Write};
 
-        // SAFETY: pipe_fd is a valid duplicated file descriptor
-        let mut pipe_file = unsafe { File::from_raw_fd(pipe_fd) };
-        let mut temp_file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&temp_path_clone)?;
-
+        let mut pipe = pipe;
         const CHUNK_SIZE: usize = 64 * 1024;
         let mut buffer = vec![0u8; CHUNK_SIZE];
 
         loop {
-            let bytes_read = pipe_file.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break; // EOF
-            }
-            temp_file.write_all(&buffer[..bytes_read])?;
-            // Flush each chunk so main thread can see progress
-            temp_file.flush()?;
+            let bytes_read = match pipe.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                // A closed pipe is an ordinary end of input, not a failure.
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => break,
+                Err(e) => return Err(e.into()),
+            };
+            writer.write_all(&buffer[..bytes_read])?;
+            // Flush each chunk so the editor can show progress while the
+            // rest is still arriving.
+            writer.flush()?;
         }
 
         tracing::info!("Stdin streaming complete");
@@ -703,105 +699,70 @@ fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
     });
 
     Ok(StdinStreamState {
-        temp_path,
+        spool,
         thread_handle: Some(thread_handle),
     })
 }
 
-/// Windows stdin stream state
-#[cfg(windows)]
-pub struct StdinStreamState {
-    pub temp_path: PathBuf,
-    pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+/// Hand back the piped stdin as an owned reader, so it survives stdin being
+/// reopened as the terminal.
+#[cfg(unix)]
+fn take_stdin_pipe() -> AnyhowResult<std::fs::File> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+
+    let stdin_fd = io::stdin().as_raw_fd();
+    // SAFETY: `dup` returns a fresh descriptor for the same pipe, which the
+    // `File` below then owns; the original fd is left for `reopen_stdin_from_tty`.
+    let pipe_fd = unsafe { libc::dup(stdin_fd) };
+    if pipe_fd == -1 {
+        anyhow::bail!("Failed to dup stdin: {}", io::Error::last_os_error());
+    }
+    // SAFETY: `pipe_fd` is a valid descriptor this function just created and
+    // hands sole ownership of to the returned `File`.
+    Ok(unsafe { std::fs::File::from_raw_fd(pipe_fd) })
 }
 
-/// Stream stdin content to a temp file on Windows.
-/// This is called when stdin is a pipe (e.g., `cat file.txt | fresh`).
-/// We duplicate the stdin handle, spawn a thread to read from it,
-/// and then reopen stdin from CONIN$ for keyboard input.
+/// Windows counterpart of [`take_stdin_pipe`].
 #[cfg(windows)]
-fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
-    use std::fs::File;
-    use std::io::{Read, Write};
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+fn take_stdin_pipe() -> AnyhowResult<std::fs::File> {
+    use std::os::windows::io::FromRawHandle;
     use windows_sys::Win32::Foundation::{
         DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
     };
-    use windows_sys::Win32::System::Console::GetStdHandle;
-    use windows_sys::Win32::System::Console::STD_INPUT_HANDLE;
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE};
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-    // Get the current stdin handle (which is a pipe)
+    // SAFETY: plain console/handle queries; every failure is checked below.
     let stdin_handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
     if stdin_handle == INVALID_HANDLE_VALUE || stdin_handle.is_null() {
         anyhow::bail!("Failed to get stdin handle");
     }
 
-    // Duplicate the handle so we can read from it in a background thread
-    // while we replace stdin with CONIN$ for keyboard input
-    let mut duplicated_handle: HANDLE = std::ptr::null_mut();
-    let current_process = unsafe { GetCurrentProcess() };
-    let success = unsafe {
+    let mut duplicated: HANDLE = std::ptr::null_mut();
+    // SAFETY: duplicating a handle this process owns into this process; the
+    // result is checked and then owned by the `File` below.
+    let ok = unsafe {
+        let me = GetCurrentProcess();
         DuplicateHandle(
-            current_process,
+            me,
             stdin_handle,
-            current_process,
-            &mut duplicated_handle,
+            me,
+            &mut duplicated,
             0,
             0, // not inheritable
             DUPLICATE_SAME_ACCESS,
         )
     };
-
-    if success == 0 {
+    if ok == 0 {
         anyhow::bail!(
             "Failed to duplicate stdin handle: {}",
             io::Error::last_os_error()
         );
     }
 
-    // Create a temp file to store the piped content
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(format!("fresh-stdin-{}.txt", std::process::id()));
-
-    let temp_path_clone = temp_path.clone();
-
-    // Cast handle to usize for Send across thread boundary
-    // SAFETY: HANDLE is a pointer-sized value, usize preserves it exactly
-    let handle_as_usize = duplicated_handle as usize;
-
-    // Spawn a thread to read from the duplicated pipe handle
-    let thread_handle = std::thread::spawn(move || -> AnyhowResult<()> {
-        // SAFETY: We own this duplicated handle and will close it when done
-        // Cast back from usize to raw handle
-        let raw_handle = handle_as_usize as *mut std::ffi::c_void;
-        let owned_handle = unsafe { OwnedHandle::from_raw_handle(raw_handle) };
-        let mut pipe_reader = unsafe { File::from_raw_handle(owned_handle.as_raw_handle()) };
-        // Forget the OwnedHandle since File now owns it
-        std::mem::forget(owned_handle);
-
-        let mut temp_file = File::create(&temp_path_clone)?;
-        let mut buffer = [0u8; 8192];
-
-        loop {
-            match pipe_reader.read(&mut buffer) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    temp_file.write_all(&buffer[..n])?;
-                }
-                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => break,
-                Err(e) => return Err(e.into()),
-            }
-        }
-
-        temp_file.flush()?;
-        Ok(())
-    });
-
-    Ok(StdinStreamState {
-        temp_path,
-        thread_handle: Some(thread_handle),
-    })
+    // SAFETY: `duplicated` is a valid handle this function just created and
+    // hands sole ownership of to the returned `File`.
+    Ok(unsafe { std::fs::File::from_raw_handle(duplicated.cast()) })
 }
 
 /// Check if stdin has data available (is a pipe or redirect, not a TTY)
@@ -971,8 +932,14 @@ fn handle_first_run_setup(
     // Handle stdin streaming (takes priority over files)
     // Opens with empty/partial buffer, content streams in background
     if let Some(mut stream_state) = stdin_stream.take() {
-        tracing::info!("Opening stdin buffer from: {:?}", stream_state.temp_path);
-        editor.open_stdin_buffer(&stream_state.temp_path, stream_state.thread_handle.take())?;
+        tracing::info!(
+            "Opening stdin buffer from spool {:?}",
+            stream_state.spool.path()
+        );
+        editor.open_stdin_buffer(
+            std::sync::Arc::clone(&stream_state.spool),
+            stream_state.thread_handle.take(),
+        )?;
     }
 
     // Queue CLI files to be opened after the TUI starts
@@ -1692,6 +1659,20 @@ fn connect_remote(
     })
 }
 
+/// Which locale the UI should use: CLI `--locale` first, then `locale` from
+/// the config, then `None` — which leaves `i18n::init_with_config` to detect
+/// from `LC_ALL`/`LC_MESSAGES`/`LANG`.
+///
+/// One function rather than the expression written out per entry point.
+/// Every process that renders the UI has to make this decision — the
+/// standalone editor in `initialize_app`, the daemon in
+/// `run_server_command` — and #3149 was precisely a path that reached the
+/// UI without making it. Anything new that boots an editor should call this
+/// rather than re-derive the precedence.
+fn resolve_locale_override<'a>(args: &'a Args, config: &'a config::Config) -> Option<&'a str> {
+    args.locale.as_deref().or(config.locale.as_option())
+}
+
 fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let log_file = args
         .log_file
@@ -1730,8 +1711,8 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             match start_stdin_streaming() {
                 Ok(stream_state) => {
                     tracing::info!(
-                        "Stdin streaming started, temp file: {:?}",
-                        stream_state.temp_path
+                        "Stdin streaming started, spool: {:?}",
+                        stream_state.spool.path()
                     );
                     Some(stream_state)
                 }
@@ -1921,8 +1902,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Initialize i18n with locale: CLI arg > config > environment
     // This ensures menu defaults are created with the correct translations
-    let locale_override = args.locale.as_deref().or(config.locale.as_option());
-    fresh::i18n::init_with_config(locale_override);
+    fresh::i18n::init_with_config(resolve_locale_override(args, &config));
 
     // Enable terminal modes (raw mode, alternate screen, mouse capture, etc.)
     // This checks support for each mode and tracks what was enabled
@@ -3054,6 +3034,14 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         config::Config::load_with_layers(&dir_context, &config_dir)
     };
     boot!("[server] Editor config loaded");
+
+    // Re-init i18n now that the config is known. The only init that has run
+    // so far is the pre-clap one, which consults argv and the environment
+    // but never the config file — so without this the daemon renders its
+    // whole UI in the environment's language and silently ignores `locale`
+    // from `config.json` (#3149).
+    fresh::i18n::init_with_config(resolve_locale_override(args, &editor_config));
+
     // Cell-level (TUI) animations would stream to the browser as bursts of
     // frame diffs, on top of the CSS-level motion the web frontend does for
     // itself — the same reason the standalone bridge forces them off. One
@@ -3201,6 +3189,8 @@ fn run_open_files_command(
     session_name: Option<&str>,
     files: &[String],
     wait: bool,
+    locale: Option<&str>,
+    config: Option<&Path>,
 ) -> AnyhowResult<()> {
     use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{ClientControl, ServerControl};
@@ -3247,7 +3237,7 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref())?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
 
         // Wait for server to be ready
         loop {
@@ -3286,7 +3276,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[]);
+            return run_attach(session_name, &[], locale, config);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -4683,10 +4673,26 @@ fn read_script_source(from: &[&str]) -> AnyhowResult<String> {
 
 /// Attach to an existing daemon, starting one if needed
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
-    run_attach(args.session_name.as_deref(), &args.files)
+    run_attach(
+        args.session_name.as_deref(),
+        &args.files,
+        args.locale.as_deref(),
+        args.config.as_deref(),
+    )
 }
 
-fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> {
+/// `locale` and `config` are the client's own `--locale` and `--config`,
+/// forwarded to a daemon we *start* here so those flags survive the hop
+/// into the process that actually renders the UI and reads the config.
+/// Attaching to an already-running daemon leaves both alone: it is someone
+/// else's session, already serving other terminals, the same way an
+/// existing daemon keeps its authority.
+fn run_attach(
+    session_name: Option<&str>,
+    files: &[String],
+    locale: Option<&str>,
+    config: Option<&Path>,
+) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
         ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
@@ -4731,7 +4737,7 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref())?;
+        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
         true
     } else {
         false
@@ -5090,6 +5096,8 @@ fn run_if_subcommand(
             session_name.as_deref(),
             files,
             *wait,
+            args.locale.as_deref(),
+            args.config.as_deref(),
         ));
     }
     if args.attach {
