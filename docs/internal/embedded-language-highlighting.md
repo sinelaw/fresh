@@ -22,9 +22,9 @@ and turns itself off above a size threshold breaks both design rules
 ("avoid full-buffer scans", no size cliff) — that's what this mechanism
 replaces.
 
-## Three existing tools, and when to use which
+## Four tools, and when to use which
 
-There are now three ways to get a second language highlighted, and they are
+There are now four ways to get a second language highlighted, and they are
 **not** interchangeable. Rule of thumb for future mixed-language cases:
 
 1. **The grammar itself embeds the other language** (via the shared

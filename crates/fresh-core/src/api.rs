@@ -1342,9 +1342,22 @@ pub struct CompositePaneStyle {
 /// both sides share (context) lists both. An empty list means one parser
 /// shared by every region that says nothing.
 ///
-/// Regions replace the buffer's previous set, and setting the buffer's
-/// content clears them. They are anchored to the text, so an edit moves
-/// them the way it moves overlays.
+/// The contract:
+/// - Only a plugin-composed (virtual) buffer can be told this; a file has
+///   a grammar of its own, and the call is ignored, with a log line, for
+///   anything else.
+/// - A region starts at a row's first byte and ends just past a row's
+///   newline. A row is coloured when its first byte lies in a region.
+/// - Regions replace the buffer's previous set and must not overlap: a
+///   region that overlaps the one before it (in byte order) is dropped,
+///   with a log line. Setting the buffer's content clears them all.
+/// - The first stream a region names colours its rows; the others are fed
+///   for their state. The host keeps the four most recently fed parsers;
+///   a stream fed again after four others starts afresh.
+/// - A language nothing in the grammar set claims leaves the rows as the
+///   plugin styled them, with a log line.
+/// - Regions follow the text: an edit inside the buffer moves them the
+///   way it moves overlays.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename = "TsSyntaxRegion", rename_all = "camelCase")]
@@ -1360,7 +1373,8 @@ pub struct SyntaxRegion {
     /// Bytes at the start of every row that are not code.
     #[serde(default)]
     pub prefix: usize,
-    /// Parsers the rows feed; see the type docs.
+    /// Parsers the rows feed, in order; the first colours the rows. Empty
+    /// means the shared stream `0`. See the type docs.
     #[serde(default)]
     pub streams: Vec<u32>,
 }

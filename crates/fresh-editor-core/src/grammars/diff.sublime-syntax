@@ -25,9 +25,14 @@ contexts:
       captures:
         1: constant.other.language-name.diff
       push: diff-file
-    # Keep a region even when a non-standard header does not expose a path.
-    - match: '^diff --git\b.*$'
+    # A header the rules above cannot parse (a path with a space and
+    # `core.quotePath` off) still opens a region and still names it: the
+    # whole tail is the token, and resolving it by its extension is what
+    # keeps the previous file's parser from running on into this one.
+    - match: '^diff --git\b(.*)$'
       scope: meta.diff.header.git
+      captures:
+        1: constant.other.language-name.diff
       push: diff-file
     - include: diff-body
 
@@ -42,10 +47,13 @@ contexts:
   diff-body:
     - match: '^@@@?.*?@@@?'
       scope: meta.diff.range.unified
+      push: hunk
     - match: '^\+\+\+.*$'
       scope: meta.diff.header.to-file
     - match: '^---.*$'
       scope: meta.diff.header.from-file
+    # Change rows before any hunk header — a diff arriving in pieces, or
+    # one with the header cut off — still get their wash.
     - match: '^\+.*$'
       scope: markup.inserted.diff
     - match: '^-.*$'
@@ -56,3 +64,15 @@ contexts:
       scope: meta.diff.header.binary
     - match: '^(?:index|new file mode|deleted file mode|old mode|new mode|similarity index|dissimilarity index|rename from|rename to|copy from|copy to)\b.*$'
       scope: meta.diff.header.git
+
+  # Inside a hunk every row is source or a marker note: a removed line
+  # beginning `--` or an added one beginning `++` is code, not a file
+  # header, and is fed to the file's parser like any other row. The next
+  # hunk header or file header ends the hunk.
+  hunk:
+    - match: '(?=^(?:diff --git\b|@@))'
+      pop: true
+    - match: '^\+.*$'
+      scope: markup.inserted.diff
+    - match: '^-.*$'
+      scope: markup.deleted.diff
