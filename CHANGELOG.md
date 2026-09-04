@@ -44,6 +44,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **A daemon now speaks the locale configured in `config.json`** instead of falling back to the environment (#3149, reported by @kirinriki7777-sys).
 * **`Ctrl+C`/`kill` now end the editor promptly and reliably** instead of occasionally deadlocking or crashing on the way out.
 * **Piped-in text (`... | fresh -`) no longer leaves a temp file behind in `/tmp`** (#3134, reported by @Korkman).
+* **Enter on the blank last line of a plain-text file no longer indents to the block above**; a blank line keeps the cursor's own column (#3165).
 
 ### Internals
 
