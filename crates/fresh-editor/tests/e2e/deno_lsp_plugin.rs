@@ -6,7 +6,7 @@
 //! is a stub on `PATH`: the plugin only needs the executable to exist, and
 //! nothing in these tests starts a server.
 
-use crate::common::global_state::pin_config_globals;
+use crate::common::global_state::{pin_config_globals, pin_path_with_dir_first};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,12 +31,14 @@ fn project(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
 
 /// Put a stub `deno` on `PATH` for the duration of the returned guard.
 ///
-/// `PATH` is process-global and these run as threads of one binary, so every
-/// test that touches it also takes [`pin_config_globals`] — otherwise a
-/// sibling's restore lands mid-test and the stub disappears.
+/// `PATH` is process-global and these run as threads of one binary, so the
+/// stub goes on through [`pin_path_with_dir_first`] — the same pin the
+/// fake-`ssh` shims use. That single owner is what keeps a sibling's *restore*
+/// from landing mid-test and taking this stub (or the sibling's shim) with it:
+/// each snapshot is taken while no one else can be holding one.
 struct DenoOnPath {
     _dir: tempfile::TempDir,
-    previous: Option<String>,
+    _pin: crate::common::global_state::PathPin,
 }
 
 impl DenoOnPath {
@@ -54,26 +56,10 @@ impl DenoOnPath {
             fs::set_permissions(&deno, perms).unwrap();
         }
 
-        let previous = std::env::var("PATH").ok();
-        let separator = if cfg!(windows) { ";" } else { ":" };
-        let path = match &previous {
-            Some(existing) => format!("{}{}{}", dir.path().display(), separator, existing),
-            None => dir.path().display().to_string(),
-        };
-        std::env::set_var("PATH", path);
-
+        let pin = pin_path_with_dir_first(dir.path());
         Self {
             _dir: dir,
-            previous,
-        }
-    }
-}
-
-impl Drop for DenoOnPath {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(path) => std::env::set_var("PATH", path),
-            None => std::env::remove_var("PATH"),
+            _pin: pin,
         }
     }
 }

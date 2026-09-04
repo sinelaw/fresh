@@ -2,84 +2,77 @@
 //! (`orchestrator_dock_failed_reconnect.rs`,
 //! `orchestrator_dock_dormant_ssh_badge.rs`).
 //!
-//! Persistence isolation: `Workspace::save`/`load` live under the *global*
-//! `$XDG_DATA_HOME/fresh`, while the harness's boot discovery reads the
+//! Persistence isolation: `Workspace::save`/`load` resolve their files through
+//! `get_data_dir`, while the harness's boot discovery reads the
 //! `DirectoryContext` it is built with. [`isolated_dir_context`] points BOTH
 //! at the same per-test temp tree so phase-1 saves are what phase-2 discovery
-//! finds — and nothing touches the real user data dir. Setting the env var is
-//! process-global, so each test binary using this module must hold a single
-//! test (the same constraint `remote_restore_terminal_e2e.rs` documents).
+//! finds — and nothing touches the real user data dir. It does that with the
+//! thread-local `global_state::pin_data_dir`, so the isolation is private to the calling
+//! test; the `std::env::set_var("XDG_DATA_HOME", …)` it used to use was
+//! process-global and, once every root was folded into one `all_tests` binary,
+//! moved every concurrent test's workspace store as well as this one's.
 
 use std::path::{Path, PathBuf};
-use std::sync::Once;
 
 use fresh::config_io::DirectoryContext;
 use fresh::services::authority::{RemoteAgentSpec, RemoteTransportSpec, SessionAuthoritySpec};
 
+use super::global_state::{pin_path_with_dir_first, PathPin};
 use super::harness::{EditorTestHarness, HarnessOptions};
 
-static PATH_INIT: Once = Once::new();
-
-/// Prepend the fake-ssh fixtures dir to PATH once, so `Command::new("ssh")`
-/// resolves to the always-failing shim (`tests/fixtures/fake-ssh`) — a
-/// deterministic "unreachable host" with no network involved. `Once` keeps
-/// the process-global env mutation from racing across tests in a binary.
-pub fn ensure_fake_ssh_on_path() {
-    PATH_INIT.call_once(|| prepend_shim_dir("tests/fixtures/fake-ssh"));
+/// Put the always-failing fake `ssh` (`tests/fixtures/fake-ssh`) at the front
+/// of `$PATH` for the life of the returned guard — a deterministic
+/// "unreachable host" with no network involved.
+///
+/// Hold the guard for the whole test: the three shims all provide a program
+/// called `ssh` and only one can be in front at a time, which is why this is a
+/// scoped pin rather than the process-lifetime `Once` it used to be (see
+/// [`pin_path_with_dir_first`]).
+#[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
+pub fn fake_ssh_on_path() -> PathPin {
+    pin_shim_dir("tests/fixtures/fake-ssh")
 }
 
-static HANG_PATH_INIT: Once = Once::new();
-
-/// Like [`ensure_fake_ssh_on_path`], but the shim **hangs** instead of
-/// failing (`tests/fixtures/fake-ssh-hang`): a host that accepts the TCP
-/// connection and never completes the SSH handshake, so the connect stays
-/// in-flight for the whole test — the "shut-down host that drops packets"
-/// shape, which never produces a prompt failure.
-pub fn ensure_hanging_fake_ssh_on_path() {
-    HANG_PATH_INIT.call_once(|| prepend_shim_dir("tests/fixtures/fake-ssh-hang"));
+/// Like [`fake_ssh_on_path`], but the shim **hangs** instead of failing
+/// (`tests/fixtures/fake-ssh-hang`): a host that accepts the TCP connection
+/// and never completes the SSH handshake, so the connect stays in-flight for
+/// the whole test — the "shut-down host that drops packets" shape, which never
+/// produces a prompt failure.
+#[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
+pub fn hanging_fake_ssh_on_path() -> PathPin {
+    pin_shim_dir("tests/fixtures/fake-ssh-hang")
 }
 
-static SLOW_PATH_INIT: Once = Once::new();
-
-/// Like [`ensure_fake_ssh_on_path`], but the shim **completes the connection
-/// slowly** (`tests/fixtures/fake-ssh-slow`): it bootstraps the real agent
-/// locally so file ops actually work, but throttles selected responses so the
-/// channel becomes "connected but slow" — the bandwidth-throttled remote shape
+/// Like [`fake_ssh_on_path`], but the shim **completes the connection slowly**
+/// (`tests/fixtures/fake-ssh-slow`): it bootstraps the real agent locally so
+/// file ops actually work, but throttles selected responses so the channel
+/// becomes "connected but slow" — the bandwidth-throttled remote shape
 /// (cf. `ProxyCommand ... | pv -qL 20k`). This is the state that stalls a
 /// *synchronous* filesystem call, unlike the hang shim (which never
-/// establishes the channel at all). Behaviour is tuned per-test through the
-/// `FAKE_SSH_SLOW_*` env vars the shim reads.
-pub fn ensure_slow_fake_ssh_on_path() {
-    SLOW_PATH_INIT.call_once(|| prepend_shim_dir("tests/fixtures/fake-ssh-slow"));
+/// establishes the channel at all).
+///
+/// Behaviour is tuned per-test through the `FAKE_SSH_SLOW_*` variables the
+/// shim reads; set them through [`PathPin::set_env`] so they are unset again
+/// with the shim. Leaving them behind pointed a later test's shim at a gate
+/// file inside a temp directory that had already been deleted.
+#[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
+pub fn slow_fake_ssh_on_path() -> PathPin {
+    pin_shim_dir("tests/fixtures/fake-ssh-slow")
 }
 
-fn prepend_shim_dir(rel: &str) {
+fn pin_shim_dir(rel: &str) -> PathPin {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
     assert!(
         dir.join("ssh").exists(),
         "fake ssh shim missing at {}",
         dir.display()
     );
-    let old = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var("PATH", format!("{}:{old}", dir.display()));
+    pin_path_with_dir_first(&dir)
 }
 
-/// Isolate ALL editor persistence into `base`: `$XDG_DATA_HOME/fresh` is
-/// where workspace save/load live, and the returned `DirectoryContext`'s
-/// `data_dir` is the SAME path — so phase-1 saves, boot discovery, and any
-/// later save all agree, inside the test's temp tree.
-pub fn isolated_dir_context(base: &Path) -> DirectoryContext {
-    let xdg_data = base.join("xdg-data");
-    std::fs::create_dir_all(&xdg_data).unwrap();
-    std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    DirectoryContext {
-        data_dir: xdg_data.join("fresh"),
-        config_dir: base.join("config"),
-        home_dir: Some(base.join("home")),
-        documents_dir: None,
-        downloads_dir: None,
-    }
-}
+/// Re-exported from [`super::global_state`], where the five other roots that
+/// need the same thing now find it too.
+pub use super::global_state::isolated_dir_context;
 
 /// An SSH `authority_spec` for a host the fake shim "fails to reach".
 pub fn dead_ssh_spec(remote_path: &Path) -> SessionAuthoritySpec {

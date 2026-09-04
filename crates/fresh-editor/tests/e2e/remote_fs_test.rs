@@ -2,6 +2,22 @@ use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::services::remote::{spawn_local_agent, RemoteFileSystem};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Effectively-unbounded per-request timeout for the test harness.
+///
+/// `AgentChannel` defaults to 10s, which is right for a real interactive
+/// session and wrong for a test: these run as threads of one binary alongside
+/// ~4700 others, each `create_test_filesystem` spins up its own multi-threaded
+/// Tokio runtime and a `python3` agent process, and a loaded machine can take
+/// longer than that to turn round even the tiny `info` request while still
+/// making forward progress. A blown deadline is not a failed assertion — it
+/// surfaces as `home_dir()` handing back `None` and the `unwrap` below
+/// panicking, which reads like the anchoring regression the test is here to
+/// catch. Removing the deadline removes the ambiguity (and the time
+/// dependency CONTRIBUTING.md §Testing 3 rules out); `remote_filesystem_tests`
+/// does the same for the same reason.
+const TEST_HARNESS_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 fn create_test_filesystem() -> Option<(RemoteFileSystem, tempfile::TempDir, tokio::runtime::Runtime)>
 {
@@ -9,6 +25,7 @@ fn create_test_filesystem() -> Option<(RemoteFileSystem, tempfile::TempDir, toki
     let rt = tokio::runtime::Runtime::new().ok()?;
 
     let channel = rt.block_on(spawn_local_agent()).ok()?;
+    channel.set_request_timeout(TEST_HARNESS_REQUEST_TIMEOUT);
     let fs = RemoteFileSystem::new(channel, "test@localhost".to_string());
 
     Some((fs, temp_dir, rt))

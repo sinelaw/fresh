@@ -20,9 +20,9 @@
 //! the script grant, and pointed at the restored window rather than the one
 //! that died.
 //!
-//! Own integration binary because it sets the process-global `XDG_DATA_HOME`
-//! to isolate workspace persistence, mirroring `terminal_restore_live.rs`.
-//! Skips when there is no PTY.
+//! Workspace persistence is isolated by
+//! `common::global_state::isolated_dir_context`, mirroring
+//! `terminal_restore_live.rs`. Skips when there is no PTY.
 //!
 //! Gated on `plugins`: the grant under test *is* a plugin-API capability
 //! ("may drive this editor as a plugin would"), and the spawn path that hands
@@ -44,18 +44,7 @@ use std::sync::Arc;
 /// read rather than an empty line it might mistake for missing output.
 const MARKER: &str = "FRESH_CMD_TOKEN_IS:";
 
-fn isolated_dir_context(base: &Path) -> DirectoryContext {
-    let xdg_data = base.join("xdg-data");
-    std::fs::create_dir_all(&xdg_data).unwrap();
-    std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    DirectoryContext {
-        data_dir: xdg_data.join("fresh"),
-        config_dir: base.join("config"),
-        home_dir: Some(base.join("home")),
-        documents_dir: None,
-        downloads_dir: None,
-    }
-}
+use crate::common::global_state::isolated_dir_context;
 
 fn editor_in(project: &Path, dir_context: &DirectoryContext) -> fresh::app::Editor {
     let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
@@ -163,7 +152,7 @@ fn a_restored_agent_terminal_can_still_drive_the_editor() {
     }
 
     let sandbox = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(sandbox.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(sandbox.path());
     let project = sandbox.path().join("project");
     std::fs::create_dir(&project).unwrap();
     let project = project.canonicalize().unwrap();

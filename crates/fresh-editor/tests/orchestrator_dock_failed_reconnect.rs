@@ -12,9 +12,10 @@
 //!
 //! The SSH failure is deterministic: the fake `ssh` shim in
 //! `tests/fixtures/fake-ssh` fails instantly like an unreachable host, so no
-//! network (or real ssh binary) is involved. Single test in this binary: the
-//! persistence isolation sets the process-global `XDG_DATA_HOME` (see
-//! `crate::common::dormant_ssh::isolated_dir_context`).
+//! network (or real ssh binary) is involved. The shim is put on `$PATH` by a
+//! `PathPin` and persistence by
+//! `crate::common::global_state::isolated_dir_context`, both held for the
+//! test body.
 //!
 //! Plugins-gated: the dormant-session dive (`bring_dormant_remote_online` →
 //! `start_remote_connect`) is a no-op without the plugin runtime, and the
@@ -25,7 +26,7 @@
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::{
-    canonical_mkdir, ensure_fake_ssh_on_path, isolated_dir_context, persist_previous_session,
+    canonical_mkdir, fake_ssh_on_path, isolated_dir_context, persist_previous_session,
 };
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh_core::api::PluginCommand;
@@ -38,11 +39,11 @@ use fresh_core::api::PluginCommand;
 #[test]
 fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
     crate::common::tracing::init_tracing_from_env();
-    ensure_fake_ssh_on_path();
+    let _fake_ssh = fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 
     let base = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(base.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(base.path());
     let project = canonical_mkdir(base.path(), "project");
     let remote_root = canonical_mkdir(base.path(), "remote-root");
 
