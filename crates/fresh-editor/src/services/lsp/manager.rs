@@ -2742,12 +2742,20 @@ mod tests {
         assert_eq!(detect_language(&header, &languages), Some("c".to_string()));
     }
 
+    // These two use POSIX-absolute inputs (`/tmp/...`). On Windows such a path
+    // has no drive, so `path_to_uri` resolves it against the current directory
+    // and the encoded URI carries that drive (`file:///D:/tmp/...`) — a correct
+    // result, but not the literal the assertions below expect. Gate them to
+    // Unix; the Windows drive/space behavior is covered by the `#[cfg(windows)]`
+    // test that follows.
+    #[cfg(unix)]
     #[test]
     fn test_path_to_uri_basic() {
         let uri = path_to_uri(Path::new("/tmp/test")).unwrap();
         assert_eq!(uri.as_str(), "file:///tmp/test");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_path_to_uri_with_spaces() {
         let uri = path_to_uri(Path::new("/tmp/my project/src")).unwrap();
@@ -2769,6 +2777,11 @@ mod tests {
             "file:///C:/Users/Lance/.config/opencode",
             "root_uri must keep the Windows drive letter (issue #3067)"
         );
+
+        // Spaces are still percent-encoded on Windows (the encoding coverage the
+        // Unix `test_path_to_uri_with_spaces` provides on that platform).
+        let spaced = path_to_uri(Path::new(r"C:\my project\src")).unwrap();
+        assert_eq!(spaced.as_str(), "file:///C:/my%20project/src");
     }
 
     #[test]
