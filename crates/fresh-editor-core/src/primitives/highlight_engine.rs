@@ -293,10 +293,17 @@ pub struct TextMateEngine {
     // than a grammar found. Its own syntax is plain text; every colour
     // comes from a region's child parser.
     declared_host: bool,
-    // The declared regions, sorted by start and disjoint (see
-    // `set_declared_regions`): a row finds its region by binary search,
-    // and an edit shifts them all in one pass.
-    declared: Vec<DeclaredRegion>,
+    // One span marker per declared region, in the engine's own marker
+    // list — the same list, and the same `notify_insert` / `notify_delete`
+    // hooks, that carry its parse checkpoints through an edit. `declared`
+    // holds what each marker's region parses as.
+    region_markers: MarkerList,
+    declared: HashMap<MarkerId, DeclaredRegion>,
+    // The region the last row fell in. Regions are runs of rows, so the
+    // marker tree is asked once per run rather than once per row; a row
+    // outside this range re-queries. Dropped whenever the markers move,
+    // since it caches their positions.
+    active_region: Option<(MarkerId, usize, usize)>,
 }
 
 /// A run of rows a plugin declared as code, as the host resolved it. The
@@ -304,9 +311,10 @@ pub struct TextMateEngine {
 /// its language already looked up in the syntax set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredRegion {
-    /// Byte offset of the first row's first byte.
+    /// Byte offset of the first row's first byte, as declared. The live
+    /// bounds are the region's marker's: an edit moves them.
     pub start: usize,
-    /// Byte offset one past the last row's newline.
+    /// Byte offset one past the last row's newline, as declared.
     pub end: usize,
     /// Index into the syntax set of the language the rows are written
     /// in. `None` when nothing in the set claims it, in which case the
@@ -980,7 +988,9 @@ impl TextMateEngine {
             child_span_scratch: Vec::new(),
             scope_category_cache: HashMap::new(),
             declared_host: false,
-            declared: Vec::new(),
+            region_markers: MarkerList::new(),
+            declared: HashMap::new(),
+            active_region: None,
         }
     }
 
@@ -1010,83 +1020,96 @@ impl TextMateEngine {
     /// dropped with a warning rather than left to fight over rows. Every
     /// cached span is dropped, since any of them may now be wrong.
     pub fn set_declared_regions(&mut self, mut regions: Vec<DeclaredRegion>) {
+        let stale: Vec<MarkerId> = self.declared.keys().copied().collect();
+        for id in stale {
+            self.region_markers.delete(id);
+        }
+        self.declared.clear();
+        self.active_region = None;
         regions.sort_by_key(|region| region.start);
-        let mut kept: Vec<DeclaredRegion> = Vec::with_capacity(regions.len());
+        let mut previous_end = 0;
         for mut region in regions {
             if region.end <= region.start {
                 continue;
             }
-            if let Some(previous) = kept.last() {
-                if region.start < previous.end {
-                    tracing::warn!(
-                        "declared region {}..{} overlaps {}..{}; dropped",
-                        region.start,
-                        region.end,
-                        previous.start,
-                        previous.end
-                    );
-                    continue;
-                }
+            if region.start < previous_end {
+                tracing::warn!(
+                    "declared region {}..{} overlaps the one ending at {}; dropped",
+                    region.start,
+                    region.end,
+                    previous_end
+                );
+                continue;
             }
+            previous_end = region.end;
             if region.streams.is_empty() {
                 region.streams.push(DEFAULT_REGION_STREAM);
             }
-            kept.push(region);
+            let id = self.region_markers.create_span(region.start, region.end);
+            self.declared.insert(id, region);
         }
-        self.declared = kept;
         self.invalidate_all();
     }
 
     /// The declared regions and the syntax set they index, for a caller
-    /// that is replacing this engine and must not lose them.
+    /// that is replacing this engine and must not lose them. The regions
+    /// come back at their live bounds, so an engine rebuilt from them
+    /// picks up where this one left off.
     pub fn take_declared_regions(&mut self) -> (Arc<SyntaxSet>, Vec<DeclaredRegion>) {
-        (
-            Arc::clone(&self.syntax_set),
-            std::mem::take(&mut self.declared),
-        )
+        let mut regions: Vec<DeclaredRegion> = std::mem::take(&mut self.declared)
+            .into_iter()
+            .filter_map(|(id, mut region)| {
+                let (start, end) = self.region_bounds(id)?;
+                region.start = start;
+                region.end = end;
+                Some(region)
+            })
+            .collect();
+        regions.sort_by_key(|region| region.start);
+        self.region_markers = MarkerList::new();
+        self.active_region = None;
+        (Arc::clone(&self.syntax_set), regions)
+    }
+
+    /// A region's live bounds, or `None` once an edit has swallowed it.
+    fn region_bounds(&self, id: MarkerId) -> Option<(usize, usize)> {
+        let start = self.region_markers.get_position(id)?;
+        let (_, start, end) = self
+            .region_markers
+            .query_range(start, start + 1)
+            .into_iter()
+            .find(|&(found, _, _)| found == id)?;
+        (end > start).then_some((start, end))
     }
 
     /// The declared region a row belongs to, by the row's first byte.
-    fn declared_region_at(&self, row_start: usize) -> Option<usize> {
-        let index = self
-            .declared
-            .partition_point(|region| region.start <= row_start)
-            .checked_sub(1)?;
-        (row_start < self.declared[index].end).then_some(index)
-    }
-
-    /// Move the declared regions for an insertion, as the buffer's own
-    /// markers would: text inserted at a region's first byte lands before
-    /// it, text inserted anywhere inside it grows it.
-    fn shift_declared_regions_for_insert(&mut self, position: usize, length: usize) {
-        for region in &mut self.declared {
-            if region.start >= position {
-                region.start += length;
-            }
-            if region.end > position {
-                region.end += length;
+    ///
+    /// Regions come in runs of rows, so the answer is remembered and the
+    /// marker tree is consulted once per run rather than once per row.
+    fn declared_region_at(&mut self, row_start: usize) -> Option<MarkerId> {
+        if let Some((id, start, end)) = self.active_region {
+            if start <= row_start && row_start < end {
+                return Some(id);
             }
         }
-    }
-
-    /// Move the declared regions for a deletion; a region the deletion
-    /// swallows whole is gone.
-    fn shift_declared_regions_for_delete(&mut self, position: usize, length: usize) {
-        let deleted_end = position + length;
-        let shift = |offset: usize| {
-            if offset <= position {
-                offset
-            } else if offset >= deleted_end {
-                offset - length
-            } else {
-                position
+        let found = self
+            .region_markers
+            .query_range(row_start, row_start + 1)
+            .into_iter()
+            .filter(|&(id, start, end)| {
+                start <= row_start && row_start < end && self.declared.contains_key(&id)
+            })
+            .max_by_key(|&(_, start, _)| start);
+        match found {
+            Some((id, start, end)) => {
+                self.active_region = Some((id, start, end));
+                Some(id)
             }
-        };
-        for region in &mut self.declared {
-            region.start = shift(region.start);
-            region.end = shift(region.end);
+            None => {
+                self.active_region = None;
+                None
+            }
         }
-        self.declared.retain(|region| region.end > region.start);
     }
 
     /// Get performance stats for testing and diagnostics.
@@ -1108,7 +1131,8 @@ impl TextMateEngine {
     /// the cache dirty so the partial-update path runs on next render.
     pub fn notify_insert(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_insert(position, length);
-        self.shift_declared_regions_for_insert(position, length);
+        self.region_markers.adjust_for_insert(position, length);
+        self.active_region = None;
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
             for span in &mut cache.spans {
@@ -1131,7 +1155,8 @@ impl TextMateEngine {
     /// Buffer-delete notification. Mirror of `notify_insert`.
     pub fn notify_delete(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_delete(position, length);
-        self.shift_declared_regions_for_delete(position, length);
+        self.region_markers.adjust_for_delete(position, length);
+        self.active_region = None;
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
             let delete_end = position + length;
@@ -1522,11 +1547,11 @@ impl TextMateEngine {
         current_offset: usize,
         mut on_span: impl FnMut(usize, usize, HighlightCategory, Option<HighlightCategory>),
     ) -> bool {
-        let Some(index) = self.declared_region_at(current_offset) else {
+        let Some(id) = self.declared_region_at(current_offset) else {
             return true;
         };
         let (syntax_index, prefix, stream_count) = {
-            let region = &self.declared[index];
+            let region = &self.declared[&id];
             (region.syntax_index, region.prefix, region.streams.len())
         };
         let Some(syntax_index) = syntax_index else {
@@ -1549,7 +1574,7 @@ impl TextMateEngine {
         child_spans.clear();
         let mut ok = true;
         for k in 0..stream_count {
-            let stream = self.declared[index].streams[k];
+            let stream = self.declared[&id].streams[k];
             let mut parser = snapshot.take_stream(stream, syntax_index, &self.syntax_set);
             let (child_ok, _) = self.parse_line_into_spans(
                 &mut parser.state,
@@ -5064,8 +5089,10 @@ diff --git a/tools/check.py b/tools/check.py
         );
     }
 
-    /// Regions ride the text: an insertion before them moves them, and
-    /// the rows they meant are still the ones coloured.
+    /// Regions ride the text on the engine's own marker list, the one
+    /// that carries its parse checkpoints: an insertion before a region
+    /// moves it, an insertion inside it grows it, and either way the rows
+    /// it meant are still the ones coloured.
     #[test]
     fn test_declared_regions_follow_an_edit() {
         let (registry, theme) = declared_host_for_test();
@@ -5092,6 +5119,21 @@ diff --git a/tools/check.py b/tools/check.py
             Some(HighlightCategory::Keyword)
         );
         assert_eq!(category_at(&spans, &content, "HEADER"), None);
+
+        // A row inserted *inside* the region grows it, so the new row is
+        // code too — the marker span's own semantics, not arithmetic here.
+        let at = content.find("+def").unwrap() + "+def f():\n".len();
+        let added = "+    return 1\n";
+        let content = format!("{}{}{}", &content[..at], added, &content[at..]);
+        engine.notify_insert(at, added.len());
+        engine.invalidate_range(at..at + added.len());
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let spans = engine.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+        assert_eq!(
+            category_at(&spans, &content, "return"),
+            Some(HighlightCategory::Keyword),
+            "a row inserted inside a region is still inside it afterwards"
+        );
     }
 
     /// A language nothing in the set claims leaves the rows as they are;
