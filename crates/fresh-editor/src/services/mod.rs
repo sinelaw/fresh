@@ -30,6 +30,7 @@ pub mod release_checker;
 pub mod remote;
 pub mod signal_handler;
 pub mod status_log;
+pub mod stdin_spool;
 pub mod styled_html;
 pub mod telemetry;
 pub mod terminal;
