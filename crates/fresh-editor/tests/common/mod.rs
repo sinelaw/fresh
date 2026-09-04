@@ -23,6 +23,9 @@ pub mod global_state;
 pub mod harness;
 #[cfg(test)]
 #[allow(dead_code)]
+pub mod pty;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod scenario;
 #[cfg(test)]
 #[allow(dead_code)]
