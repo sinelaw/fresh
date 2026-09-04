@@ -865,6 +865,65 @@ fn handle_skip_over(events: &mut Vec<Event>, cursor_id: CursorId, insert_positio
     });
 }
 
+/// Rebase the skip-over `MoveCursor`s in `events` (at the given indices)
+/// onto the buffer as it will be once every *other* cursor's edit in the
+/// same list has applied.
+///
+/// A skip-over owns no edit — its whole effect is the move — and
+/// [`handle_skip_over`] emits it in pre-edit coordinates
+/// (`insert_position + 1`). The multi-cursor applier
+/// (`apply_events_as_bulk_edit`) shifts a cursor's `MoveCursor` for other
+/// cursors' edits only when that cursor also carries an `Insert` at its own
+/// position (the auto-close shape); a move from a cursor with no such
+/// insert is taken as already post-edit, because that is what indent and
+/// the other bulk emitters produce. So with `xx` above `a()`, both cursors
+/// at end of line, typing `)` inserted one at the first cursor and left the
+/// second one byte short of stepping over its `)` — the `;` typed next went
+/// inside the parens (#3166). Bringing the skip-over moves into post-edit
+/// coordinates here, at the emitter, keeps the applier's one rule true.
+///
+/// Only edits by *other* cursors at strictly lower positions count. A
+/// cursor's own edits are already folded into the move it emits: the
+/// dedent variant deletes and re-inserts its own line's indent and moves
+/// relative to the result, and a selection is deleted at the position the
+/// move starts from, not below it.
+fn shift_skip_over_moves(events: &mut [Event], skip_over_moves: &[usize]) {
+    if skip_over_moves.is_empty() {
+        return;
+    }
+    let edits: Vec<(CursorId, usize, isize)> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Insert {
+                position,
+                text,
+                cursor_id,
+            } => Some((*cursor_id, *position, text.len() as isize)),
+            Event::Delete {
+                range, cursor_id, ..
+            } => Some((*cursor_id, range.start, -(range.len() as isize))),
+            _ => None,
+        })
+        .collect();
+    for &index in skip_over_moves {
+        let Event::MoveCursor {
+            cursor_id,
+            old_position,
+            new_position,
+            ..
+        } = &mut events[index]
+        else {
+            continue;
+        };
+        let shift: isize = edits
+            .iter()
+            .filter(|(id, position, _)| *id != *cursor_id && *position < *old_position)
+            .map(|(_, _, delta)| delta)
+            .sum();
+        *new_position = (*new_position as isize + shift).max(0) as usize;
+    }
+}
+
 /// Handle auto-dedent: when typing a closing delimiter on a line with only spaces,
 /// fix the indentation and insert the delimiter.
 fn handle_auto_dedent(
@@ -1166,6 +1225,17 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 }
 
 /// Handle InsertChar action - insert character at each cursor position.
+///
+/// With more than one cursor the resulting list is meaningful only to
+/// `apply_events_as_bulk_edit`, which applies every edit against the
+/// original buffer and shifts cursor targets itself: a skip-over's
+/// `MoveCursor` is rebased onto the other cursors' edits before it leaves
+/// here (see [`shift_skip_over_moves`]), while an auto-close's is left
+/// pre-edit for that applier to shift. Feeding the same list to
+/// `EditorState::apply` one event at a time would shift the skip-over
+/// moves a second time. Every multi-cursor dispatcher already routes lists
+/// of more than one event to the bulk applier; the single-cursor list has
+/// no other cursors' edits and is unchanged.
 #[allow(clippy::too_many_arguments)]
 fn insert_char_events(
     state: &mut EditorState,
@@ -1185,6 +1255,9 @@ fn insert_char_events(
     // select-then-type-a-delimiter wrapping.
     let surround_char = get_auto_close_char(ch, auto_surround, &state.language);
     let cursor_data = collect_insert_cursor_data(state, cursors);
+    // Indices into `events` of the `MoveCursor`s the skip-over paths emit;
+    // they are rebased onto the other cursors' edits after the loop.
+    let mut skip_over_moves: Vec<usize> = Vec::new();
 
     for data in cursor_data {
         // Virtual space: materialize the gap between the buffer/line content
@@ -1277,10 +1350,12 @@ fn insert_char_events(
                             tab_size,
                         )
                     {
+                        skip_over_moves.push(events.len() - 1);
                         continue;
                     }
                     // Simple skip-over
                     handle_skip_over(events, data.cursor_id, data.insert_position);
+                    skip_over_moves.push(events.len() - 1);
                     continue;
                 }
             }
@@ -1343,6 +1418,8 @@ fn insert_char_events(
             cursor_id: data.cursor_id,
         });
     }
+
+    shift_skip_over_moves(events, &skip_over_moves);
 }
 
 /// Calculate the maximum valid cursor position in the buffer.
