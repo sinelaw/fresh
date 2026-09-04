@@ -10,9 +10,8 @@
 //! dive land in the (empty) SSH workspace with the dock still listing the
 //! session.
 //!
-//! Single test in this binary: the persistence isolation sets the
-//! process-global `XDG_DATA_HOME` (see
-//! `crate::common::dormant_ssh::isolated_dir_context`).
+//! Persistence is isolated by `crate::common::global_state::isolated_dir_context`
+//! and the fake `ssh` by a `PathPin`, both held for the test body.
 //!
 //! Plugins-gated: the dock is the orchestrator plugin's UI, and the dormant
 //! dive it drives only connects with the plugin runtime present. Linux-gated
@@ -22,7 +21,7 @@
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::{
-    canonical_mkdir, ensure_fake_ssh_on_path, isolated_dir_context, persist_previous_session,
+    canonical_mkdir, fake_ssh_on_path, isolated_dir_context, persist_previous_session,
 };
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -30,11 +29,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[test]
 fn dock_lists_dormant_ssh_session_with_backend_badge_and_dive_commits() {
     crate::common::tracing::init_tracing_from_env();
-    ensure_fake_ssh_on_path();
+    let _fake_ssh = fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 
     let base = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(base.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(base.path());
     let project = canonical_mkdir(base.path(), "project");
     let remote_root = canonical_mkdir(base.path(), "remote-root");
 

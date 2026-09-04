@@ -2,7 +2,7 @@
 
 #![cfg(feature = "plugins")]
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -67,8 +67,7 @@ editor.debug("Test package plugin loaded!");
     .unwrap();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Create editor with the project directory
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -117,8 +116,7 @@ fn test_pkg_list_installed_empty() {
     copy_plugin(&plugins_dir, "pkg");
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         100,
@@ -207,8 +205,7 @@ globalThis.sample_cmd = function() { editor.setStatus("Sample plugin works!"); }
     let packages_dir = plugins_dir.join("packages");
     fs::create_dir_all(&packages_dir).unwrap();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -329,8 +326,7 @@ fn test_pkg_install_plugin_empty_registry() {
         .expect("Failed to git commit in fake registry");
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         100,
@@ -464,8 +460,7 @@ fn test_pkg_install_plugin_auto_syncs_stale_registry() {
     // - With auto-sync: git pull runs, shows "test-plugin"
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -594,8 +589,7 @@ fn test_pkg_manager_ui_split_view_and_tab_navigation() {
         .expect("Failed to git commit in fake registry");
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         100,
@@ -819,8 +813,7 @@ globalThis.beta_cmd = function() { editor.setStatus("Beta plugin works!"); };
         .output()
         .expect("Failed to git commit in fake registry");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -1173,8 +1166,7 @@ editor.debug("Bundle test plugin 2 loaded!");
     let bundles_packages_dir = dir_context.config_dir.join("bundles").join("packages");
     fs::create_dir_all(&bundles_packages_dir).unwrap();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -1558,8 +1550,7 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
     )
     .unwrap();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -1910,8 +1901,7 @@ fn test_pkg_install_from_url_upgrades_installed_package() {
     monorepo.git_add_all();
     monorepo.git_commit("alpha 1.0.0");
 
-    let original_dir = env.repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = env.repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -1999,8 +1989,7 @@ fn test_pkg_browser_update_action_reachable_and_updates() {
     monorepo.git_add_all();
     monorepo.git_commit("alpha 1.0.0");
 
-    let original_dir = env.repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = env.repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -2070,8 +2059,7 @@ fn test_pkg_browser_update_action_reachable_and_updates() {
 fn test_pkg_browser_reopens_after_close_buffer() {
     let env = setup_pkg_ui_env("{}");
 
-    let original_dir = env.repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = env.repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -2156,8 +2144,7 @@ fn test_pkg_browser_arrow_down_moves_selection_on_first_press() {
         ..Default::default()
     };
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,
@@ -2203,8 +2190,7 @@ fn test_pkg_url_installed_package_appears_in_open_browser() {
     monorepo.git_add_all();
     monorepo.git_commit("gamma 1.0.0");
 
-    let original_dir = env.repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = env.repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
         120,

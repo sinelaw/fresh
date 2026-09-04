@@ -8,7 +8,7 @@
 //! These tests assert only on rendered output (`screen_to_string`), per the
 //! "E2E tests observe, not inspect" rule in CONTRIBUTING.md.
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
 use fresh::config::Config;
 
@@ -86,8 +86,7 @@ fn test_live_diff_added_line_shows_plus_in_gutter() {
     repo.setup_typical_project();
     repo.setup_live_diff_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Insert one new line at the top vs HEAD.
     repo.modify_file(
@@ -128,8 +127,7 @@ fn test_live_diff_modified_line_shows_old_content_above() {
     repo.setup_typical_project();
     repo.setup_live_diff_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Replace the `format!` line with a deliberately rewrite-style
     // line: the new content must share so little with the original
@@ -199,8 +197,7 @@ fn test_live_diff_updates_on_buffer_edit() {
     repo.setup_typical_project();
     repo.setup_live_diff_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -245,8 +242,7 @@ fn test_live_diff_handles_surrogate_pair_content() {
     repo.setup_typical_project();
     repo.setup_live_diff_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // 🎉 (U+1F389) is a 4-byte UTF-8 char that needs a surrogate pair
     // in JS strings. Modify the line so the diff has actual content.
@@ -292,8 +288,7 @@ fn test_live_diff_highlights_empty_added_line() {
     repo.setup_typical_project();
     repo.setup_live_diff_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Original utils.rs ends after `validate_config`. Append three new
     // lines: a blank line, then a function, then another blank line.
@@ -384,8 +379,7 @@ fn test_live_diff_highlights_empty_removed_line() {
     repo.git_add(&["src/utils.rs"]);
     repo.git_commit("init");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     repo.modify_file("src/utils.rs", "head\ntail\n");
 
@@ -469,8 +463,7 @@ fn test_live_diff_does_not_skip_empty_lines_on_arrow_keys() {
     repo.git_add(&["src/utils.rs"]);
     repo.git_commit("init");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Working tree: "head\n" + two empty lines + "tail\n". The two
     // blank middle lines are added empty lines — the ones the user
@@ -587,8 +580,7 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     repo.git_add(&["code.rs"]);
     repo.git_commit("init");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Wide viewport so the marker line + the long appended payload fit
     // on a single visual row — wrap would invalidate the row-index
@@ -742,8 +734,7 @@ fn test_live_diff_down_arrow_traverses_deletion_block() {
     repo.git_add(&["src/utils.rs"]);
     repo.git_commit("init");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Working tree: drop the 12 middle lines. The plugin should render
     // them as virtual `-` rows anchored above `after_01`.
@@ -851,8 +842,7 @@ fn test_live_diff_removed_line_not_split_per_char_at_tiny_width() {
     repo.git_commit("baseline");
     repo.setup_live_diff_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Working tree: rewrite the body line into something with very low
     // Sørensen–Dice similarity to the original, so the hunk splits into
@@ -950,8 +940,7 @@ fn test_live_diff_word_highlight_on_low_similarity_removed_added_pair() {
     repo.git_add(&["note.txt"]);
     repo.git_commit("baseline");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     repo.modify_file(
         "note.txt",
@@ -1062,8 +1051,7 @@ fn test_live_diff_clears_after_commit() {
     repo.git_add(&["src/demo.txt"]);
     repo.git_commit("init");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     repo.modify_file("src/demo.txt", "line one\nline two\nline three ADDED\n");
 
@@ -1142,8 +1130,7 @@ fn test_live_diff_old_revision_large_middle_renders_full_detail() {
     repo.git_add(&["src/big.rs"]);
     repo.git_commit("old revision of big file");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // The working tree holds the "new revision"; the buffer diffs it
     // against the committed old one — the same shape as checking out an
@@ -1195,8 +1182,7 @@ fn test_live_diff_near_total_rewrite_degrades_but_renders() {
     repo.git_add(&["src/big.rs"]);
     repo.git_commit("ancient revision");
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut new_text = String::new();
     for i in 0..6_000 {

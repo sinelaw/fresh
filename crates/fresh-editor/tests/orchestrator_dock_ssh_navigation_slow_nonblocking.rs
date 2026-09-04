@@ -26,12 +26,14 @@
 //! the placeholder shows no content. Releasing the read then fills the buffer,
 //! so the file's real content appears.
 //!
-//! Single test in this binary: the fake-ssh PATH shim and `isolated_dir_context`'s
-//! process-global `XDG_DATA_HOME` / `FAKE_SSH_SLOW_*` env must not leak.
+//! The fake-ssh PATH shim and the `FAKE_SSH_SLOW_*` variables that configure
+//! it are process-global, so both ride a `PathPin` that puts them back when
+//! the test ends; persistence rides a thread-local data-dir pin
+//! (`isolated_dir_context`).
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::{
-    canonical_mkdir, ensure_slow_fake_ssh_on_path, isolated_dir_context, persist_previous_session,
+    canonical_mkdir, slow_fake_ssh_on_path, isolated_dir_context, persist_previous_session,
 };
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -39,11 +41,11 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[test]
 fn arrow_nav_onto_slow_remote_keeps_editor_responsive() {
     crate::common::tracing::init_tracing_from_env();
-    ensure_slow_fake_ssh_on_path();
+    let mut fake_ssh = slow_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 
     let base = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(base.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(base.path());
     let project = canonical_mkdir(base.path(), "project");
     let remote_root = canonical_mkdir(base.path(), "remote-root");
 
@@ -54,8 +56,11 @@ fn arrow_nav_onto_slow_remote_keeps_editor_responsive() {
     // also releases the held read on the connect worker.
     let gate = base.path().join("read.gate");
     std::fs::write(&gate, "hold").unwrap();
-    std::env::set_var("FAKE_SSH_SLOW_METHODS", "read");
-    std::env::set_var("FAKE_SSH_SLOW_BLOCK_FILE", &gate);
+    // Through the pin, so both come back off when the shim does: left set,
+    // they aim a *later* test's shim at a gate file under a temp directory
+    // this one has already deleted.
+    fake_ssh.set_env("FAKE_SSH_SLOW_METHODS", "read");
+    fake_ssh.set_env("FAKE_SSH_SLOW_BLOCK_FILE", &gate);
 
     let plugins_dir = project.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
