@@ -6113,6 +6113,33 @@ impl Config {
         );
 
         languages.insert(
+            "smt2".to_string(),
+            LanguageConfig {
+                extensions: vec!["smt2".to_string()],
+                filenames: vec![],
+                grammar: "SMT-LIB 2".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
             "clojure".to_string(),
             LanguageConfig {
                 extensions: vec![
@@ -9784,6 +9811,23 @@ mod tests {
             detect_language(Path::new("application.conf"), &languages),
             Some("nginx".to_string()),
             "generic .conf files must not be claimed by Nginx"
+        );
+    }
+
+    #[test]
+    fn test_default_languages_map_smtlib2_files() {
+        use crate::language_detect::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        assert_eq!(
+            detect_language(Path::new("constraints.smt2"), &languages),
+            Some("smt2".to_string())
+        );
+        assert_ne!(
+            detect_language(Path::new("legacy.smt"), &languages),
+            Some("smt2".to_string()),
+            "SMT-LIB 1 files must not be claimed by the SMT-LIB 2 grammar"
         );
     }
 

@@ -218,6 +218,8 @@ pub const DUNE_GRAMMAR: &str = include_str!("../../grammars/dune.sublime-syntax"
 pub const DAFNY_GRAMMAR: &str = include_str!("../../grammars/dafny.sublime-syntax");
 /// Embedded Nginx configuration grammar
 pub const NGINX_GRAMMAR: &str = include_str!("../../grammars/nginx.sublime-syntax");
+/// Embedded SMT-LIB 2 / Z3 input grammar
+pub const SMTLIB2_GRAMMAR: &str = include_str!("../../grammars/smtlib2.sublime-syntax");
 /// Embedded Nix grammar
 pub const NIX_GRAMMAR: &str = include_str!("../../grammars/nix.sublime-syntax");
 /// Embedded HCL/Terraform grammar
@@ -783,6 +785,7 @@ impl GrammarRegistry {
             (DUNE_GRAMMAR, "Dune"),
             (DAFNY_GRAMMAR, "Dafny"),
             (NGINX_GRAMMAR, "Nginx"),
+            (SMTLIB2_GRAMMAR, "SMT-LIB 2"),
             (NIX_GRAMMAR, "Nix"),
             (HCL_GRAMMAR, "HCL"),
             (PROTOBUF_GRAMMAR, "Protocol Buffers"),
@@ -908,6 +911,10 @@ impl GrammarRegistry {
             ("coq", "Coq/Rocq"),
             ("rocq", "Coq/Rocq"),
             ("dfy", "Dafny"),
+            ("smt", "SMT-LIB 2"),
+            ("smt2", "SMT-LIB 2"),
+            ("smt-lib", "SMT-LIB 2"),
+            ("z3", "SMT-LIB 2"),
             ("terraform", "HCL"),
             ("tf", "HCL"),
             ("po", "Gettext PO"),
@@ -2550,6 +2557,33 @@ mod tests {
             assert_eq!(entry.display_name, "Nginx", "for {path}");
             assert!(entry.engines.syntect.is_some(), "for {path}");
             assert!(entry.engines.tree_sitter.is_none(), "for {path}");
+        }
+    }
+
+    #[test]
+    fn test_smtlib2_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(SMTLIB2_GRAMMAR, true, Some("SMT-LIB 2"))
+            .expect("SMT-LIB 2 grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "smt2"));
+
+        let mut registry = GrammarRegistry::default();
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let entry = registry
+            .find_by_path(Path::new("constraints.smt2"), None)
+            .expect(".smt2 files should resolve");
+        assert_eq!(entry.display_name, "SMT-LIB 2");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
+
+        for alias in ["smt", "smt2", "smt-lib", "z3"] {
+            assert_eq!(
+                registry
+                    .find_by_name(alias)
+                    .unwrap_or_else(|| panic!("{alias} alias should resolve"))
+                    .display_name,
+                "SMT-LIB 2",
+                "for alias {alias}"
+            );
         }
     }
 

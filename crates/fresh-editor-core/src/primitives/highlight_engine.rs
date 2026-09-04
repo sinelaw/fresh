@@ -2801,6 +2801,59 @@ mod tests {
     }
 
     #[test]
+    fn test_smtlib2_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let mut engine = HighlightEngine::for_file(Path::new("constraints.smt2"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "; prove a small arithmetic constraint\n",
+            "(set-logic QF_LIA)\n",
+            "(set-option :produce-models true)\n",
+            "(declare-const x Int)\n",
+            "(declare-fun bounded (Int) Bool)\n",
+            "(assert (! (and (> x 10) (bounded x)) :named |main constraint|))\n",
+            "(assert (= #b1010 #x0A))\n",
+            "(assert (= ((_ extract 3 0) #b1010) (_ bv10 4)))\n",
+            "(echo \"quote: \"\"ok\"\"\")\n",
+            "(check-sat)\n",
+            "(get-model)\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for (needle, expected) in [
+            ("prove a small", HighlightCategory::Comment),
+            ("set-logic", HighlightCategory::Keyword),
+            ("QF_LIA", HighlightCategory::Constant),
+            (":produce-models", HighlightCategory::Attribute),
+            ("true", HighlightCategory::Number),
+            ("declare-const", HighlightCategory::Keyword),
+            ("x Int", HighlightCategory::Variable),
+            ("Int", HighlightCategory::Type),
+            ("bounded", HighlightCategory::Function),
+            ("and", HighlightCategory::Operator),
+            ("10", HighlightCategory::Number),
+            (":named", HighlightCategory::Attribute),
+            ("|main constraint|", HighlightCategory::Variable),
+            ("#b1010", HighlightCategory::Number),
+            ("extract", HighlightCategory::Function),
+            ("bv10", HighlightCategory::Number),
+            ("quote:", HighlightCategory::String),
+            ("check-sat", HighlightCategory::Keyword),
+        ] {
+            assert_eq!(
+                engine.category_at_position(content.find(needle).unwrap()),
+                Some(expected),
+                "unexpected SMT-LIB 2 category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_fish_indented_control_keywords_stay_keywords() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());

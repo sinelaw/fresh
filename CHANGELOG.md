@@ -17,6 +17,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Markdown types brackets and quotes literally** by default instead of auto-pairing them, since prose needs the literal character far more often than the pair.
 * **Dafny highlighting** - `.dfy` files now get built-in syntax highlighting for declarations, verification clauses, nested comments, attributes, strings, types, constants, numbers, calls, and operators.
 * **Nginx highlighting** - `nginx.conf`, `*.nginx`, and configuration files under an `nginx/` directory now get built-in highlighting for directives, contexts, variables, strings, regular expressions, addresses, values, and comments, without claiming every `.conf` file.
+* **SMT-LIB 2 / Z3 highlighting** - `.smt2` files now get built-in highlighting for solver commands, declarations, sorts, attributes, quoted symbols, strings, bit-vector and numeric literals, operators, and comments.
 * **OCaml ecosystem highlighting** - new built-in grammars highlight Coq/Rocq (`.coq`, `_CoqProject`, `_RocqProject`) and Dune files (`dune`, `dune-project`, `dune-workspace*`, `*.dune`), and `.ocamlinit` is now detected as OCaml. The shared `.v` extension remains mapped to the V language for compatibility, but `.v` files are automatically promoted to Coq/Rocq inside a project containing `_CoqProject` or `_RocqProject`.
 
 ### Bug Fixes

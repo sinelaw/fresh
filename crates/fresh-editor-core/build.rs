@@ -234,6 +234,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/dune.sublime-syntax", "Dune"),
         ("src/grammars/dafny.sublime-syntax", "Dafny"),
         ("src/grammars/nginx.sublime-syntax", "Nginx"),
+        ("src/grammars/smtlib2.sublime-syntax", "SMT-LIB 2"),
         ("src/grammars/nix.sublime-syntax", "Nix"),
         ("src/grammars/hcl.sublime-syntax", "HCL"),
         ("src/grammars/protobuf.sublime-syntax", "Protocol Buffers"),
