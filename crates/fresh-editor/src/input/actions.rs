@@ -1574,9 +1574,10 @@ fn handle_insert_newline(
                 _ => {
                     if let Some(w) = rules_indent(state, indent_position, tab_size) {
                         Some(w)
-                    } else if state.highlighter.language().is_some() {
-                        // Only a buffer with no language at all treats a
-                        // blank line as prose (#3165).
+                    } else if state.language != "text" {
+                        // Only plain text treats a blank line as prose
+                        // (#3165); `highlighter.language()` is not the
+                        // signal, since a grammar can still be loading.
                         Some(
                             crate::primitives::indent::IndentCalculator::calculate_indent_no_grammar(
                                 &state.buffer,
