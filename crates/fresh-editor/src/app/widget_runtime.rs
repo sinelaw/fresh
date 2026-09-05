@@ -1543,6 +1543,10 @@ impl Editor {
         // The tree is the ring; the registry is its mirror. Written in step,
         // before the plugin is told, so nothing reads one against the other.
         self.focus_panel_widget_in_tree(panel_key, &new_key);
+        // On a `focusFollowsCursor` panel the caret comes along, before
+        // the plugin hears about the move — so a `focus` handler that
+        // reveals the widget is revealing a row the caret is already on.
+        self.seat_cursor_on_focused_widget(panel_key, &new_key);
         // Offer the transition to the kinds: the widget losing focus
         // and the one gaining it each get their `on_focus_change`
         // hook (Tree keeps its selected-row highlight coherent with
@@ -1555,6 +1559,212 @@ impl Editor {
             "focus".to_string(),
             serde_json::json!({ "previous": old_key }),
         );
+    }
+
+    /// Move `buffer_id`'s caret onto the row of the widget that just
+    /// took focus, for a panel that asked for `focusFollowsCursor`.
+    ///
+    /// The guard is not "is the caret already on that row" but "does the
+    /// caret's row already resolve to this widget", which is the same
+    /// question the other direction asks — and it has to be, because a
+    /// card several rows tall anchors at its top. Arriving at its last
+    /// row from below focuses the card; seating the caret on the card's
+    /// *top* row would then throw the reader back over everything they
+    /// just walked past, and the next Up would do it again.
+    ///
+    /// Clearing focus never moves the caret. "Nothing is focused" is
+    /// what a caret on prose means; there is no row to go to.
+    pub(super) fn seat_cursor_on_focused_widget(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        new_key: &str,
+    ) {
+        if new_key.is_empty() {
+            return;
+        }
+        let Some(panel) = self.widget_registry.get(panel_key) else {
+            return;
+        };
+        if !panel.focus_follows_cursor {
+            return;
+        }
+        let buffer_id = panel.buffer_id;
+        if let Some(row) = self.panel_buffer_cursor_row(buffer_id) {
+            if self
+                .widget_registry
+                .focus_candidates_at_row(buffer_id, row)
+                .is_some_and(|(_, keys)| keys.iter().any(|k| k == new_key))
+            {
+                return;
+            }
+        }
+        let Some(row) = self.widget_registry.row_of_widget(buffer_id, new_key) else {
+            return;
+        };
+        let offset = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .and_then(|st| st.buffer.line_start_offset(row as usize));
+        if let Some(offset) = offset {
+            // Un-latch first, or the reveal the caret move *is* may not
+            // happen: `ensure_visible` returns early while
+            // `skip_ensure_visible` is set, and a wheel scroll sets it.
+            self.unlatch_ensure_visible(buffer_id);
+            self.seat_buffer_cursor(buffer_id, offset);
+        }
+    }
+
+    /// Every split currently showing `buffer_id`, the leaves of grouped
+    /// subtrees included.
+    ///
+    /// A grouped subtree's leaves are not in `splits_for_buffer` — the
+    /// group host owns the outer leaf — so a panel buffer shown inside
+    /// one would keep a stale caret without this.
+    pub(super) fn splits_showing_buffer(&self, buffer_id: BufferId) -> Vec<LeafId> {
+        let mut splits = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .splits_for_buffer(buffer_id);
+        for node in self.active_window().grouped_subtrees.values() {
+            if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
+                for inner_leaf in layout.leaf_split_ids() {
+                    if let Some(vs) = self
+                        .windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.buffers.splits())
+                        .map(|(_, vs)| vs)
+                        .expect("active window must have a populated split layout")
+                        .get(&inner_leaf)
+                    {
+                        if vs.active_buffer == buffer_id && !splits.contains(&inner_leaf) {
+                            splits.push(inner_leaf);
+                        }
+                    }
+                }
+            }
+        }
+        splits
+    }
+
+    /// Put `buffer_id`'s caret at `position` in every split showing it.
+    ///
+    /// The editor writes a caret through exactly two routes — the event
+    /// pipeline (`Editor::apply_event`, which every user-visible move
+    /// travels: arrows, page keys, a click, Goto Line, back/forward,
+    /// a search hit) and this one, for the host and plugins seating it
+    /// directly. Both end in `sync_widget_focus_to_cursor`, so a
+    /// `focusFollowsCursor` panel cannot be reached by a caret move that
+    /// leaves its focus behind.
+    pub(super) fn seat_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
+        let splits = self.splits_showing_buffer(buffer_id);
+        if splits.is_empty() {
+            tracing::warn!("No splits found for buffer {:?}", buffer_id);
+        }
+        if self.active_window().buffers.get(&buffer_id).is_none() {
+            tracing::warn!("Buffer {:?} not found for a caret move", buffer_id);
+            return;
+        }
+        self.active_window_mut()
+            .set_buffer_cursor_in_splits(buffer_id, position, &splits);
+        self.sync_widget_focus_to_cursor(buffer_id, position);
+    }
+
+    /// Clear `skip_ensure_visible` on every split showing `buffer_id`, so
+    /// the next caret move is allowed to scroll the pane to it.
+    ///
+    /// The latch is set by any wheel or scrollbar scroll, and is
+    /// otherwise cleared only at the top of `handle_key` and only for the
+    /// effective active split. A reveal that declines to scroll looks
+    /// exactly like a reveal that had no need to, so a caller that skips
+    /// this fails silently.
+    pub(super) fn unlatch_ensure_visible(&mut self, buffer_id: BufferId) {
+        let splits = self.splits_showing_buffer(buffer_id);
+        if let Some(states) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+        {
+            for leaf in splits {
+                if let Some(view_state) = states.get_mut(&leaf) {
+                    view_state.viewport.clear_skip_ensure_visible();
+                }
+            }
+        }
+    }
+
+    /// The other direction: the caret has landed somewhere in a
+    /// `focusFollowsCursor` panel's buffer, so focus goes to whatever
+    /// focusable widget is on that row — or to nothing, when the row
+    /// carries none.
+    ///
+    /// Clearing is the half that matters most. Without it an arrow key
+    /// leaves the last Tab's target armed under Enter, three cards up
+    /// and off screen: the reader is looking at one thing and the
+    /// keyboard is pointed at another.
+    pub(super) fn sync_widget_focus_to_cursor(&mut self, buffer_id: BufferId, position: usize) {
+        // Cheap out before touching the buffer: this runs on every cursor
+        // move in the editor, and resolving a byte offset to a line
+        // number is not free on a multi-GB file.
+        if !self.widget_registry.has_focus_follower(buffer_id) {
+            return;
+        }
+        let Some(row) = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .map(|st| st.buffer.get_line_number(position))
+        else {
+            return;
+        };
+        let Some((panel_key, candidates)) = self
+            .widget_registry
+            .focus_candidates_at_row(buffer_id, row as u32)
+        else {
+            return;
+        };
+        let current = self
+            .widget_registry
+            .focus_key(&panel_key)
+            .unwrap_or_default()
+            .to_string();
+        // Membership, not equality. Three door cards sit side by side on
+        // the same rows, so their caret row cannot say *which* of them
+        // has focus — only that one of them does, which is agreement
+        // enough. Re-deriving focus from the row here would have made
+        // Tab between two controls of one row impossible: the move to
+        // the second seats the caret on the row they share, and the row
+        // would then hand focus straight back to the first.
+        if candidates.contains(&current) {
+            return;
+        }
+        let next = candidates.first().cloned().unwrap_or_default();
+        if next == current {
+            return;
+        }
+        self.set_panel_focus_and_notify(&panel_key, next);
+        // The focus marker is painted by the render, so the panel has to
+        // repaint for the move to be visible at all.
+        self.rerender_widget_panel(&panel_key);
+    }
+
+    /// The caret's 0-indexed row in `buffer_id`, from whichever split is
+    /// carrying that buffer's cursor.
+    fn panel_buffer_cursor_row(&self, buffer_id: BufferId) -> Option<u32> {
+        let (_, view_states) = self.windows.get(&self.active_window)?.buffers.splits()?;
+        let position = view_states.values().find_map(|vs| {
+            vs.buffer_state(buffer_id)
+                .map(|bs| bs.cursors.primary().position)
+        })?;
+        let line = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .map(|st| st.buffer.get_line_number(position))?;
+        Some(line as u32)
     }
 
     /// Offer a panel-focus transition to the kinds: the widget losing
@@ -3452,6 +3662,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
         );
     }
 
@@ -3586,6 +3797,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         // Candidates never come from the spec — the plugin pushes them — so
@@ -3684,6 +3896,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
         );
         assert_eq!(
             editor.widget_registry.focus_key(&panel_key),
@@ -3750,6 +3963,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -3824,6 +4038,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -4063,6 +4278,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -4132,6 +4348,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);

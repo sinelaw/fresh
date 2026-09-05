@@ -1226,62 +1226,16 @@ impl Editor {
     /// the inner leaves of all grouped subtrees stored in `grouped_subtrees`,
     /// mirroring `handle_scroll_buffer_to_line` — buffer-group panel buffers
     /// are not represented in `split_manager`'s tree, so the basic lookup
-    /// returns nothing for them.
+    /// returns nothing for them. That walk is
+    /// [`Editor::splits_showing_buffer`], shared with the widget runtime's
+    /// own caret moves so the two cannot drift.
     pub(super) fn handle_set_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
-        // Find all splits that display this buffer (main tree + grouped subtrees).
-        let mut splits: Vec<crate::app::LeafId> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .splits_for_buffer(buffer_id);
-        for node in self.active_window().grouped_subtrees.values() {
-            if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
-                for inner_leaf in layout.leaf_split_ids() {
-                    if let Some(vs) = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(_, vs)| vs)
-                        .expect("active window must have a populated split layout")
-                        .get(&inner_leaf)
-                    {
-                        if vs.active_buffer == buffer_id && !splits.contains(&inner_leaf) {
-                            splits.push(inner_leaf);
-                        }
-                    }
-                }
-            }
-        }
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-
         tracing::debug!(
-            "SetBufferCursor: buffer_id={:?}, position={}, found {} splits: {:?}, active={:?}",
+            "SetBufferCursor: buffer_id={:?}, position={}",
             buffer_id,
             position,
-            splits.len(),
-            splits,
-            active_split
         );
-
-        if splits.is_empty() {
-            tracing::warn!("No splits found for buffer {:?}", buffer_id);
-        }
-
-        let _ = active_split;
-        if self.active_window().buffers.get(&buffer_id).is_none() {
-            tracing::warn!("Buffer {:?} not found for SetBufferCursor", buffer_id);
-            return;
-        }
-        self.active_window_mut()
-            .set_buffer_cursor_in_splits(buffer_id, position, &splits);
+        self.seat_buffer_cursor(buffer_id, position);
     }
 
     /// Handle ScrollToWidget: put the cursor on the keyed widget, and
@@ -1321,35 +1275,10 @@ impl Editor {
         };
         if align == fresh_core::api::ScrollAlign::Minimal {
             // Un-latch the splits showing this buffer before the cursor
-            // move, or the reveal this alignment *is* may not happen.
-            //
-            // `ensure_visible` returns early while `skip_ensure_visible`
-            // is set, and that latch is set by any wheel or scrollbar
-            // scroll — and by `ScrollAlign::Top` itself. It is otherwise
-            // cleared only at the top of `handle_key`, and only for the
-            // effective active split. So a plugin revealing focus after
-            // the reader had scrolled with the wheel, or in a split that
-            // is not the active one, would have done nothing at all —
-            // silently, because a reveal that declines to scroll looks
-            // exactly like a reveal that had no need to.
-            let splits = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .splits_for_buffer(buffer_id);
-            if let Some(states) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-            {
-                for leaf in splits {
-                    if let Some(view_state) = states.get_mut(&leaf) {
-                        view_state.viewport.clear_skip_ensure_visible();
-                    }
-                }
-            }
+            // move, or the reveal this alignment *is* may not happen —
+            // and `ScrollAlign::Top` is one of the things that latches
+            // them. See `Editor::unlatch_ensure_visible`.
+            self.unlatch_ensure_visible(buffer_id);
             self.handle_set_buffer_cursor(buffer_id, offset);
             return;
         }

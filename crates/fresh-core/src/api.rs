@@ -1860,6 +1860,29 @@ pub struct WidgetPanelOptions {
     #[serde(default)]
     #[ts(optional)]
     pub auto_focus_first: Option<bool>,
+    /// Keep this panel's focus and its buffer's caret on the same thing.
+    ///
+    /// For a panel mounted into a buffer the reader *reads* — a page
+    /// with a caret in it, laid out by widgets — focus and the cursor
+    /// are two answers to one question: what am I looking at. Left
+    /// independent they contradict each other, and the contradiction is
+    /// not cosmetic: Tab moves focus while the caret stays three cards
+    /// above, and an arrow key moves the caret while Enter still fires
+    /// whatever the last Tab left focused — off screen, unasked for.
+    ///
+    /// Saying so makes the host maintain both directions: a focus move
+    /// (Tab, Shift+Tab, a plugin's `setFocusKey`) seats the caret on the
+    /// focused widget's row, and a cursor move (an arrow key, a page
+    /// key, a click on the text) focuses the widget on the row it landed
+    /// on — or clears focus, when the row carries none. "Nothing
+    /// focused" is a state this option produces constantly, so a panel
+    /// declaring it almost certainly wants `autoFocusFirst: false` too.
+    ///
+    /// `None` reads as `false`: every panel written before this field
+    /// keeps focus and cursor independent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub focus_follows_cursor: Option<bool>,
 }
 
 impl WidgetPanelOptions {
@@ -1867,6 +1890,12 @@ impl WidgetPanelOptions {
     /// names none. Unspecified is the historical `true`.
     pub fn auto_focus_first(&self) -> bool {
         self.auto_focus_first.unwrap_or(true)
+    }
+
+    /// Whether the panel's focus and its buffer's caret track each
+    /// other. Unspecified is the historical `false`.
+    pub fn focus_follows_cursor(&self) -> bool {
+        self.focus_follows_cursor.unwrap_or(false)
     }
 }
 

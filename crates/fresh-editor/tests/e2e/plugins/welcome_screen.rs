@@ -439,3 +439,136 @@ fn opening_a_file_leaves_a_welcome_page_the_reader_was_looking_at() {
          open, as if the plugin still stepped aside"
     );
 }
+
+/// **Tab moves the caret, not just a highlight.** The page is a document
+/// with a real caret in it, so focus and the caret are two answers to
+/// one question — what am I looking at. They used to be able to
+/// disagree: Tab advanced focus down the page while the caret stayed on
+/// the top row, and the reader was left with two "you are here" markers
+/// pointing at different things.
+///
+/// The first Tab stop is the startup switch on the page's own first
+/// row, where the caret already is, so it is the *second* Tab — onto the
+/// first door card — that has a move to make.
+#[test]
+fn tab_brings_the_caret_to_the_control_it_focused() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    for _ in 0..2 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let (_, door_row) = harness
+        .find_text_on_screen("Open a file & go")
+        .expect("the first door card's own row is on screen");
+    let caret = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret");
+    assert_eq!(
+        caret.1,
+        door_row,
+        "Tab focused the first door and left the caret behind on row {} \
+         instead of the card's own row {}. Screen:\n{}",
+        caret.1,
+        door_row,
+        harness.screen_to_string()
+    );
+}
+
+/// **The other direction: moving the caret disarms whatever Tab left
+/// focused.** A click on a paragraph is the reader saying "I am reading
+/// here"; it used to leave the last Tab's target focused — possibly off
+/// screen — so the next Space or Enter fired a control they could not
+/// see. Here that control is the one that changes a persisted setting,
+/// which is exactly the case where a silent activation is worst.
+#[test]
+fn moving_the_caret_onto_prose_disarms_the_focused_control() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    // Tab once: the startup switch takes focus.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    // Click the tagline — prose, carrying no control of any kind.
+    let (col, row) = harness
+        .find_text_on_screen("It grows when your work does")
+        .expect("the tagline is on screen");
+    harness.mouse_click(col + 2, row).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    // The switch says so when it changes, precisely because a persisted
+    // setting must not change silently.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Welcome: hidden"),
+        "Space after clicking on prose toggled the startup switch — the \
+         caret moved and focus stayed behind. Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("[✓] Show this screen on startup"),
+        "the startup switch is no longer on: Space reached it from a \
+         caret parked on a paragraph. Screen:\n{screen}"
+    );
+}
+
+/// **And the caret arriving at an editable field puts you in it.**
+/// Walking down the page with an arrow key onto the finder's input means
+/// the next character typed goes into the finder — no Tab count, no `/`,
+/// nothing to know. The caret is on the field, so the field has focus.
+#[test]
+fn the_caret_arriving_at_the_finder_field_types_into_it() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    // `1` puts the Level 1 banner at the top of the pane, with the caret
+    // on it — the finder card is a few rows below, in the same viewport.
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("find ["))
+        .expect("the finder card is on screen");
+
+    let (_, field_row) = harness
+        .find_text_on_screen("find [")
+        .expect("the finder field is on screen");
+    let caret_row = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret")
+        .1;
+    assert!(
+        caret_row < field_row,
+        "expected the caret above the finder field, got caret row \
+         {caret_row} and field row {field_row}"
+    );
+    // Counted from what is on screen rather than from the card's
+    // structure: how many rows a framed card spends above its first
+    // control is the layout's business, not this test's.
+    for _ in 0..(field_row - caret_row) {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    for ch in "zq".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("zq"))
+        .expect(
+            "the characters went nowhere: arriving at the field with the \
+             caret did not give it focus",
+        );
+}

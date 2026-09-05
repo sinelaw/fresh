@@ -414,8 +414,9 @@ a manual; "It's a project now" is a thing that happens to you.
 | `1` / `2` / `3` | scroll to that level; the path card and depth meter update |
 | `0` | back to the top |
 | scroll / `PgUp` / `PgDn` / mouse wheel | ordinary buffer scrolling; the depth meter follows |
-| `Tab` / `Shift+Tab` | move focus between interactive widgets |
-| `Enter` / `Space` | activate the focused widget |
+| `Tab` / `Shift+Tab` | move focus between interactive widgets — the caret comes with it |
+| arrow / page keys / a click on the text | move the caret; the control on the row it lands on takes focus, and a row with none clears it |
+| `Enter` / `Space` | activate the focused widget — nothing, on a paragraph |
 | click on a fold arrow, or `za` on its row | fold / unfold that card |
 | typing, while the finder is focused | it is a real text input; it really searches |
 | `Ctrl+P`, `F1`, `Alt+O`, the menu bar | all work — this is a normal pane, not a modal |
@@ -711,10 +712,28 @@ Eleven things the wireframes did not know:
 
 6. **Tab moves widget focus, but the host only scrolls the pane for a focused
    *text* widget.** A focused button further down a long document was
-   invisible. The `focus` event now reveals the focused widget's card, using
-   card-header rows read back from the painted buffer — the same read-back
-   `resolveLevelLines` already did for the jump keys. A keyed read-only widget
-   also joins the Tab cycle, so the markdown sample is deliberately keyless.
+   invisible — and the page had two "you are here" markers that could point
+   at different things, since it also carries a real caret. Both are one
+   question, so they are now one answer: the panel is mounted with
+   `focusFollowsCursor`, and the host keeps focus and the caret on the same
+   widget in both directions — a focus move seats the caret on the focused
+   widget's row (which reveals it, for free), and a caret move focuses
+   whatever is on the row it landed on, or clears focus when that row is
+   prose. Three workarounds went with it: the page's own reveal on `focus`,
+   its read-back of card-header rows, and `/` jumping to Level 1 to bring the
+   field it had just focused on screen. A keyed read-only widget also joins
+   the Tab cycle, so the markdown sample is deliberately keyless.
+
+   Two things the host has to get right, both learned from this page.
+   *Membership, not equality*: the three door cards share every one of their
+   rows, so a caret row cannot say which of them has focus — only that one of
+   them does. Re-deriving focus from the row on every caret move would make
+   Tab between two controls of one row impossible, because the move to the
+   second seats the caret on the row they share and the row hands focus back
+   to the first. And *a card anchors at its top*, so seating the caret has to
+   ask the same membership question first: arrowing **up** into a card's last
+   row focuses the card, and moving the caret to the card's top row would
+   throw the reader back over everything they had just walked past.
 
 7. **`getAllThemes()` answers with the registry object, not a list.** Its keys
    are the theme names.

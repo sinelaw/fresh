@@ -970,7 +970,11 @@ export class WidgetPanel {
    *  Pass `{ autoFocusFirst: false }` when "nothing focused" is a real
    *  resting state for the panel, or clearing focus will not clear it:
    *  the next repaint re-seeds it onto whichever widget happens to be
-   *  first in the tab order. */
+   *  first in the tab order. Pass `{ focusFollowsCursor: true }` for a
+   *  panel mounted into a buffer the reader moves a caret through, so
+   *  focus and that caret stay on the same thing in both directions —
+   *  which makes "nothing focused" the common case, so the two options
+   *  are nearly always set together. */
   constructor(
     bufferId: number,
     panelId?: number,

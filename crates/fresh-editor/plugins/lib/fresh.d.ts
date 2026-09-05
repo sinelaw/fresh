@@ -2117,6 +2117,29 @@ type WidgetPanelOptions = {
 	* reads as `true`.
 	*/
 	autoFocusFirst?: boolean;
+	/**
+	* Keep this panel's focus and its buffer's caret on the same thing.
+	*
+	* For a panel mounted into a buffer the reader *reads* — a page
+	* with a caret in it, laid out by widgets — focus and the cursor
+	* are two answers to one question: what am I looking at. Left
+	* independent they contradict each other, and the contradiction is
+	* not cosmetic: Tab moves focus while the caret stays three cards
+	* above, and an arrow key moves the caret while Enter still fires
+	* whatever the last Tab left focused — off screen, unasked for.
+	*
+	* Saying so makes the host maintain both directions: a focus move
+	* (Tab, Shift+Tab, a plugin's `setFocusKey`) seats the caret on the
+	* focused widget's row, and a cursor move (an arrow key, a page
+	* key, a click on the text) focuses the widget on the row it landed
+	* on — or clears focus, when the row carries none. "Nothing
+	* focused" is a state this option produces constantly, so a panel
+	* declaring it almost certainly wants `autoFocusFirst: false` too.
+	*
+	* `None` reads as `false`: every panel written before this field
+	* keeps focus and cursor independent.
+	*/
+	focusFollowsCursor?: boolean;
 };
 type ScrollAlign = "top" | "minimal";
 type WidgetAction = {

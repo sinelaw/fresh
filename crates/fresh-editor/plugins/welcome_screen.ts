@@ -1500,7 +1500,19 @@ async function openWelcome(force: boolean): Promise<void> {
     // first tabbable widget on every repaint — so clearing focus did
     // not clear it, and leaving the finder parked focus on the startup
     // toggle, off screen, where the next Space switched the page off.
-    panel = new WidgetPanel(bufferId, undefined, { autoFocusFirst: false });
+    panel = new WidgetPanel(bufferId, undefined, {
+      autoFocusFirst: false,
+      // The caret and the focus ring are one thing on this page. It is a
+      // document with a real cursor in it, so two independent "where am
+      // I" markers is one too many: Tab used to move focus while the
+      // caret stayed three cards above, and an arrow key used to move
+      // the caret while Enter still fired whatever the last Tab had
+      // left focused — off screen, unasked for. The host maintains both
+      // directions now (`WidgetPanelOptions.focusFollowsCursor`), which
+      // is also what makes "nothing focused" the common case rather
+      // than a corner: most rows of this page are prose.
+      focusFollowsCursor: true,
+    });
     // Re-assert the caret *after* the panel exists. `createVirtualBuffer`
     // took `showCursors: true` and mounting a widget panel then cleared
     // it — panel buffers default to no caret — so the page ran with
@@ -1778,8 +1790,12 @@ registerHandler("welcome_focus_find", () => {
     render();
   }
   lastFocusedWidget = "finderField";
+  // The caret follows the focus (`focusFollowsCursor`), and the reveal
+  // comes with it. Jumping to the Level 1 banner afterwards used to be
+  // the way this got on screen; it would now *move the caret off the
+  // field it just focused*, and the move would take the focus back off
+  // it again.
   panel.setFocusKey("finderField");
-  jumpTo("1");
 });
 
 registerHandler("mode_text_input", (args: { text: string }) => {
@@ -1931,33 +1947,22 @@ editor.on("widget_event", (args) => {
   const k = typeof args.widget_key === "string" ? args.widget_key : "";
   if (k.length > 0) lastFocusedWidget = k;
 
-  // Tab / Shift+Tab move focus; the host scrolls the pane only for a
-  // focused *text* widget, so a focused button further down this
-  // document would otherwise be invisible. Reveal it.
+  // A `focus` event is the host stating where focus now is, and `""` is
+  // one of the things it can state — `focusFollowsCursor` clears focus
+  // every time the caret lands on prose, which is most of this page.
+  // Mirroring only non-empty keys left this proxy naming a widget
+  // nothing was focused on, so `Enter` on a paragraph still opened the
+  // finder's marked hit.
   if (args.event_type === "focus") {
-    // `"minimal"` is the whole of it now: scroll only as far as it takes
-    // to bring the control on screen, and not at all when it is already
-    // there.
-    //
-    // This used to name the enclosing *card* and scroll to its top,
-    // through a `cardForWidget` table mapping key prefixes to cards.
-    // Three bugs in one workaround. The table answered `null` for the
-    // startup switch, the three doors and the three verbs, so those
-    // seven never scrolled at all — from below the fold, seven
-    // consecutive Tabs moved focus with nothing changing on screen.
-    // Where it did answer, it scrolled unconditionally, so tabbing
-    // between two controls of one card moved the page for no reason.
-    // And scrolling to a top means the focused control lands on the top
-    // row with its own card title pushed off above it — a button whose
-    // label you can no longer read — which also stopped Tab and
-    // Shift+Tab being inverses, because a jump forgets where it came
-    // from.
-    //
-    // A minimal reveal has none of those cases. There is nothing left
-    // for the page to know about its own layout.
-    if (bufferId !== null && k.length > 0) {
-      editor.scrollToWidget(bufferId, k, "minimal");
-    }
+    lastFocusedWidget = k;
+    // No reveal here any more. The page used to call `scrollToWidget`
+    // with `"minimal"`, which *is* a caret move — and under
+    // `focusFollowsCursor` the host has already made the only correct
+    // one. Repeating it was actively wrong in the case the host is
+    // careful about: a card several rows tall anchors at its top, so
+    // arrowing up into a door card's last row focused the card and this
+    // then threw the caret back over everything the reader had just
+    // walked past.
     return;
   }
 

@@ -5223,6 +5223,7 @@ impl Editor {
             out.painted,
             out.boxes,
             options.auto_focus_first(),
+            options.focus_follows_cursor(),
         );
         // Mark the buffer as hosting an interactive widget panel so the
         // focus/click paths keep routing focus to it even when it opts out
@@ -5622,6 +5623,12 @@ impl Editor {
                 self.widget_registry
                     .set_focus_key(panel_key, widget_key.clone());
                 self.focus_panel_widget_in_tree(panel_key, &widget_key);
+                // On a `focusFollowsCursor` panel the caret is half of
+                // what focus *is*, so it comes along here too — a plugin
+                // that focuses its search field from a hotkey means the
+                // reader's caret to be in that field. Still no `focus`
+                // event: the plugin asked for this one.
+                self.seat_cursor_on_focused_widget(panel_key, &widget_key);
             }
         }
 
@@ -5777,6 +5784,8 @@ impl Editor {
             // record what they actually rendered under rather than a
             // policy they do not read.
             true,
+            // A floating panel has no buffer caret to track.
+            false,
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
@@ -5880,6 +5889,8 @@ impl Editor {
             // As the dock: `render_floating_spec` seeds focus
             // unconditionally, so record what was rendered under.
             true,
+            // As the dock: no buffer caret of its own to track.
+            false,
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;

@@ -464,6 +464,11 @@ pub struct WidgetPanelState {
     /// This panel's [`WidgetPanelOptions::auto_focus_first`], kept so
     /// every later repaint resolves focus the same way the mount did.
     pub auto_focus_first: bool,
+    /// This panel's [`WidgetPanelOptions::focus_follows_cursor`]: focus
+    /// and the buffer's caret are the same thing, in both directions.
+    /// Read by the host on every focus move and every cursor move; the
+    /// panel itself never acts on it.
+    pub focus_follows_cursor: bool,
     /// Widget the pointer is over, `""` for none.
     ///
     /// Floating and dock panels keep this on their `FloatingWidgetPanel`
@@ -647,6 +652,7 @@ impl WidgetRegistry {
         painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
         auto_focus_first: bool,
+        focus_follows_cursor: bool,
     ) -> Option<WidgetPanelState> {
         // A re-mount under a stationary pointer keeps its highlight:
         // the pointer has not moved, so neither should what it lights.
@@ -667,6 +673,7 @@ impl WidgetRegistry {
                 painted,
                 boxes,
                 auto_focus_first,
+                focus_follows_cursor,
                 hovered_widget_key,
                 hovered_item_key,
             },
@@ -1000,6 +1007,68 @@ impl WidgetRegistry {
             .min()
     }
 
+    /// The panel mounted into `buffer_id` that asked for
+    /// [`WidgetPanelOptions::focus_follows_cursor`](fresh_core::api::WidgetPanelOptions),
+    /// and every widget of it a caret on `row` could be said to be on —
+    /// left to right.
+    ///
+    /// The list is normally empty or one long, and it is a *list*
+    /// because a row can carry several focusables side by side (the
+    /// welcome screen's three door cards share every one of their rows).
+    /// Focus is per widget and a caret is per row, so on such a row the
+    /// two cannot be derived from each other: the caller's question is
+    /// "does the caret still agree with what has focus", which is
+    /// membership, and only when the answer is no does the first entry
+    /// become the new focus.
+    ///
+    /// An empty list is an answer, not the absence of one: a caret
+    /// parked on a paragraph means *nothing* is focused, and a caller
+    /// that read it as "leave focus alone" would keep the last Tab's
+    /// target armed under an Enter aimed at prose. `None` is reserved
+    /// for "no panel here asked for this".
+    ///
+    /// Focusable, not merely hit-testable: `tabbable` is the panel's own
+    /// Tab ring, so a row of a list whose entries are clickable but not
+    /// stops (the finder's results) carries no candidate, exactly as Tab
+    /// would never land there.
+    /// Whether any panel mounted into `buffer_id` asked for
+    /// `focusFollowsCursor`.
+    ///
+    /// The cheap gate in front of [`Self::focus_candidates_at_row`]: it
+    /// is asked on **every cursor move in the editor**, almost all of
+    /// them in ordinary text buffers no panel is mounted into, so it
+    /// allocates nothing and never touches the buffer.
+    pub fn has_focus_follower(&self, buffer_id: BufferId) -> bool {
+        self.panels
+            .values()
+            .any(|p| p.buffer_id == buffer_id && p.focus_follows_cursor)
+    }
+
+    pub fn focus_candidates_at_row(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+    ) -> Option<(PanelKey, Vec<String>)> {
+        let panel_key = self
+            .panels_for_buffer(buffer_id)
+            .into_iter()
+            .find(|pk| self.get(pk).is_some_and(|p| p.focus_follows_cursor))?;
+        let panel = self.get(&panel_key)?;
+        let mut hits: Vec<&HitArea> = panel
+            .hits
+            .iter()
+            .filter(|h| h.buffer_row == row && panel.tabbable.contains(&h.event.widget_key))
+            .collect();
+        hits.sort_by_key(|h| h.byte_start);
+        let mut keys: Vec<String> = Vec::new();
+        for h in hits {
+            if !keys.contains(&h.event.widget_key) {
+                keys.push(h.event.widget_key.clone());
+            }
+        }
+        Some((panel_key, keys))
+    }
+
     pub fn hit_test_row_aware(
         &self,
         buffer_id: BufferId,
@@ -1111,6 +1180,71 @@ mod tests {
         }
     }
 
+    /// A row's candidates are its *focusable* hits, left to right — and
+    /// a row with none answers with an empty list rather than `None`,
+    /// which is how a caret on prose says "nothing is focused".
+    #[test]
+    fn focus_candidates_are_the_rows_tabbables_left_to_right() {
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(1),
+            BufferId(1),
+            empty_spec(),
+            vec![
+                // Declared right-to-left on purpose: the answer is
+                // ordered by where they were painted, not by when they
+                // were recorded.
+                make_hit(0, 20, 30, "door-2"),
+                make_hit(0, 0, 10, "door-1"),
+                // A clickable row that is not a Tab stop — the finder's
+                // results are exactly this — carries no candidate.
+                make_hit(1, 0, 10, "result-3"),
+            ],
+            HashMap::new(),
+            String::new(),
+            vec!["door-1".to_string(), "door-2".to_string()],
+            HashMap::new(),
+            Vec::new(),
+            false,
+            true,
+        );
+
+        assert_eq!(
+            reg.focus_candidates_at_row(BufferId(1), 0).map(|(_, k)| k),
+            Some(vec!["door-1".to_string(), "door-2".to_string()]),
+        );
+        assert_eq!(
+            reg.focus_candidates_at_row(BufferId(1), 1).map(|(_, k)| k),
+            Some(Vec::new()),
+            "a clickable row that is not a Tab stop must not take focus"
+        );
+        assert!(reg.has_focus_follower(BufferId(1)));
+    }
+
+    /// A panel that did not ask for it is invisible to both accessors —
+    /// the whole mechanism is opt-in, and every panel written before it
+    /// keeps focus and caret independent.
+    #[test]
+    fn a_panel_that_did_not_opt_in_has_no_focus_candidates() {
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(2),
+            BufferId(2),
+            empty_spec(),
+            vec![make_hit(0, 0, 10, "btn")],
+            HashMap::new(),
+            String::new(),
+            vec!["btn".to_string()],
+            HashMap::new(),
+            Vec::new(),
+            true,
+            false,
+        );
+
+        assert!(!reg.has_focus_follower(BufferId(2)));
+        assert!(reg.focus_candidates_at_row(BufferId(2), 0).is_none());
+    }
+
     #[test]
     fn hit_test_finds_widget_inside_range() {
         let mut reg = WidgetRegistry::new();
@@ -1125,6 +1259,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         let hit = reg.hit_test(BufferId(7), 0, 8).expect("inside b");
         assert_eq!(hit.0, pk(42));
@@ -1145,6 +1280,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         assert!(
             reg.hit_test(BufferId(0), 0, 5).is_none(),
@@ -1191,6 +1327,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         // Byte 10 is the exclusive end, so `hit_test` alone misses...
         assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
@@ -1233,6 +1370,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         let bcol = 27u32;
         let (_, hit) = reg
@@ -1263,6 +1401,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(3), 0, 2, false)
@@ -1287,6 +1426,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         assert!(reg.hit_test_row_aware(BufferId(4), 3, 0, false).is_none());
     }
@@ -1310,6 +1450,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         // On the overlay surface only the popup's own hits resolve…
         let (_, hit) = reg
@@ -1357,6 +1498,7 @@ mod tests {
             painted,
             Vec::new(),
             true,
+            false,
         );
     }
 
@@ -1421,6 +1563,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         let evicted = reg.mount(
             PanelKey::new("beta", 1),
@@ -1433,6 +1576,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         assert!(evicted.is_none(), "beta:1 must not evict alpha:1");
 
@@ -1463,6 +1607,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         assert!(reg.hit_test(BufferId(2), 0, 1).is_some());
         reg.unmount(&pk(5));
@@ -1483,6 +1628,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
         );
         reg.update(
             &pk(5),

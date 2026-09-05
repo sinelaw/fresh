@@ -212,6 +212,30 @@ impl Editor {
             }
         }
 
+        // 2b. A `focusFollowsCursor` panel keeps its focus on whatever the
+        // caret is on — so every way the caret moves (an arrow key, a page
+        // key, a click on the text) lands here, and the widget under it
+        // takes focus. Before the plugin hooks: a `cursor_moved` handler
+        // that asks the host what has focus should be told the truth.
+        match event {
+            Event::MoveCursor { new_position, .. } => {
+                let buffer_id = self.active_buffer();
+                self.sync_widget_focus_to_cursor(buffer_id, *new_position);
+            }
+            Event::Batch { events, .. } => {
+                if let Some(Event::MoveCursor { new_position, .. }) = events
+                    .iter()
+                    .rev()
+                    .find(|e| matches!(e, Event::MoveCursor { .. }))
+                {
+                    let buffer_id = self.active_buffer();
+                    let position = *new_position;
+                    self.sync_widget_focus_to_cursor(buffer_id, position);
+                }
+            }
+            _ => {}
+        }
+
         // 3. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
 
