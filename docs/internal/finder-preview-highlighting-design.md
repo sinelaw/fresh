@@ -10,10 +10,11 @@ The issue asks for syntax highlighting in the preview buffers the
 grep-style finders show. The answer this doc argues for is not to colour
 the snippet but to **stop composing one**: preview the real file as an
 ephemeral *preview tab*, exactly as the File Explorer does on a single
-click. Highlighting then arrives for free, along with everything else a
-real buffer has. Only the surface that genuinely cannot be a file — the
-results / Quickfix *list*, whose rows come from many files — still needs
-the declared-region mechanism of
+click — through the explorer's own code, not a second implementation of
+it. Highlighting then arrives for free, along with everything else a real
+buffer has. Only the surface that genuinely cannot be a file — the results
+/ Quickfix *list*, whose rows come from many files — still needs the
+declared-region mechanism of
 [`embedded-language-highlighting.md`](embedded-language-highlighting.md).
 
 ## 1. Three surfaces, one of them already right
@@ -47,7 +48,7 @@ What that buffer cannot have, because it is not a file:
 It also duplicates work the host already does well: reading a file, and
 showing part of one.
 
-## 3. The proposal: preview tabs, the File Explorer's semantics
+## 3. The proposal: the File Explorer's preview tabs, shared
 
 The editor already has an ephemeral-open concept with worked-out
 invariants — `Editor::open_file_preview`, what the explorer calls when you
@@ -66,63 +67,100 @@ single-click a file:
 - **The tab says so** — a preview tab renders with the preview indicator,
   so the user can see the difference between "looking" and "opened".
 
-That is precisely the behaviour the ask describes, already built, already
-tested, already the thing users know from the explorer. The finders should
-call it instead of composing a buffer.
+That is the behaviour the ask describes, already built and already tested.
+The finders should **call it**, not re-implement it.
 
-**Prompt-mode finders** (Git Grep, Find References): drop `updatePreview`,
-the `*Preview*` buffer and the preview split entirely. On every selection
-change, preview the selected result's file into the split the search was
-started from, cursor on the match. Enter commits — that is the open the
-finder already performs, and it promotes the preview it is already looking
-at rather than opening a second buffer. Escape restores (§3.2).
+### 3.1 What is shared, and what stays the caller's
 
-**Panel-mode finders** (Diagnostics, the Quickfix list): `navigateOnCursorMove`
-already opens the item's file in the source split as the cursor moves —
-with a *committing* open, so today arrowing down a diagnostics list leaves
-one permanent tab per file. Routing it through the preview open fixes that
-accumulation as a side effect; it is the same bug the issue is about, one
-surface over.
+Read `open_file_preview` as two things stuck together: a **policy header**
+that is the explorer's, and a **preview discipline** that is nobody's in
+particular. The refactor separates them and shares the second.
 
-### 3.1 The one host gap: previewing without bouncing focus
+Caller policy — moves out:
 
-`open_file_preview` targets `preferred_split_for_file()` and leaves
-keyboard focus where it was — that is how the explorer previews into the
-editor pane while the sidebar keeps the keys. A prompt-mode finder is in
-the same position: the prompt is chrome, so the preview can land in the
-editing split under it with no focus change at all.
+- **The `file_explorer.preview_tabs` gate.** It is the explorer's setting
+  and it stays the explorer's; the finder preview is not gated by it and
+  does not read it. (This is also a small cleanup: the key is checked in
+  *two* places today — inside `open_file_preview` and again in the
+  explorer's keyboard-nav path — and after the split there is one check,
+  in the explorer wrapper.) A finder that ever wants an off switch gets
+  its own key; it does not borrow the explorer's.
+- **Which split the preview lands in.** The explorer passes
+  `preferred_split_for_file()` — the unlabeled editor pane, so a sidebar
+  never previews into itself. A finder passes the split it is browsing
+  from.
+- **What to do about an interactive open** (§4, first bullet).
 
-Panel mode is not. It reaches its source split by focusing it and focusing
-back, and a *focus change to another split promotes the preview*
-(`promote_preview_if_not_in_split` — walking away is commitment). A plugin
-doing that dance would commit every preview it opened, which is exactly
-the accumulation we are removing.
+Preview discipline — becomes the shared core, unchanged in behaviour:
+dismissing a popup anchored to the buffer being left, suppressing position
+history for the open, opening with `OpenKind::Preview` so the
+`after_file_open` hook is deferred, telling "opened a new file" from
+"switched to one already open", closing or promoting the outgoing preview
+depending on whether it shared the target split, and anchoring
+`window.preview` as the single source of truth. Roughly:
 
-So the host needs one addition: **a preview open that names its split and
-changes no focus.** Either an options bag on the existing command —
-`openFileInSplit(splitId, path, line, column, { preview: true })` — or a
-sibling `previewFileInSplit`. It routes to the same preview bookkeeping
-(single preview, replace, promote, suppressed history, deferred hook) and
-must not call `set_active_split`. Everything else on the path already
-exists.
+```
+preview_file_into_split(path, target_split, at: Option<(line, col)>) -> Result<BufferId>
+```
 
-### 3.2 Cancel has to restore
+with `open_file_preview(path)` reduced to the explorer's gate plus a call
+to it, and the plugin command a validated split id plus a call to it. No
+second copy of the promote/replace rules, and a fix to any of them lands
+for both surfaces at once.
 
-The explorer never restores: browsing *is* the interaction, and walking
-away commits. A search is different — Escape should put the user back in
-the buffer they were reading, not in the last result they arrowed past.
+Two small generalizations the split argument forces, both of which the
+current code only avoids by making the target split *active* first:
+
+- **A preview open that names its split and changes no focus.**
+  `open_file_preview` reaches its split through
+  `preferred_split_for_file()` inside `open_file`; `openFileInSplit`
+  reaches its split by calling `set_active_split` and then opening. The
+  shared core needs the target as a parameter instead — insert the buffer
+  into that split's view state and make it that split's active buffer,
+  without touching which split is active. The committing
+  `openFileInSplit` can ride the same targeted open afterwards (it keeps
+  the focus change; it just stops being the *mechanism* for targeting).
+- **A jump that names its buffer.** `jump_to_line_column` moves
+  `active_state_mut()`'s cursor via `jump_active_cursor_to`, which is only
+  correct when the previewed buffer is the active one. It needs the target
+  passed in, with today's call sites passing "the active one".
+
+### 3.2 The focus gap, and why panel mode needs it
+
+`open_file_preview` leaves keyboard focus where it was — that is how the
+explorer previews into the editor pane while the sidebar keeps the keys. A
+prompt-mode finder is in the same position: the prompt is chrome, so the
+preview lands in the editing split under it with no focus change at all.
+
+Panel-mode finders are not. `navigateOnCursorMove` reaches its source
+split by focusing it and focusing back, and **a focus change to another
+split promotes the preview** (`promote_preview_if_not_in_split` — walking
+away is commitment). A plugin doing that dance would commit every preview
+it opened, which is exactly the accumulation being removed. Hence the
+no-focus targeted open above; with it, the plugin API is
+`openFileInSplit(splitId, path, line, column, { preview: true })` (or a
+sibling `previewFileInSplit`) and the panel keeps its cursor.
+
+Panel mode is worth fixing in the same pass for its own sake: its
+navigation opens with a *committing* open today, so arrowing down a
+diagnostics list already leaves one permanent tab per file.
+
+### 3.3 Cancel has to restore
+
+The explorer never restores: browsing *is* the interaction there, and
+walking away commits. A search is different — Escape should put the user
+back in the buffer they were reading, not in the last result they arrowed
+past.
 
 Prior art on both sides of the FFI: the Quick Open `:N` goto-line prompt
 snapshots the split's buffer and cursor and restores them when the prompt
 is cancelled, and the Live Grep overlay does the same for its phantom
 preview, closing only the buffers *it* loaded and never one the user
-already had open. The finder wants that behaviour, so cancel is: close the
-current preview if we opened it and it is unmodified, then restore the
-split's previous active buffer and cursor.
-
-Doing this in the plugin is possible (it knows the source split and can
-record the buffer and cursor), but it re-derives a rule the host already
-implements twice. See §6.
+already had open. Cancel is therefore: close the current preview if we
+opened it and it is unmodified, then restore the split's previous active
+buffer and cursor. Confirm is the opposite and needs nothing new — Enter
+already opens the file, which promotes the preview the user is looking at
+rather than opening a second buffer.
 
 ## 4. What it buys, and what it costs
 
@@ -131,8 +169,22 @@ plus the finders finally matching the Live Grep overlay users already see.
 
 Costs, honestly:
 
-- **LSP churn is the real one.** Each preview open is a `didOpen` and each
-  replacement a `didClose`; `open_file_preview` already carries a
+- **An open that wants to ask the user something.** Loading a *large* file
+  whose encoding needs a full pass (non-resynchronizable, or non-UTF-8)
+  does not silently guess: the buffer loader bails with
+  `LargeFileEncodingConfirmation`, and callers turn that into a modal
+  asking whether to load it. That is right for a deliberate open and wrong
+  for a browse — a modal must not appear over a live search because the
+  selection moved onto a `.csv` in Latin-1. The explorer's keyboard-nav
+  preview already takes this position (it logs and skips; the user can
+  still press Enter for the full flow), while its single-click path raises
+  the modal — an inconsistency between two entry points to the same
+  gesture that the refactor should settle rather than copy. The finder
+  behaves like arrow-nav: a browse never prompts, a commit does. One
+  shared classifier for "this open wants the user" instead of a third
+  place that downcasts the error.
+- **LSP churn is the real cost.** Each preview open is a `didOpen` and
+  each replacement a `didClose`; `open_file_preview` already carries a
   `TODO(perf)` saying so for the explorer. A finder previews on every
   selection move *and* on the first result of every search refresh — i.e.
   per keystroke — so this must be debounced (preview only after the
@@ -141,10 +193,7 @@ Costs, honestly:
   server through dozens of open/close pairs. The snippet had no LSP cost
   at all; this is the one place the trade is genuinely worse.
 - **Whole files, not slices.** In practice a wash: `updatePreview` already
-  reads the entire file across the FFI to show eleven lines. But a preview
-  must never *prompt* — the explorer's path can surface a large-file
-  encoding confirmation, and a modal over a live search is unacceptable.
-  A preview that would need confirmation is a preview that is skipped.
+  reads the entire file across the FFI to show eleven lines.
 - **Buffers the user modifies.** Type in a preview and it is promoted, by
   the existing mutation rule; cancel must then leave it alone rather than
   close it.
@@ -152,12 +201,6 @@ Costs, honestly:
   paint empty for a frame. The overlay already lives with this.
 - **File watching.** Each open registers a watch; confirm the close path
   drops it, or a long search session accumulates watchers.
-- **The setting's name.** The preview-tab mechanism is gated by
-  `file_explorer.preview_tabs`, and with it off the explorer falls back to
-  a *committing* open. A finder must not: with previews off it should
-  simply not preview, rather than open a permanent tab per result. The
-  honest fix is to grow the key into an editor-level one and alias the old
-  path.
 - **What is lost from the snippet**: the `path:line:col` header line, the
   `>` marker on the match row, and the deliberate ±5 framing. The gutter,
   the cursor and the status bar carry the first two; the third becomes
@@ -195,23 +238,23 @@ parser sees exactly that.
 
 ## 6. Where this points: one preview primitive
 
-There are three preview implementations in the tree today — the explorer's
-preview tab (host), Live Grep's overlay phantom buffer with its own
-`loaded_buffers` bookkeeping and restore (host), and the Finder's composed
-snippet (plugin). They agree on the hard parts (at most one live preview,
-never close a buffer the user already had, never close a modified one,
-restore what was there) and each states them separately.
+§3.1 shares the preview *discipline* between the explorer and the finders.
+The remaining duplication is one level up: Live Grep's overlay carries its
+own phantom-buffer bookkeeping (`loaded_buffers`, hidden-from-tabs,
+restore-on-close) because it renders its preview into a card rather than a
+split, and the goto-line prompt carries its own snapshot/restore.
 
-The consolidation this design points at is a host-owned **preview session**:
-begin one against a split, preview files into it, end it with either
-*commit* (the user chose a result) or *restore* (they cancelled). The
-explorer's preview tab is that session with no restore; the overlay's
-phantom buffer is that session rendered into a card instead of a split;
-the finder becomes the third consumer instead of the third implementation.
+They agree on the hard parts — at most one live preview, never close a
+buffer the user already had, never close a modified one, restore what was
+there — and each states them separately. The consolidation this points at
+is a host-owned **preview session**: begin one against a split, preview
+files into it, end it with either *commit* (the user chose a result) or
+*restore* (they cancelled). The explorer's preview tab is that session
+with no restore; the overlay's is that session rendered into a card.
 
 Not a prerequisite. §3.1 plus a plugin-side cancel is enough to ship the
-behaviour; the session is what to build if a fourth consumer appears, or
-when the overlay and the finder start disagreeing about an edge case.
+behaviour; the session is what to build when the fourth consumer appears,
+or when the overlay and the finder start disagreeing about an edge case.
 
 ## 7. Properties worth a test
 
@@ -234,9 +277,15 @@ is the natural home):
 7. **The panel case.** Cursor movement in the Diagnostics/Quickfix panel
    previews without stealing focus from the panel and without promoting on
    each move — the regression the focus bounce would cause.
-8. **The list's own colours** (§5): rows colour by their own file; an
-   unknown language is unchanged; the search-match highlight still wins
-   over the syntax colour, mirroring the word-level-diff test.
+8. **The explorer's setting is the explorer's.** With
+   `file_explorer.preview_tabs` off, the explorer stops previewing and the
+   finder's previews are unaffected.
+9. **A browse never prompts.** A result in a large non-UTF-8 file leaves
+   the search running with no preview and no modal; opening it with Enter
+   still gets the confirmation.
+10. **The list's own colours** (§5): rows colour by their own file; an
+    unknown language is unchanged; the search-match highlight still wins
+    over the syntax colour, mirroring the word-level-diff test.
 
 ## 8. Open questions
 
@@ -250,3 +299,6 @@ is the natural home):
 - **Whether `preview: true` rides `openFileInSplit`** or gets its own
   command. An options bag keeps one call site; a sibling command keeps the
   committing open's signature honest about what it does.
+- **Whether the explorer's single click should stop raising the
+  confirmation modal**, matching its own arrow-key path (§4). Settling it
+  is a behaviour change to the explorer, so it wants its own call.
