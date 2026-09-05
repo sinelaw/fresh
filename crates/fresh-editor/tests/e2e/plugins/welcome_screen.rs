@@ -572,3 +572,39 @@ fn the_caret_arriving_at_the_finder_field_types_into_it() {
              caret did not give it focus",
         );
 }
+
+/// **A banner and its opening sentence are two things.** Set tight, the
+/// rule and the line under it read as one two-line heading — the
+/// sentence looked like a subtitle of the rule rather than the first
+/// line of the level it introduces.
+#[test]
+fn a_level_banner_has_air_before_its_description() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("LEVEL 1 · JUST EDIT"))
+        .expect("the Level 1 banner is on screen");
+
+    let (_, rule_row) = harness
+        .find_text_on_screen("LEVEL 1 · JUST EDIT")
+        .expect("the Level 1 banner is on screen");
+    let gap = harness.screen_row_text(rule_row + 1);
+    let description = harness.screen_row_text(rule_row + 2);
+    assert!(
+        gap.trim().is_empty(),
+        "no air between the Level 1 rule and its description — row \
+         {} reads {gap:?}",
+        rule_row + 1
+    );
+    assert!(
+        description.contains("Open a file. Type. Save."),
+        "the Level 1 description is not two rows under its rule — row \
+         {} reads {description:?}. Screen:\n{}",
+        rule_row + 2,
+        harness.screen_to_string()
+    );
+}

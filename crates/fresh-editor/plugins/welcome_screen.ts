@@ -465,6 +465,11 @@ function banner(level: string, sub: string): WidgetSpec {
       }),
       line([{ text: " " + "━".repeat(tail), style: { fg: C.frame } }]),
     ),
+    // A rule and the line under it, set tight, read as one two-line
+    // heading — the description looked like a subtitle *of the rule*
+    // rather than the opening sentence of the level it introduces. The
+    // air is what makes the banner a banner and the sentence prose.
+    blank(),
     line([{ text: "  " + sub, style: { fg: C.body } }]),
     blank(),
   );
