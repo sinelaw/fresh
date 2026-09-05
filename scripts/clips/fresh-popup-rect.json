@@ -264,8 +264,8 @@
       "github.com/sinelaw/fresh"
     ],
     "timing": {
-      "intro": 2.0,
-      "zoom": 0.7,
+      "intro": 0,
+      "zoom": 0,
       "hold": 1.2,
       "pan": 0.3,
       "push": 0.65,
@@ -323,7 +323,7 @@
           0,
           67
         ],
-        "note": "🧱 Old code: hand-stacked",
+        "note": "🤮 Old code: hand-stacked",
         "note_at": "below-right"
       },
       {
@@ -339,7 +339,7 @@
           0,
           66
         ],
-        "note": "🔁 duplicated",
+        "note": "😩 duplicated",
         "note_at": "below-right",
         "transition": "push"
       },
@@ -356,7 +356,7 @@
           0,
           52
         ],
-        "note": "📐 manual",
+        "note": "😓 manual",
         "note_at": "below-right",
         "transition": "push"
       },
