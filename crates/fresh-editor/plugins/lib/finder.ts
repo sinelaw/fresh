@@ -11,7 +11,7 @@
  * - Panel mode for displaying results (Find References)
  * - Live panel mode for reactive data (Diagnostics)
  * - Built-in fuzzy filtering
- * - Automatic preview panel management
+ * - Preview-tab browsing of results (the real file, not a snippet)
  * - Automatic debouncing and process cancellation
  *
  * @example
@@ -34,6 +34,7 @@
  */
 
 import type { Location, RGB } from "./types.ts";
+import { byteLength } from "./text.ts";
 
 // ============================================================================
 // Core Types
@@ -90,7 +91,11 @@ export interface FilterSource<T> {
  */
 export interface PreviewConfig {
   enabled: boolean;
-  /** Lines of context before and after (default: 5) */
+  /**
+   * @deprecated Ignored. A preview is the real file opened as the
+   * editor's preview tab, not a slice of it, so there is no context
+   * window to size — the user can scroll the whole file.
+   */
   contextLines?: number;
 }
 
@@ -104,7 +109,18 @@ export interface FinderConfig<T> {
   /** Transform raw result to display format */
   format: (item: T, index: number) => DisplayEntry;
 
-  /** Preview configuration (default: auto-enabled if format returns location) */
+  /**
+   * Preview results as the selection moves (default: auto-enabled when
+   * entries carry a location).
+   *
+   * The result's file is opened in the split the browse is driven from,
+   * as the editor's single *preview* tab — the File Explorer's
+   * single-click behaviour. Previews replace each other instead of
+   * accumulating, and the tab becomes permanent when the user commits to
+   * it. Set `false` for finders whose entries are not worth opening as
+   * you pass them (a file picker), or that draw their own preview (Live
+   * Grep's floating overlay).
+   */
   preview?: boolean | PreviewConfig;
 
   /** Maximum results to display (default: 100) */
@@ -426,8 +442,13 @@ interface PromptState<T> {
 }
 
 interface PreviewState {
-  bufferId: number | null;
-  splitId: number | null;
+  /** Whether we have previewed anything during this browse — i.e. whether
+   *  there is a preview tab of ours for a cancel to drop. */
+  active: boolean;
+  /** Debounce timer id for the pending preview, if any. */
+  pending: number | null;
+  /** The location the pending timer will preview. */
+  next: { file: string; line: number; column: number } | null;
 }
 
 interface PanelState<T> {
@@ -467,8 +488,9 @@ export class Finder<T> {
 
   // Preview state (shared between prompt and panel modes)
   private previewState: PreviewState = {
-    bufferId: null,
-    splitId: null,
+    active: false,
+    pending: null,
+    next: null,
   };
 
   // Panel mode state
@@ -483,6 +505,9 @@ export class Finder<T> {
     lineToItemIndex: new Map(),
     unsubscribe: null,
   };
+
+  /** Rolling parser-stream id for the panel's per-row syntax regions. */
+  private regionStreamCounter = 0;
 
   // Mode flags
   private isPromptMode = false;
@@ -518,7 +543,6 @@ export class Finder<T> {
   // Handler names (for cleanup)
   private handlerPrefix: string;
   private modeName: string;
-  private previewModeName: string;
 
   // Current source (for prompt mode)
   private currentSource: SearchSource<T> | FilterSource<T> | null = null;
@@ -536,7 +560,6 @@ export class Finder<T> {
 
     this.handlerPrefix = `_finder_${config.id}`;
     this.modeName = `${config.id}-results`;
-    this.previewModeName = `${config.id}-preview`;
 
     // Register handlers
     this.registerPromptHandlers();
@@ -697,6 +720,15 @@ export class Finder<T> {
   private registerPromptHandlers(): void {
     const self = this;
     const id = this.config.id;
+
+    // The debounced preview's timer handler. Timers are host-driven and
+    // named, so this lives beside the other handlers rather than as a
+    // closure the timer captures.
+    (globalThis as Record<string, unknown>)[
+      `${this.handlerPrefix}_preview_tick`
+    ] = function (): void {
+      self.previewTick();
+    };
 
     // Handle prompt input changes
     (globalThis as Record<string, unknown>)[`${this.handlerPrefix}_changed`] =
@@ -880,7 +912,7 @@ export class Finder<T> {
             this.reportFound(parsed.length);
             // Show preview of first result
             if (this.shouldShowPreview()) {
-              await this.updatePreview(this.promptState.entries[0]);
+              this.updatePreview(this.promptState.entries[0]);
             }
           } else {
             this.setSearchStatus("No matches");
@@ -907,7 +939,7 @@ export class Finder<T> {
         if (results.length > 0) {
           this.reportFound(results.length);
           if (this.shouldShowPreview()) {
-            await this.updatePreview(this.promptState.entries[0]);
+            this.updatePreview(this.promptState.entries[0]);
           }
         } else {
           this.setSearchStatus("No matches");
@@ -977,7 +1009,7 @@ export class Finder<T> {
     }
 
     if (entry && this.shouldShowPreview()) {
-      await this.updatePreview(entry);
+      this.updatePreview(entry);
     }
   }
 
@@ -988,8 +1020,10 @@ export class Finder<T> {
       this.promptState.currentSearch = null;
     }
 
-    // Close preview
-    this.closePreview();
+    // The browse ends in a choice: the open below promotes the preview
+    // tab the user is looking at rather than opening a second buffer, so
+    // there is nothing to dismiss — only our own claim to drop.
+    this.commitPreview();
 
     // Handle selection
     if (
@@ -1068,100 +1102,86 @@ export class Finder<T> {
     return this.promptState.entries.some((e) => e.location);
   }
 
-  private getContextLines(): number {
-    if (typeof this.config.preview === "object") {
-      return this.config.preview.contextLines ?? 5;
-    }
-    return 5;
-  }
+  /** How long the selection must sit still before its file is previewed.
+   *  Every preview is a real buffer open — and, for a language server, a
+   *  didOpen/didClose pair — so previewing on each keystroke of a search
+   *  would walk a heavy server through dozens of them. A pause this short
+   *  is invisible to arrow-key browsing and skips every intermediate
+   *  result of fast typing. */
+  private static readonly PREVIEW_DEBOUNCE_MS = 90;
 
-  private async updatePreview(entry: DisplayEntry): Promise<void> {
+  /** Show `entry`'s file in the split the browse started from, as the
+   *  editor's single preview tab — what the File Explorer does on a single
+   *  click. The host owns the hard parts: the previous preview is replaced
+   *  rather than accumulated, a file the user already had open is switched
+   *  to and never demoted, and the tab becomes permanent the moment they
+   *  commit to it. Nothing is composed here, so the preview is the real
+   *  file: syntax colours, gutter, folds, wrap, LSP decoration, and the
+   *  rest of the file to scroll through. */
+  private updatePreview(entry: DisplayEntry): void {
     if (!entry.location) return;
+    const splitId = this.previewTargetSplit();
+    if (splitId === null) return;
 
-    try {
-      const content = await this.editor.readFile(this.editor.authorityPath(entry.location.file));
-      if (!content) return;
-      const lines = content.split("\n");
+    this.previewState.next = {
+      file: entry.location.file,
+      line: entry.location.line,
+      column: entry.location.column ?? 1,
+    };
 
-      const contextLines = this.getContextLines();
-      const startLine = Math.max(0, entry.location.line - 1 - contextLines);
-      const endLine = Math.min(lines.length, entry.location.line + contextLines);
+    if (this.previewState.pending !== null) return;
+    this.previewState.pending = this.editor.setTimeout(
+      Finder.PREVIEW_DEBOUNCE_MS,
+      `${this.handlerPrefix}_preview_tick`
+    );
+  }
 
-      const entries: TextPropertyEntry[] = [];
+  /** The split a preview lands in: the one the browse is being driven
+   *  from. In prompt mode that is the split that was active when the
+   *  prompt opened (the prompt itself is chrome, not a split); in panel
+   *  mode it is the panel's source split. */
+  private previewTargetSplit(): number | null {
+    if (this.isPanelMode) return this.panelState.sourceSplitId;
+    return this.promptState.originalSplitId;
+  }
 
-      // Header
-      entries.push({
-        text: `  ${entry.location.file}:${entry.location.line}:${entry.location.column ?? 1}\n`,
-        properties: { type: "header" },
-      });
-      entries.push({
-        text: "─".repeat(60) + "\n",
-        properties: { type: "separator" },
-      });
+  /** Fire the debounced preview — only the newest location, whatever
+   *  arrived while the timer ran. */
+  private previewTick(): void {
+    this.previewState.pending = null;
+    const next = this.previewState.next;
+    const splitId = this.previewTargetSplit();
+    if (!next || splitId === null) return;
+    this.previewState.next = null;
+    this.previewState.active = true;
+    this.editor.previewFileInSplit(splitId, next.file, next.line, next.column);
+  }
 
-      // Content lines with line numbers
-      for (let i = startLine; i < endLine; i++) {
-        const lineNum = i + 1;
-        const lineContent = lines[i] || "";
-        const isMatchLine = lineNum === entry.location.line;
-        const prefix = isMatchLine ? "> " : "  ";
-        const lineNumStr = String(lineNum).padStart(4, " ");
-
-        entries.push({
-          text: `${prefix}${lineNumStr} │ ${lineContent}\n`,
-          properties: {
-            type: isMatchLine ? "match" : "context",
-            line: lineNum,
-          },
-        });
-      }
-
-      if (this.previewState.bufferId === null) {
-        // Define preview mode
-        this.editor.defineMode(
-          this.previewModeName,
-          [["q", "close_buffer"], ["Escape", "close_buffer"]],
-          true
-        );
-
-        // Create preview split
-        const result = await this.editor.createVirtualBufferInSplit({
-          name: "*Preview*",
-          mode: this.previewModeName,
-          readOnly: true,
-          entries,
-          ratio: 0.5,
-          direction: "vertical",
-          panelId: `${this.config.id}-preview`,
-          showLineNumbers: false,
-          editingDisabled: true,
-        });
-
-        this.previewState.bufferId = result.bufferId;
-        this.previewState.splitId = result.splitId ?? null;
-
-        // Return focus to original split
-        if (this.promptState.originalSplitId !== null) {
-          this.editor.focusSplit(this.promptState.originalSplitId);
-        }
-      } else {
-        // Update existing preview
-        this.editor.setVirtualBufferContent(this.previewState.bufferId, entries);
-      }
-    } catch (e) {
-      this.editor.debug(`[Finder] Failed to update preview: ${e}`);
+  /** End the browse without a choice: drop the preview tab so the split
+   *  goes back to what it was showing. A preview the user edited is kept
+   *  (promoted) by the host — their typing was the commitment. */
+  private closePreview(): void {
+    if (this.previewState.pending !== null) {
+      this.editor.clearInterval(this.previewState.pending);
+      this.previewState.pending = null;
+    }
+    this.previewState.next = null;
+    if (this.previewState.active) {
+      this.previewState.active = false;
+      this.editor.dismissPreview();
     }
   }
 
-  private closePreview(): void {
-    if (this.previewState.bufferId || this.previewState.bufferId == 0) {
-      this.editor.closeBuffer(this.previewState.bufferId);
-      this.previewState.bufferId = null;
+  /** End the browse *with* a choice: the selected file is about to be
+   *  opened for real, which promotes the preview tab showing it. Forget
+   *  our claim on it without dismissing anything. */
+  private commitPreview(): void {
+    if (this.previewState.pending !== null) {
+      this.editor.clearInterval(this.previewState.pending);
+      this.previewState.pending = null;
     }
-    if (this.previewState.splitId || this.previewState.splitId == 0) {
-      this.editor.closeSplit(this.previewState.splitId);
-      this.previewState.splitId = null;
-    }
+    this.previewState.next = null;
+    this.previewState.active = false;
   }
 
   // ==========================================================================
@@ -1222,21 +1242,18 @@ export class Finder<T> {
           `Item ${itemIndex + 1}/${self.panelState.items.length}`
         );
 
-        // Navigate source split to show the item's location (without focus change)
+        // Show the item's location in the source split as the cursor
+        // moves. This is a browse, not an open: it goes through the
+        // preview tab, so stepping down a list of twenty diagnostics
+        // leaves one ephemeral tab rather than twenty permanent ones,
+        // and it changes no focus — so the panel keeps the keys without
+        // the `focusSplit` bounce that used to follow the open (and
+        // that, being a split focus change, would have committed each
+        // preview on the way past).
         if (self.config.navigateOnCursorMove) {
           const entry = self.panelState.entries[itemIndex];
-          if (
-            entry.location &&
-            self.panelState.sourceSplitId !== null &&
-            self.panelState.splitId !== null
-          ) {
-            self.editor.openFileInSplit(
-              self.panelState.sourceSplitId,
-              entry.location.file,
-              entry.location.line,
-              entry.location.column
-            );
-            self.editor.focusSplit(self.panelState.splitId);
+          if (entry.location && self.panelState.sourceSplitId !== null) {
+            self.updatePreview(entry);
           }
         }
       }
@@ -1308,6 +1325,10 @@ export class Finder<T> {
         this.panelState.bufferId = result.bufferId;
         this.panelState.splitId = result.splitId ?? null;
         this.applyPanelHighlighting();
+        this.editor.setSyntaxRegions(
+          result.bufferId,
+          this.panelSyntaxRegions(entries)
+        );
 
         const count = this.panelState.items.length;
         this.editor.setStatus(`${title}: ${count} item${count !== 1 ? "s" : ""}`);
@@ -1326,7 +1347,13 @@ export class Finder<T> {
     const entries = this.buildPanelEntries(title);
     this.panelState.cachedContent = entries.map((e) => e.text).join("");
 
+    // Setting the content clears the buffer's declared regions, so they
+    // are re-declared with every write, never once at creation.
     this.editor.setVirtualBufferContent(this.panelState.bufferId, entries);
+    this.editor.setSyntaxRegions(
+      this.panelState.bufferId,
+      this.panelSyntaxRegions(entries)
+    );
     this.applyPanelHighlighting();
 
     const count = this.panelState.items.length;
@@ -1435,8 +1462,63 @@ export class Finder<T> {
         location: entry.location,
         severity: entry.severity,
         metadata: entry.metadata,
+        // Bytes before the matched line's own text on this row — measured
+        // from the pieces actually emitted, not assumed, because the label
+        // is a different width on every row. `panelSyntaxRegions` hands it
+        // to the host as the region's prefix; see `codeText` for why the
+        // description is measured separately from its two-space gap.
+        codePrefix: desc ? byteLength(prefix + entry.label + "  ") : null,
       },
     };
+  }
+
+  /**
+   * Where the panel's rows carry code, for `editor.setSyntaxRegions`.
+   *
+   * A result list is the one search surface that cannot be a real buffer:
+   * its rows are single lines drawn from many files, each sitting behind a
+   * `path:line:col` label of its own width. So each row is its own region —
+   * its own measured prefix, its own language, and its own parser stream, so
+   * that a row is read as a line standing alone rather than as a
+   * continuation of the unrelated row above it.
+   *
+   * Rows that are not code (the title, file headers, the help footer) and
+   * rows the truncation ate get no region and keep the styling they have.
+   */
+  private panelSyntaxRegions(entries: TextPropertyEntry[]): TsSyntaxRegion[] {
+    const regions: TsSyntaxRegion[] = [];
+    let at = 0;
+    for (const entry of entries) {
+      const start = at;
+      at += byteLength(entry.text);
+      const props = entry.properties as
+        | { type?: string; location?: Location; codePrefix?: number | null }
+        | undefined;
+      if (!props || props.type !== "item") continue;
+      const file = props.location?.file;
+      const prefix = props.codePrefix;
+      if (!file || prefix === null || prefix === undefined) continue;
+      // A row truncated back into its own label has no code left to colour.
+      if (byteLength(entry.text) <= prefix + 1) continue;
+      regions.push({
+        start,
+        end: at,
+        language: file,
+        prefix,
+        // Fresh id per row: an id the host has not parsed under gets a new
+        // parser, which is exactly "this line starts clean". Ids rise
+        // across refreshes so a redeclaration never inherits the last
+        // list's state for the same row number.
+        streams: [this.nextRegionStream()],
+      });
+    }
+    return regions;
+  }
+
+  /** Next never-before-used parser-stream id (wrapped to u32). */
+  private nextRegionStream(): number {
+    this.regionStreamCounter = (this.regionStreamCounter + 1) % 0xffffffff;
+    return this.regionStreamCounter;
   }
 
   private findFirstItemLine(): number {
@@ -1457,6 +1539,10 @@ export class Finder<T> {
 
     const item = this.panelState.items[itemIndex];
     const entry = this.panelState.entries[itemIndex];
+
+    // A choice: the open below promotes whatever the browse was
+    // previewing, so drop the claim rather than dismissing the tab.
+    this.commitPreview();
 
     if (this.config.onSelect) {
       this.config.onSelect(item, entry);
@@ -1480,6 +1566,11 @@ export class Finder<T> {
   }
 
   private closePanel(): void {
+    // The panel is going away without a choice having been made: drop
+    // the preview tab the browse left behind, so closing a diagnostics
+    // list doesn't leave the last file it walked past open.
+    this.closePreview();
+
     // Unsubscribe from provider
     if (this.panelState.unsubscribe) {
       this.panelState.unsubscribe();

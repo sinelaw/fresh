@@ -117,21 +117,42 @@ impl Editor {
     /// on rapid browsing. A future optimization is to keep the LSP session
     /// for the outgoing buffer until the user commits to the new one.
     pub fn open_file_preview(&mut self, path: &Path) -> anyhow::Result<BufferId> {
-        // Dismiss any popup on the buffer being left. The explorer's preview
-        // gesture (mouse single-click *and* keyboard arrow nav both route
-        // through this function) is a focus shift away from the editor pane;
-        // an LSP popup anchored to the previous buffer's cursor must not
-        // follow the user across previews. Doing the cleanup here is the
-        // single dedup point — both input paths get it for free, and the
-        // popup is gone in the next render so a subsequent re-preview of the
-        // same file doesn't resurrect it.
-        if self.active_state().popups.is_visible() {
-            self.clear_popups();
-        }
-
-        // Feature gate — fall back to normal open when preview tabs are off.
+        // Feature gate — the File Explorer's own setting, applied here at the
+        // explorer's entry point. It is deliberately NOT part of
+        // `preview_file`: other browsing surfaces (the finders' result
+        // previews) share the preview *discipline* below without inheriting
+        // the explorer's policy. With the setting off, a click still opens
+        // the file — just permanently.
         if !self.config.file_explorer.preview_tabs {
             return self.open_file(path);
+        }
+        self.preview_file(path)
+    }
+
+    /// The preview discipline itself, with no caller's policy attached:
+    /// open `path` as *the* preview tab of the split the open path picks.
+    ///
+    /// Shared by every surface that browses files rather than opening them —
+    /// the File Explorer (via [`Self::open_file_preview`], which adds its
+    /// setting) and the finders' result previews (via
+    /// [`Self::preview_file_in_split`], which adds a target split). Whoever
+    /// calls it gets the whole set of invariants documented on
+    /// `open_file_preview`, and a fix to any of them lands for all of them.
+    ///
+    /// Errors are the caller's to interpret: a browse should skip a file it
+    /// cannot preview (a large file whose encoding needs confirmation bails
+    /// here rather than prompting), while a deliberate open raises them.
+    pub(crate) fn preview_file(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        // Dismiss any popup on the buffer being left. A preview gesture —
+        // the explorer's single click or arrow nav, a finder moving its
+        // selection — is a focus shift away from the editor pane; an LSP
+        // popup anchored to the previous buffer's cursor must not follow the
+        // user across previews. Doing the cleanup here is the single dedup
+        // point — every input path gets it for free, and the popup is gone in
+        // the next render so a subsequent re-preview of the same file doesn't
+        // resurrect it.
+        if self.active_state().popups.is_visible() {
+            self.clear_popups();
         }
 
         // Decide target split up-front. `open_file_no_focus` will target
@@ -223,6 +244,87 @@ impl Editor {
         self.active_window_mut().preview = Some((target_split, buffer_id));
 
         Ok(buffer_id)
+    }
+
+    /// Preview `path` in a *named* split, at `line`/`column` (1-indexed), and
+    /// leave the active split exactly where it was.
+    ///
+    /// This is what a finder's result preview calls as its selection moves.
+    /// The whole preview discipline is [`Self::preview_file`]'s; the only
+    /// thing added here is the target.
+    ///
+    /// Targeting works by making `target_split` active for the duration of
+    /// the open — the open path routes through `preferred_split_for_file`
+    /// and `set_active_buffer`, both of which read the active split — and
+    /// restoring the previous one afterwards. The swap goes through
+    /// `SplitManager::set_active_split` rather than the editor's focus
+    /// handler on purpose: the focus handler commits the preview when it
+    /// moves between splits ("walking away is commitment"), which is right
+    /// for a user walking away and wrong for a browse that never left. Same
+    /// reason the cursor jump happens inside the window: `jump_to_line_column`
+    /// moves the active split's cursor, and the target is the active split
+    /// only until this returns.
+    pub fn preview_file_in_split(
+        &mut self,
+        path: &Path,
+        target_split: LeafId,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> anyhow::Result<BufferId> {
+        let previous_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.active_split())
+            .ok_or_else(|| anyhow::anyhow!("no split layout"))?;
+
+        let set_active = |editor: &mut Self, split: LeafId| -> bool {
+            editor
+                .windows
+                .get_mut(&editor.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .is_some_and(|mgr| mgr.set_active_split(split))
+        };
+
+        if !set_active(self, target_split) {
+            anyhow::bail!("preview: split {:?} does not exist", target_split);
+        }
+
+        let result = self.preview_file(path);
+        if result.is_ok() && (line.is_some() || column.is_some()) {
+            self.jump_to_line_column(line, column);
+        }
+
+        // Back to where the user actually is. `previous_split` was live a
+        // moment ago; if the open collapsed it (it cannot — a preview open
+        // adds a buffer, it doesn't close splits) the id simply won't set.
+        set_active(self, previous_split);
+
+        result
+    }
+
+    /// Drop the current preview tab, if any: the browse is over and was not
+    /// committed. Closes the preview buffer so the split falls back to what
+    /// it was showing before.
+    ///
+    /// A preview the user has since *modified* is not closed — editing is
+    /// commitment, and by then it is no longer the preview anyway
+    /// (`promote_active_buffer_from_preview` runs on mutation). A close that
+    /// fails for any other reason promotes instead of leaving a buffer
+    /// half-owned, mirroring the replace path in [`Self::preview_file`].
+    pub fn dismiss_preview(&mut self) {
+        let Some((_split, buffer_id)) = self.active_window_mut().preview.take() else {
+            return;
+        };
+        if let Err(e) = self.close_buffer(buffer_id) {
+            tracing::warn!(
+                "preview: could not dismiss preview buffer {:?}, promoting it: {}",
+                buffer_id,
+                e
+            );
+            self.active_window()
+                .fire_deferred_after_file_open(buffer_id);
+        }
     }
 
     // `promote_buffer_from_preview`, `promote_active_buffer_from_preview`,

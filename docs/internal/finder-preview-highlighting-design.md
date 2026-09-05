@@ -2,9 +2,9 @@
 
 > _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
-**Status: PLANNED.** Design for sinelaw/fresh#3196 — the follow-up to
-sinelaw/fresh#3104, which put syntax colours on the source embedded in the
-Review Diff and Git Log panels.
+**Status: IMPLEMENTED**, except where §6 and §8 say otherwise. Design for
+sinelaw/fresh#3196 — the follow-up to sinelaw/fresh#3104, which put syntax
+colours on the source embedded in the Review Diff and Git Log panels.
 
 The issue asks for syntax highlighting in the preview buffers the
 grep-style finders show. The answer this doc argues for is not to colour
@@ -99,31 +99,28 @@ history for the open, opening with `OpenKind::Preview` so the
 depending on whether it shared the target split, and anchoring
 `window.preview` as the single source of truth. Roughly:
 
-```
-preview_file_into_split(path, target_split, at: Option<(line, col)>) -> Result<BufferId>
-```
+`Editor::preview_file` is that discipline, and `open_file_preview` is now
+the explorer's gate plus a call to it. `Editor::preview_file_in_split`
+adds the target split for the finders. No second copy of the
+promote/replace rules, so a fix to any of them lands for both surfaces at
+once.
 
-with `open_file_preview(path)` reduced to the explorer's gate plus a call
-to it, and the plugin command a validated split id plus a call to it. No
-second copy of the promote/replace rules, and a fix to any of them lands
-for both surfaces at once.
+Targeting is where this could have grown a second open path, and did not.
+Everything downstream — `preferred_split_for_file` picking the tab strip,
+`set_active_buffer`, `jump_to_line_column` moving `active_state_mut()`'s
+cursor — reads *the active split*, so threading a target through all of it
+would have meant a parallel set of split-aware entry points. Instead
+`preview_file_in_split` makes the target split active for the length of
+the open and puts the previous one back, and the whole existing path runs
+unchanged inside that window.
 
-Two small generalizations the split argument forces, both of which the
-current code only avoids by making the target split *active* first:
-
-- **A preview open that names its split and changes no focus.**
-  `open_file_preview` reaches its split through
-  `preferred_split_for_file()` inside `open_file`; `openFileInSplit`
-  reaches its split by calling `set_active_split` and then opening. The
-  shared core needs the target as a parameter instead — insert the buffer
-  into that split's view state and make it that split's active buffer,
-  without touching which split is active. The committing
-  `openFileInSplit` can ride the same targeted open afterwards (it keeps
-  the focus change; it just stops being the *mechanism* for targeting).
-- **A jump that names its buffer.** `jump_to_line_column` moves
-  `active_state_mut()`'s cursor via `jump_active_cursor_to`, which is only
-  correct when the previewed buffer is the active one. It needs the target
-  passed in, with today's call sites passing "the active one".
+The swap goes through `SplitManager::set_active_split` rather than the
+editor's focus handler, and that distinction is the load-bearing part: the
+focus handler is where `promote_preview_if_not_in_split` lives, so routing
+through it would commit the preview on the way in and again on the way
+out. `SplitManager` moves the target without the focus semantics, which is
+what "a browse never left" means in code. Keyboard focus is untouched
+either way — it belongs to the prompt or panel, not to a split.
 
 ### 3.2 The focus gap, and why panel mode needs it
 
@@ -132,14 +129,14 @@ explorer previews into the editor pane while the sidebar keeps the keys. A
 prompt-mode finder is in the same position: the prompt is chrome, so the
 preview lands in the editing split under it with no focus change at all.
 
-Panel-mode finders are not. `navigateOnCursorMove` reaches its source
-split by focusing it and focusing back, and **a focus change to another
-split promotes the preview** (`promote_preview_if_not_in_split` — walking
-away is commitment). A plugin doing that dance would commit every preview
-it opened, which is exactly the accumulation being removed. Hence the
-no-focus targeted open above; with it, the plugin API is
-`openFileInSplit(splitId, path, line, column, { preview: true })` (or a
-sibling `previewFileInSplit`) and the panel keeps its cursor.
+Panel-mode finders are not. `navigateOnCursorMove` used to reach its
+source split by focusing it and focusing back, and **a focus change to
+another split promotes the preview** (`promote_preview_if_not_in_split` —
+walking away is commitment), so that dance would have committed every
+preview it opened. The plugin API is therefore its own call,
+`previewFileInSplit(splitId, path, line?, column?)`, which changes no
+focus — and the panel's `focusSplit` bounce after the open is gone with
+it, because there is no longer anything to bounce back from.
 
 Panel mode is worth fixing in the same pass for its own sake: its
 navigation opens with a *committing* open today, so arrowing down a
@@ -152,15 +149,19 @@ walking away commits. A search is different — Escape should put the user
 back in the buffer they were reading, not in the last result they arrowed
 past.
 
-Prior art on both sides of the FFI: the Quick Open `:N` goto-line prompt
-snapshots the split's buffer and cursor and restores them when the prompt
-is cancelled, and the Live Grep overlay does the same for its phantom
-preview, closing only the buffers *it* loaded and never one the user
-already had open. Cancel is therefore: close the current preview if we
-opened it and it is unmodified, then restore the split's previous active
-buffer and cursor. Confirm is the opposite and needs nothing new — Enter
-already opens the file, which promotes the preview the user is looking at
-rather than opening a second buffer.
+Cancel is `dismissPreview()` → `Editor::dismiss_preview`: close the
+preview buffer, which drops the split back to the tab it was showing. It
+needs no snapshot of its own, because the preview tab *is* the record of
+what the browse added — everything else in the split was already there.
+Three cases fall out of the existing rules rather than being special-cased
+here: a file the user already had open never became the preview, so cancel
+leaves it alone; a preview they edited was promoted on the first
+keystroke, so cancel finds no preview and keeps their work; and a close
+that fails for any other reason promotes instead of orphaning the buffer.
+
+Confirm is `commitPreview()` on the plugin side and nothing at all on the
+host's: Enter already opens the file, which promotes the very tab the user
+is looking at rather than opening a second buffer.
 
 ## 4. What it buys, and what it costs
 
@@ -175,22 +176,22 @@ Costs, honestly:
   `LargeFileEncodingConfirmation`, and callers turn that into a modal
   asking whether to load it. That is right for a deliberate open and wrong
   for a browse — a modal must not appear over a live search because the
-  selection moved onto a `.csv` in Latin-1. The explorer's keyboard-nav
-  preview already takes this position (it logs and skips; the user can
-  still press Enter for the full flow), while its single-click path raises
-  the modal — an inconsistency between two entry points to the same
-  gesture that the refactor should settle rather than copy. The finder
-  behaves like arrow-nav: a browse never prompts, a commit does. One
-  shared classifier for "this open wants the user" instead of a third
-  place that downcasts the error.
+  selection moved onto a `.csv` in Latin-1. The mechanism for skipping it
+  is the one the explorer's arrow-key preview already uses, and it is
+  deliberately not a new abstraction: the preview call *returns* the
+  error, and a browsing caller discards it (a debug log, no dialog, no
+  status noise). `preview_file` therefore raises nothing on its own —
+  raising is something a caller adds, which is why the explorer's
+  single-click path can still show the modal while the finders never do.
 - **LSP churn is the real cost.** Each preview open is a `didOpen` and
   each replacement a `didClose`; `open_file_preview` already carries a
   `TODO(perf)` saying so for the explorer. A finder previews on every
   selection move *and* on the first result of every search refresh — i.e.
-  per keystroke — so this must be debounced (preview only after the
-  selection has been still briefly), and the debounce belongs in the
-  Finder where the keystrokes are. Without it, rapid typing walks a heavy
-  server through dozens of open/close pairs. The snippet had no LSP cost
+  per keystroke — so the Finder debounces: the selection must sit still
+  briefly before its file is opened, and only the newest location survives
+  the wait. The delay is short enough to be invisible to arrow-key
+  browsing and long enough that fast typing previews the result the user
+  stops on, not the twenty they typed through. The snippet had no LSP cost
   at all; this is the one place the trade is genuinely worse.
 - **Whole files, not slices.** In practice a wash: `updatePreview` already
   reads the entire file across the FFI to show eleven lines.
@@ -296,9 +297,12 @@ is the natural home):
   source split already reads as a peek pane. Start with the source split.
 - **Debounce interval**, and whether it belongs in the Finder or beside the
   preview open in the host.
-- **Whether `preview: true` rides `openFileInSplit`** or gets its own
-  command. An options bag keeps one call site; a sibling command keeps the
-  committing open's signature honest about what it does.
 - **Whether the explorer's single click should stop raising the
-  confirmation modal**, matching its own arrow-key path (§4). Settling it
-  is a behaviour change to the explorer, so it wants its own call.
+  confirmation modal**, matching its own arrow-key path (§4). Left alone:
+  it is a behaviour change to the explorer, whose click is a deliberate
+  gesture at one file rather than a walk down a list, and it wants its own
+  call.
+- **Whether the committing `openFileInSplit` should route through the same
+  targeted open** now that one exists. It still targets by making the
+  split active, which is harmless for a commit — but it means two ways of
+  saying "in that split" live in the tree.

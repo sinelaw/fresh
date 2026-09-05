@@ -2028,6 +2028,55 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Preview a file in a specific split, as the editor's single
+    /// *preview* (ephemeral) tab — what the File Explorer does on a
+    /// single click, pointed at a split you name.
+    ///
+    /// Use this instead of `openFileInSplit` while the user is *browsing*
+    /// a list of locations — search results, references, diagnostics — and
+    /// call it again as the selection moves. The previous preview is
+    /// replaced rather than piling up as tabs, a file the user already had
+    /// open is switched to and never demoted to a preview, and the buffer
+    /// becomes a permanent tab as soon as they commit to it (open it,
+    /// edit it, or move focus to another split). Focus does not move, so
+    /// the panel or prompt driving the browse keeps the keys.
+    ///
+    /// `line` / `column` are 1-indexed and optional. Returns false only
+    /// when the command channel is dead; a file that cannot be previewed
+    /// (unreadable, or large enough that loading it would have to ask the
+    /// user about its encoding) is skipped quietly on the editor side —
+    /// a browse never raises a dialog. Pair with `dismissPreview` when the
+    /// browse ends without a choice.
+    pub fn preview_file_in_split(
+        &self,
+        split_id: u32,
+        path: String,
+        line: rquickjs::function::Opt<u32>,
+        column: rquickjs::function::Opt<u32>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::PreviewFileInSplit {
+                split_id: split_id as usize,
+                path: PathBuf::from(path),
+                line: line.0.map(|l| l as usize),
+                column: column.0.map(|c| c as usize),
+            })
+            .is_ok()
+    }
+
+    /// Drop the preview tab opened by `previewFileInSplit`, if it is still
+    /// the preview — the browse ended without a choice (the user cancelled
+    /// the prompt), so the split goes back to what it was showing.
+    ///
+    /// A preview the user edited is kept and promoted to a permanent tab:
+    /// their typing was the commitment. Safe to call when there is no
+    /// preview.
+    pub fn dismiss_preview(&self) -> bool {
+        self.command_sender
+            .send(PluginCommand::DismissPreview)
+            .is_ok()
+    }
+
     /// Open `path` as a regular buffer in forced large-file (file-backed)
     /// mode. The file is created (empty) if missing — designed for
     /// buffers that will be filled by a concurrent `spawnProcess` with

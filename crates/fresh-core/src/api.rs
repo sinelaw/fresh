@@ -4115,6 +4115,31 @@ pub enum PluginCommand {
         column: Option<usize>, // 1-indexed, None = go to line start
     },
 
+    /// Preview a file in a specific split, as the editor's single
+    /// *preview* (ephemeral) tab — the File Explorer's single-click
+    /// behaviour, addressed at a split a plugin names.
+    ///
+    /// For browsing a list of locations (search results, references,
+    /// diagnostics) as the selection moves: the previous preview is
+    /// replaced rather than accumulated, a file the user already had open
+    /// is switched to and never demoted, and touching the buffer or
+    /// walking away to another split promotes it to a permanent tab.
+    /// Focus does not move — the split the plugin's own UI lives in keeps
+    /// it — and a file that cannot be previewed without asking the user
+    /// something is skipped rather than prompted for.
+    /// Line and column are 1-indexed, like `OpenFileInSplit`.
+    PreviewFileInSplit {
+        split_id: usize,
+        path: PathBuf,
+        line: Option<usize>,   // 1-indexed, None = go to start
+        column: Option<usize>, // 1-indexed, None = go to line start
+    },
+
+    /// Drop the current preview tab, if there is one — the browse ended
+    /// without a commitment (the user cancelled the prompt). A preview
+    /// they modified is kept, promoted to a permanent tab.
+    DismissPreview,
+
     /// Cancel the active prompt / overlay, equivalent to the user
     /// pressing Escape. Lets a plugin dismiss a prompt it opened.
     CancelPrompt,

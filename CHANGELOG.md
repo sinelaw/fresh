@@ -8,6 +8,9 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
+* **Search results preview the real file** - Git Grep, Find References and the LSP-driven result lists used to show a `*Preview*` buffer holding eleven sliced lines: no syntax colours, no gutter, no folds or wrap, and nothing to scroll past the slice. The result's file is now opened as the editor's **preview tab** - the same ephemeral open the File Explorer does on a single click - so a preview is the file, with everything a buffer has. Browsing a list replaces that one tab instead of accumulating one per result (which the Diagnostics panel used to do on every arrow key), a file you already had open is switched to and never demoted, the tab becomes permanent as soon as you commit to it, and cancelling the search drops it and puts you back where you were. Plugins get the same thing as `editor.previewFileInSplit` / `editor.dismissPreview` (#3196; #836, requested by @66RED99).
+    * The Quickfix and Diagnostics **result lists** - rows drawn from many files, which no single grammar can parse - are syntax highlighted per row instead, through the `editor.setSyntaxRegions` mechanism the diff panels use.
+
 * **Sidebar sections** - the explorer sidebar can now split into stacked, collapsible sections (#3045, requested by @mruff-aeq).
     * **Markdown Table of Contents** - a "Contents" sidebar section for Markdown files.
 * **An interactive Welcome screen** on startup, as a background tab that never displaces your work (#3147).

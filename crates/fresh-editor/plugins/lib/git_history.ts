@@ -207,23 +207,13 @@ export async function fetchCommitShow(
 }
 
 // =============================================================================
-// UTF-8 byte-length helper — the runtime's overlay offsets are in bytes, but
-// JS strings are UTF-16. Colocated here so consumers don't have to redefine it.
+// UTF-8 byte-length helper — moved to `lib/text.ts` when a second family of
+// consumers (the finders' result lists) needed it. Re-exported here so the
+// git plugins' imports keep working and there is still one implementation.
 // =============================================================================
 
-export function byteLength(s: string): number {
-  let b = 0;
-  for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    if (code <= 0x7f) b += 1;
-    else if (code <= 0x7ff) b += 2;
-    else if (code >= 0xd800 && code <= 0xdfff) {
-      b += 4;
-      i++;
-    } else b += 3;
-  }
-  return b;
-}
+import { byteLength } from "./text.ts";
+export { byteLength };
 
 // =============================================================================
 // Commit log entry building
