@@ -16,14 +16,7 @@ use crate::widgets::render::{
 
 pub struct Tree;
 
-/// Columns one pan keystroke moves.
-///
-/// `less(1)`'s left/right step, which is the closest thing to a convention a
-/// terminal has for panning by key — and it has to be wider than the wheel's
-/// three-column notch, because a wheel is turned in handfuls and a key is
-/// pressed one press at a time. The extremes have `S-Home` / `S-End`, so this
-/// only has to be comfortable for reading around a match.
-const PAN_COLUMNS: i32 = 8;
+use crate::widgets::render::PAN_COLUMNS;
 
 impl WidgetImpl for Tree {
     fn on_wheel(
@@ -225,7 +218,21 @@ impl WidgetImpl for Tree {
             // (`Alt`+arrows are back/forward, `Ctrl`+arrows word-wise; both
             // are bound.) Issue #1580.
             "S-Left" | "S-Right" | "S-Home" | "S-End" => {
-                let bounds = crate::widgets::render::pan_bounds(spec);
+                let bounds = crate::widgets::render::pan_bounds(spec, viewport.cols, None);
+                // `S-End` is "the end of the row I am on", not "the end of
+                // the longest row": the pan is shared, rows of unequal length
+                // cannot all sit at their tail at once, and answering with
+                // the longest one leaves the selected row clamped with
+                // keystrokes still to spend before it moves.
+                let selected = resolve(spec, widget_key, &panel.instance_states).selected;
+                let end = usize::try_from(selected)
+                    .ok()
+                    .map(|r| crate::widgets::render::pan_bounds(spec, viewport.cols, Some(r)).1)
+                    // A row with nowhere to go — a file header among match
+                    // rows — would make the key a no-op while the rows around
+                    // it still had a tail to show. Fall back to the longest.
+                    .filter(|&r| r > 0)
+                    .unwrap_or(bounds.1);
                 let delta = match key {
                     "S-Left" => Some(-PAN_COLUMNS),
                     "S-Right" => Some(PAN_COLUMNS),
@@ -238,7 +245,7 @@ impl WidgetImpl for Tree {
                     // its own tail — and no further, so `S-Left` walks back
                     // from the end of the longest row rather than from a
                     // number no content justifies.
-                    _ => Some(bounds.1),
+                    _ => Some(end),
                 };
                 if !panel.pan_h(widget_key, delta, bounds) {
                     // Already home, or already at the value asked for: say so,
@@ -852,6 +859,7 @@ fn render_widget_tree(
                 rows: visible_rows,
                 items: visible_rows / per_node.max(1),
                 offset: scroll,
+                cols: panel_width,
             },
         );
     }

@@ -2741,6 +2741,14 @@ pub struct WindowedBody {
     pub slice_end: usize,
     /// Bytes of leading marker drawn before the slice.
     pub lead_bytes: usize,
+    /// The pans this row can actually use, as a delta from where it rests.
+    ///
+    /// The clamp the paint applied, handed back so the *stored* pan can be
+    /// held to it. Without this the panel keeps a number no row can reach —
+    /// `S-End` overshoots by however far the row rests from its own tail —
+    /// and the reader spends that difference pressing `S-Left` at a screen
+    /// that does not move. `(0, 0)` for a row that fits.
+    pub pan_range: (i32, i32),
 }
 
 /// Bytes of the char at char index `n`, or the length past the end.
@@ -2799,6 +2807,42 @@ fn resting_start_col(body: &str, budget: usize, anchor: Option<(usize, usize)>) 
 /// each row starts where its own content needs it to and they slide together.
 /// It is clamped per row, so panning right stops at the longest row's tail and
 /// panning left brings every row home to column zero.
+/// Where a body rests, and how far it can travel each way from there.
+///
+/// The measuring half of [`window_row_body`], split out because the pan a
+/// panel *stores* has to be held to the same limit the paint would apply —
+/// and a second copy of this arithmetic is exactly the drift that let
+/// `Shift+End` leave a number `Shift+Left` could not walk back.
+fn row_travel(body: &str, budget: usize) -> (usize, usize) {
+    use crate::primitives::display_width::str_width;
+    if budget == 0 {
+        return (0, 0);
+    }
+    let content = body.trim_end_matches(' ');
+    let total = str_width(content);
+    if total <= budget {
+        return (0, 0);
+    }
+    // The right-hand limit owes the leading marker a column; see below.
+    let max_start = total.saturating_sub(budget.saturating_sub(1));
+    (max_start, 0)
+}
+
+/// The pans `body` can use, as a delta from where it rests.
+///
+/// `(0, 0)` for a row that fits: there is nothing to its left and nothing to
+/// its right, and a row that fits never moves at any pan.
+pub fn row_pan_range(body: &str, budget: usize, anchor: Option<(usize, usize)>) -> (i32, i32) {
+    let (max_start, _) = row_travel(body, budget);
+    if max_start == 0 {
+        return (0, 0);
+    }
+    let content = body.trim_end_matches(' ');
+    let rest = resting_start_col(content, budget, anchor).min(max_start);
+    let cap = |v: usize| v.min(i32::MAX as usize) as i32;
+    (-cap(rest), cap(max_start - rest))
+}
+
 pub fn window_row_body(
     body: &str,
     budget: usize,
@@ -2814,6 +2858,7 @@ pub fn window_row_body(
             slice_start: 0,
             slice_end: 0,
             lead_bytes: 0,
+            pan_range: (0, 0),
         };
     }
     // **Trailing padding is not content.** A row arrives padded to the width
@@ -2832,6 +2877,7 @@ pub fn window_row_body(
             slice_start: 0,
             slice_end: body.len(),
             lead_bytes: 0,
+            pan_range: (0, 0),
         };
     }
 
@@ -2875,66 +2921,140 @@ pub fn window_row_body(
         slice_start,
         slice_end,
         lead_bytes: if lead { MARKER.len() } else { 0 },
+        pan_range: row_pan_range(body, budget, anchor),
     }
 }
+
+/// Columns of frozen gutter before a tree row's body, and the budget the
+/// body is then fitted into.
+///
+/// Written twice inside `render_tree_row` already — once as the measured
+/// width of the prefix it builds, once as the indent its continuation lines
+/// take — and [`pan_bounds`] needs the same numbers to say how far a row can
+/// travel. One definition, because a bound that disagrees with the paint by
+/// even a column is a bound the reader feels as a keypress that does nothing.
+fn tree_row_gutter_cols(node: &TreeNode, checkable: bool, indent_cols: usize) -> usize {
+    // The disclosure column is two wide whether or not a glyph is drawn
+    // (glyph + separator space, or two literal spaces), and a checkbox adds
+    // `[v]` and a space. The indent is per level of depth.
+    let checkbox = usize::from(checkable && node.checked.is_some()) * 4;
+    (node.depth as usize) * indent_cols + 2 + checkbox
+}
+
+/// A tree row's text as the paint will see it.
+///
+/// `TextPropertyEntry::text` is empty until `normalize_widths` concatenates
+/// the segments into it, and a row built from segments — which is every
+/// styled row a plugin sends — therefore measures as nothing until then.
+/// Measuring the unnormalised field said a Search & Replace row had no
+/// content and so nowhere to pan.
+fn row_text(entry: &TextPropertyEntry) -> std::borrow::Cow<'_, str> {
+    if entry.segments.is_empty() {
+        std::borrow::Cow::Borrowed(&entry.text)
+    } else {
+        std::borrow::Cow::Owned(entry.segments.iter().map(|s| s.text.as_str()).collect())
+    }
+}
+
+/// Columns one pan step moves — one key press, or one wheel notch.
+///
+/// `less(1)`'s left/right step, the closest thing to a convention a terminal
+/// has for panning sideways. The wheel used to move three, mirroring the
+/// three *lines* a vertical notch moves, but a screen is three times wider
+/// than it is tall: three columns of a hundred-and-twenty is a fifth of what
+/// three lines of forty is, and the gesture read as a dead one. One number
+/// for both, so a reader who pans with the wheel and a reader who pans with
+/// the keyboard are moving the same distance.
+pub const PAN_COLUMNS: i32 = 8;
 
 /// How far, in display columns, `widget` can usefully be panned each way.
 ///
 /// The clamp that decides what is *drawn* is per row and lives in
 /// [`window_row_body`] — that is what keeps rows of different lengths sliding
-/// together instead of drifting apart at the ends. But the pan the panel
-/// *stores* is what the next keystroke moves from, so it has to be bounded by
-/// something the content justifies: `S-End` asks for "past the end of the
-/// longest row", and a nominal bound left a number a reader then had to walk
-/// back eight columns at a time, in silence, before anything moved.
+/// together instead of drifting apart at the ends. But the pan a panel
+/// *stores* is what the next keystroke moves from, so it has to be held to
+/// the same limit: `Shift+End` asks for "past the end of the longest row",
+/// and a number past what any row can reach is a number the reader spends
+/// keystrokes walking back while the screen sits still.
 ///
 /// **Two bounds, because a pan is a delta from where each row rests** — its
 /// own match, not column zero. A row whose match sits 259 columns along a 403
 /// column line can go 259 columns left and only ~80 right, and one number for
-/// both would be wrong on whichever side is shorter by the difference.
+/// both is wrong on whichever side is shorter by the difference.
 ///
-/// The numbers are upper bounds rather than the exact clamp, which only the
-/// paint can compute because only it knows the panel's width. Two
-/// conversions, both safe in that direction: a row's byte length is at least
-/// its column count (a two-column glyph costs three bytes), and an anchor's
-/// char offset is at most its column offset doubled. Both are O(1) per row,
-/// so a pan keystroke over a ten-thousand-row tree stays a length walk rather
-/// than a width walk.
+/// `cols` is the width the window was given. Zero means nobody has laid this
+/// widget out yet, and the answer is `(0, 0)`: a pan before the first frame
+/// has no screen to be measured against, and the first paint will answer it.
 ///
-/// `(0, 0)` for every kind whose paint does not thread the pan, which is
+/// `(0, 0)` also for every kind whose paint does not thread the pan, which is
 /// every kind but `Tree`: a widget that cannot show a pan should not
 /// accumulate one.
-pub fn pan_bounds(widget: &WidgetSpec) -> (i32, i32) {
-    let WidgetSpec::Tree { nodes, .. } = widget else {
+///
+/// `row` narrows the question to one node. The whole tree's range is what the
+/// stored pan is *clamped* to — it must not exclude a row that still has
+/// somewhere to go — but "pan to the end" is a question about the row the
+/// reader is on, and answering it with the longest row's travel leaves their
+/// row clamped at its own tail with keystrokes still to spend before it
+/// moves. Rows of unequal length cannot all be at their end at once; the one
+/// under the selection is the one that should be.
+pub fn pan_bounds(widget: &WidgetSpec, cols: u32, row: Option<usize>) -> (i32, i32) {
+    let WidgetSpec::Tree {
+        nodes,
+        checkable,
+        indent_cols,
+        item_height,
+        card_borders,
+        ..
+    } = widget
+    else {
         return (0, 0);
     };
-    fn row_bytes(e: &TextPropertyEntry) -> usize {
-        // `text` is rebuilt from `segments` when those are present, so the
-        // larger of the two bounds the row in either shape. Trailing padding
-        // is excluded for the same reason `window_row_body` does not elide
-        // it: it is not content, and panning onto it shows nothing.
-        let segs: usize = e
-            .segments
-            .iter()
-            .map(|s| s.text.trim_end_matches(' ').len())
-            .sum();
-        e.text.trim_end_matches(' ').len().max(segs)
+    // Bordered cards lay out inside their box rather than being windowed —
+    // `render_tree_row` returns before the pan is applied — so they offer a
+    // pan nothing.
+    if cols == 0 || (*card_borders && *item_height > 1) {
+        return (0, 0);
     }
-    let (mut left, mut right) = (0usize, 0usize);
-    for n in nodes {
-        let len = row_bytes(&n.text).max(
-            // `extra_lines` pan with the row they continue, so they bound it
-            // too. They carry no anchor of their own and so rest at zero.
-            n.extra_lines.iter().map(row_bytes).max().unwrap_or(0),
-        );
-        // No anchor means the row rests at column zero: nothing to its left,
-        // and its whole length to its right.
-        let rest = n.window_anchor.map(|a| a.start as usize).unwrap_or(0);
-        left = left.max((rest * 2).min(len));
-        right = right.max(len.saturating_sub(rest));
+    let (mut left, mut right) = (0i32, 0i32);
+    for (i, node) in nodes.iter().enumerate() {
+        if row.is_some_and(|r| r != i) {
+            continue;
+        }
+        let r = tree_row_pan_range(node, *checkable, *indent_cols as usize, cols);
+        left = left.min(r.0);
+        right = right.max(r.1);
     }
-    let cap = |v: usize| v.min(i32::MAX as usize) as i32;
-    (cap(left), cap(right))
+    (left, right)
+}
+
+/// One tree row's travel, measured the way `render_tree_row` will fit it.
+fn tree_row_pan_range(
+    node: &TreeNode,
+    checkable: bool,
+    indent_cols: usize,
+    cols: u32,
+) -> (i32, i32) {
+    let gutter = tree_row_gutter_cols(node, checkable, indent_cols);
+    let budget = (cols as usize).saturating_sub(gutter);
+    let w = node.window_anchor.unwrap_or_default();
+    let text = row_text(&node.text);
+    let pinned_bytes = byte_of_char(&text, w.pinned as usize);
+    let (pinned, rest) = text.split_at(pinned_bytes);
+    let anchor = node.window_anchor.map(|a| {
+        (
+            (a.start as usize).saturating_sub(a.pinned as usize),
+            a.len as usize,
+        )
+    });
+    let body_budget = budget.saturating_sub(crate::primitives::display_width::str_width(pinned));
+    let mut r = row_pan_range(rest, body_budget, anchor);
+    // Continuation lines pan with the row they continue, so they widen it.
+    // They carry no anchor of their own and rest at column zero.
+    for line in &node.extra_lines {
+        let c = row_pan_range(&row_text(line), budget, None);
+        r = (r.0.min(c.0), r.1.max(c.1));
+    }
+    r
 }
 
 /// Carry one overlay across a [`WindowedBody`] cut.
@@ -4290,6 +4410,7 @@ pub mod tests {
                 rows,
                 items: rows,
                 offset,
+                cols: 0,
             },
         );
         m
@@ -6283,24 +6404,136 @@ pub mod tests {
             start: 380,
             len: 5,
         });
-        let (left, right) = pan_bounds(&make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t")));
+        let tree = make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t"));
+        let (left, right) = pan_bounds(&tree, 100, None);
         assert!(
-            right < 100,
-            "a match 380 columns along a 400 column row has almost nothing to \
-             its right, but the bound says {right}"
+            (0..20).contains(&right),
+            "a match 380 columns along a 400 column row, in a 100 column \
+             window, has almost nothing to its right — the bound says {right}"
         );
         assert!(
-            left >= 380,
-            "the head of that row is 380 columns to its left and must stay \
-             reachable, but the bound says {left}"
+            (-360..-280).contains(&left),
+            "the head of that row is roughly 320 columns to its left — the \
+             bound says {left}"
+        );
+    }
+
+    /// "Pan to the end" is a question about the row the reader is on.
+    ///
+    /// The pan is shared, so rows of unequal length cannot all sit at their
+    /// tail at once. Answering with the longest row's travel leaves the
+    /// selected row clamped at its own tail with keystrokes still to spend
+    /// before it moves — which is what a reader reports as "Shift+arrow does
+    /// nothing". The whole tree's range still bounds the *stored* value, so
+    /// panning right does not stop early for the longer row.
+    #[test]
+    fn pan_bounds_can_be_asked_about_one_row() {
+        let long = {
+            let mut n = tnode(
+                &format!("{}M{}", "x".repeat(100), "y".repeat(300)),
+                0,
+                false,
+            );
+            n.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+                pinned: 0,
+                start: 100,
+                len: 1,
+            });
+            n
+        };
+        let short = {
+            let mut n = tnode(&format!("{}M{}", "x".repeat(100), "y".repeat(60)), 0, false);
+            n.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+                pinned: 0,
+                start: 100,
+                len: 1,
+            });
+            n
+        };
+        let tree = make_tree(
+            vec![short.clone(), long.clone()],
+            vec!["a", "b"],
+            0,
+            10,
+            vec![],
+            Some("t"),
+        );
+        let cols = 60u32;
+        let whole = pan_bounds(&tree, cols, None).1;
+        let just_short = pan_bounds(&tree, cols, Some(0)).1;
+        let just_long = pan_bounds(&tree, cols, Some(1)).1;
+        assert!(
+            just_short < whole,
+            "the short row reaches its tail before the tree does ({just_short} vs {whole})"
+        );
+        assert_eq!(
+            just_long, whole,
+            "the long row is what sets the tree's own bound"
+        );
+        // And the row-scoped answer is the row's real clamp: panning by it
+        // lands on the tail, one step more shows nothing new.
+        let at = |pan: i32| {
+            render_tree_row(&short, false, false, 1, false, cols, 0, pan)
+                .entry
+                .text
+        };
+        assert_ne!(at(just_short), at(just_short - PAN_COLUMNS));
+        assert_eq!(
+            at(just_short),
+            at(whole),
+            "past its own tail is still its tail"
+        );
+    }
+
+    /// The bound is the clamp the paint would apply, not an estimate of it:
+    /// panning by exactly it lands on the last column the row can show, and
+    /// one more column changes nothing.
+    #[test]
+    fn pan_bounds_agree_with_what_the_window_draws() {
+        let body = format!("{}MATCH{}", "x".repeat(200), "y".repeat(200));
+        let mut node = tnode(&body, 0, false);
+        node.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+            pinned: 0,
+            start: 200,
+            len: 5,
+        });
+        let tree = make_tree(vec![node.clone()], vec!["a"], 0, 10, vec![], Some("t"));
+        let cols = 60u32;
+        let (left, right) = pan_bounds(&tree, cols, None);
+        let at = |pan: i32| {
+            render_tree_row(&node, false, false, 1, false, cols, 0, pan)
+                .entry
+                .text
+        };
+        assert_eq!(
+            at(right),
+            at(right + 40),
+            "past the right bound is not further right"
+        );
+        assert_ne!(at(right), at(right - 8), "the right bound is reachable");
+        assert_eq!(
+            at(left),
+            at(left - 40),
+            "past the left bound is not further left"
+        );
+        assert_ne!(at(left), at(left + 8), "the left bound is reachable");
+        assert!(
+            at(left).contains('x'),
+            "the left bound shows the head: {}",
+            at(left)
+        );
+        assert!(
+            at(right).ends_with('y'),
+            "the right bound shows the tail: {}",
+            at(right)
         );
     }
 
     /// A row with no anchor rests at column zero: nothing to its left, its
-    /// whole length to its right. And a kind whose paint cannot show a pan
-    /// does not accumulate one.
+    /// whole length to its right. A kind whose paint cannot show a pan does
+    /// not accumulate one, and neither does a widget nothing has laid out.
     #[test]
-    fn pan_bounds_without_an_anchor_and_without_a_tree() {
+    fn pan_bounds_without_an_anchor_a_tree_or_a_width() {
         let tree = make_tree(
             vec![tnode(&"x".repeat(400), 0, false)],
             vec!["a"],
@@ -6309,13 +6542,27 @@ pub mod tests {
             vec![],
             Some("t"),
         );
-        assert_eq!(pan_bounds(&tree), (0, 400));
         assert_eq!(
-            pan_bounds(&WidgetSpec::Spacer {
-                cols: 1,
-                flex: false,
-                key: None,
-            }),
+            pan_bounds(&tree, 100, None).0,
+            0,
+            "nothing to the left of column zero"
+        );
+        assert!(pan_bounds(&tree, 100, None).1 > 300);
+        assert_eq!(
+            pan_bounds(&tree, 0, None),
+            (0, 0),
+            "a widget nothing has laid out has no width to be panned against"
+        );
+        assert_eq!(
+            pan_bounds(
+                &WidgetSpec::Spacer {
+                    cols: 1,
+                    flex: false,
+                    key: None,
+                },
+                100,
+                None
+            ),
             (0, 0),
             "a kind that never threads the pan has nothing to pan"
         );
@@ -6327,8 +6574,12 @@ pub mod tests {
     fn pan_bounds_ignore_trailing_padding() {
         let node = tnode(&format!("{}{}", "x".repeat(40), " ".repeat(360)), 0, false);
         assert_eq!(
-            pan_bounds(&make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t"))),
-            (0, 40)
+            pan_bounds(
+                &make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t")),
+                100,
+                None
+            ),
+            (0, 0)
         );
     }
 

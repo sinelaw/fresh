@@ -1140,6 +1140,10 @@ impl Editor {
         Some(crate::widgets::kinds::Viewport {
             items: (window.h as u32).max(1),
             rows: cells as u32,
+            // `w` counts cells on both kinds of window — it is the one part
+            // of an item-scrolling rectangle that is not in items — so it is
+            // the width a sideways pan is measured against.
+            cols: window.w as u32,
         })
     }
 
@@ -2382,7 +2386,8 @@ impl Editor {
         let Some(widget) = crate::widgets::find_widget_by_key(&spec, widget_key) else {
             return false;
         };
-        let bounds = crate::widgets::render::pan_bounds(widget);
+        let viewport = self.widget_viewport(panel_key, widget, widget_key);
+        let bounds = crate::widgets::render::pan_bounds(widget, viewport.cols, None);
         let Some(panel) = self.widget_registry.get_mut(panel_key) else {
             return false;
         };
@@ -3982,6 +3987,7 @@ mod tests {
                     rows: 3,
                     items: 3,
                     offset: 0,
+                    cols: 0,
                 },
             );
 
@@ -4122,7 +4128,11 @@ mod tests {
         };
         assert_eq!(
             Viewport::from_spec(&cards),
-            Viewport { rows: 12, items: 3 },
+            Viewport {
+                rows: 12,
+                items: 3,
+                cols: 0,
+            },
             "twelve rows of four-row cards is three cards"
         );
         let lines = match cards.clone() {
@@ -4154,7 +4164,8 @@ mod tests {
             Viewport::from_spec(&lines),
             Viewport {
                 rows: 12,
-                items: 12
+                items: 12,
+                cols: 0,
             },
             "and a single-line tree's rows are its nodes"
         );

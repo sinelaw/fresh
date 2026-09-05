@@ -3557,15 +3557,28 @@ fn test_search_replace_pan_end_is_walkable_back() {
         "precondition: panned to the tail"
     );
 
-    // The fixture's line is 403 characters, so 60 presses of 8 columns is
-    // more than the whole line — enough to reach the head from any column of
-    // it, and nowhere near enough to walk back an unbounded pan.
-    press_shift(&mut harness, KeyCode::Left, 60);
+    // **One press, not sixty.** The stored pan is held to what the paint can
+    // honour, so `Shift+End` lands *on* the tail rather than past it and the
+    // very next `Shift+Left` moves the row. Asserting on the first press is
+    // what makes this a test of the bound rather than of arithmetic: an
+    // over-estimate of any size fails here, and the earlier one was 8 presses
+    // wide on this fixture.
+    let ended = row_containing(&harness, "long.txt:1");
+    press_shift(&mut harness, KeyCode::Left, 1);
+    assert_ne!(
+        row_containing(&harness, "long.txt:1"),
+        ended,
+        "the first Shift+Left after Shift+End must move the row; the pan \
+         stored by Shift+End is past anything the row can show. Row:\n{ended}"
+    );
 
+    // And the head is still reachable: the bound is a clamp on the stored
+    // value, not a shorter leash.
+    press_shift(&mut harness, KeyCode::Left, 60);
     let panned = row_containing(&harness, "long.txt:1");
     assert!(
         panned.contains("HEADMARK"),
-        "Shift+End left a pan that Shift+Left cannot walk back. Row:\n{panned}\n\
+        "Shift+Left no longer reaches the head of the line. Row:\n{panned}\n\
          Screen:\n{}",
         harness.screen_to_string()
     );

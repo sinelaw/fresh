@@ -222,6 +222,12 @@ pub struct PaintedWindow {
     /// `List`, rows for a `Tree`). The scroll fold's previous value: the
     /// next paint reads it back, clamps it, and republishes it.
     pub offset: u32,
+    /// Width of the window, in display columns.
+    ///
+    /// The horizontal counterpart to `rows`, and the number a sideways pan
+    /// needs: how far a row can travel is a question about the panel's
+    /// width, and nothing but the paint knows it. Zero when unknown.
+    pub cols: u32,
     // Rows one item occupies was here — the measured card band. It was the
     // fourth of the four numbers S1 moved out of `WidgetInstanceState`, and
     // the only one that never acquired a reader on this side: the division
@@ -551,6 +557,7 @@ impl WidgetPanelState {
         self.painted.get(key).map(|w| super::kinds::Viewport {
             rows: w.rows,
             items: w.items.max(1),
+            cols: w.cols,
         })
     }
 
@@ -575,6 +582,7 @@ impl WidgetPanelState {
                 rows: viewport.rows,
                 items: viewport.items,
                 offset: 0,
+                cols: 0,
             })
     }
 
@@ -595,25 +603,34 @@ impl WidgetPanelState {
     /// and clamping per row, is what keeps rows of different lengths sliding
     /// together instead of drifting apart at the ends.
     ///
-    /// `bounds` is what the widget's own content can justify — how far left
-    /// and right of where its rows rest there is anything to see — and it is
-    /// not decoration. A stored pan is what the *next* keystroke moves from,
-    /// so a value no row can reach is a value the reader has to walk back
-    /// through in silence: "jump to the end" followed by a value of
-    /// `i32::MAX / 4` cost sixty-seven million presses to undo. Past the
-    /// bound the pan stops moving and this returns `false`, which is also
-    /// what stops a dead keypress from being swallowed and repainting the
-    /// panel for nothing. See [`pan_bounds`].
+    /// **The bound comes from the last paint, and it has to.** A stored pan
+    /// is what the *next* keystroke moves from, so a value no row on screen
+    /// can reach is a value the reader has to press their way back through
+    /// against a screen that does not move. Only the paint knows the panel's
+    /// width, so only the paint can say where the travel ends; it publishes
+    /// that as [`PaintedWindow::pan_range`] and this holds both the current
+    /// value and the new one to it. `Shift+End` therefore lands *on* the
+    /// tail rather than past it, and a run of `Shift+Right` at the tail
+    /// accumulates no debt for `Shift+Left` to pay off.
+    ///
+    /// `bounds` is the fallback for the frame before any paint — what the
+    /// spec alone can justify, from [`pan_bounds`]. It is an over-estimate
+    /// by construction, which is exactly why it cannot be the only bound.
     ///
     /// [`pan_bounds`]: crate::widgets::render::pan_bounds
+    /// [`PaintedWindow::pan_range`]: PaintedWindow::pan_range
     pub fn pan_h(&mut self, key: &str, delta: Option<i32>, bounds: (i32, i32)) -> bool {
-        let (left, right) = (bounds.0.max(0), bounds.1.max(0));
-        let cur = self.h_pan(key);
+        let (left, right) = (bounds.0.min(0).abs(), bounds.1.max(0));
+        // Clamped on the way in as well as on the way out: a stored value
+        // from a wider window, or from the estimate used before the first
+        // paint, is one the reader would otherwise have to press their way
+        // back through against a screen that does not move.
+        let cur = self.h_pan(key).clamp(-left, right);
         let next = match delta {
             Some(d) => cur.saturating_add(d).clamp(-left, right),
             None => 0,
         };
-        if next == cur {
+        if next == cur && next == self.h_pan(key) {
             return false;
         }
         if next == 0 {

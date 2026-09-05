@@ -531,7 +531,16 @@ pub fn mode_key_disposition(
         // a fix to the one thing that was broken.
         let plain = !event
             .modifiers
-            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
+            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL);
+        // **Control is not plain.** It used to be — `plain` excluded only
+        // Shift and Alt — and with a non-text widget focused (a results tree,
+        // say) `Ctrl+Left` fell through here, resolved to `move_word_left`,
+        // and moved the *panel document's* own cursor: a cursor nothing
+        // draws, whose line and column the status bar then reported changing
+        // under a keystroke that visibly did nothing at all. A focused field
+        // gets its word-wise motion from `widget_panel_key`, which names the
+        // chord `C-Left` for the kind to answer.
+        let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
         let nav = matches!(
             event.code,
             KeyCode::Left
@@ -540,10 +549,12 @@ pub fn mode_key_disposition(
                 | KeyCode::Down
                 | KeyCode::Home
                 | KeyCode::End
-                | KeyCode::PageUp
-                | KeyCode::PageDown
         );
-        if plain && nav {
+        // **`Ctrl`+the page keys are not navigation-in-a-document.** They are
+        // `prev_buffer` / `next_buffer` — switching tabs, which a reader
+        // expects to work from anywhere, panel included.
+        let page = matches!(event.code, KeyCode::PageUp | KeyCode::PageDown);
+        if (plain && (nav || page)) || (ctrl && page) {
             let action = kb.resolve(event, KeyContext::Normal);
             if action != Action::None {
                 return ModeKeyDisposition::Forward(action);
@@ -824,6 +835,83 @@ mod tests {
                 &event(KeyCode::Char('o'), KeyModifiers::CONTROL)
             ),
             ModeKeyDisposition::Block
+        );
+    }
+
+    #[test]
+    /// Ctrl+nav must not reach the buffer from a text-input mode.
+    ///
+    /// It used to count as "plain" — `plain` excluded only Shift and Alt — so
+    /// `Ctrl+Left` in a mode like search-replace fell through to
+    /// `kb.resolve(…, Normal)`, resolved to `move_word_left`, and moved the
+    /// *panel document's* own cursor: a cursor nothing draws, whose line and
+    /// column the status bar then reported changing under a keystroke that
+    /// visibly did nothing at all. A focused field gets its word-wise motion
+    /// from `widget_panel_key` instead, which names the chord for the kind.
+    fn text_input_mode_keeps_ctrl_nav_off_the_buffer() {
+        let kb = resolver();
+        let view = ModeKeyView {
+            effective_mode: Some("search-replace-list".to_string()),
+            allows_text_input: true,
+            global_mode_read_only: None,
+        };
+        for code in [
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Home,
+            KeyCode::End,
+        ] {
+            assert_eq!(
+                mode_key_disposition(&view, &[], &kb, &event(code, KeyModifiers::CONTROL)),
+                ModeKeyDisposition::Block,
+                "Ctrl+{code:?} must not reach the buffer from a text-input mode"
+            );
+        }
+        // Plain navigation still forwards, which is what this arm exists for.
+        assert!(matches!(
+            mode_key_disposition(&view, &[], &kb, &event(KeyCode::Down, KeyModifiers::NONE)),
+            ModeKeyDisposition::Forward(_)
+        ));
+        // And the page keys keep their Control: `Ctrl+PageUp` is
+        // `prev_buffer` — switching tabs, not moving a cursor — and a reader
+        // expects that from a panel too.
+        let page_up = mode_key_disposition(
+            &view,
+            &[],
+            &kb,
+            &event(KeyCode::PageUp, KeyModifiers::CONTROL),
+        );
+        assert!(
+            matches!(
+                page_up,
+                ModeKeyDisposition::Run(Action::PrevBuffer)
+                    | ModeKeyDisposition::Forward(Action::PrevBuffer)
+            ),
+            "Ctrl+PageUp switches buffers and must keep doing so, but resolved to {page_up:?}"
+        );
+    }
+
+    /// The word-wise half of the same chord: a focused field is reached
+    /// through the panel's own key vocabulary, where `C-Left` names it.
+    #[test]
+    fn a_focused_field_still_gets_its_word_wise_motion() {
+        let kb = resolver();
+        let view = WidgetPanelView {
+            non_modal: true,
+            pane: true,
+            focus_key: Some("search".to_string()),
+            focused_widget_is_text: true,
+            page: false,
+        };
+        assert_eq!(
+            widget_panel_key(&view, &kb, KeyCode::Left, KeyModifiers::CONTROL),
+            WidgetKeyOutcome::SmartKey("C-Left".to_string())
+        );
+        assert_eq!(
+            widget_panel_key(&view, &kb, KeyCode::Right, KeyModifiers::CONTROL),
+            WidgetKeyOutcome::SmartKey("C-Right".to_string())
         );
     }
 
