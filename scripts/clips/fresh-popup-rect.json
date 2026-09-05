@@ -59,10 +59,14 @@
     "cols": 72,
     "title": "fresh · one popup, near an edge",
     "labels": {"solo": "BEFORE"},
+    "views": {
+      "old": {"rows": [2, 24], "cols": [0, 62]},
+      "new": {"rows": [2, 21], "cols": [0, 59]}
+    },
     "intro_caption": ["Put a popup on screen, near an edge",
                       "the same job, two years apart"],
     "outro_caption": ["fresh", "github.com/sinelaw/fresh"],
-    "timing": {"intro": 2.0, "zoom": 0.7, "hold": 1.5, "pan": 0.35,
+    "timing": {"intro": 2.0, "zoom": 0.7, "hold": 1.5, "pan": 0.3,
                "push": 0.9, "outro": 1.0},
     "theme": {
       "bg": [21, 22, 30],
@@ -74,45 +78,45 @@
       "after": [80, 250, 123]
     },
     "annotations": [
-      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
        "head": "app/theme_inspect.rs",
-       "rows": [2, 9], "cols": [6, 31],
+       "rows": [2, 9], "cols": [0, 23],
        "note": "five numbers in, one rect out", "note_at": "below-right"},
 
-      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
        "head": "app/theme_inspect.rs",
-       "rows": [9, 14], "cols": [10, 54],
+       "rows": [9, 14], "cols": [0, 46],
        "note": "off the right edge: shove it left", "note_at": "below-right"},
 
-      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
        "head": "app/theme_inspect.rs",
-       "rows": [14, 19], "cols": [10, 54],
+       "rows": [14, 19], "cols": [0, 46],
        "note": "off the bottom: flip it above", "note_at": "below-right"},
 
-      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
        "head": "app/theme_inspect.rs",
-       "rows": [19, 20], "cols": [29, 69],
+       "rows": [19, 20], "cols": [19, 62],
        "note": "then clamp, twice more", "note_at": "below-left"},
 
-      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
        "transition": "push",
        "head": "view/shell/theme_info.rs",
-       "rows": [4, 5], "cols": [14, 55],
+       "rows": [4, 5], "cols": [7, 47],
        "note": "where it wants to be", "note_at": "below-right"},
 
-      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
        "head": "view/shell/theme_info.rs",
-       "rows": [5, 7], "cols": [14, 36],
+       "rows": [5, 7], "cols": [7, 28],
        "note": "the flip and the clamp, named", "note_at": "below-right"},
 
-      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
        "head": "view/shell/theme_info.rs",
-       "rows": [7, 15], "cols": [14, 40],
+       "rows": [7, 15], "cols": [7, 39],
        "note": "dismissal comes with it", "note_at": "below-right"},
 
-      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
        "head": "view/shell/theme_info.rs",
-       "rows": [16, 17], "cols": [14, 66],
+       "rows": [16, 17], "cols": [7, 59],
        "note": "nothing counts lines for a height", "note_at": "below-right"}
     ]
   },
