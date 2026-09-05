@@ -165,6 +165,31 @@
     "rows": 40,
     "cols": 72,
     "title": "fresh · one popup, declared",
+    "title_card": {
+      "lines": [
+        {
+          "text": "Horrible Code",
+          "effect": "sick",
+          "at": 0.04
+        },
+        {
+          "text": "to",
+          "at": 0.34,
+          "small": true
+        },
+        {
+          "text": "Declarative",
+          "effect": "shine",
+          "at": 0.5
+        }
+      ],
+      "footer": {
+        "added": 63164,
+        "removed": 27662,
+        "note": "One example, out of two hundred and sixteen files",
+        "at": 0.62
+      }
+    },
     "labels": {
       "solo": "BEFORE"
     },
@@ -222,7 +247,7 @@
       "after": {
         "rows": [
           2,
-          23
+          29
         ],
         "cols": [
           0,
@@ -244,7 +269,8 @@
       "hold": 1.2,
       "pan": 0.3,
       "push": 0.65,
-      "outro": 1.0
+      "outro": 1.0,
+      "title": 3.2
     },
     "theme": {
       "bg": [
@@ -289,7 +315,6 @@
         "view": "boxes",
         "label": "BEFORE",
         "tone": "before",
-        "head": "app/chrome/theme_info.rs",
         "rows": [
           5,
           20
@@ -298,7 +323,7 @@
           0,
           67
         ],
-        "note": "three rectangles, and two z numbers",
+        "note": "☠ hand-stacked",
         "note_at": "below-right"
       },
       {
@@ -307,7 +332,6 @@
         "label": "BEFORE",
         "tone": "before",
         "transition": "push",
-        "head": "app/chrome/theme_info.rs",
         "rows": [
           7,
           25
@@ -316,7 +340,7 @@
           0,
           66
         ],
-        "note": "dismissal, written twice",
+        "note": "↻ duplicated",
         "note_at": "below-right"
       },
       {
@@ -325,7 +349,6 @@
         "label": "BEFORE",
         "tone": "before",
         "transition": "push",
-        "head": "app/theme_inspect.rs",
         "rows": [
           6,
           17
@@ -334,7 +357,7 @@
           0,
           52
         ],
-        "note": "it counts its own lines for a height",
+        "note": "⚠ manual",
         "note_at": "below-right"
       },
       {
@@ -343,7 +366,6 @@
         "label": "BEFORE",
         "tone": "before",
         "transition": "push",
-        "head": "app/theme_inspect.rs",
         "rows": [
           6,
           18
@@ -352,7 +374,7 @@
           0,
           62
         ],
-        "note": "and the hit-test path counts them again",
+        "note": "☹ again",
         "note_at": "below-right"
       },
       {
@@ -361,7 +383,6 @@
         "label": "BEFORE",
         "tone": "before",
         "transition": "push",
-        "head": "app/theme_inspect.rs",
         "rows": [
           11,
           22
@@ -370,7 +391,7 @@
           0,
           62
         ],
-        "note": "the edges, by hand",
+        "note": "☠ again",
         "note_at": "below-right"
       },
       {
@@ -379,7 +400,40 @@
         "label": "AFTER",
         "tone": "after",
         "transition": "push",
-        "head": "view/shell/theme_info.rs",
+        "rows": [
+          4,
+          20
+        ],
+        "cols": [
+          0,
+          62
+        ],
+        "note": "★ declarative and clean",
+        "note_at": "below-right",
+        "hold": 1.6
+      },
+      {
+        "shot": "after",
+        "view": "after",
+        "label": "AFTER",
+        "tone": "after",
+        "rows": [
+          4,
+          20
+        ],
+        "cols": [
+          0,
+          62
+        ],
+        "note": "✓ position",
+        "note_at": "below-right",
+        "hold": 1.6
+      },
+      {
+        "shot": "after",
+        "view": "after",
+        "label": "AFTER",
+        "tone": "after",
         "rows": [
           6,
           7
@@ -388,7 +442,7 @@
           8,
           48
         ],
-        "note": "where it wants to be",
+        "note": "✓ layout",
         "note_at": "below-right"
       },
       {
@@ -396,7 +450,6 @@
         "view": "after",
         "label": "AFTER",
         "tone": "after",
-        "head": "view/shell/theme_info.rs",
         "rows": [
           7,
           9
@@ -405,7 +458,7 @@
           8,
           28
         ],
-        "note": "and what to do at the edge",
+        "note": "✓ input handling",
         "note_at": "below-right"
       },
       {
@@ -413,7 +466,6 @@
         "view": "after",
         "label": "AFTER",
         "tone": "after",
-        "head": "view/shell/theme_info.rs",
         "rows": [
           9,
           17
@@ -422,7 +474,7 @@
           8,
           40
         ],
-        "note": "dismissal, declared",
+        "note": "✓ sizing",
         "note_at": "below-right"
       },
       {
@@ -430,7 +482,6 @@
         "view": "after",
         "label": "AFTER",
         "tone": "after",
-        "head": "view/shell/theme_info.rs",
         "rows": [
           18,
           19
@@ -439,10 +490,17 @@
           8,
           60
         ],
-        "note": "and nothing counts lines",
+        "note": "✓ sizing",
         "note_at": "below-right"
       }
-    ]
+    ],
+    "note_size": 54,
+    "vignette": {
+      "edge": 0.16,
+      "side": 0.05,
+      "blur": 8,
+      "fade": 0.62
+    }
   },
   "encode": {
     "crf": 18,
