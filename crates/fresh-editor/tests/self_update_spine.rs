@@ -109,12 +109,17 @@ fn place_binary(to: &Path) {
 /// writes a private name and renames into place, so the losers of the race
 /// overwrite identical content and any reader holds a complete file.
 ///
+/// The cache is only reused while it is newer than the binary it was stripped
+/// from. Without that check a rebuilt `fresh` is silently ignored and every
+/// case here tests the previous build — which is worse than no cache: the
+/// tests still pass, against code that is no longer the code.
+///
 /// Falls back to the unstripped binary if `strip` is unavailable.
 fn stripped_binary() -> PathBuf {
     let original = PathBuf::from(env!("CARGO_BIN_EXE_fresh"));
     let cache_dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let cached = cache_dir.join("fresh-stripped");
-    if cached.is_file() {
+    if is_fresher(&cached, &original) {
         return cached;
     }
 
@@ -132,6 +137,20 @@ fn stripped_binary() -> PathBuf {
     }
     let _ = std::fs::remove_file(&staging);
     original
+}
+
+/// Whether `cached` exists and was written after `source` — i.e. whether it
+/// still describes the binary under test.
+///
+/// A missing timestamp on either side answers "no": re-stripping costs a few
+/// seconds, and reusing a cache we cannot date costs a green run that proved
+/// nothing.
+fn is_fresher(cached: &Path, source: &Path) -> bool {
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (modified(cached), modified(source)) {
+        (Some(cached), Some(source)) => cached >= source,
+        _ => false,
+    }
 }
 
 /// Build the release archive in whichever format this target publishes, using
@@ -227,6 +246,80 @@ fn report(what: &str, out: &Output) -> String {
     )
 }
 
+/// Serve the fabricated release the way GitHub serves a real one: the version
+/// comes from a 302 on `releases/latest`, and the assets sit beside it under
+/// `releases/download/vX.Y.Z/`. No release feed at all — this server answers
+/// 404 for anything else, so a run that reached for one fails here.
+fn serve_redirect(archive: Vec<u8>, asset: String, sha256_line: String) -> String {
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("bind");
+    let port = server.server_addr().to_ip().unwrap().port();
+    let base = format!("http://127.0.0.1:{port}");
+    let location = format!("{base}/releases/tag/v{NEW_VERSION}");
+
+    std::thread::spawn(move || {
+        for request in server.incoming_requests() {
+            let url = request.url().to_string();
+            let response = if url == "/releases/latest" {
+                // Absolute `Location`, the way GitHub answers it.
+                tiny_http::Response::from_data(Vec::new())
+                    .with_status_code(302)
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"Location"[..], location.as_bytes())
+                            .expect("header"),
+                    )
+            } else if url.ends_with(&format!("{asset}.sha256")) {
+                tiny_http::Response::from_data(sha256_line.clone().into_bytes())
+                    .with_status_code(200)
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"X-Served"[..], &b"sha256"[..])
+                            .expect("header"),
+                    )
+            } else if url.ends_with(&asset) {
+                tiny_http::Response::from_data(archive.clone())
+                    .with_status_code(200)
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"X-Served"[..], &b"asset"[..])
+                            .expect("header"),
+                    )
+            } else {
+                tiny_http::Response::from_data(b"not found".to_vec())
+                    .with_status_code(404)
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"X-Served"[..], &b"none"[..])
+                            .expect("header"),
+                    )
+            };
+            let _ = request.respond(response);
+        }
+    });
+
+    base
+}
+
+/// Run the installed binary with only the download base pointed at the fake
+/// release, so the version is resolved through the redirect beside it — the
+/// route a real install takes, and the one that spends no API budget.
+///
+/// Deliberately no `--releases-url`: naming a feed is what takes the redirect
+/// out of play. If the redirect route ever regresses, this run falls through
+/// to GitHub's real feed, reports the real version, and the assertions below
+/// fail on the version comparison. That is the failure, not a flake.
+fn run_update_via_redirect(install: &Install, base: &str, extra: &[&str]) -> Output {
+    let mut cmd = Command::new(&install.exe);
+    cmd.arg("--cmd")
+        .arg("update")
+        .arg("--download-base")
+        .arg(format!("{base}/releases/download"))
+        .args(extra)
+        .env("HOME", install.root.join("home"))
+        .env("XDG_DATA_HOME", install.root.join("home"))
+        .env("XDG_CONFIG_HOME", install.root.join("home"))
+        .env_remove("FRESH_INSTALL_CHANNEL")
+        .env_remove("FRESH_RELEASES_URL")
+        .env_remove("FRESH_DOWNLOAD_BASE");
+    cmd.output().expect("run fresh --cmd update")
+}
+
 /// Set up an install serving a well-formed release, ready to update.
 fn ready(with_receipt: bool) -> (Install, String) {
     let install = install(with_receipt);
@@ -264,6 +357,67 @@ fn fresh_updates_itself_in_place() {
         .output()
         .expect("run replacement");
     assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "updated-ok");
+}
+
+/// The same update, resolved the way every real install resolves it: through
+/// the `releases/latest` redirect rather than the API feed.
+///
+/// This is the production route — `fresh --cmd update` asks GitHub's web host
+/// for the version precisely so an exhausted API rate limit cannot refuse an
+/// update — and the server here answers 404 to everything but the redirect and
+/// the assets, so a run that fell back to a feed could not succeed.
+#[test]
+fn fresh_updates_itself_through_the_release_redirect() {
+    let install = install(true);
+    let archive = build_archive(&install);
+    let line = sha256_line(&archive, &install.asset);
+    let base = serve_redirect(archive, install.asset.clone(), line);
+    let before = std::fs::read(&install.exe).unwrap();
+
+    let out = run_update_via_redirect(&install, &base, &["--yes"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        report("update through the redirect failed", &out)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains(NEW_VERSION),
+        "{}",
+        report("the redirect did not name the release", &out)
+    );
+
+    let after = std::fs::read(&install.exe).unwrap();
+    assert_ne!(before, after, "binary was not replaced");
+    assert_eq!(after, NEW_BINARY, "binary is not the payload we published");
+
+    let ran = Command::new(&install.exe)
+        .output()
+        .expect("run replacement");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "updated-ok");
+}
+
+/// `--check` over the same route, which is what the editor's daily check does:
+/// it must report the version without ever reaching for the API.
+#[test]
+fn check_through_the_redirect_reports_without_replacing_anything() {
+    let install = install(true);
+    let archive = build_archive(&install);
+    let line = sha256_line(&archive, &install.asset);
+    let base = serve_redirect(archive, install.asset.clone(), line);
+    let before = std::fs::read(&install.exe).unwrap();
+
+    let out = run_update_via_redirect(&install, &base, &["--check"]);
+    assert!(out.status.success(), "{}", report("--check failed", &out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains(NEW_VERSION),
+        "{}",
+        report("--check did not report the available version", &out)
+    );
+    assert_eq!(
+        std::fs::read(&install.exe).unwrap(),
+        before,
+        "--check replaced the binary"
+    );
 }
 
 /// `--check` reports and stops. The binary must be untouched, because this is

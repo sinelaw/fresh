@@ -356,6 +356,30 @@ mod tests {
         );
     }
 
+    /// The one API request an update still makes is this one, so a rate limit
+    /// here is the one that can stop an install. It has to say that: what was
+    /// verified, what was not, and that re-running is the fix — not "403".
+    #[test]
+    fn a_rate_limited_lookup_explains_the_stop_rather_than_the_status() {
+        let limited = crate::net::FetchError::RateLimited {
+            url: attestation_url("sinelaw/fresh", &"a".repeat(64)),
+            wait: Some(std::time::Duration::from_secs(600)),
+            authenticated: false,
+        };
+        assert!(limited.is_rate_limited());
+        let message = AttestationError::RateLimited(limited.to_string()).to_string();
+        assert!(message.contains("10 minutes"), "{message}");
+        assert!(message.contains("GITHUB_TOKEN"), "{message}");
+        assert!(
+            message.contains("matched its checksum"),
+            "the message must say what did verify: {message}"
+        );
+        assert!(
+            message.contains("does not install unverified bytes"),
+            "the message must say the install stopped: {message}"
+        );
+    }
+
     #[test]
     fn url_is_on_the_pinned_api_host() {
         let url = attestation_url("sinelaw/fresh", &"a".repeat(64));

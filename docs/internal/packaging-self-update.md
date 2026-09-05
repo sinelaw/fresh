@@ -788,10 +788,14 @@ pre-release — survives the move, because it is re-derived from the tag itself
 (`version::is_prerelease`) rather than from a flag the redirect does not carry.
 Drafts need no equivalent: they are not public, so no redirect reaches one.
 
-An overridden endpoint (`--releases-url`, a mirror, the test server in
-`self_update_spine.rs`) keeps using its feed throughout: it named a document,
-and reinterpreting that as "ask GitHub instead" would ignore what the caller
-asked for.
+The redirect URL is *derived from the download base* rather than hard-coded:
+GitHub serves `…/releases/latest` beside `…/releases/download`, and so does
+anything mirroring that layout. Naming a feed (`--releases-url`,
+`FRESH_RELEASES_URL`) clears it — the caller pointed at a document, and
+resolving the version elsewhere would ignore that — while pointing only the
+downloads elsewhere moves it with them. That is also what lets
+`self_update_spine.rs` drive the real binary through a real 302 without any
+test-only surface: it overrides the download base and nothing else.
 
 ---
 

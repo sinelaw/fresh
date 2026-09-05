@@ -705,6 +705,7 @@ mod tests {
             endpoints: Endpoints {
                 releases_url: "http://127.0.0.1:9/release.json".to_string(),
                 download_base: "http://127.0.0.1:9".to_string(),
+                redirect_url: None,
                 trusted: false,
             },
             ..UpdateOptions::default()
@@ -760,6 +761,7 @@ mod tests {
         let untrusted = Endpoints {
             releases_url: "http://127.0.0.1:9/release.json".to_string(),
             download_base: "http://127.0.0.1:9".to_string(),
+            redirect_url: None,
             trusted: false,
         };
         for channel in [Channel::Apt, Channel::Dnf, Channel::Zypper] {

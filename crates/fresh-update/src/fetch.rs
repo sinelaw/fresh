@@ -27,9 +27,12 @@
 //!   construction the install script does — and [`crate::engine`] falls back to
 //!   the feed if the release does not actually publish that name.
 //!
-//! An overridden endpoint (`--releases-url`, a mirror, a test server) keeps
-//! using its feed: it named a document, and reinterpreting that as "ask GitHub
-//! instead" would ignore what the caller asked for.
+//! Naming a feed (`--releases-url`, `FRESH_RELEASES_URL`) takes the redirect
+//! out of play entirely: the caller pointed at a document, and resolving the
+//! version somewhere else would ignore that. Pointing only the *downloads*
+//! elsewhere moves the redirect with them — it lives beside them, at
+//! `…/releases/latest` — so a mirror that keeps GitHub's layout keeps the
+//! cheap route too. See [`crate::endpoint::Endpoints::redirect_url`].
 //!
 //! The one request that has no second route is the attestation lookup
 //! ([`crate::attestation`]), which is a *different origin* on purpose — that is
@@ -239,10 +242,46 @@ mod server_tests {
         format!("http://127.0.0.1:{port}")
     }
 
+    /// [`serve`], plus paths that answer 200 with a body.
+    fn serve_with_bodies(routes: Vec<Route>, bodies: Vec<(&'static str, &'static str)>) -> String {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind");
+        let port = server.server_addr().to_ip().expect("ip").port();
+        let (ready, started) = mpsc::channel();
+        std::thread::spawn(move || {
+            ready.send(()).expect("signal");
+            for request in server.incoming_requests() {
+                let url = request.url().to_string();
+                let response = if let Some((_, body)) =
+                    bodies.iter().find(|(path, _)| url.starts_with(path))
+                {
+                    tiny_http::Response::from_string(*body).with_status_code(200)
+                } else if let Some((_, code, headers)) =
+                    routes.iter().find(|(path, _, _)| url.starts_with(path))
+                {
+                    let mut response = tiny_http::Response::from_string("")
+                        .with_status_code(tiny_http::StatusCode(*code));
+                    for (name, value) in headers {
+                        response.add_header(
+                            tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes())
+                                .expect("header"),
+                        );
+                    }
+                    response
+                } else {
+                    tiny_http::Response::from_string("").with_status_code(404)
+                };
+                let _ = request.respond(response);
+            }
+        });
+        started.recv().expect("server start");
+        format!("http://127.0.0.1:{port}")
+    }
+
     fn endpoints_for(base: &str) -> Endpoints {
         Endpoints {
             releases_url: format!("{base}/releases/latest"),
             download_base: format!("{base}/dl"),
+            redirect_url: None,
             trusted: false,
         }
     }
@@ -281,6 +320,68 @@ mod server_tests {
     /// The regression this module exists for: `api.github.com` answering 403
     /// because the address's hourly budget is gone must be reported as the
     /// rate limit it is, with the remedy in the message.
+    /// Endpoints shaped like production against a local server: the redirect
+    /// beside the download base, and a feed nothing may reach — so if the
+    /// redirect route is not the one taken, the test fails rather than
+    /// quietly asking GitHub.
+    fn redirect_endpoints(base: &str) -> Endpoints {
+        Endpoints {
+            releases_url: "http://127.0.0.1:1/must-not-be-fetched".to_string(),
+            download_base: format!("{base}/releases/download"),
+            redirect_url: Some(format!("{base}/releases/latest")),
+            trusted: false,
+        }
+    }
+
+    /// The route every real update now takes, driven through `latest` against
+    /// a server answering the way GitHub does: 302, `Location` naming the
+    /// release page. No feed request is possible here.
+    #[test]
+    fn the_redirect_is_the_route_the_version_comes_from() {
+        let base = serve(vec![(
+            "/releases/latest",
+            302,
+            vec![(
+                "Location",
+                "https://github.com/sinelaw/fresh/releases/tag/v9.9.9".to_string(),
+            )],
+        )]);
+        let endpoints = redirect_endpoints(&base);
+        let transport = Transport::new(&endpoints).without_token();
+
+        let fetched = latest(&transport, &endpoints, false).expect("the redirect answers");
+        assert_eq!(fetched.release.version(), "9.9.9");
+        assert_eq!(fetched.source, Source::ReleaseRedirect);
+        // And the asset URL built from it lands beside the redirect, which is
+        // what makes the whole update reachable without the API.
+        assert_eq!(
+            endpoints.asset_url("9.9.9", "fresh-editor_9.9.9-1_amd64.deb"),
+            format!("{base}/releases/download/v9.9.9/fresh-editor_9.9.9-1_amd64.deb")
+        );
+    }
+
+    /// If the redirect stops answering the way we expect, the feed still can:
+    /// the same server serves a 500 there and a release document at the feed
+    /// URL, and the version comes back from the feed.
+    #[test]
+    fn a_broken_redirect_falls_through_to_the_feed() {
+        let base = serve_with_bodies(
+            vec![("/releases/latest", 500, vec![])],
+            vec![("/feed", r#"{"tag_name":"v8.8.8"}"#)],
+        );
+        let endpoints = Endpoints {
+            releases_url: format!("{base}/feed"),
+            download_base: format!("{base}/releases/download"),
+            redirect_url: Some(format!("{base}/releases/latest")),
+            trusted: false,
+        };
+        let transport = Transport::new(&endpoints).without_token();
+
+        let fetched = latest(&transport, &endpoints, false).expect("the feed answers");
+        assert_eq!(fetched.release.version(), "8.8.8");
+        assert_eq!(fetched.source, Source::Api);
+    }
+
     #[test]
     fn a_rate_limited_feed_says_so() {
         let base = serve(vec![(
