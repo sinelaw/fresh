@@ -186,7 +186,7 @@
       "footer": {
         "added": 63164,
         "removed": 27662,
-        "note": "One example, out of two hundred and sixteen files",
+        "note": "Example: popups",
         "at": 0.0
       }
     },
@@ -256,8 +256,8 @@
       }
     },
     "intro_caption": [
-      "Show a popup, then dismiss it",
-      "what that took, before and after"
+      "",
+      ""
     ],
     "outro_caption": [
       "fresh",
@@ -323,7 +323,7 @@
           0,
           67
         ],
-        "note": "🧱 hand-stacked",
+        "note": "🧱 Old code: hand-stacked",
         "note_at": "below-right"
       },
       {
@@ -407,7 +407,7 @@
           0,
           62
         ],
-        "note": "✨ declarative and clean",
+        "note": "😍 New code: declarative",
         "note_at": "below-right",
         "transition": "push",
         "hold": 1.6
