@@ -199,6 +199,27 @@ impl PtyChild {
         self.child.id()
     }
 
+    /// The modes the child has put the terminal in — alternate screen,
+    /// mouse reporting, bracketed paste — as a terminal emulator sees them.
+    pub fn modes(&self) -> &vt100::Screen {
+        self.parser.screen()
+    }
+
+    /// Whether the pty is in cooked mode: keystrokes echoed and lines
+    /// buffered, which is what a shell needs and what raw mode takes away.
+    ///
+    /// Read from the master end, so it is still answerable after the child
+    /// has gone — which is the moment a test cares about.
+    pub fn cooked(&self) -> bool {
+        // SAFETY: `tcgetattr` only fills the struct it is handed, and the
+        // fd is our own live master end.
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(self.master.as_raw_fd(), &mut termios) } != 0 {
+            return false;
+        }
+        termios.c_lflag & libc::ECHO != 0 && termios.c_lflag & libc::ICANON != 0
+    }
+
     /// Kill the child and reap it. Safe to call after it already exited.
     pub fn kill(&mut self) {
         let _ = self.child.kill();
