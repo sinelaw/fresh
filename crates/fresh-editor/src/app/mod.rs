@@ -1463,6 +1463,16 @@ pub struct Editor {
     /// the originating plugin needing to re-emit. See
     /// `docs/internal/plugin-widget-library-design.md`.
     pub(crate) widget_registry: crate::widgets::WidgetRegistry,
+    /// How deep the focus↔caret sync currently is.
+    ///
+    /// A `focusFollowsCursor` panel makes `set_panel_focus_and_notify`
+    /// re-entrant on purpose and exactly once: focusing a widget seats
+    /// the caret on it, and seating the caret re-resolves focus from
+    /// where it landed. The second resolve finds them agreeing and
+    /// stops. This counts the nesting so that "exactly once" is a
+    /// `debug_assert!` rather than a paragraph of prose — see
+    /// `Editor::set_panel_focus_and_notify`.
+    pub(crate) seat_focus_depth: u8,
 
     /// Currently-mounted floating widget panel, if any.
     ///

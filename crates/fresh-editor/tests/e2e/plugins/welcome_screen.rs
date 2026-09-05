@@ -98,20 +98,31 @@ fn open_welcome(harness: &mut EditorTestHarness) {
 /// hidden — so sampling it once is a coin flip on a page whose plugin
 /// repaints asynchronously (`git status` landing, the themes probe).
 ///
+/// It waits for the caret to be *settled*, not merely present: two
+/// consecutive frames drawing it in the same place. Present-is-enough
+/// has the mirror-image of the problem it was written for — a frame
+/// drawn before a pending repaint lands shows the caret at its old
+/// position, and every caller uses the result as the thing it asserts
+/// on.
+///
 /// Bounded, unlike the waits elsewhere in this file, and deliberately:
-/// "the caret is on screen" is not a state that must eventually arrive —
-/// a page scrolled away from its caret never shows one — so an
+/// "the caret is on screen" is not a state that must eventually arrive
+/// (a page scrolled away from its caret never shows one), so an
 /// open-ended wait here is a hung test rather than a failing one, which
-/// is worse in every way. Failing says which frame it gave up on.
+/// is worse in every way.
 fn caret_position(harness: &mut EditorTestHarness) -> (u16, u16) {
+    let mut previous = None;
     for _ in 0..40 {
-        if let Some(pos) = harness.render_observing_cursor().unwrap() {
-            return pos;
+        let seen = harness.render_observing_cursor().unwrap();
+        if seen.is_some() && seen == previous {
+            return seen.expect("checked above");
         }
+        previous = seen;
         harness.wait_for_async_quiescence(1).unwrap();
     }
     panic!(
-        "no frame drew the caret — the page is scrolled away from it. Screen:\n{}",
+        "no two consecutive frames drew the caret in the same place \
+         (last frame: {previous:?}). Screen:\n{}",
         harness.screen_to_string()
     );
 }
@@ -162,26 +173,56 @@ fn scroll_until(harness: &mut EditorTestHarness, needle: &str) {
 
 /// Put the caret in the finder's field, which is what gives it focus.
 ///
-/// There is no hotkey for this any more. `/` used to be one, and its
-/// only job was reaching the field without counting Tab stops — which
-/// the caret does, so the key went back to being a path separator you
-/// can type. Walking down to the field is therefore also the test of
-/// that: the row count comes from what is on screen, not from the card's
-/// structure.
+/// By clicking it. There is no hotkey for this any more — `/` used to be
+/// one, and its only job was reaching the field without counting Tab
+/// stops, which the caret does — and a click is how a reader who can see
+/// the field gets there. Walking down to it with the arrow keys is the
+/// *subject* of one test rather than the setup for four: that walk has
+/// to read the caret's screen row, which an async repaint can scroll
+/// away from under it, and a shared helper should not carry a race that
+/// belongs to one test's premise.
+///
+/// Returns having proved the field takes what is typed, so every caller
+/// starts from an established premise rather than an assumed one.
 fn put_the_caret_in_the_finder(harness: &mut EditorTestHarness) {
     scroll_until(harness, "find [");
-    let (_, field_row) = harness
+    let (col, row) = harness
         .find_text_on_screen("find [")
         .expect("the finder field is on screen");
-    let caret_row = caret_position(harness).1;
-    assert!(
-        caret_row < field_row,
-        "expected the caret above the finder field, got {caret_row} and {field_row}"
-    );
-    for _ in 0..(field_row - caret_row) {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
+    // Just inside the brackets.
+    harness.mouse_click(col + 7, row).unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
+    assert_the_finder_takes_typing(harness);
+}
+
+/// Prove the field has focus, and leave it as it was found.
+///
+/// The premise of every finder test is "the caret is in the field", and
+/// the caret being on the field's *row* is not that premise — it is the
+/// thing that is supposed to cause it. Typing is what the premise means,
+/// so type: a character that reaches the field appears between its
+/// brackets, and a Backspace takes it back out.
+fn assert_the_finder_takes_typing(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('~'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.contains("find [") && l.contains('~'))
+        })
+        .expect("the caret is on the finder field, so the field takes what is typed");
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .lines()
+                .any(|l| l.contains("find [") && l.contains('~'))
+        })
+        .expect("Backspace takes the probe character back out");
 }
 
 /// The page renders, at the width the design is drawn for.
@@ -636,24 +677,39 @@ fn the_caret_arriving_at_the_finder_field_types_into_it() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
+    // Let the page's own probes land first — `git ls-files` and `git
+    // status` each repaint it, and a repaint under the caret is what
+    // makes reading its screen row unreliable.
+    harness.wait_for_async_quiescence(4).unwrap();
     scroll_until(&mut harness, "find [");
 
-    let (_, field_row) = harness
-        .find_text_on_screen("find [")
-        .expect("the finder field is on screen");
-    let caret_row = caret_position(&mut harness).1;
-    assert!(
-        caret_row < field_row,
-        "expected the caret above the finder field, got caret row \
-         {caret_row} and field row {field_row}"
-    );
-    // Counted from what is on screen rather than from the card's
-    // structure: how many rows a framed card spends above its first
-    // control is the layout's business, not this test's.
-    for _ in 0..(field_row - caret_row) {
+    // Down moves by *buffer* line and the gap read off the screen is in
+    // *screen* rows; they agree only while nothing between them wraps
+    // and the pane does not scroll. So walk, re-reading both each time,
+    // rather than computing a count once.
+    let mut arrived = false;
+    for _ in 0..40 {
+        let (_, field_row) = harness
+            .find_text_on_screen("find [")
+            .expect("the finder field is on screen");
+        let caret_row = caret_position(&mut harness).1;
+        if caret_row == field_row {
+            arrived = true;
+            break;
+        }
+        assert!(
+            caret_row < field_row,
+            "the caret passed the finder field without stopping on it \
+             (caret row {caret_row}, field row {field_row})"
+        );
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.wait_for_async_quiescence(2).unwrap();
     }
-    harness.wait_for_async_quiescence(4).unwrap();
+    assert!(
+        arrived,
+        "the caret never reached the finder field. Screen:\n{}",
+        harness.screen_to_string()
+    );
 
     for ch in "zq".chars() {
         harness
@@ -803,6 +859,10 @@ fn walking_down_the_page_does_not_get_stuck_in_the_finder() {
     let (mut harness, _tmp) = harness_with_welcome_in_a_repo();
     open_welcome(&mut harness);
 
+    // `put_the_caret_in_the_finder` proves the field has focus by typing
+    // into it, so this test's premise is established rather than assumed
+    // — the finder renders its result rows with no query and regardless
+    // of focus, so "README.md is on screen" would prove nothing.
     put_the_caret_in_the_finder(&mut harness);
     harness
         .wait_until(|h| h.screen_to_string().contains("README.md"))
@@ -878,6 +938,38 @@ fn the_contents_button_puts_the_pages_outline_in_the_sidebar() {
     }
 }
 
+/// **A section mounted into a hidden column waits there.** Mounting one
+/// used to open the sidebar — and create a file explorer to head it — on
+/// a reader who had closed it. It is placed silently now, so the claim
+/// that it "is there the moment the reader opens it" is the thing to
+/// pin: nothing on screen, then everything, with no `Contents` button
+/// pressed in between.
+#[test]
+fn an_outline_mounted_into_a_closed_sidebar_appears_when_it_is_opened() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("File Explorer"),
+        "precondition: the sidebar starts closed. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("Welcome — Contents"),
+        "mounting the outline opened the sidebar. Screen:\n{screen}"
+    );
+
+    // Open the sidebar by the editor's own key, not by anything of this
+    // page's — the section has to be sitting there already.
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Welcome — Contents"))
+        .expect("the outline was waiting in the hidden column");
+}
+
 /// **The page binds nothing printable.** `1` / `2` / `3` jumped to a
 /// level, `0` went to the top, `/` put focus in the finder and Space
 /// activated the focused control — and every one of them is a character
@@ -893,17 +985,39 @@ fn the_page_binds_no_printable_key() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    // Somewhere that is not the top, so a stray "go to the top" shows.
+    // The property, not a symptom of it. "The caret did not move" is
+    // satisfied by a rebound key that does something else — re-bind
+    // Space and it still reaches a panel with nothing focused, moves no
+    // caret, and passes — while the thing that actually breaks is the
+    // character not arriving in the field.
+    put_the_caret_in_the_finder(&mut harness);
+    for key in ['/', '0', '1', '2', '3', ' '] {
+        harness
+            .send_key(KeyCode::Char(key), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.contains("find [/0123 "))
+        })
+        .expect(
+            "every printable key reached the finder: a slash, four digits \
+             and a space, in the order they were typed",
+        );
+
+    // And with the caret away from the field they do nothing at all —
+    // no jump, no activation.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     scroll_until(&mut harness, "━━━━ LEVEL 2 · IT'S A PROJECT NOW");
     let before = caret_readout(&harness);
-
     for key in ['/', '0', '1', '2', '3', ' '] {
         harness
             .send_key(KeyCode::Char(key), KeyModifiers::NONE)
             .unwrap();
     }
     harness.wait_for_async_quiescence(4).unwrap();
-
     assert_eq!(
         caret_readout(&harness),
         before,

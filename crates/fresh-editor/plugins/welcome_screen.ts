@@ -234,7 +234,13 @@ type OutlineEntry = { label: string; key: string; depth: number };
 
 let outline: OutlineEntry[] = [];
 
-/** The entry the Contents section marks, by index into `outline`.
+/** The entry the Contents section marks, by widget key.
+ *
+ *  A key, not an index into `outline` — that list is discarded and
+ *  rebuilt on every `render()`, which is every keystroke in the finder,
+ *  and an index into it is only stable while every `card()` call is
+ *  unconditional. One card built behind a condition and the mark would
+ *  quietly point at a different section.
  *
  *  It follows *focus*, not the caret, and only when focus lands on a
  *  heading — a fold arrow or a level banner. A plugin cannot ask where
@@ -243,7 +249,7 @@ let outline: OutlineEntry[] = [];
  *  heading, and with the caret driving focus that is most of the way
  *  there. The mark stays put while they read a card's body, which is
  *  the behaviour you want anyway. */
-let outlineSelected = -1;
+let outlineSelected = "";
 
 const LEVEL_MARK: Record<string, string> = {
   "1": "LEVEL 1 · JUST EDIT",
@@ -645,6 +651,13 @@ function chipsRow(): WidgetSpec {
  *  but a button can say what it does under the pointer and a toggle
  *  cannot. */
 function startupRow(): WidgetSpec[] {
+  // The page's first row says so itself, rather than the outline naming
+  // `startupToggle` from a table: a table is a string that has to match a
+  // widget key defined somewhere else, and `scrollToWidget` on a key that
+  // no longer exists does nothing at all — a silent first row in the
+  // Contents section, which is exactly what building the outline as the
+  // page is built exists to rule out.
+  outline.push({ label: "Top of the page", key: "startupToggle", depth: 0 });
   const on = showOnStartup();
   const label = `${on ? "[✓]" : "[ ]"} Show this screen on startup`;
   return [
@@ -1493,7 +1506,7 @@ function buildSpec(): WidgetSpec {
  *  whole document up the screen. */
 function render(): void {
   if (!panel) return;
-  outline = [{ label: "Top of the page", key: "startupToggle", depth: 0 }];
+  outline = [];
   panel.set(buildSpec());
   publishContents();
 }
@@ -1522,16 +1535,22 @@ function contentsRows(): number {
   return Math.max(6, Math.min(outline.length, 16));
 }
 
+/** Where the marked key sits in the outline as it stands now — the one
+ *  place an index is computed, at the moment it is used. */
+function outlineIndex(): number {
+  return outline.findIndex((e) => e.key === outlineSelected);
+}
+
 function contentsSpec(): WidgetSpec {
   return tree({
     key: "toc",
-    nodes: outline.map((e, i) => ({
+    nodes: outline.map((e) => ({
       // One column for "you are here". A tree paints its selection band
       // only while it has the keyboard, and this section spends its life
       // blurred — so without a glyph in the text it would say nothing at
       // all about where in the page the reader is, which is half of what
       // an outline is for.
-      text: { text: (i === outlineSelected ? "▸ " : "  ") + e.label },
+      text: { text: (e.key === outlineSelected ? "▸ " : "  ") + e.label },
       depth: e.depth,
       hasChildren: false,
     })),
@@ -1540,7 +1559,7 @@ function contentsSpec(): WidgetSpec {
     // on the way back: the activation handler scrolls to the key it was
     // handed.
     itemKeys: outline.map((e) => e.key),
-    selectedIndex: outlineSelected,
+    selectedIndex: outlineIndex(),
     // Nothing folds: the outline is three levels of cards, and a
     // disclosure triangle on every level would be two states to keep for
     // a list that fits.
@@ -1564,7 +1583,7 @@ function publishContents(): void {
   editor.widgetMutate(CONTENTS_PANEL_ID, {
     kind: "setSelectedIndex",
     widgetKey: "toc",
-    index: outlineSelected,
+    index: outlineIndex(),
   });
 }
 
@@ -1614,9 +1633,9 @@ function unmountContents(): void {
 function markOutlineFor(widgetKey: string): void {
   if (!contentsMounted) return;
   if (!widgetKey.startsWith("fold:") && !widgetKey.startsWith("level:")) return;
-  const i = outline.findIndex((e) => e.key === widgetKey);
-  if (i < 0 || i === outlineSelected) return;
-  outlineSelected = i;
+  if (widgetKey === outlineSelected) return;
+  if (!outline.some((e) => e.key === widgetKey)) return;
+  outlineSelected = widgetKey;
   // Both, and both are needed. `setSelectedIndex` is the *selection* —
   // where an arrow key would start if the reader put the keyboard in
   // here — and a blurred tree does not paint one, which is most of the
@@ -1626,7 +1645,7 @@ function markOutlineFor(widgetKey: string): void {
   editor.widgetMutate(CONTENTS_PANEL_ID, {
     kind: "setSelectedIndex",
     widgetKey: "toc",
-    index: i,
+    index: outlineIndex(),
   });
   editor.updateFloatingWidget(CONTENTS_PANEL_ID, contentsSpec());
 }
@@ -1920,12 +1939,17 @@ registerHandler("welcomeOnBufferActivated", (e: { buffer_id: number }) => {
   // a source file would be a table of contents for something that is not
   // on screen — and it would sit where the Markdown outline goes, which
   // is the same column and the same idea.
-  if (bufferId !== null && e.buffer_id !== bufferId) {
+  if (bufferId === null) return;
+  if (e.buffer_id !== bufferId) {
     unmountContents();
     return;
   }
-  if (bufferId === null || e.buffer_id !== bufferId) return;
   if (editor.getActiveBufferId() !== bufferId) return;
+  // Blurred, so a closed sidebar stays closed — which means a reader who
+  // keeps it closed gets no outline and no sign that one exists except
+  // the `Contents` button in the first viewport. That is the trade: this
+  // page does not get to open a column the reader shut, and the button
+  // is the recovery.
   mountContents(false);
   editor.setTimeout(0, "welcomeCatchUpOnShow");
 });
@@ -2274,24 +2298,27 @@ function openFinderHit(index: number): void {
   editor.openFile(hit.path);
 }
 
-/** The Contents section's own events. Returns true when it handled one,
- *  so the page's handler can stay about the page. */
+/** The Contents section's own events.
+ *
+ *  Routing is decided by `panel_id` at the call site, so this returns
+ *  nothing: it used to answer "did I handle it", and the one caller
+ *  discarded the answer. */
 function handleContentsEvent(args: {
   event_type: string;
   payload?: unknown;
-}): boolean {
+}): void {
   const payload = (args.payload ?? {}) as { index?: unknown; via?: unknown };
   if (args.event_type === "cancel") {
     // The section's `×`: the host has already unmounted it. The button
     // on the page is how it comes back.
     contentsMounted = false;
-    return true;
+    return;
   }
   if (args.event_type === "select" || args.event_type === "activate") {
     const index = typeof payload.index === "number" ? payload.index : -1;
     const entry = outline[index];
-    if (!entry || bufferId === null) return true;
-    outlineSelected = index;
+    if (!entry || bufferId === null) return;
+    outlineSelected = entry.key;
     // **An arrow key browses; a click or Enter goes.** Both halves are
     // deliberate, and the first is why an arrow does not scroll the page.
     //
@@ -2303,15 +2330,13 @@ function handleContentsEvent(args: {
     // outline is not navigating it, and Enter is what commits.
     const goThere = args.event_type === "activate" ||
       (payload as { via?: unknown }).via === "click";
-    if (!goThere) return true;
+    if (!goThere) return;
     editor.scrollToWidget(bufferId, entry.key, "top");
     // `"top"` rather than a minimal reveal: the reader asked to be taken
     // to this section, not to be shown that it exists.
     editor.floatingPanelControl(CONTENTS_PANEL_ID, "blur", 0);
     editor.showBuffer(bufferId);
-    return true;
   }
-  return args.event_type === "focus" || args.event_type === "blur";
 }
 
 editor.on("widget_event", (args) => {
@@ -2321,7 +2346,6 @@ editor.on("widget_event", (args) => {
   }
   if (!panel || args.panel_id !== panel.id()) return;
   const k = typeof args.widget_key === "string" ? args.widget_key : "";
-  if (k.length > 0) lastFocusedWidget = k;
 
   // A `focus` event is the host stating where focus now is, and `""` is
   // one of the things it can state — `focusFollowsCursor` clears focus
@@ -2329,6 +2353,17 @@ editor.on("widget_event", (args) => {
   // Mirroring only non-empty keys left this proxy naming a widget
   // nothing was focused on, so `Enter` on a paragraph still opened the
   // finder's marked hit.
+  //
+  // And the `focus` branch is the *only* writer. There used to be a
+  // second one here, running for every event type, and the page has
+  // widgets the host never focuses: `doorRow` marks six of a card's
+  // seven rows `focusable: false`, and the finder's results are keyed
+  // individually and not focusable at all. Clicking either fires
+  // `activate` without moving focus, so that writer left the mirror
+  // naming a widget nothing was focused on — with host focus still in
+  // the finder field, `finderFocused()` went false while the field was
+  // still taking what you typed, and Up/Down stopped walking the
+  // results.
   if (args.event_type === "focus") {
     lastFocusedWidget = k;
     markOutlineFor(k);

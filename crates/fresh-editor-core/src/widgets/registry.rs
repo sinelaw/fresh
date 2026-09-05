@@ -1024,30 +1024,6 @@ impl WidgetRegistry {
             .min()
     }
 
-    /// The panel mounted into `buffer_id` that asked for
-    /// [`WidgetPanelOptions::focus_follows_cursor`](fresh_core::api::WidgetPanelOptions),
-    /// and every widget of it a caret on `row` could be said to be on —
-    /// left to right.
-    ///
-    /// The list is normally empty or one long, and it is a *list*
-    /// because a row can carry several focusables side by side (the
-    /// welcome screen's three door cards share every one of their rows).
-    /// Focus is per widget and a caret is per row, so on such a row the
-    /// two cannot be derived from each other: the caller's question is
-    /// "does the caret still agree with what has focus", which is
-    /// membership, and only when the answer is no does the first entry
-    /// become the new focus.
-    ///
-    /// An empty list is an answer, not the absence of one: a caret
-    /// parked on a paragraph means *nothing* is focused, and a caller
-    /// that read it as "leave focus alone" would keep the last Tab's
-    /// target armed under an Enter aimed at prose. `None` is reserved
-    /// for "no panel here asked for this".
-    ///
-    /// Focusable, not merely hit-testable: `tabbable` is the panel's own
-    /// Tab ring, so a row of a list whose entries are clickable but not
-    /// stops (the finder's results) carries no candidate, exactly as Tab
-    /// would never land there.
     /// Whether any panel mounted into `buffer_id` asked for
     /// `focusFollowsCursor`.
     ///
@@ -1061,49 +1037,85 @@ impl WidgetRegistry {
             .any(|p| p.buffer_id == buffer_id && p.focus_follows_cursor)
     }
 
-    /// The panel mounted into `buffer_id` that asked for
-    /// [`WidgetPanelOptions::focus_follows_cursor`](fresh_core::api::WidgetPanelOptions),
-    /// and the widget a caret at `(row, col_byte)` is on.
+    /// The one panel mounted into `buffer_id` that asked for
+    /// `focusFollowsCursor`, or `None`.
     ///
-    /// **A focus region is the widget's own painted span, not its row.**
-    /// A row can carry several focusables side by side — the welcome
-    /// screen's three door cards share every one of their rows, and its
-    /// three verbs sit on one line — and answering with the row's first
-    /// would make the caret unable to say which of them it is on. It
-    /// would also make Tab between two of them impossible: the move to
-    /// the second seats the caret on the row they share, and the row
-    /// would hand focus straight back to the first.
+    /// **`None` when two of them share a buffer**, deliberately. Two
+    /// panels both tracking one caret is not a state with a right
+    /// answer — each would seat the caret where the other did not want
+    /// it — and picking one of them here would pick it out of a
+    /// `HashMap`, so the pair could resolve differently on two
+    /// consecutive calls in the same frame. Answering "no" and saying so
+    /// in the log leaves the caret alone, which is the one behaviour
+    /// that cannot be wrong.
+    pub fn focus_follower_of(&self, buffer_id: BufferId) -> Option<PanelKey> {
+        let mut found: Option<&PanelKey> = None;
+        for (key, state) in &self.panels {
+            if state.buffer_id != buffer_id || !state.focus_follows_cursor {
+                continue;
+            }
+            if found.is_some() {
+                tracing::warn!(
+                    "two focusFollowsCursor panels in buffer {:?}; neither will track the caret",
+                    buffer_id
+                );
+                return None;
+            }
+            found = Some(key);
+        }
+        found.cloned()
+    }
+
+    /// The widget in `panel_key` that a caret at `(row, col_byte)` is on,
+    /// or `""` for none.
     ///
-    /// Nearest rather than strictly containing, by the same
-    /// [`column_distance`] the click path uses: distance is zero inside
-    /// a span, so a caret on a control resolves to it exactly, and a
-    /// caret in the gutter of a framed card or in the gap between two
-    /// verbs resolves to the control it is beside instead of to
-    /// nothing. Ties go to the leftmost. A caret reading down a page
-    /// keeps whatever column it was in, and that column is very often a
-    /// card's border.
+    /// **The row is the region; the column decides which control on it.**
+    /// That is a weaker rule than "a focus region is a widget's own
+    /// painted span", and the weaker one is the one that works: a caret
+    /// reading down a page keeps whatever column it was in, and on this
+    /// editor's own pages that column is very often a framed card's
+    /// border or the page margin left of an inset card. Requiring
+    /// containment would mean arrowing down through a card focuses
+    /// nothing in it — including its text field, which then does not
+    /// take what you type.
+    ///
+    /// So: containment wins where it applies (distance zero), and
+    /// otherwise the nearest control **on the same row**, ties leftmost,
+    /// by the same [`column_distance`] the click path uses for two
+    /// side-by-side lists. There is no distance cap, which has a
+    /// consequence worth stating rather than discovering: on a row
+    /// carrying exactly one control, that control is the answer for
+    /// every column of the row. A caret anywhere on the welcome screen's
+    /// top row is on its "show this on startup" switch.
+    ///
+    /// The column earns its keep where a row carries *several* controls
+    /// — three door cards side by side, three verbs on one line — which
+    /// a row-granular rule cannot tell apart at all, and which would
+    /// make Tab between two of them impossible (the move to the second
+    /// seats the caret on the row they share, and the row hands focus
+    /// back to the first).
     ///
     /// An empty string is an answer, not the absence of one: a caret on
-    /// a row with no focusable widget at all means *nothing* is focused,
-    /// and a caller that read it as "leave focus alone" would keep the
-    /// last Tab's target armed under an Enter aimed at prose. `None` is
-    /// reserved for "no panel here asked for this".
+    /// a row with no control at all means *nothing* is focused, and a
+    /// caller that read it as "leave focus alone" would keep the last
+    /// Tab's target armed under an Enter aimed at prose.
     ///
-    /// Focusable, not merely hit-testable: `tabbable` is the panel's own
-    /// Tab ring, so a row of a list whose entries are clickable but not
-    /// stops (the finder's results) resolves to nothing, exactly as Tab
-    /// would never land there.
+    /// **Focusability is per key, not per hit.** `tabbable` holds widget
+    /// *keys*, so a widget declared `focusable: false` that shares a key
+    /// with a focusable sibling is a focus region too. That is not an
+    /// accident to be tidied away — it is how a card several rows tall
+    /// becomes one region: the welcome screen's door cards emit a button
+    /// per row, all under one key, with `focusable` set on the row that
+    /// names the action. A caret anywhere in the card is on the card.
+    /// Give those rows separate keys and each stops being a region;
+    /// `focus_regions_are_per_key_not_per_hit` pins it.
     pub fn focus_target_at(
         &self,
-        buffer_id: BufferId,
+        panel_key: &PanelKey,
         row: u32,
         col_byte: usize,
-    ) -> Option<(PanelKey, String)> {
-        let panel_key = self
-            .panels_for_buffer(buffer_id)
-            .into_iter()
-            .find(|pk| self.get(pk).is_some_and(|p| p.focus_follows_cursor))?;
-        let panel = self.get(&panel_key)?;
+    ) -> Option<String> {
+        let panel = self.get(panel_key)?;
         let mut best: Option<(&HitArea, usize)> = None;
         for hit in &panel.hits {
             if hit.buffer_row != row || !panel.tabbable.contains(&hit.event.widget_key) {
@@ -1114,10 +1126,10 @@ impl WidgetRegistry {
                 best = Some((hit, d));
             }
         }
-        let key = best
-            .map(|(h, _)| h.event.widget_key.clone())
-            .unwrap_or_default();
-        Some((panel_key, key))
+        Some(
+            best.map(|(h, _)| h.event.widget_key.clone())
+                .unwrap_or_default(),
+        )
     }
 
     /// The first cell `key` was painted on, as `(row, byte in that row)`.
@@ -1127,11 +1139,10 @@ impl WidgetRegistry {
     /// one is for seating a caret *on* it: a widget several rows tall
     /// anchors at its top row, and one sharing a row with its siblings
     /// anchors at its own first column rather than at the row's.
-    pub fn anchor_of_widget(&self, buffer_id: BufferId, key: &str) -> Option<(u32, usize)> {
-        self.panels_for_buffer(buffer_id)
-            .into_iter()
-            .filter_map(|pk| self.get(&pk))
-            .flat_map(|p| p.hits.iter())
+    pub fn anchor_of_widget(&self, panel_key: &PanelKey, key: &str) -> Option<(u32, usize)> {
+        self.get(panel_key)?
+            .hits
+            .iter()
             .filter(|h| h.event.widget_key == key)
             .map(|h| (h.buffer_row, h.byte_start))
             .min()
@@ -1156,17 +1167,13 @@ impl WidgetRegistry {
     /// widget Tab could not have reached.
     pub fn tabbable_from_caret(
         &self,
-        buffer_id: BufferId,
+        panel_key: &PanelKey,
         row: u32,
         col_byte: usize,
         forward: bool,
         restrict_to: &[String],
     ) -> Option<String> {
-        let panel_key = self
-            .panels_for_buffer(buffer_id)
-            .into_iter()
-            .find(|pk| self.get(pk).is_some_and(|p| p.focus_follows_cursor))?;
-        let panel = self.get(&panel_key)?;
+        let panel = self.get(panel_key)?;
         // One entry per widget, at its anchor, in paint order.
         let mut anchors: Vec<(u32, usize, &str)> = Vec::new();
         for hit in &panel.hits {
@@ -1329,8 +1336,7 @@ mod tests {
         );
 
         let target = |row, col| {
-            reg.focus_target_at(BufferId(1), row, col)
-                .map(|(_, k)| k)
+            reg.focus_target_at(&pk(1), row, col)
                 .expect("the panel follows the caret")
         };
         assert_eq!(target(0, 3), "door-1", "inside the first span");
@@ -1347,6 +1353,85 @@ mod tests {
         );
         assert_eq!(target(2, 0), "", "a row with no control focuses nothing");
         assert!(reg.has_focus_follower(BufferId(1)));
+    }
+
+    /// Focusability is per **key**: a widget declared `focusable: false`
+    /// that shares a key with a focusable sibling is a focus region too.
+    ///
+    /// Not an accident to be tidied away — it is how a card several rows
+    /// tall becomes one region. Split those rows into separate keys and
+    /// all but one silently stop being focus regions, which is why this
+    /// is pinned rather than left to be rediscovered.
+    #[test]
+    fn focus_regions_are_per_key_not_per_hit() {
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(1),
+            BufferId(1),
+            empty_spec(),
+            vec![
+                // One card, three rows, one key — the shape `doorRow`
+                // emits, with `focusable` set on only one of them.
+                make_hit(0, 0, 10, "card"),
+                make_hit(1, 0, 10, "card"),
+                make_hit(2, 0, 10, "card"),
+                // A row of a list, keyed per item and on no ring.
+                make_hit(3, 0, 10, "result-0"),
+            ],
+            HashMap::new(),
+            String::new(),
+            vec!["card".to_string()],
+            HashMap::new(),
+            Vec::new(),
+            false,
+            true,
+        );
+
+        for row in 0..3 {
+            assert_eq!(
+                reg.focus_target_at(&pk(1), row, 5).as_deref(),
+                Some("card"),
+                "row {row} of a card sharing one key is part of its focus region"
+            );
+        }
+        assert_eq!(
+            reg.focus_target_at(&pk(1), 3, 5).as_deref(),
+            Some(""),
+            "a clickable row that is on no ring is not a focus region"
+        );
+    }
+
+    /// The row is the region and the column decides which control on it —
+    /// which on a row carrying exactly one control means the whole row.
+    #[test]
+    fn a_lone_control_owns_its_whole_row() {
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(1),
+            BufferId(1),
+            empty_spec(),
+            // Right-aligned, as the welcome screen's startup switch is.
+            vec![make_hit(0, 70, 100, "toggle")],
+            HashMap::new(),
+            String::new(),
+            vec!["toggle".to_string()],
+            HashMap::new(),
+            Vec::new(),
+            false,
+            true,
+        );
+
+        assert_eq!(
+            reg.focus_target_at(&pk(1), 0, 80).as_deref(),
+            Some("toggle")
+        );
+        assert_eq!(
+            reg.focus_target_at(&pk(1), 0, 0).as_deref(),
+            Some("toggle"),
+            "unbounded by design: a caret reading down a page keeps its \
+             column, and on this editor's pages that column is often a \
+             framed card's border or the margin left of an inset card"
+        );
     }
 
     /// Seating a caret needs the widget's first *cell*, not just its
@@ -1374,9 +1459,9 @@ mod tests {
             true,
         );
 
-        assert_eq!(reg.anchor_of_widget(BufferId(1), "card"), Some((3, 20)));
-        assert_eq!(reg.anchor_of_widget(BufferId(1), "other"), Some((3, 0)));
-        assert_eq!(reg.anchor_of_widget(BufferId(1), "nope"), None);
+        assert_eq!(reg.anchor_of_widget(&pk(1), "card"), Some((3, 20)));
+        assert_eq!(reg.anchor_of_widget(&pk(1), "other"), Some((3, 0)));
+        assert_eq!(reg.anchor_of_widget(&pk(1), "nope"), None);
     }
 
     /// Tab from "nothing focused" starts beside the caret, not at the
@@ -1411,7 +1496,7 @@ mod tests {
             "middle".to_string(),
             "last".to_string(),
         ];
-        let seed = |row, forward| reg.tabbable_from_caret(BufferId(1), row, 0, forward, &ring);
+        let seed = |row, forward| reg.tabbable_from_caret(&pk(1), row, 0, forward, &ring);
 
         assert_eq!(seed(5, true).as_deref(), Some("middle"));
         assert_eq!(seed(5, false).as_deref(), Some("first"));
@@ -1424,7 +1509,7 @@ mod tests {
         assert_eq!(seed(30, false).as_deref(), Some("last"));
         // A ring scoped to a focus trap can never be seeded outside it.
         assert_eq!(
-            reg.tabbable_from_caret(BufferId(1), 5, 0, true, &["last".to_string()])
+            reg.tabbable_from_caret(&pk(1), 5, 0, true, &["last".to_string()])
                 .as_deref(),
             Some("last"),
         );
@@ -1451,10 +1536,7 @@ mod tests {
         );
 
         assert!(!reg.has_focus_follower(BufferId(2)));
-        assert!(reg.focus_target_at(BufferId(2), 0, 0).is_none());
-        assert!(reg
-            .tabbable_from_caret(BufferId(2), 0, 0, true, &["btn".to_string()])
-            .is_none());
+        assert!(reg.focus_follower_of(BufferId(2)).is_none());
     }
 
     #[test]

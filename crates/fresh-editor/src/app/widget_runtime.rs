@@ -1245,30 +1245,48 @@ impl Editor {
         // focus was always seeded, so `autoFocusFirst: false` is what
         // made this reachable.
         let buffer_id = panel.buffer_id;
-        let unfocused_seed = |editor: &Self| {
-            // On a `focusFollowsCursor` panel, "nothing focused" is not
-            // the panel at rest — it is the caret sitting on prose, which
-            // on a page that is mostly prose is most of the time. Falling
-            // to `ring[0]` there would send every such Tab to the top of
-            // the document: read down to the last card, press Tab, and you
-            // are back at the first. Start from where the reader is.
-            let (row, col) = editor.panel_buffer_caret(buffer_id)?;
-            editor
-                .widget_registry
-                .tabbable_from_caret(buffer_id, row, col, delta >= 0, &ring)
+        let follows_cursor = panel.focus_follows_cursor;
+        let end_of_ring = if delta >= 0 {
+            ring[0].clone()
+        } else {
+            ring[(n - 1) as usize].clone()
         };
         let new_key = match ring.iter().position(|k| k == &panel.focus_key) {
             Some(cur) => {
                 let new_idx = ((cur as i32 + delta) % n + n) % n;
                 ring[new_idx as usize].clone()
             }
-            None => unfocused_seed(self).unwrap_or_else(|| {
-                if delta >= 0 {
-                    ring[0].clone()
-                } else {
-                    ring[(n - 1) as usize].clone()
+            // Every other panel in the editor: "nothing focused" is the
+            // panel at rest, and the ring starts at its end.
+            None if !follows_cursor => end_of_ring,
+            // On a `focusFollowsCursor` panel it is the caret sitting on
+            // prose instead, which on a page that is mostly prose is most
+            // of the time — so starting at the ring's end would send every
+            // Tab from below the fold to the top of the document.
+            //
+            // The two `None`s below are not that case and are not silent:
+            // a panel with no caret to read, or a ring naming widgets the
+            // last paint did not place, are both disagreements between
+            // this panel's spec and its paint. Falling back to the ring's
+            // end would make them look exactly like the resting state
+            // this branch exists to avoid.
+            None => {
+                let seed = self.panel_buffer_caret(buffer_id).and_then(|(row, col)| {
+                    self.widget_registry
+                        .tabbable_from_caret(panel_key, row, col, delta >= 0, &ring)
+                });
+                match seed {
+                    Some(key) => key,
+                    None => {
+                        tracing::warn!(
+                            panel = %panel_key,
+                            "focusFollowsCursor: no caret or no painted ring member to seed Tab \
+                             from; falling back to the end of the ring"
+                        );
+                        end_of_ring
+                    }
                 }
-            }),
+            }
         };
         self.set_panel_focus_and_notify(panel_key, new_key);
         self.rerender_widget_panel(panel_key);
@@ -1561,10 +1579,6 @@ impl Editor {
         // The tree is the ring; the registry is its mirror. Written in step,
         // before the plugin is told, so nothing reads one against the other.
         self.focus_panel_widget_in_tree(panel_key, &new_key);
-        // On a `focusFollowsCursor` panel the caret comes along, before
-        // the plugin hears about the move — so a `focus` handler that
-        // reveals the widget is revealing a row the caret is already on.
-        self.seat_cursor_on_focused_widget(panel_key, &new_key);
         // Offer the transition to the kinds: the widget losing focus
         // and the one gaining it each get their `on_focus_change`
         // hook (Tree keeps its selected-row highlight coherent with
@@ -1573,10 +1587,44 @@ impl Editor {
         self.notify_widget_focus_change(panel_key, &old_key, &new_key);
         self.fire_widget_event(
             panel_key,
-            new_key,
+            new_key.clone(),
             "focus".to_string(),
             serde_json::json!({ "previous": old_key }),
         );
+        // **Last, and this is re-entrant on purpose.** On a
+        // `focusFollowsCursor` panel the caret is half of what focus is,
+        // so it comes along — and moving it re-resolves focus from where
+        // it landed, which can disagree with the widget we just focused
+        // (`anchor_of_widget` answers a widget's top-left cell;
+        // `focus_target_at` answers the nearest control to a column, and
+        // on a row with several controls those are not inverses). So:
+        //
+        //     set_panel_focus_and_notify
+        //       └ seat_cursor_on_focused_widget
+        //           └ seat_buffer_cursor
+        //               └ sync_widget_focus_to_cursor
+        //                   └ set_panel_focus_and_notify   (at most once)
+        //
+        // It terminates because the inner call's guard compares against
+        // the caret the outer one just wrote, and the second-level entry
+        // then finds focus and caret already agreeing. `seat_focus_depth`
+        // makes that an assertion rather than a hope.
+        //
+        // Placing it *after* the event is the whole reason this is the
+        // last statement: with the seat in the middle, a disagreeing
+        // resolve fired the inner (final) `focus` event before the outer
+        // (already superseded) one, and every plugin mirroring focus from
+        // these events — `welcome_screen.ts` does — was left holding the
+        // stale key.
+        self.seat_focus_depth += 1;
+        debug_assert!(
+            self.seat_focus_depth <= 2,
+            "focus/caret sync recursed past its one re-entry: focus and the caret \
+             disagree after a seat, which means `anchor_of_widget` and \
+             `focus_target_at` are not settling on the same widget"
+        );
+        self.seat_cursor_on_focused_widget(panel_key, &new_key);
+        self.seat_focus_depth -= 1;
     }
 
     /// Move `buffer_id`'s caret onto the row of the widget that just
@@ -1610,13 +1658,13 @@ impl Editor {
         if let Some((row, col)) = self.panel_buffer_caret(buffer_id) {
             if self
                 .widget_registry
-                .focus_target_at(buffer_id, row, col)
-                .is_some_and(|(_, k)| k == new_key)
+                .focus_target_at(panel_key, row, col)
+                .is_some_and(|k| k == new_key)
             {
                 return;
             }
         }
-        let Some((row, byte_in_row)) = self.widget_registry.anchor_of_widget(buffer_id, new_key)
+        let Some((row, byte_in_row)) = self.widget_registry.anchor_of_widget(panel_key, new_key)
         else {
             return;
         };
@@ -1652,6 +1700,22 @@ impl Editor {
             Some(next) => next.saturating_sub(1),
             None => state.buffer.len(),
         };
+        if start + byte_in_row > end {
+            // Not absorbed quietly: the widget's span and the row's
+            // stored text have disagreed, and the caret is about to land
+            // at end-of-row instead of on the widget — which the sync
+            // then re-resolves to whatever control is rightmost on that
+            // row. Either the hit geometry is stale or a row really is
+            // shorter than the span recorded against it; both are the
+            // author's business.
+            tracing::warn!(
+                "widget span past its row: buffer {:?} row {} byte {} exceeds row end {}",
+                buffer_id,
+                row,
+                byte_in_row,
+                end - start
+            );
+        }
         Some((start + byte_in_row).min(end))
     }
 
@@ -1662,27 +1726,21 @@ impl Editor {
     /// group host owns the outer leaf — so a panel buffer shown inside
     /// one would keep a stale caret without this.
     pub(super) fn splits_showing_buffer(&self, buffer_id: BufferId) -> Vec<LeafId> {
-        let mut splits = self
+        let (manager, view_states) = self
             .windows
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .splits_for_buffer(buffer_id);
+            .expect("active window must have a populated split layout");
+        let mut splits = manager.splits_for_buffer(buffer_id);
         for node in self.active_window().grouped_subtrees.values() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
-                    if let Some(vs) = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(_, vs)| vs)
-                        .expect("active window must have a populated split layout")
+                    if view_states
                         .get(&inner_leaf)
+                        .is_some_and(|vs| vs.active_buffer == buffer_id)
+                        && !splits.contains(&inner_leaf)
                     {
-                        if vs.active_buffer == buffer_id && !splits.contains(&inner_leaf) {
-                            splits.push(inner_leaf);
-                        }
+                        splits.push(inner_leaf);
                     }
                 }
             }
@@ -1692,13 +1750,20 @@ impl Editor {
 
     /// Put `buffer_id`'s caret at `position` in every split showing it.
     ///
-    /// The editor writes a caret through exactly two routes — the event
-    /// pipeline (`Editor::apply_event`, which every user-visible move
-    /// travels: arrows, page keys, a click, Goto Line, back/forward,
-    /// a search hit) and this one, for the host and plugins seating it
-    /// directly. Both end in `sync_widget_focus_to_cursor`, so a
+    /// The editor writes a caret through two routes — the event pipeline
+    /// (`Editor::apply_event`, which every user-visible move travels:
+    /// arrows, page keys, a click, Goto Line, back/forward, a search
+    /// hit) and this one, for the host and plugins seating it directly.
+    /// Both end in `sync_widget_focus_to_cursor`, so a
     /// `focusFollowsCursor` panel cannot be reached by a caret move that
     /// leaves its focus behind.
+    ///
+    /// That is an invariant, not an observation, and it only holds while
+    /// **every** direct write goes through here — including the ones that
+    /// look like initialisation. `CreateVirtualBufferWithContent`'s
+    /// `initialCursorLine` and the display-buffer path both used to call
+    /// `set_buffer_cursor_in_splits` themselves, into buffers that can
+    /// perfectly well carry a focus-following panel; they call this now.
     pub(super) fn seat_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
         let splits = self.splits_showing_buffer(buffer_id);
         if splits.is_empty() {
@@ -1760,9 +1825,12 @@ impl Editor {
         else {
             return;
         };
-        let Some((panel_key, next)) = self
+        let Some(panel_key) = self.widget_registry.focus_follower_of(buffer_id) else {
+            return;
+        };
+        let Some(next) = self
             .widget_registry
-            .focus_target_at(buffer_id, row as u32, col)
+            .focus_target_at(&panel_key, row as u32, col)
         else {
             return;
         };
@@ -1775,14 +1843,23 @@ impl Editor {
         self.rerender_widget_panel(&panel_key);
     }
 
-    /// The caret's `(0-indexed row, byte in that row)` in `buffer_id`,
-    /// from whichever split is carrying that buffer's cursor.
+    /// The caret's `(0-indexed row, byte in that row)` in `buffer_id`, as
+    /// the split the reader is in has it.
+    ///
+    /// Each split showing a buffer keeps its own cursors, so "the
+    /// buffer's caret" is not a thing — this used to take whichever one
+    /// a `HashMap` walk reached first, which made both callers
+    /// order-dependent with the page open twice: a Tab in one pane could
+    /// be seeded from the other pane's caret, differently on different
+    /// runs. The effective active split is the one whose caret the
+    /// reader is moving, and it is what `apply_event` writes through.
     fn panel_buffer_caret(&self, buffer_id: BufferId) -> Option<(u32, usize)> {
+        let leaf = self.effective_active_split();
         let (_, view_states) = self.windows.get(&self.active_window)?.buffers.splits()?;
-        let position = view_states.values().find_map(|vs| {
-            vs.buffer_state(buffer_id)
-                .map(|bs| bs.cursors.primary().position)
-        })?;
+        let position = view_states
+            .get(&leaf)
+            .and_then(|vs| vs.buffer_state(buffer_id))
+            .map(|bs| bs.cursors.primary().position)?;
         let (line, col) = self
             .active_window()
             .buffers

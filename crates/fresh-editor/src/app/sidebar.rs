@@ -531,20 +531,28 @@ impl super::Editor {
     /// **Placing a section does not call this, and that is the point.**
     /// It used to: `place_panel_in_sidebar` opened the column on every
     /// mount, on the reasoning that a section is nothing if the column
-    /// is hidden. True, and not worth what it cost — a plugin that
-    /// mounts a section quietly, as `markdown_toc` does for every
-    /// Markdown buffer and the welcome screen does for its own outline,
-    /// then yanked open a thirty-five-column sidebar (and created a file
-    /// explorer to head it) on someone who had deliberately closed it.
-    /// The pane it stole those columns from was mid-layout: the welcome
-    /// screen had already composed against the full width, so its cards
-    /// fell out of their row and its rows wrapped.
+    /// is hidden. True, and not worth what it cost.
     ///
-    /// So revealing is now the *ask*, not the placement: a mount that
-    /// does not start blurred, a focus on a section, and re-anchoring a
-    /// dock or centred panel into the column all say so out loud. A
-    /// quiet mount waits in a hidden column and is there the moment the
-    /// reader opens it.
+    /// The cost is a user-facing one and it does not depend on any
+    /// pane's layout: `markdown_toc` mounts a section for every Markdown
+    /// buffer, so opening a `.md` file yanked open a thirty-five-column
+    /// sidebar — and created a file explorer to head it — on a reader
+    /// who had deliberately closed it. No plugin asked for that; every
+    /// one of them said `startBlurred: true`, which is a plugin saying
+    /// "do not take anything from the reader for this".
+    ///
+    /// (It also corrupted the welcome screen's own layout, because the
+    /// page had composed against a width the mount then took away. That
+    /// was the symptom that found this, not the reason for the change —
+    /// a page can and does recompose on `viewport_changed`. Stealing the
+    /// columns is the part that was wrong.)
+    ///
+    /// So revealing is the *ask*, not the placement: a mount that does
+    /// not start blurred, a focus on a section, and re-anchoring a dock
+    /// or centred panel into the column all say so out loud. A quiet
+    /// mount waits in a hidden column and is there the moment the reader
+    /// opens it — `an_outline_mounted_into_a_closed_sidebar_appears_when_it_is_opened`
+    /// is that sentence as a test.
     pub(crate) fn reveal_sidebar(&mut self) {
         if self.active_window().file_explorer_visible {
             return;

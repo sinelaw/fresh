@@ -1880,6 +1880,11 @@ pub struct WidgetPanelOptions {
     ///
     /// `None` reads as `false`: every panel written before this field
     /// keeps focus and cursor independent.
+    ///
+    /// It makes `autoFocusFirst` false whatever the panel said — see
+    /// [`WidgetPanelOptions::auto_focus_first`]. The pair is not a
+    /// setting with two useful values; it is one broken combination, so
+    /// it is not representable rather than advised against.
     #[serde(default)]
     #[ts(optional)]
     pub focus_follows_cursor: Option<bool>,
@@ -1888,8 +1893,17 @@ pub struct WidgetPanelOptions {
 impl WidgetPanelOptions {
     /// Whether to seed focus onto the first tabbable when the focus key
     /// names none. Unspecified is the historical `true`.
+    ///
+    /// **Never true alongside `focusFollowsCursor`**, whatever the panel
+    /// asked for. Seeding re-runs on every repaint, and on a panel whose
+    /// caret follows focus that means every repaint drags the reader's
+    /// caret to the first control on the page — a plugin repainting on a
+    /// timer, or when `git status` lands, would move the cursor out from
+    /// under them. Stating it in prose and hoping was not enough: the
+    /// default for `autoFocusFirst` is `true`, so the broken pair was
+    /// what a plugin got by *not* thinking about it.
     pub fn auto_focus_first(&self) -> bool {
-        self.auto_focus_first.unwrap_or(true)
+        !self.focus_follows_cursor() && self.auto_focus_first.unwrap_or(true)
     }
 
     /// Whether the panel's focus and its buffer's caret track each
