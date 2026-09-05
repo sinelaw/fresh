@@ -1,22 +1,23 @@
 {
   "name": "fresh-popup-rect",
-
   "_note": [
-    "Run assets/fresh-popup-rect/make-files.sh first; it writes the two",
-    "versions of one job — put a popup on screen near an edge — straight out",
-    "of git, so the clip films what shipped rather than an excerpt.",
+    "Run assets/fresh-popup-rect/make-files.sh first. It writes three files:",
+    "the two the old popup was spread across, and the one that replaced them.",
+    "Comments are stripped and rustfmt re-wraps at 68 columns, so nothing on",
+    "screen wraps and nothing on screen is prose. It prints the line each",
+    "anchor landed on, which is what the goto-line steps below are set from —",
+    "the stripping moves every line, so the clip cannot hold line numbers of",
+    "its own, and a rebase upstream fails there rather than filming the wrong",
+    "function.",
     "",
-    "Both screens come from one run of one editor: the two files open as tabs,",
-    "a shot is taken of the second, ctrl+PageUp switches to the first, and the",
-    "run ends there, so the establishing shot is the old code.",
+    "Six screens out of one run. Each ctrl+g lands the caret twenty lines past",
+    "what the screen is about, because the editor centres the caret's line:",
+    "that puts the region's first line at the top of the viewport. The run",
+    "ends on the first BEFORE screen, so that is the establishing shot.",
     "",
-    "Each file is opened twenty lines past the function, because the editor",
-    "puts the caret line in the middle: that lands the function's first line",
-    "at the top of the viewport and leaves its doc comment above it, off",
-    "screen. The clip argues in its own captions; the source's comments are",
-    "not evidence, and reading them is not what the eye should be doing."
+    "Five of the six are BEFORE, which is the shape of the argument: the after",
+    "is one function, and every line of it used to be a place you had to go."
   ],
-
   "capture": {
     "geometry": "72x40",
     "font": "JetBrains Mono 27",
@@ -25,8 +26,7 @@
     "settle": 16,
     "workdir": "~/repos/tui-clips/out/fresh-popup-rect-src",
     "copy_dirs": {
-      "~/repos/fresh/scripts/clips/assets/fresh-popup-rect/fresh":
-        "{scratch}/config/fresh"
+      "~/repos/fresh/scripts/clips/assets/fresh-popup-rect/fresh": "{scratch}/config/fresh"
     },
     "env": {
       "XDG_CONFIG_HOME": "{scratch}/config",
@@ -35,91 +35,417 @@
       "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
     },
     "keys": [
-      {"sleep": 2},
-      {"shot": "after"},
-      {"key": "ctrl+Prior"},
-      {"sleep": 2},
-      {"shot": "before"}
+      {
+        "sleep": 2
+      },
+      {
+        "key": "ctrl+g"
+      },
+      {
+        "type": "54"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "after"
+      },
+      {
+        "key": "ctrl+Prior"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "key": "ctrl+g"
+      },
+      {
+        "type": "404"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "clamp"
+      },
+      {
+        "key": "ctrl+g"
+      },
+      {
+        "type": "383"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "again"
+      },
+      {
+        "key": "ctrl+g"
+      },
+      {
+        "type": "221"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "measure"
+      },
+      {
+        "key": "ctrl+Prior"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "key": "ctrl+g"
+      },
+      {
+        "type": "109"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "dismiss"
+      },
+      {
+        "key": "ctrl+g"
+      },
+      {
+        "type": "28"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "boxes"
+      }
     ],
     "panes": {
       "popup": {
-        "argv": ["~/repos/fresh/target/debug/fresh", "--no-restore",
-                 "--no-upgrade-check",
-                 "before/theme_inspect.rs:358", "after/theme_info.rs:93"]
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "before/chrome_theme_info.rs",
+          "before/theme_inspect.rs",
+          "after/shell_theme_info.rs"
+        ]
       }
     }
   },
-
   "render": {
-    "size": [1080, 1080],
+    "size": [
+      1080,
+      1080
+    ],
     "header_height": 80,
     "caption_height": 130,
     "fps": 60,
     "rows": 40,
     "cols": 72,
-    "title": "fresh · one popup, near an edge",
-    "labels": {"solo": "BEFORE"},
-    "views": {
-      "old": {"rows": [2, 24], "cols": [0, 62]},
-      "new": {"rows": [2, 21], "cols": [0, 59]}
+    "title": "fresh · one popup, declared",
+    "labels": {
+      "solo": "BEFORE"
     },
-    "intro_caption": ["Put a popup on screen, near an edge",
-                      "the same job, two years apart"],
-    "outro_caption": ["fresh", "github.com/sinelaw/fresh"],
-    "timing": {"intro": 2.0, "zoom": 0.7, "hold": 1.5, "pan": 0.3,
-               "push": 0.9, "outro": 1.0},
+    "views": {
+      "boxes": {
+        "rows": [
+          2,
+          24
+        ],
+        "cols": [
+          0,
+          67
+        ]
+      },
+      "dismiss": {
+        "rows": [
+          2,
+          31
+        ],
+        "cols": [
+          0,
+          66
+        ]
+      },
+      "measure": {
+        "rows": [
+          2,
+          21
+        ],
+        "cols": [
+          0,
+          64
+        ]
+      },
+      "again": {
+        "rows": [
+          2,
+          21
+        ],
+        "cols": [
+          0,
+          64
+        ]
+      },
+      "clamp": {
+        "rows": [
+          2,
+          25
+        ],
+        "cols": [
+          0,
+          64
+        ]
+      },
+      "after": {
+        "rows": [
+          2,
+          23
+        ],
+        "cols": [
+          0,
+          62
+        ]
+      }
+    },
+    "intro_caption": [
+      "Show a popup, then dismiss it",
+      "what that took, before and after"
+    ],
+    "outro_caption": [
+      "fresh",
+      "github.com/sinelaw/fresh"
+    ],
+    "timing": {
+      "intro": 2.0,
+      "zoom": 0.7,
+      "hold": 1.2,
+      "pan": 0.3,
+      "push": 0.65,
+      "outro": 1.0
+    },
     "theme": {
-      "bg": [21, 22, 30],
-      "caption_bg": [30, 31, 41],
-      "panel_border": [56, 58, 74],
-      "muted": [140, 142, 160],
-      "fg": [240, 240, 246],
-      "before": [255, 121, 128],
-      "after": [80, 250, 123]
+      "bg": [
+        21,
+        22,
+        30
+      ],
+      "caption_bg": [
+        30,
+        31,
+        41
+      ],
+      "panel_border": [
+        56,
+        58,
+        74
+      ],
+      "muted": [
+        140,
+        142,
+        160
+      ],
+      "fg": [
+        240,
+        240,
+        246
+      ],
+      "before": [
+        255,
+        121,
+        128
+      ],
+      "after": [
+        80,
+        250,
+        123
+      ]
     },
     "annotations": [
-      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
-       "head": "app/theme_inspect.rs",
-       "rows": [2, 9], "cols": [0, 23],
-       "note": "five numbers in, one rect out", "note_at": "below-right"},
-
-      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
-       "head": "app/theme_inspect.rs",
-       "rows": [9, 14], "cols": [0, 46],
-       "note": "off the right edge: shove it left", "note_at": "below-right"},
-
-      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
-       "head": "app/theme_inspect.rs",
-       "rows": [14, 19], "cols": [0, 46],
-       "note": "off the bottom: flip it above", "note_at": "below-right"},
-
-      {"shot": "before", "view": "old", "label": "BEFORE", "tone": "before",
-       "head": "app/theme_inspect.rs",
-       "rows": [19, 20], "cols": [19, 62],
-       "note": "then clamp, twice more", "note_at": "below-left"},
-
-      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
-       "transition": "push",
-       "head": "view/shell/theme_info.rs",
-       "rows": [4, 5], "cols": [7, 47],
-       "note": "where it wants to be", "note_at": "below-right"},
-
-      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
-       "head": "view/shell/theme_info.rs",
-       "rows": [5, 7], "cols": [7, 28],
-       "note": "the flip and the clamp, named", "note_at": "below-right"},
-
-      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
-       "head": "view/shell/theme_info.rs",
-       "rows": [7, 15], "cols": [7, 39],
-       "note": "dismissal comes with it", "note_at": "below-right"},
-
-      {"shot": "after", "view": "new", "label": "AFTER", "tone": "after",
-       "head": "view/shell/theme_info.rs",
-       "rows": [16, 17], "cols": [7, 59],
-       "note": "nothing counts lines for a height", "note_at": "below-right"}
+      {
+        "shot": "boxes",
+        "view": "boxes",
+        "label": "BEFORE",
+        "tone": "before",
+        "head": "app/chrome/theme_info.rs",
+        "rows": [
+          5,
+          20
+        ],
+        "cols": [
+          0,
+          67
+        ],
+        "note": "three rectangles, and two z numbers",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "dismiss",
+        "view": "dismiss",
+        "label": "BEFORE",
+        "tone": "before",
+        "transition": "push",
+        "head": "app/chrome/theme_info.rs",
+        "rows": [
+          7,
+          25
+        ],
+        "cols": [
+          0,
+          66
+        ],
+        "note": "dismissal, written twice",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "measure",
+        "view": "measure",
+        "label": "BEFORE",
+        "tone": "before",
+        "transition": "push",
+        "head": "app/theme_inspect.rs",
+        "rows": [
+          6,
+          17
+        ],
+        "cols": [
+          0,
+          52
+        ],
+        "note": "it counts its own lines for a height",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "again",
+        "view": "again",
+        "label": "BEFORE",
+        "tone": "before",
+        "transition": "push",
+        "head": "app/theme_inspect.rs",
+        "rows": [
+          6,
+          18
+        ],
+        "cols": [
+          0,
+          62
+        ],
+        "note": "and the hit-test path counts them again",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "clamp",
+        "view": "clamp",
+        "label": "BEFORE",
+        "tone": "before",
+        "transition": "push",
+        "head": "app/theme_inspect.rs",
+        "rows": [
+          11,
+          22
+        ],
+        "cols": [
+          0,
+          62
+        ],
+        "note": "the edges, by hand",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "after",
+        "view": "after",
+        "label": "AFTER",
+        "tone": "after",
+        "transition": "push",
+        "head": "view/shell/theme_info.rs",
+        "rows": [
+          6,
+          7
+        ],
+        "cols": [
+          8,
+          48
+        ],
+        "note": "where it wants to be",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "after",
+        "view": "after",
+        "label": "AFTER",
+        "tone": "after",
+        "head": "view/shell/theme_info.rs",
+        "rows": [
+          7,
+          9
+        ],
+        "cols": [
+          8,
+          28
+        ],
+        "note": "and what to do at the edge",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "after",
+        "view": "after",
+        "label": "AFTER",
+        "tone": "after",
+        "head": "view/shell/theme_info.rs",
+        "rows": [
+          9,
+          17
+        ],
+        "cols": [
+          8,
+          40
+        ],
+        "note": "dismissal, declared",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "after",
+        "view": "after",
+        "label": "AFTER",
+        "tone": "after",
+        "head": "view/shell/theme_info.rs",
+        "rows": [
+          18,
+          19
+        ],
+        "cols": [
+          8,
+          60
+        ],
+        "note": "and nothing counts lines",
+        "note_at": "below-right"
+      }
     ]
   },
-
-  "encode": {"crf": 18, "preset": "slow"}
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
 }
