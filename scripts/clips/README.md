@@ -29,6 +29,7 @@ specific to filming *this* program.
 | `fresh-markdown-compose.json` | comparison | Compose mode against a released build |
 | `fresh-markdown-compose-solo.json` | solo | the same, with nothing to compare against |
 | `fresh-markdown-toc.json` | solo | the table-of-contents panel following the cursor |
+| `fresh-popup-rect.json` | solo, before/after | one popup placed by arithmetic, then declared |
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 
@@ -36,7 +37,10 @@ specific to filming *this* program.
 capture gets a deliberate theme and a known set of enabled plugins instead of
 whatever the machine happens to have. `assets/fresh-review-syntax/make-repo.sh`
 builds the demo repo that clip reviews — Review Diff reads a working tree, so
-the diff on screen has to come from a real one.
+the diff on screen has to come from a real one — and
+`assets/fresh-popup-rect/make-files.sh` writes two versions of one function
+straight out of git, checking that the lines it films are still the ones it
+means to.
 
 ## Filming fresh specifically
 
@@ -72,6 +76,13 @@ or an explode piece wants:
 Bind a key rather than running the command from the palette: the dump is of the
 frame the *last* paint built, which for a palette invocation is the frame with
 the palette open over everything.
+
+**Filming code? Open the file past the function, not at it.** The editor puts
+the caret's line in the middle of the viewport, so opening at `file:N+20` lands
+line `N` at the top — which is how a function's doc comment ends up above the
+screen rather than on it. A clip makes its own argument in its own captions;
+the source's comments are not evidence, and reading them is not what the eye
+should be doing.
 
 **Park the caret on a blank line.** Compose mode and other rendering modes
 reveal the raw source of the caret's line, which reads as a rendering flaw to

@@ -1,0 +1,121 @@
+{
+  "name": "fresh-popup-rect",
+
+  "_note": [
+    "Run assets/fresh-popup-rect/make-files.sh first; it writes the two",
+    "versions of one job — put a popup on screen near an edge — straight out",
+    "of git, so the clip films what shipped rather than an excerpt.",
+    "",
+    "Both screens come from one run of one editor: the two files open as tabs,",
+    "a shot is taken of the second, ctrl+PageUp switches to the first, and the",
+    "run ends there, so the establishing shot is the old code.",
+    "",
+    "Each file is opened twenty lines past the function, because the editor",
+    "puts the caret line in the middle: that lands the function's first line",
+    "at the top of the viewport and leaves its doc comment above it, off",
+    "screen. The clip argues in its own captions; the source's comments are",
+    "not evidence, and reading them is not what the eye should be doing."
+  ],
+
+  "capture": {
+    "geometry": "72x40",
+    "font": "JetBrains Mono 27",
+    "screen": "2000x2400x24",
+    "display": ":99",
+    "settle": 16,
+    "workdir": "~/repos/tui-clips/out/fresh-popup-rect-src",
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-popup-rect/fresh":
+        "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {"sleep": 2},
+      {"shot": "after"},
+      {"key": "ctrl+Prior"},
+      {"sleep": 2},
+      {"shot": "before"}
+    ],
+    "panes": {
+      "popup": {
+        "argv": ["~/repos/fresh/target/debug/fresh", "--no-restore",
+                 "--no-upgrade-check",
+                 "before/theme_inspect.rs:358", "after/theme_info.rs:93"]
+      }
+    }
+  },
+
+  "render": {
+    "size": [1080, 1080],
+    "header_height": 80,
+    "caption_height": 130,
+    "fps": 60,
+    "rows": 40,
+    "cols": 72,
+    "title": "fresh · one popup, near an edge",
+    "labels": {"solo": "BEFORE"},
+    "intro_caption": ["Put a popup on screen, near an edge",
+                      "the same job, two years apart"],
+    "outro_caption": ["fresh", "github.com/sinelaw/fresh"],
+    "timing": {"intro": 2.0, "zoom": 0.7, "hold": 1.5, "pan": 0.35,
+               "push": 0.9, "outro": 1.0},
+    "theme": {
+      "bg": [21, 22, 30],
+      "caption_bg": [30, 31, 41],
+      "panel_border": [56, 58, 74],
+      "muted": [140, 142, 160],
+      "fg": [240, 240, 246],
+      "before": [255, 121, 128],
+      "after": [80, 250, 123]
+    },
+    "annotations": [
+      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+       "head": "app/theme_inspect.rs",
+       "rows": [2, 9], "cols": [6, 31],
+       "note": "five numbers in, one rect out", "note_at": "below-right"},
+
+      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+       "head": "app/theme_inspect.rs",
+       "rows": [9, 14], "cols": [10, 54],
+       "note": "off the right edge: shove it left", "note_at": "below-right"},
+
+      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+       "head": "app/theme_inspect.rs",
+       "rows": [14, 19], "cols": [10, 54],
+       "note": "off the bottom: flip it above", "note_at": "below-right"},
+
+      {"shot": "before", "camera": "fit", "label": "BEFORE", "tone": "before",
+       "head": "app/theme_inspect.rs",
+       "rows": [19, 20], "cols": [29, 69],
+       "note": "then clamp, twice more", "note_at": "below-left"},
+
+      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+       "transition": "push",
+       "head": "view/shell/theme_info.rs",
+       "rows": [4, 5], "cols": [14, 55],
+       "note": "where it wants to be", "note_at": "below-right"},
+
+      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+       "head": "view/shell/theme_info.rs",
+       "rows": [5, 7], "cols": [14, 36],
+       "note": "the flip and the clamp, named", "note_at": "below-right"},
+
+      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+       "head": "view/shell/theme_info.rs",
+       "rows": [7, 15], "cols": [14, 40],
+       "note": "dismissal comes with it", "note_at": "below-right"},
+
+      {"shot": "after", "camera": "fit", "label": "AFTER", "tone": "after",
+       "head": "view/shell/theme_info.rs",
+       "rows": [16, 17], "cols": [14, 66],
+       "note": "nothing counts lines for a height", "note_at": "below-right"}
+    ]
+  },
+
+  "encode": {"crf": 18, "preset": "slow"}
+}
