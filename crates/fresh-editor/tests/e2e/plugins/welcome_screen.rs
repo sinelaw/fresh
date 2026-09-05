@@ -41,6 +41,33 @@ fn harness_with_welcome() -> (EditorTestHarness, tempfile::TempDir) {
     harness_with_welcome_config(Config::default())
 }
 
+/// The same, in a git repo with a few tracked files — the finder reads
+/// `git ls-files`, so without one it has nothing to list and every test
+/// about walking its results passes vacuously.
+fn harness_with_welcome_in_a_repo() -> (EditorTestHarness, tempfile::TempDir) {
+    let (mut harness, temp) = harness_with_welcome();
+    let work = temp.path().join("work");
+    fs::create_dir_all(work.join("src")).unwrap();
+    fs::write(work.join("README.md"), "hello\n").unwrap();
+    fs::write(work.join("src/main.rs"), "fn main() {}\n").unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&work)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    harness.wait_for_async_quiescence(2).unwrap();
+    (harness, temp)
+}
+
 /// Fire startup and return the one buffer it added.
 fn startup_welcome_tab(harness: &mut EditorTestHarness) -> BufferId {
     let before = harness.editor().all_buffer_ids_for_tests();
@@ -661,6 +688,133 @@ fn tab_after_reading_down_the_page_does_not_jump_back_to_the_top() {
     assert!(
         screen.contains("The Orchestrator dock"),
         "Tab left Level 3 entirely. Screen:\n{screen}"
+    );
+}
+
+/// **A seated caret clears the goal column.** Tab seats the caret on the
+/// control it focused, and the very next Up/Down used to throw it back
+/// to whatever column the reader had left long before: Tab across to the
+/// third door card, press Down once, and the caret snapped into the
+/// first — so Enter opened Level 1 from a card that was not the one
+/// focused. An absolute placement is a jump, and a jump clears the goal
+/// column, the same as a click or a search hit.
+#[test]
+fn a_caret_seated_by_tab_keeps_its_column_on_the_next_arrow_key() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    // Three Tabs: the startup switch, then the first and second doors.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+    let tabbed = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret");
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    let moved = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret");
+
+    assert_eq!(
+        moved.0,
+        tabbed.0,
+        "one Down after Tab snapped the caret from column {} to column {} — \
+         a stale goal column survived the seat. Screen:\n{}",
+        tabbed.0,
+        moved.0,
+        harness.screen_to_string()
+    );
+
+    // Which is the whole point: the card Tab chose is still the card
+    // Enter opens.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("LEVEL 2 · IT'S A PROJECT NOW")
+        })
+        .expect("Enter still opens the second door's level");
+}
+
+/// **The finder must not trap the caret.** Its field takes focus just by
+/// the caret arriving on its row, and Up/Down belong to its result list
+/// while it has focus — so a reader walking down the page fell in and
+/// could not walk out: every Down cycled a list of every file in the
+/// repo instead of moving the caret, with nothing on screen to say why.
+/// An untouched finder is not something you are navigating.
+#[test]
+fn walking_down_the_page_does_not_get_stuck_in_the_finder() {
+    let (mut harness, _tmp) = harness_with_welcome_in_a_repo();
+    open_welcome(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("README.md"))
+        .expect("the finder lists the repo's files");
+
+    for _ in 0..2 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    // The caret has left the field, so the field no longer takes what is
+    // typed. (Anything that *did* reach it would show up between the
+    // brackets.)
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let screen = harness.screen_to_string();
+    let field = screen
+        .lines()
+        .find(|l| l.contains("find ["))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !field.contains('z'),
+        "two Downs left the caret inside the finder: it is still taking \
+         what is typed. Field row: {field:?}\nScreen:\n{screen}"
+    );
+}
+
+/// **`/` shows the card, not just the field.** Focusing the field brings
+/// the caret with it and so reveals it — but a reveal is minimal by
+/// design, which put the field on the bottom row of the pane with its
+/// own result list below the fold. The one thing this card is for is the
+/// list.
+#[test]
+fn the_finder_hotkey_brings_the_whole_card_into_view() {
+    let (mut harness, _tmp) = harness_with_welcome_in_a_repo();
+    open_welcome(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("find ["))
+        .expect("the finder field is on screen");
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("README.md"),
+        "the results are below the fold — the field was revealed on its \
+         own. Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Hot Exit"),
+        "the card's own closing prose is below the fold, so the card is \
+         clipped at the pane's bottom edge. Screen:\n{screen}"
     );
 }
 

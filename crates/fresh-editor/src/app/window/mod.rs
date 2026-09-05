@@ -1911,7 +1911,16 @@ impl Window {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
-                    view_state.cursors.primary_mut().move_to(position, false);
+                    let cursor = view_state.cursors.primary_mut();
+                    cursor.move_to(position, false);
+                    // An absolute placement is a jump, not a vertical move, so
+                    // it clears the goal column — the same thing every other
+                    // jump does (`new_sticky_column: None` on a diagnostic
+                    // jump, a search hit, a click). Without this the *next*
+                    // Up/Down snapped the caret back to a column the reader
+                    // left long ago: Tab onto the third door card seated the
+                    // caret on it and one Down threw it back into the first.
+                    cursor.sticky_column = None;
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                     moved_any = true;
                 }

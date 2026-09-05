@@ -1725,10 +1725,35 @@ registerHandler("welcome_space", () => {
   if (activateFocused()) return;
   dispatch(widgetKey("Space"));
 });
-function moveFinder(delta: number): void {
-  if (finderHits.length === 0) return;
-  finderIndex = (finderIndex + delta + finderHits.length) % finderHits.length;
+/** Walk the finder's marked hit, and say whether it moved.
+ *
+ *  It no longer wraps, and the caller falls through to an ordinary caret
+ *  move when it declines. Wrapping made the finder a trap: the caret now
+ *  focuses the field just by arriving on its row, so a reader walking
+ *  down the page fell in and could never walk out again — every Down
+ *  cycled a list instead of moving the caret, with nothing on screen to
+ *  say why. Falling out of either end is how a list inside a document
+ *  should behave. */
+function moveFinder(delta: number): boolean {
+  if (finderHits.length === 0) return false;
+  const next = finderIndex + delta;
+  if (next < 0 || next >= finderHits.length) return false;
+  finderIndex = next;
   render();
+  return true;
+}
+
+/** Whether Up/Down belong to the finder's result list rather than to the
+ *  page.
+ *
+ *  Not simply "is the field focused". With an empty query every file in
+ *  the repo is a hit, so a reader who has typed nothing — who has merely
+ *  arrived at the field with the caret — would have to walk two hundred
+ *  results to get past the card. A query is what makes the list
+ *  something you are navigating rather than something that happens to be
+ *  under you. */
+function finderOwnsVerticalKeys(): boolean {
+  return finderFocused() && finderQuery.length > 0;
 }
 /** Movement keys decide only *who* moves — the focused widget, or the
  *  editor. The moving itself is the host's, which is why none of the
@@ -1741,12 +1766,12 @@ function moveFinder(delta: number): void {
  *  mean something the host cannot know: with the finder focused they
  *  walk its *hits*, which are plugin state, not text in the field. */
 registerHandler("welcome_up", () => {
-  if (finderFocused()) moveFinder(-1);
-  else editor.executeAction("move_up");
+  if (finderOwnsVerticalKeys() && moveFinder(-1)) return;
+  editor.executeAction("move_up");
 });
 registerHandler("welcome_down", () => {
-  if (finderFocused()) moveFinder(1);
-  else editor.executeAction("move_down");
+  if (finderOwnsVerticalKeys() && moveFinder(1)) return;
+  editor.executeAction("move_down");
 });
 
 
@@ -1794,12 +1819,19 @@ registerHandler("welcome_focus_find", () => {
     folded.delete("finder");
     render();
   }
+  // Put the card at the top of the pane *first*. Focusing the field
+  // brings the caret with it (`focusFollowsCursor`) and so reveals it,
+  // but a reveal is minimal by design — the field lands on the bottom
+  // row with its own result list below the fold, which is the one thing
+  // this card is for. Scrolling to its heading and then focusing the
+  // field costs no extra motion: the field is already on screen by the
+  // time focus reaches it.
+  //
+  // The order matters and is guaranteed: both are commands on the same
+  // queue, so the scroll's own caret move lands before the focus move
+  // that supersedes it.
+  if (bufferId !== null) editor.scrollToWidget(bufferId, "fold:finder", "top");
   lastFocusedWidget = "finderField";
-  // The caret follows the focus (`focusFollowsCursor`), and the reveal
-  // comes with it. Jumping to the Level 1 banner afterwards used to be
-  // the way this got on screen; it would now *move the caret off the
-  // field it just focused*, and the move would take the focus back off
-  // it again.
   panel.setFocusKey("finderField");
 });
 

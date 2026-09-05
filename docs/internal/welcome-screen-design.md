@@ -744,6 +744,22 @@ Eleven things the wireframes did not know:
    The same test is why a Tab onto the only control on a row leaves the caret
    where it is: the two already agree.
 
+   *An absolute placement clears the goal column.* Seating the caret is a
+   jump, and a jump resets the column an Up/Down aims at — the same as a
+   click or a search hit. Without that, Tab across to the third door card
+   and one Down threw the caret back into the first, so Enter opened a
+   level the reader had not chosen.
+
+   *The finder must not trap the caret.* Its field takes focus just by the
+   caret arriving on its row, and its Up/Down walk its results — so a
+   reader walking down the page fell in and could not walk out. The list
+   no longer wraps (either end falls through to a caret move) and it only
+   claims the arrow keys once a query has been typed: with an empty one
+   every file in the repo is a hit, and an untouched finder is not
+   something you are navigating. For the same reason `/` scrolls the card
+   into view before focusing the field — the reveal a focus move brings is
+   minimal, which would leave the results below the fold.
+
    *Tab from nothing focused starts beside the caret.* "Nothing focused" is
    not this panel at rest — it is the caret on prose, which on a page that is
    mostly prose is most rows. Falling back to the ring's first entry would
