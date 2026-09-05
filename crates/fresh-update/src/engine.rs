@@ -43,16 +43,12 @@
 
 #![allow(clippy::let_underscore_must_use)]
 
-/// The flag that turns the attestation check off, named once so the hint in a
-/// failure and the CLI that parses it cannot drift apart.
-pub const SKIP_ATTESTATION_FLAG: &str = "--skip-attestation";
-
 use crate::endpoint::Endpoints;
 use crate::feed::Release;
 use crate::net::{self, Transport};
 use crate::provenance::Provenance;
 use crate::registry::UpdateKind;
-use crate::{self_update, Channel};
+use crate::{self_update, Channel, SKIP_ATTESTATION_FLAG};
 use std::path::{Path, PathBuf};
 
 /// Options for one run of the engine.

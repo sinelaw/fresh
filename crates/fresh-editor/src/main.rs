@@ -262,7 +262,7 @@ impl From<Cli> for Args {
             && cli
                 .cmd
                 .iter()
-                .any(|a| a == fresh_update::engine::SKIP_ATTESTATION_FLAG);
+                .any(|a| a == fresh_update::SKIP_ATTESTATION_FLAG);
         // Value flags: `--flag VALUE`. Point the update at a mirror of the
         // release feed — an air-gapped/enterprise mirror in production, and the
         // way the packaging containers exercise the real install flow in tests.
