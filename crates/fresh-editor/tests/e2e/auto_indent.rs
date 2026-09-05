@@ -179,6 +179,61 @@ fn test_fallback_copies_previous_indent() {
     );
 }
 
+/// #3165: Enter on the blank last line of a text file does not indent.
+#[test]
+fn test_plain_text_enter_on_blank_last_line_does_not_indent() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(
+        &file_path,
+        "    line1\n    line2\n        line3\n        line4\n",
+    )
+    .unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.assert_screen_contains("Ln 5, Col 1");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 6, Col 1");
+
+    harness.type_text("x").unwrap();
+    harness.assert_screen_contains("Ln 6, Col 2");
+    // Not `assert_buffer_content`: the harness's shadow string does not
+    // model auto-indent.
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "    line1\n    line2\n        line3\n        line4\n\nx"
+    );
+
+    // Enter at the end of an indented line, then at the end of the
+    // inserted whitespace, keeps the indent: the rule is the cursor's column.
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.assert_screen_contains("Ln 4, Col 14");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 5, Col 9");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 6, Col 9");
+    harness.type_text("y").unwrap();
+    harness.assert_screen_contains("Ln 6, Col 10");
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "    line1\n    line2\n        line3\n        line4\n        \n        y\n\nx"
+    );
+}
+
 /// Test auto-indent with multi-cursor
 #[test]
 fn test_auto_indent_with_multi_cursor() {
