@@ -91,6 +91,75 @@ fn open_welcome(harness: &mut EditorTestHarness) {
         .expect("welcome screen renders its three doors");
 }
 
+/// The caret's screen position, waited for rather than sampled.
+///
+/// `render_observing_cursor` reports the frame it just drew, and a frame
+/// drawn while the page is repainting can have the caret off-view and
+/// hidden — so sampling it once is a coin flip on a page whose plugin
+/// repaints asynchronously (`git status` landing, the themes probe).
+///
+/// Bounded, unlike the waits elsewhere in this file, and deliberately:
+/// "the caret is on screen" is not a state that must eventually arrive —
+/// a page scrolled away from its caret never shows one — so an
+/// open-ended wait here is a hung test rather than a failing one, which
+/// is worse in every way. Failing says which frame it gave up on.
+fn caret_position(harness: &mut EditorTestHarness) -> (u16, u16) {
+    for _ in 0..40 {
+        if let Some(pos) = harness.render_observing_cursor().unwrap() {
+            return pos;
+        }
+        harness.wait_for_async_quiescence(1).unwrap();
+    }
+    panic!(
+        "no frame drew the caret — the page is scrolled away from it. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The caret's line and column, read off the status bar.
+///
+/// Rendered output, like everything else here — but unlike the hardware
+/// cursor's *screen* position it does not move when the pane scrolls. A
+/// test asking whether a key moved the caret should not also be a test
+/// of whether an async repaint happened to re-anchor the view.
+fn caret_readout(harness: &EditorTestHarness) -> String {
+    let screen = harness.screen_to_string();
+    let status = screen
+        .lines()
+        .rev()
+        .find(|l| l.contains("Ln "))
+        .expect("the status bar shows the caret's line");
+    let at = status.find("Ln ").expect("checked above");
+    status[at..]
+        .split("  ")
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// Scroll the page until `needle` is on screen.
+///
+/// The level-jump digits are gone — every printable key this page used
+/// to bind is — so a test that wants a card walks to it the way a reader
+/// does. How far that is belongs to the layout, which is why this
+/// watches the screen rather than counting.
+fn scroll_until(harness: &mut EditorTestHarness, needle: &str) {
+    for _ in 0..12 {
+        if harness.screen_to_string().contains(needle) {
+            return;
+        }
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_async_quiescence(2).unwrap();
+    }
+    panic!(
+        "scrolled the whole page without finding {needle:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Put the caret in the finder's field, which is what gives it focus.
 ///
 /// There is no hotkey for this any more. `/` used to be one, and its
@@ -100,20 +169,11 @@ fn open_welcome(harness: &mut EditorTestHarness) {
 /// that: the row count comes from what is on screen, not from the card's
 /// structure.
 fn put_the_caret_in_the_finder(harness: &mut EditorTestHarness) {
-    harness
-        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("find ["))
-        .expect("the finder card is on screen");
+    scroll_until(harness, "find [");
     let (_, field_row) = harness
         .find_text_on_screen("find [")
         .expect("the finder field is on screen");
-    let caret_row = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret")
-        .1;
+    let caret_row = caret_position(harness).1;
     assert!(
         caret_row < field_row,
         "expected the caret above the finder field, got {caret_row} and {field_row}"
@@ -188,7 +248,7 @@ fn leaving_the_finder_does_not_park_focus_on_the_startup_switch() {
     // Escape leaves the field (it does not close the page from here).
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
     // The switch's own confirmation is the tell: it says so when it
@@ -513,10 +573,7 @@ fn tab_brings_the_caret_to_the_control_it_focused() {
     let (_, door_row) = harness
         .find_text_on_screen("Open a file & go")
         .expect("the first door card's own row is on screen");
-    let caret = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret");
+    let caret = caret_position(&mut harness);
     assert_eq!(
         caret.1,
         door_row,
@@ -551,7 +608,7 @@ fn moving_the_caret_onto_prose_disarms_the_focused_control() {
     harness.wait_for_async_quiescence(4).unwrap();
 
     harness
-        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
 
@@ -560,7 +617,7 @@ fn moving_the_caret_onto_prose_disarms_the_focused_control() {
     let screen = harness.screen_to_string();
     assert!(
         !screen.contains("Welcome: hidden"),
-        "Space after clicking on prose toggled the startup switch — the \
+        "Enter after clicking on prose toggled the startup switch — the \
          caret moved and focus stayed behind. Screen:\n{screen}"
     );
     assert!(
@@ -579,23 +636,12 @@ fn the_caret_arriving_at_the_finder_field_types_into_it() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    // `1` puts the Level 1 banner at the top of the pane, with the caret
-    // on it — the finder card is a few rows below, in the same viewport.
-    harness
-        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("find ["))
-        .expect("the finder card is on screen");
+    scroll_until(&mut harness, "find [");
 
     let (_, field_row) = harness
         .find_text_on_screen("find [")
         .expect("the finder field is on screen");
-    let caret_row = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret")
-        .1;
+    let caret_row = caret_position(&mut harness).1;
     assert!(
         caret_row < field_row,
         "expected the caret above the finder field, got caret row \
@@ -639,17 +685,11 @@ fn tab_between_two_cards_on_one_row_carries_the_caret_across_it() {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     }
     harness.wait_for_async_quiescence(4).unwrap();
-    let first = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret");
+    let first = caret_position(&mut harness);
 
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
-    let second = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret");
+    let second = caret_position(&mut harness);
 
     assert_eq!(
         second.1, first.1,
@@ -687,17 +727,9 @@ fn tab_after_reading_down_the_page_does_not_jump_back_to_the_top() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    // `3` puts the Level 3 banner at the top of the pane, with the caret
-    // on it — a banner is not a Tab stop, so nothing is focused.
-    harness
-        .send_key(KeyCode::Char('3'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("LEVEL 3 · RUN THE WHOLE SHOP")
-        })
-        .expect("the page scrolls to Level 3");
+    // Read down to Level 3. A banner is not a Tab stop and the rows
+    // around it are prose, so nothing is focused when we arrive.
+    scroll_until(&mut harness, "The Orchestrator dock");
 
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
@@ -731,17 +763,11 @@ fn a_caret_seated_by_tab_keeps_its_column_on_the_next_arrow_key() {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     }
     harness.wait_for_async_quiescence(4).unwrap();
-    let tabbed = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret");
+    let tabbed = caret_position(&mut harness);
 
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
-    let moved = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret");
+    let moved = caret_position(&mut harness);
 
     assert_eq!(
         moved.0,
@@ -808,26 +834,42 @@ fn walking_down_the_page_does_not_get_stuck_in_the_finder() {
     );
 }
 
-/// **The page's own outline, in the sidebar.** A long document in this
+/// **The page's own outline, on request.** A long document in this
 /// editor gets a Contents section — that is what Markdown files do — and
 /// this page is a long document. It is built from the page's own
 /// structure as the page is built, so it cannot name a card that is not
 /// there or miss one that is.
+///
+/// It does not arrive on its own, and that is the other half of the
+/// test: mounting a sidebar section opens the sidebar *column*, and a
+/// startup surface does not get to rearrange the window it opens into.
+/// The `Contents` button in the UI row is what asks for it.
 #[test]
-fn the_page_puts_its_outline_in_the_sidebar() {
+fn the_contents_button_puts_the_pages_outline_in_the_sidebar() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
     harness.wait_for_async_quiescence(4).unwrap();
 
-    let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Welcome — Contents"),
-        "no Contents section in the sidebar:\n{screen}"
+        !harness.screen_to_string().contains("Welcome — Contents"),
+        "the outline opened the sidebar without being asked. Screen:\n{}",
+        harness.screen_to_string()
     );
+
+    let (col, row) = harness
+        .find_text_on_screen("Contents")
+        .expect("the UI row names Contents in the first viewport");
+    harness.mouse_click(col + 2, row).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Welcome — Contents"))
+        .expect("the Contents button opens the section");
+
+    let screen = harness.screen_to_string();
     for entry in [
         "LEVEL 1 · JUST EDIT",
         "LEVEL 2 · IT'S A PROJECT NOW",
         "LEVEL 3 · RUN THE WHOLE SHOP",
+        "Review Diff — read a change",
     ] {
         assert!(
             screen.contains(entry),
@@ -836,46 +878,36 @@ fn the_page_puts_its_outline_in_the_sidebar() {
     }
 }
 
-/// **`/` and `0` are gone.** Both existed only because the page had no
-/// caret to navigate with. `/` put focus in the finder — which is now
-/// what having the caret on the field means — so the key goes back to
-/// being the one separator every path contains; `0` went to the top,
-/// which the Contents section's first entry does.
+/// **The page binds nothing printable.** `1` / `2` / `3` jumped to a
+/// level, `0` went to the top, `/` put focus in the finder and Space
+/// activated the focused control — and every one of them is a character
+/// a reader can mean to *type* into the field this page carries. The
+/// host does hand a focused text widget the key ahead of the mode's
+/// bindings, so they were never actually stolen; but working by a
+/// precedence rule is a worse answer than not binding them, and the page
+/// has better ways to say all five: the caret navigates, Enter
+/// activates, the Contents section jumps, and the door cards are Tab
+/// stops that jump on Enter.
 #[test]
-fn the_page_no_longer_binds_slash_or_zero() {
+fn the_page_binds_no_printable_key() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
     // Somewhere that is not the top, so a stray "go to the top" shows.
-    harness
-        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("LEVEL 2 · IT'S A PROJECT NOW")
-        })
-        .expect("`2` still jumps — the door cards promise it in print");
-    let before = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret");
+    scroll_until(&mut harness, "━━━━ LEVEL 2 · IT'S A PROJECT NOW");
+    let before = caret_readout(&harness);
 
-    for key in ['/', '0'] {
+    for key in ['/', '0', '1', '2', '3', ' '] {
         harness
             .send_key(KeyCode::Char(key), KeyModifiers::NONE)
             .unwrap();
     }
     harness.wait_for_async_quiescence(4).unwrap();
 
-    let after = harness
-        .render_observing_cursor()
-        .unwrap()
-        .expect("the page draws a caret");
     assert_eq!(
-        after,
+        caret_readout(&harness),
         before,
-        "`/` or `0` still moves the page. Screen:\n{}",
+        "a printable key still moves the caret. Screen:\n{}",
         harness.screen_to_string()
     );
 }
@@ -916,38 +948,16 @@ fn the_review_diff_card_is_on_the_page_with_its_keys() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    harness
-        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Review Diff — read a change"))
-        .expect("the Review Diff card is under Level 2");
-
-    // Page down until the card's key table is on screen. How far that is
-    // belongs to the layout — the card sits below the git card, whose
-    // height depends on what `git status` says about the working tree —
-    // so this walks rather than counting.
-    for _ in 0..6 {
-        if harness.screen_to_string().contains("next / previous hunk") {
-            break;
-        }
-        harness
-            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
-            .unwrap();
-        harness.wait_for_async_quiescence(2).unwrap();
-    }
-
-    let screen = harness.screen_to_string();
+    // In document order, walking to each: the card is taller than a
+    // viewport once the git card above it has anything to say, so no one
+    // screen holds all of it.
     for line in [
         "next / previous hunk",
         "stage · unstage · discard the hunk under the cursor",
         "export the session as Markdown",
         "Review the working tree",
     ] {
-        assert!(
-            screen.contains(line),
-            "the Review Diff card is missing {line:?}:\n{screen}"
-        );
+        scroll_until(&mut harness, line);
     }
 }
 
@@ -960,15 +970,12 @@ fn a_level_banner_has_air_before_its_description() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    harness
-        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("LEVEL 1 · JUST EDIT"))
-        .expect("the Level 1 banner is on screen");
+    // The Contents section carries these captions too, so the rule is
+    // found by the one thing only the banner has: its heavy stroke.
+    scroll_until(&mut harness, "━━━━ LEVEL 1 · JUST EDIT");
 
     let (_, rule_row) = harness
-        .find_text_on_screen("LEVEL 1 · JUST EDIT")
+        .find_text_on_screen("━━━━ LEVEL 1 · JUST EDIT")
         .expect("the Level 1 banner is on screen");
     let gap = harness.screen_row_text(rule_row + 1);
     let description = harness.screen_row_text(rule_row + 2);

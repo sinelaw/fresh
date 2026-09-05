@@ -397,6 +397,10 @@ impl super::Editor {
         {
             return;
         }
+        // Putting the keyboard in a section you cannot see is not a
+        // state; this is the ask that `place_panel_in_sidebar` no longer
+        // assumes (see `reveal_sidebar`).
+        self.reveal_sidebar();
         if self.dock.as_ref().is_some_and(|d| d.focused) {
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
@@ -518,16 +522,38 @@ impl super::Editor {
             sec.rows = rows;
         }
         sec.panel = Some(panel);
-        // A section is nothing if the column is hidden.
-        if !self.active_window().file_explorer_visible {
-            self.active_window_mut().file_explorer_visible = true;
-            if self.file_explorer().is_none() {
-                self.init_file_explorer();
-            }
-            self.relayout();
-        }
         self.renumber_sidebar_panels();
         index
+    }
+
+    /// Show the sidebar column, initialising the explorer that heads it.
+    ///
+    /// **Placing a section does not call this, and that is the point.**
+    /// It used to: `place_panel_in_sidebar` opened the column on every
+    /// mount, on the reasoning that a section is nothing if the column
+    /// is hidden. True, and not worth what it cost — a plugin that
+    /// mounts a section quietly, as `markdown_toc` does for every
+    /// Markdown buffer and the welcome screen does for its own outline,
+    /// then yanked open a thirty-five-column sidebar (and created a file
+    /// explorer to head it) on someone who had deliberately closed it.
+    /// The pane it stole those columns from was mid-layout: the welcome
+    /// screen had already composed against the full width, so its cards
+    /// fell out of their row and its rows wrapped.
+    ///
+    /// So revealing is now the *ask*, not the placement: a mount that
+    /// does not start blurred, a focus on a section, and re-anchoring a
+    /// dock or centred panel into the column all say so out loud. A
+    /// quiet mount waits in a hidden column and is there the moment the
+    /// reader opens it.
+    pub(crate) fn reveal_sidebar(&mut self) {
+        if self.active_window().file_explorer_visible {
+            return;
+        }
+        self.active_window_mut().file_explorer_visible = true;
+        if self.file_explorer().is_none() {
+            self.init_file_explorer();
+        }
+        self.relayout();
     }
 
     /// Take a plugin section's panel out of the column, dropping the

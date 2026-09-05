@@ -36,7 +36,8 @@ const editor = getEditor();
 //   (wordmark, one line, three numbered doors, four verbs, one
 //   reassurance) and mentions no LSP, git, worktree or agent.
 //   Scrolling descends through three bannered levels ordered by
-//   sophistication; `1` / `2` / `3` jump straight to one.
+//   sophistication; the Contents section in the sidebar, and the three
+//   door cards, jump straight to one.
 //
 //   Everything here is built from the existing plugin surface — a
 //   virtual buffer with a mounted widget panel (the same pairing
@@ -810,7 +811,7 @@ function doorCard(d: Door, rows: number): WidgetSpec {
       // time. The digit lives here rather than flushed right: a
       // full-width button pads its own label, so there is no column to
       // align a second fragment to.
-      doorRow(d, `jump ↓ · or press ${d.n}`, true),
+      doorRow(d, "jump ↓ · click, or Enter", true),
     ),
   });
 }
@@ -1567,10 +1568,22 @@ function publishContents(): void {
   });
 }
 
-/** Put the section in the sidebar. Blurred: the page arrives as
- *  something to read, and taking the keyboard into the sidebar the
- *  moment you switch to a tab is hostile — the same call
- *  `markdown_toc.ts` makes, for the same reason. */
+/** Put the section in the sidebar — quietly, unless `focus` says the
+ *  reader asked for it.
+ *
+ *  `startBlurred` is not a detail here. Mounting a section used to open
+ *  the sidebar *column* whatever the mount said, and the file explorer
+ *  came up with it: opening this page took thirty-five columns off a
+ *  hundred-and-twenty-column terminal on every launch, from someone who
+ *  had deliberately closed the sidebar. It also stole them from a page
+ *  that had already composed against the full width, so the three doors
+ *  fell out of their row and every row wrapped.
+ *
+ *  A blurred mount is silent now (`Editor::reveal_sidebar`): the outline
+ *  is there for a reader whose sidebar is open, and waits in a hidden
+ *  column for one whose is not. The `Contents` button is what opens it —
+ *  which is why the button exists at all, since a section can be closed,
+ *  collapsed, or buried under the explorer. */
 function mountContents(focus: boolean): void {
   if (!contentsMounted) {
     editor.mountSidebarSection(
@@ -1798,7 +1811,11 @@ async function openWelcome(force: boolean): Promise<void> {
     probeThemes();
     probeWorkspaces();
     render();
-    mountContents(false);
+    // No section yet. The page is created as a *background* tab at
+    // startup, and an outline of a page nobody is looking at would sit
+    // in the sidebar under the file they are — where the Markdown
+    // outline goes, and in place of it. `buffer_activated` is the moment
+    // this page is the one being read; `showBuffer` below fires it.
     if (force) editor.showBuffer(bufferId);
     void probeRepoFiles();
     void probeGit();
@@ -1968,14 +1985,16 @@ function jumpTo(level: string): void {
 // mode's bindings, so these handlers only ever run when nothing is
 // being typed into, and they can simply do their job.
 
-registerHandler("welcome_jump_1", () => jumpTo("1"));
-registerHandler("welcome_jump_2", () => jumpTo("2"));
-registerHandler("welcome_jump_3", () => jumpTo("3"));
 registerHandler("welcome_tab", () => dispatch(widgetKey("Tab")));
 registerHandler("welcome_shift_tab", () => dispatch(widgetKey("Shift+Tab")));
 /** Activate whatever has focus.
  *
- *  Two keys are handled here rather than forwarded to the panel:
+ *  Enter is the only key that gets here. Space used to as well, and is
+ *  gone with the rest of the printable bindings — it is a character a
+ *  reader can mean to type into the finder, and Enter already says
+ *  "activate this" everywhere else in the editor.
+ *
+ *  Two cases are handled here rather than forwarded to the panel:
  *
  *  - the finder field, because a single-line `Text` widget treats Enter
  *    as advance-focus, and opening the pick is this field's whole
@@ -2000,10 +2019,6 @@ function activateFocused(): boolean {
 registerHandler("welcome_enter", () => {
   if (activateFocused()) return;
   dispatch(widgetKey("Enter"));
-});
-registerHandler("welcome_space", () => {
-  if (activateFocused()) return;
-  dispatch(widgetKey("Space"));
 });
 /** Walk the finder's marked hit, and say whether it moved.
  *
@@ -2101,17 +2116,22 @@ registerHandler("mode_text_input", (args: { text: string }) => {
 editor.defineMode(
   "welcome",
   [
-    // The digits stay because the door cards say so — "jump ↓ · or press
-    // 1" is a promise printed on the page. `0` (back to the top) and `/`
-    // (put focus in the finder) are gone: neither was written anywhere,
-    // and both existed only because the page had no caret to navigate
-    // with. It has one now — the Contents section in the sidebar is the
-    // way back to the top, and the finder's field takes focus by having
-    // the caret on it, which also gives `/` back its real job of being a
-    // path separator you can type.
-    ["1", "welcome_jump_1"],
-    ["2", "welcome_jump_2"],
-    ["3", "welcome_jump_3"],
+    // **Nothing printable is bound here.** Every key this page claims is
+    // one no text field wants: Tab, Enter, Escape, the arrows, Backspace
+    // and Delete, and the handful of Ctrl-/Alt- accelerators the page
+    // promises in print.
+    //
+    // Four went, and the reason is the same for all four. `1` / `2` / `3`
+    // jumped to a level, `0` went to the top, `/` put focus in the
+    // finder and Space activated the focused control — and each is a
+    // character a reader can perfectly well mean to *type* into the
+    // field this page carries. The host does hand a focused text widget
+    // the key ahead of the mode's bindings, so they were not actually
+    // stolen; but "it works because of a precedence rule" is a worse
+    // answer than not binding them, and the page has better ways to say
+    // all four now: the caret navigates, Enter activates, the Contents
+    // section jumps, and the door cards are Tab stops that jump when you
+    // press Enter on them.
     ["Tab", "welcome_tab"],
     // Shift+Tab is its own key code, not Tab carrying a modifier: the
     // terminal sends CSI Z and the parser yields `BackTab`. `S-Tab`
@@ -2121,7 +2141,6 @@ editor.defineMode(
     ["BackTab", "welcome_shift_tab"],
     ["S-BackTab", "welcome_shift_tab"],
     ["Return", "welcome_enter"],
-    ["Space", "welcome_space"],
     ["Up", "welcome_up"],
     ["Down", "welcome_down"],
     ["Backspace", "welcome_backspace"],

@@ -409,6 +409,21 @@ a manual; "It's a project now" is a thing that happens to you.
 
 ## 6b. The Contents section, and the UI row
 
+**It opens only where it is wanted.** Mounting a sidebar section used to open
+the sidebar *column* whatever the mount said, initialising a file explorer to
+head it — so a quiet mount yanked thirty-five columns away from a reader who
+had deliberately closed the sidebar, and did it to the welcome page's own
+pane after the page had composed against the full width (the doors fell out
+of their row; every row wrapped). It is not this page's bug alone:
+`markdown_toc` mounts on every Markdown buffer, so opening a `.md` file
+opened your sidebar. Revealing is the *ask* now, not the placement
+(`Editor::reveal_sidebar`): a mount that does not start blurred, a focus on a
+section, and re-anchoring a panel into the column all say so out loud, while a
+quiet mount waits in a hidden column and is there the moment you open it.
+The page also mounts nothing while it is a *background* tab — an outline of a
+page nobody is looking at would sit where the Markdown outline goes, in place
+of it.
+
 **The page is a long document, so it gets an outline.** That is what a
 Markdown file gets in this editor (`markdown_toc.ts`, the first consumer of
 the sidebar-sections API), and it comes from the same `mountSidebarSection`
@@ -453,24 +468,27 @@ the welcome screen, is the welcome screen.
 
 | Input | Effect |
 |---|---|
-| `1` / `2` / `3` | scroll to that level; the path card and depth meter update |
 | scroll / `PgUp` / `PgDn` / mouse wheel | ordinary buffer scrolling; the depth meter follows |
 | `Tab` / `Shift+Tab` | move focus between interactive widgets — the caret comes with it |
 | arrow / page keys / a click on the text | move the caret; the control on the row it lands on takes focus, and a row with none clears it |
-| `Enter` / `Space` | activate the focused widget — nothing, on a paragraph |
+| `Enter` | activate the focused widget — nothing, on a paragraph |
 | click on a fold arrow, or `za` on its row | fold / unfold that card |
 | typing, while the caret is in the finder | it is a real text input; it really searches |
 | the Contents section in the sidebar | this page's own outline: an arrow browses it, a click or Enter goes |
 | `Ctrl+P`, `F1`, `Alt+O`, the menu bar | all work — this is a normal pane, not a modal |
 | `Ctrl+W` / the tab's `×` | close it, like any tab |
 
-**Two keys this page used to bind and no longer does.** `/` put focus in the
-finder and `0` went back to the top, and both existed only because the page
-had no caret to navigate with. It has one: the finder's field takes focus by
-having the caret on it, which gives `/` back its real job of being the one
-separator every path contains, and the Contents section's first entry is the
-way to the top. The digits stay, because the door cards say `jump ↓ · or
-press 1` in print.
+**This page binds nothing printable, and that is the rule.** `1` / `2` / `3`
+jumped to a level, `0` went to the top, `/` put focus in the finder, and
+Space activated the focused control. Every one of them is a character a
+reader can mean to *type* into the field this page carries. The host does
+hand a focused text widget the key ahead of the mode's bindings, so they were
+never actually stolen — but working by a precedence rule is a worse answer
+than not binding them at all, and each had a better replacement once the page
+grew a caret: the caret navigates, Enter activates, the Contents section
+jumps, and the door cards are Tab stops that jump when you press Enter on
+one. Their label says so (`jump ↓ · click, or Enter`) where it used to
+promise a digit.
 
 **Focus.** A `welcome` mode (via `defineMode`) with `inheritNormalBindings:
 false`: on a cursorless page, every key is either bound here or intentionally
