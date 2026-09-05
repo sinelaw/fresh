@@ -170,24 +170,24 @@
         {
           "text": "Horrible Code",
           "effect": "sick",
-          "at": 0.04
+          "at": 0.0
         },
         {
           "text": "to",
-          "at": 0.34,
+          "at": 0.0,
           "small": true
         },
         {
           "text": "Declarative",
           "effect": "shine",
-          "at": 0.5
+          "at": 0.0
         }
       ],
       "footer": {
         "added": 63164,
         "removed": 27662,
         "note": "One example, out of two hundred and sixteen files",
-        "at": 0.62
+        "at": 0.0
       }
     },
     "labels": {
@@ -323,7 +323,7 @@
           0,
           67
         ],
-        "note": "☠ hand-stacked",
+        "note": "🧱 hand-stacked",
         "note_at": "below-right"
       },
       {
@@ -331,7 +331,6 @@
         "view": "dismiss",
         "label": "BEFORE",
         "tone": "before",
-        "transition": "push",
         "rows": [
           7,
           25
@@ -340,15 +339,15 @@
           0,
           66
         ],
-        "note": "↻ duplicated",
-        "note_at": "below-right"
+        "note": "🔁 duplicated",
+        "note_at": "below-right",
+        "transition": "push"
       },
       {
         "shot": "measure",
         "view": "measure",
         "label": "BEFORE",
         "tone": "before",
-        "transition": "push",
         "rows": [
           6,
           17
@@ -357,15 +356,15 @@
           0,
           52
         ],
-        "note": "⚠ manual",
-        "note_at": "below-right"
+        "note": "📐 manual",
+        "note_at": "below-right",
+        "transition": "push"
       },
       {
         "shot": "again",
         "view": "again",
         "label": "BEFORE",
         "tone": "before",
-        "transition": "push",
         "rows": [
           6,
           18
@@ -374,15 +373,15 @@
           0,
           62
         ],
-        "note": "☹ again",
-        "note_at": "below-right"
+        "note": "😵 again",
+        "note_at": "below-right",
+        "transition": "push"
       },
       {
         "shot": "clamp",
         "view": "clamp",
         "label": "BEFORE",
         "tone": "before",
-        "transition": "push",
         "rows": [
           11,
           22
@@ -391,42 +390,26 @@
           0,
           62
         ],
-        "note": "☠ again",
-        "note_at": "below-right"
+        "note": "🤯 again",
+        "note_at": "below-right",
+        "transition": "push"
       },
       {
         "shot": "after",
         "view": "after",
         "label": "AFTER",
         "tone": "after",
+        "rows": [
+          4,
+          20
+        ],
+        "cols": [
+          0,
+          62
+        ],
+        "note": "✨ declarative and clean",
+        "note_at": "below-right",
         "transition": "push",
-        "rows": [
-          4,
-          20
-        ],
-        "cols": [
-          0,
-          62
-        ],
-        "note": "★ declarative and clean",
-        "note_at": "below-right",
-        "hold": 1.6
-      },
-      {
-        "shot": "after",
-        "view": "after",
-        "label": "AFTER",
-        "tone": "after",
-        "rows": [
-          4,
-          20
-        ],
-        "cols": [
-          0,
-          62
-        ],
-        "note": "✓ position",
-        "note_at": "below-right",
         "hold": 1.6
       },
       {
@@ -442,7 +425,7 @@
           8,
           48
         ],
-        "note": "✓ layout",
+        "note": "✅ position",
         "note_at": "below-right"
       },
       {
@@ -458,7 +441,7 @@
           8,
           28
         ],
-        "note": "✓ input handling",
+        "note": "✅ layout",
         "note_at": "below-right"
       },
       {
@@ -474,7 +457,7 @@
           8,
           40
         ],
-        "note": "✓ sizing",
+        "note": "✅ input handling",
         "note_at": "below-right"
       },
       {
@@ -490,7 +473,7 @@
           8,
           60
         ],
-        "note": "✓ sizing",
+        "note": "✅ sizing",
         "note_at": "below-right"
       }
     ],
