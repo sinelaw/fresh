@@ -739,15 +739,30 @@ non-goal on silent installs.
 
 ### 10.1 GitHub's API rate limit
 
-Two of the requests an update makes go to `api.github.com`: the release feed,
-and the attestation lookup (§11). That host allows an unauthenticated caller
-**60 requests an hour per source address**, shared with everything else behind
-the same NAT — so `fresh --cmd update` can be refused with a 403 on a machine
-where `curl … install.sh | sh` succeeds seconds later. The install script is
-not luckier; it never touches the API at all, fetching the asset straight from
-`github.com`.
+`api.github.com` allows an unauthenticated caller **60 requests an hour per
+source address**, shared with everything else behind the same NAT. That used to
+be enough to break `fresh --cmd update` on a machine where
+`curl … install.sh | sh` worked seconds later — the install script never
+touches the API at all.
 
-Three things follow, all in `fresh_update::net` / `fresh_update::fetch`:
+So the updater resolves releases the way the script does, and the API is now a
+fallback rather than the route:
+
+| what | how | API budget |
+| --- | --- | --- |
+| the latest version (`--check`, the daily background check, any update) | `github.com/<repo>/releases/latest` → 302, tag in `Location` | none |
+| the archive for a self-contained install | built from the target triple, fetched from `github.com` | none |
+| the `.deb`/`.rpm`/`.flatpak` for a `DownloadPackage` channel | `feed::package_file_name`, the same construction `install.sh` does | none |
+| checksum sidecars | `<asset>.sha256` on `github.com` | none |
+| a pre-release (`--pre`) | the `/releases` list endpoint | 1 |
+| a package name the release turns out not to publish | the feed, after a 404 | 1 |
+| the release attestation, when an update installs | `api.github.com/repos/<repo>/attestations/sha256:<digest>` | 1 |
+
+A check therefore spends nothing, and an install spends exactly one request —
+the attestation, which is a *second origin* on purpose (§11) and so cannot be
+moved to `github.com` without becoming the thing it exists to improve on.
+
+Three supporting pieces, in `fresh_update::net` / `fresh_update::fetch`:
 
 - **A rate limit is reported as itself.** GitHub answers both of its limits
   with a 403 (or 429), so the status alone cannot distinguish "your budget is
@@ -760,22 +775,23 @@ Three things follow, all in `fresh_update::net` / `fresh_update::fetch`:
   over https, with `ureq` configured to drop `Authorization` across redirects,
   so a hop to the asset CDN cannot carry the credential. A token needs no
   scopes for a public repository and raises the limit to 5000/hour.
-- **The version has a second route.** `github.com/<repo>/releases/latest`
-  redirects to the newest release's page, and the tag is in the `Location`
-  header: one request, same host allowlist, no API budget. When — and only when
-  — the feed was refused for rate limiting, the version is read from there
-  instead, so `--check`, the daily background check and a SelfContained update
-  all keep working. It is a fallback, never the default: the redirect carries
-  no `prerelease`/`draft` flag, and making it the default would hand those
-  guarantees back to GitHub's web behaviour, which is what `feed::select`
-  exists to stop.
+- **Predicted names are checked by using them.** `package_file_name` builds
+  `fresh-editor_0.4.10-1_amd64.deb` from the version, because the pipeline
+  fixes that shape (`update-debian-changelog.sh` writes `-1`; `generate-rpm`
+  defaults to release `1`) — but it is a prediction. The engine downloads it and
+  falls back to the feed on a 404, so a packaging change costs one request
+  rather than producing a wrong answer. A checksum or attestation failure is
+  never retried that way: only `DownloadError::Missing` reopens the question.
 
-What the redirect cannot supply is the release's **asset list**, so a
-`DownloadPackage` channel (a `.deb`/`.rpm` whose filename embeds a packaging
-revision) says exactly that rather than claiming the release publishes nothing
-for the architecture. Neither can the attestation lookup be routed around: it
-is fail-closed by design, so a rate-limited attestation stops the install and
-the message names the two remedies (wait, or set a token).
+The guarantee `feed::select` carries — a stable install never offered a
+pre-release — survives the move, because it is re-derived from the tag itself
+(`version::is_prerelease`) rather than from a flag the redirect does not carry.
+Drafts need no equivalent: they are not public, so no redirect reaches one.
+
+An overridden endpoint (`--releases-url`, a mirror, the test server in
+`self_update_spine.rs`) keeps using its feed throughout: it named a document,
+and reinterpreting that as "ask GitHub instead" would ignore what the caller
+asked for.
 
 ---
 

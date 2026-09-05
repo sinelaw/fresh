@@ -20,13 +20,13 @@
 //!
 //! # Rate limiting is a distinct outcome, not a failure like any other
 //!
-//! Two of the requests an update makes — the release feed and the attestation
-//! lookup — go to `api.github.com`, which allows an unauthenticated client 60
-//! requests an hour *per source address*. That budget is shared by everyone
-//! behind the same NAT, so "403" here usually means someone else spent it. It
-//! is reported as [`FetchError::RateLimited`] rather than a bare status,
-//! because the answer ("wait, or bring a token") is nothing like the answer to
-//! a real 403, and because [`crate::fetch`] can route around it for the feed.
+//! `api.github.com` allows an unauthenticated client 60 requests an hour *per
+//! source address*, a budget shared by everyone behind the same NAT — so "403"
+//! from that host usually means someone else spent it. [`crate::fetch`] keeps
+//! the updater off the API for everything but the attestation lookup, and what
+//! is left is reported as [`FetchError::RateLimited`] rather than a bare
+//! status, because the answer ("wait, or bring a token") is nothing like the
+//! answer to a real 403.
 //!
 //! A token from the environment is attached to `api.github.com` requests only.
 //! `ureq`'s default is to drop `Authorization` across a redirect, so a hop to

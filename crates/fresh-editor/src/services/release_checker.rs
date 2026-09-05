@@ -338,7 +338,13 @@ pub fn plan_for(prov: &Provenance) -> UpdatePlan {
 /// rate limit is how the indicator goes quiet for an hour at a time.
 #[cfg(feature = "http")]
 fn fetch_release(releases_url: &str) -> Result<fresh_update::feed::Release, String> {
-    let mut endpoints = fresh_update::endpoint::Endpoints::production();
+    // From the environment, so both overrides are honoured: which route the
+    // check takes depends on the download base too — a mirror's own feed is
+    // authoritative for a mirror, and GitHub's redirect is not.
+    let mut endpoints = fresh_update::endpoint::Endpoints::from_env().unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "ignoring an unusable release endpoint override");
+        fresh_update::endpoint::Endpoints::production()
+    });
     if releases_url != endpoints.releases_url {
         // A URL the policy refuses cannot reach here in a release build —
         // `releases_url()` above already sanitised the env override — but a

@@ -1,33 +1,48 @@
-//! Getting the release we would offer — and what to do when GitHub's API says
-//! no.
+//! Which release to offer, resolved the way the install script resolves it.
 //!
-//! The release feed lives on `api.github.com`, which gives an unauthenticated
-//! caller 60 requests an hour *per source address*. That is a budget shared
-//! with everything else on the same NAT, so `fresh --cmd update` can be
-//! refused with a 403 on a machine where `curl … install.sh | sh` works fine
-//! seconds later: the install script never touches the API at all. It asks
-//! `github.com` for the release *asset*, and GitHub serves that from the web
-//! host with no such budget.
+//! `scripts/install.sh` never touches `api.github.com`. It asks
+//! `github.com/<repo>/releases/latest`, which answers 302 with the newest
+//! release's page in its `Location` header, and builds every asset URL from
+//! the tag it reads there. That is why `curl … install.sh | sh` succeeds on a
+//! machine where `fresh --cmd update` was just refused with a 403: the API
+//! gives an unauthenticated caller 60 requests an hour *per source address*,
+//! shared with everyone behind the same NAT, and the web host has no such
+//! budget.
 //!
-//! So when the API refuses for that reason — and only that reason — the
-//! version is read the way the install script effectively reads it:
-//! `github.com/<repo>/releases/latest` is a redirect to the newest release's
-//! page, and the tag is in the `Location` header. One request, no API budget,
-//! same host allowlist, still https.
+//! So the updater resolves the version the same way: one redirect, no API
+//! budget, same host allowlist, still https. `--check`, the editor's daily
+//! background check and a self-contained update therefore spend nothing at all
+//! on the API, and cannot be refused by a limit somebody else used up.
 //!
-//! What the redirect cannot give is the release's **asset list**, which is why
-//! the source is reported alongside the release rather than hidden. Channels
-//! whose artifact is named by the feed ([`crate::registry::UpdateKind::DownloadPackage`])
-//! need that list and must say so plainly; the self-contained channels build
-//! the asset name from their own target triple and need nothing but the
-//! version. The former is the case the redirect cannot rescue, and pretending
-//! otherwise would surface as "release 0.4.8 publishes no .deb for amd64" —
-//! a sentence that is both false and unactionable.
+//! # What the redirect cannot answer, and what happens then
 //!
-//! The redirect is *not* used in place of the feed by default. It carries no
-//! `prerelease` or `draft` flag, so `select`'s guarantees would become
-//! GitHub's web behaviour again, which is the arrangement
-//! [`crate::feed::select`] exists to end.
+//! It names a tag and nothing else. Two things need more, and both fall back
+//! to the feed on `api.github.com`:
+//!
+//! * **`--pre`.** The redirect points at the newest *full* release by
+//!   definition, so a pre-release can only come from the list endpoint. This
+//!   is opt-in and rare.
+//! * **A package whose filename we cannot construct.** `.deb`/`.rpm`/`.flatpak`
+//!   names come out of [`crate::feed::package_file_name`], the same
+//!   construction the install script does — and [`crate::engine`] falls back to
+//!   the feed if the release does not actually publish that name.
+//!
+//! An overridden endpoint (`--releases-url`, a mirror, a test server) keeps
+//! using its feed: it named a document, and reinterpreting that as "ask GitHub
+//! instead" would ignore what the caller asked for.
+//!
+//! The one request that has no second route is the attestation lookup
+//! ([`crate::attestation`]), which is a *different origin* on purpose — that is
+//! the entire value it adds over the checksum sidecar. It is spent once, when
+//! an update actually installs, and never by a check.
+//!
+//! # The guarantee the flag used to carry
+//!
+//! [`crate::feed::select`] refuses a pre-release unless asked, rather than
+//! relying on `/releases/latest` to omit one. A tag carries no such flag, so
+//! that check is made against the version itself: a tag that parses as a
+//! pre-release is refused here exactly as the flag would be. Drafts need no
+//! equivalent — they are not public, so no redirect reaches one.
 
 use crate::endpoint::{self, Endpoints};
 use crate::feed::Release;
@@ -58,17 +73,66 @@ pub struct Fetched {
     pub source: Source,
 }
 
-/// The release to offer, from the feed if the API will serve it.
+/// The release to offer.
 ///
-/// Falls back to the redirect only when the API refused for rate limiting:
-/// every other failure is reported as itself, because a 404 or a TLS error is
-/// not something a second request to a different path would fix, and quietly
-/// answering a broken feed with a version from somewhere else would hide it.
+/// Tries the redirect first on the pinned endpoints, and the feed when that is
+/// not available (an override, `--pre`) or did not work. Failing over in that
+/// direction matters: the redirect is one header on a host that also serves
+/// the download, so if it stops answering, the API is still there.
 pub fn latest(
     transport: &Transport,
     endpoints: &Endpoints,
     allow_prerelease: bool,
 ) -> Result<Fetched, String> {
+    if !allow_prerelease {
+        if let Some(redirect) = endpoints.latest_redirect_url() {
+            match latest_tag(transport, &redirect) {
+                Ok(tag) => return from_redirect_tag(tag),
+                // Not fatal: the feed answers the same question, and is what
+                // every overridden endpoint uses anyway.
+                Err(e) => {
+                    tracing::warn!(error = %e, "release redirect unusable; asking the API feed")
+                }
+            }
+        }
+    }
+
+    Ok(Fetched {
+        release: from_feed(transport, endpoints, allow_prerelease)?,
+        source: Source::Api,
+    })
+}
+
+/// The release a redirect tag names, with the guarantee the feed's flag used
+/// to carry.
+///
+/// GitHub should never point `releases/latest` at a pre-release, so this is
+/// the same defence `feed::select` makes against a feed that does: the refusal
+/// is ours, derived from the version, rather than a behaviour we are trusting.
+fn from_redirect_tag(tag: String) -> Result<Fetched, String> {
+    if crate::version::is_prerelease(&tag) {
+        return Err(format!(
+            "the newest release is {}, a pre-release; pass --pre to install it",
+            tag.trim_start_matches('v')
+        ));
+    }
+    Ok(Fetched {
+        release: Release::from_tag(tag),
+        source: Source::ReleaseRedirect,
+    })
+}
+
+/// The release the API feed describes, assets and all.
+///
+/// This is the request that spends rate-limit budget, so it is called only
+/// when something actually needs what the redirect cannot give: `--pre`, an
+/// overridden endpoint, or a package filename that turned out not to be the
+/// published one.
+pub fn from_feed(
+    transport: &Transport,
+    endpoints: &Endpoints,
+    allow_prerelease: bool,
+) -> Result<Release, String> {
     // Pre-releases are absent from `/releases/latest`, so opting in means
     // asking the list endpoint; without the flag this is the pinned default.
     let feed_url = if allow_prerelease {
@@ -76,37 +140,8 @@ pub fn latest(
     } else {
         endpoints.releases_url.clone()
     };
-
-    let error = match transport.get_text(&feed_url, net::FEED_MAX_BYTES) {
-        Ok(body) => {
-            return Ok(Fetched {
-                release: crate::feed::select(&body, allow_prerelease)?,
-                source: Source::Api,
-            })
-        }
-        Err(e) => e,
-    };
-
-    // The redirect names the latest *stable* release, so it cannot answer a
-    // `--pre` run, and it only means anything against the pinned endpoints.
-    let redirect = match (error.is_rate_limited(), allow_prerelease) {
-        (true, false) => endpoints.latest_redirect_url(),
-        _ => None,
-    };
-    let Some(redirect) = redirect else {
-        return Err(error.to_string());
-    };
-
-    tracing::warn!(%error, "release feed rate-limited; reading the version from the release redirect");
-    match latest_tag(transport, &redirect) {
-        Ok(tag) => Ok(Fetched {
-            release: Release::from_tag(tag),
-            source: Source::ReleaseRedirect,
-        }),
-        // Both routes failed: report the rate limit, which is the actionable
-        // half, and name the second attempt so it is clear one was made.
-        Err(second) => Err(format!("{error}\n\nReading {redirect} instead: {second}")),
-    }
+    let body = transport.get_text(&feed_url, net::FEED_MAX_BYTES)?;
+    crate::feed::select(&body, allow_prerelease)
 }
 
 /// The tag the `releases/latest` redirect points at.
@@ -274,6 +309,26 @@ mod server_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The redirect carries no `prerelease` flag, so a stable install keeps
+    /// its guarantee only if the tag itself is read — this is that check.
+    #[test]
+    fn a_pre_release_tag_is_refused_without_the_flag() {
+        let err = from_redirect_tag("v0.4.8-rc.1".to_string()).unwrap_err();
+        assert!(err.contains("0.4.8-rc.1"), "got: {err}");
+        assert!(
+            err.contains("--pre"),
+            "the refusal must name the flag: {err}"
+        );
+
+        let fetched = from_redirect_tag("v0.4.8".to_string()).expect("a full release");
+        assert_eq!(fetched.release.version(), "0.4.8");
+        assert_eq!(fetched.source, Source::ReleaseRedirect);
+        assert!(
+            !fetched.source.lists_assets(),
+            "a tag names no assets, and callers key off that"
+        );
+    }
 
     #[test]
     fn the_tag_comes_out_of_a_release_url() {
