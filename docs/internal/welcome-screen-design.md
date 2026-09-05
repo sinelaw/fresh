@@ -724,16 +724,31 @@ Eleven things the wireframes did not know:
    field it had just focused on screen. A keyed read-only widget also joins
    the Tab cycle, so the markdown sample is deliberately keyless.
 
-   Two things the host has to get right, both learned from this page.
-   *Membership, not equality*: the three door cards share every one of their
-   rows, so a caret row cannot say which of them has focus — only that one of
-   them does. Re-deriving focus from the row on every caret move would make
-   Tab between two controls of one row impossible, because the move to the
-   second seats the caret on the row they share and the row hands focus back
-   to the first. And *a card anchors at its top*, so seating the caret has to
-   ask the same membership question first: arrowing **up** into a card's last
-   row focuses the card, and moving the caret to the card's top row would
-   throw the reader back over everything they had just walked past.
+   Three things the host has to get right, all learned from this page.
+
+   *A focus region is a control, not a row.* The three door cards share every
+   one of their rows and the three verbs sit on one line, so a caret row
+   cannot say which of them the reader is on — only a column can. Resolving
+   by row would also make Tab between two controls of one row impossible,
+   because the move to the second seats the caret on the row they share and
+   the row hands focus straight back to the first. The hit areas already
+   carry a byte span per row, so this is the span they were always for; it is
+   resolved *nearest*, by the same distance function the click path uses,
+   because a caret reading down the page keeps whatever column it was in and
+   that column is very often a framed card's border.
+
+   *A card anchors at its top-left cell*, and seating asks whether the caret
+   already resolves to the widget before moving it. Arrowing **up** into a
+   card's last row focuses the card, and seating the caret on the card's top
+   row would throw the reader back over everything they had just walked past.
+   The same test is why a Tab onto the only control on a row leaves the caret
+   where it is: the two already agree.
+
+   *Tab from nothing focused starts beside the caret.* "Nothing focused" is
+   not this panel at rest — it is the caret on prose, which on a page that is
+   mostly prose is most rows. Falling back to the ring's first entry would
+   send every such Tab to the top of the document: read down to Level 3,
+   press Tab, and you are back on the startup switch.
 
 7. **`getAllThemes()` answers with the registry object, not a list.** Its keys
    are the theme names.

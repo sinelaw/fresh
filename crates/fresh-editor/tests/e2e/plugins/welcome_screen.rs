@@ -573,6 +573,97 @@ fn the_caret_arriving_at_the_finder_field_types_into_it() {
         );
 }
 
+/// **A focus region is a control, not a row.** The three door cards sit
+/// side by side on the same buffer rows, so a caret row cannot say which
+/// of them the reader is on — only a column can. Resolving focus by row
+/// also made Tab between two controls of one row impossible: the move to
+/// the second seated the caret on the row they share, and the row handed
+/// focus straight back to the first.
+#[test]
+fn tab_between_two_cards_on_one_row_carries_the_caret_across_it() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    // Two Tabs: past the startup switch, onto the first door.
+    for _ in 0..2 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+    let first = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret");
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    let second = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret");
+
+    assert_eq!(
+        second.1, first.1,
+        "the two doors share a row, so the caret should not have changed rows"
+    );
+    assert!(
+        second.0 > first.0,
+        "the caret stayed at column {} moving from the first door to the \
+         second: focus is still resolved a whole row at a time. Screen:\n{}",
+        first.0,
+        harness.screen_to_string()
+    );
+
+    // And focus really is on the second door — its activation jumps to
+    // Level 2. If the row had handed focus back to the first door this
+    // would land on Level 1 instead.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("LEVEL 2 · IT'S A PROJECT NOW")
+        })
+        .expect("Enter on the second door opens Level 2");
+}
+
+/// **Tab from nothing focused starts beside the caret, not at the top of
+/// the page.** Focus is cleared every time the caret lands on prose,
+/// which on this page is most rows — so a Tab ring that always restarted
+/// at its first entry would yank a reader who had scrolled to Level 3
+/// back to the startup switch.
+#[test]
+fn tab_after_reading_down_the_page_does_not_jump_back_to_the_top() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    // `3` puts the Level 3 banner at the top of the pane, with the caret
+    // on it — a banner is not a Tab stop, so nothing is focused.
+    harness
+        .send_key(KeyCode::Char('3'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("LEVEL 3 · RUN THE WHOLE SHOP")
+        })
+        .expect("the page scrolls to Level 3");
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Show this screen on startup"),
+        "Tab from Level 3 went back to the first control on the page. \
+         Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("The Orchestrator dock"),
+        "Tab left Level 3 entirely. Screen:\n{screen}"
+    );
+}
+
 /// **A banner and its opening sentence are two things.** Set tight, the
 /// rule and the line under it read as one two-line heading — the
 /// sentence looked like a subtitle of the rule rather than the first

@@ -1244,13 +1244,31 @@ impl Editor {
         // and Shift+Tab to `ring[n - 1]`. That could not happen while
         // focus was always seeded, so `autoFocusFirst: false` is what
         // made this reachable.
+        let buffer_id = panel.buffer_id;
+        let unfocused_seed = |editor: &Self| {
+            // On a `focusFollowsCursor` panel, "nothing focused" is not
+            // the panel at rest — it is the caret sitting on prose, which
+            // on a page that is mostly prose is most of the time. Falling
+            // to `ring[0]` there would send every such Tab to the top of
+            // the document: read down to the last card, press Tab, and you
+            // are back at the first. Start from where the reader is.
+            let (row, col) = editor.panel_buffer_caret(buffer_id)?;
+            editor
+                .widget_registry
+                .tabbable_from_caret(buffer_id, row, col, delta >= 0, &ring)
+        };
         let new_key = match ring.iter().position(|k| k == &panel.focus_key) {
             Some(cur) => {
                 let new_idx = ((cur as i32 + delta) % n + n) % n;
                 ring[new_idx as usize].clone()
             }
-            None if delta >= 0 => ring[0].clone(),
-            None => ring[(n - 1) as usize].clone(),
+            None => unfocused_seed(self).unwrap_or_else(|| {
+                if delta >= 0 {
+                    ring[0].clone()
+                } else {
+                    ring[(n - 1) as usize].clone()
+                }
+            }),
         };
         self.set_panel_focus_and_notify(panel_key, new_key);
         self.rerender_widget_panel(panel_key);
@@ -1589,30 +1607,52 @@ impl Editor {
             return;
         }
         let buffer_id = panel.buffer_id;
-        if let Some(row) = self.panel_buffer_cursor_row(buffer_id) {
+        if let Some((row, col)) = self.panel_buffer_caret(buffer_id) {
             if self
                 .widget_registry
-                .focus_candidates_at_row(buffer_id, row)
-                .is_some_and(|(_, keys)| keys.iter().any(|k| k == new_key))
+                .focus_target_at(buffer_id, row, col)
+                .is_some_and(|(_, k)| k == new_key)
             {
                 return;
             }
         }
-        let Some(row) = self.widget_registry.row_of_widget(buffer_id, new_key) else {
+        let Some((row, byte_in_row)) = self.widget_registry.anchor_of_widget(buffer_id, new_key)
+        else {
             return;
         };
-        let offset = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
-            .and_then(|st| st.buffer.line_start_offset(row as usize));
-        if let Some(offset) = offset {
-            // Un-latch first, or the reveal the caret move *is* may not
-            // happen: `ensure_visible` returns early while
-            // `skip_ensure_visible` is set, and a wheel scroll sets it.
-            self.unlatch_ensure_visible(buffer_id);
-            self.seat_buffer_cursor(buffer_id, offset);
-        }
+        let Some(offset) = self.buffer_offset_in_row(buffer_id, row, byte_in_row) else {
+            return;
+        };
+        // Un-latch first, or the reveal the caret move *is* may not
+        // happen: `ensure_visible` returns early while
+        // `skip_ensure_visible` is set, and a wheel scroll sets it.
+        self.unlatch_ensure_visible(buffer_id);
+        self.seat_buffer_cursor(buffer_id, offset);
+    }
+
+    /// The byte offset of `byte_in_row` on `row`, clamped to that row's
+    /// own text.
+    ///
+    /// A widget's span is measured against the row text the panel
+    /// rendered, and padding to the pane's width is applied when the
+    /// line is *drawn*, not when it is stored — so a span can reach past
+    /// what the buffer holds. Clamping keeps a caret that would land in
+    /// the padding on the last real cell of its row instead of on the
+    /// next one.
+    fn buffer_offset_in_row(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        byte_in_row: usize,
+    ) -> Option<usize> {
+        let state = self.active_window().buffers.get(&buffer_id)?;
+        let start = state.buffer.line_start_offset(row as usize)?;
+        let end = match state.buffer.line_start_offset(row as usize + 1) {
+            // Less the newline that begins the next row.
+            Some(next) => next.saturating_sub(1),
+            None => state.buffer.len(),
+        };
+        Some((start + byte_in_row).min(end))
     }
 
     /// Every split currently showing `buffer_id`, the leaves of grouped
@@ -1712,37 +1752,21 @@ impl Editor {
         if !self.widget_registry.has_focus_follower(buffer_id) {
             return;
         }
-        let Some(row) = self
+        let Some((row, col)) = self
             .active_window()
             .buffers
             .get(&buffer_id)
-            .map(|st| st.buffer.get_line_number(position))
+            .map(|st| st.buffer.position_to_line_col(position))
         else {
             return;
         };
-        let Some((panel_key, candidates)) = self
+        let Some((panel_key, next)) = self
             .widget_registry
-            .focus_candidates_at_row(buffer_id, row as u32)
+            .focus_target_at(buffer_id, row as u32, col)
         else {
             return;
         };
-        let current = self
-            .widget_registry
-            .focus_key(&panel_key)
-            .unwrap_or_default()
-            .to_string();
-        // Membership, not equality. Three door cards sit side by side on
-        // the same rows, so their caret row cannot say *which* of them
-        // has focus — only that one of them does, which is agreement
-        // enough. Re-deriving focus from the row here would have made
-        // Tab between two controls of one row impossible: the move to
-        // the second seats the caret on the row they share, and the row
-        // would then hand focus straight back to the first.
-        if candidates.contains(&current) {
-            return;
-        }
-        let next = candidates.first().cloned().unwrap_or_default();
-        if next == current {
+        if self.widget_registry.focus_key(&panel_key) == Some(next.as_str()) {
             return;
         }
         self.set_panel_focus_and_notify(&panel_key, next);
@@ -1751,20 +1775,20 @@ impl Editor {
         self.rerender_widget_panel(&panel_key);
     }
 
-    /// The caret's 0-indexed row in `buffer_id`, from whichever split is
-    /// carrying that buffer's cursor.
-    fn panel_buffer_cursor_row(&self, buffer_id: BufferId) -> Option<u32> {
+    /// The caret's `(0-indexed row, byte in that row)` in `buffer_id`,
+    /// from whichever split is carrying that buffer's cursor.
+    fn panel_buffer_caret(&self, buffer_id: BufferId) -> Option<(u32, usize)> {
         let (_, view_states) = self.windows.get(&self.active_window)?.buffers.splits()?;
         let position = view_states.values().find_map(|vs| {
             vs.buffer_state(buffer_id)
                 .map(|bs| bs.cursors.primary().position)
         })?;
-        let line = self
+        let (line, col) = self
             .active_window()
             .buffers
             .get(&buffer_id)
-            .map(|st| st.buffer.get_line_number(position))?;
-        Some(line as u32)
+            .map(|st| st.buffer.position_to_line_col(position))?;
+        Some((line as u32, col))
     }
 
     /// Offer a panel-focus transition to the kinds: the widget losing
