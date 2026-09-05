@@ -8,6 +8,7 @@ import {
 } from "./lib/git_history.ts";
 import {
   type GitRepo,
+  diffArgs,
   git,
   resolveGitRepo,
   resolveGitRepoForPath,
@@ -385,9 +386,13 @@ function spawnGitShow(hash: string, cwd: string): ProcessHandle<SpawnResult> {
   // as flat positional args. The runtime JS wrapper also accepts an
   // `{stdoutTo}` options object in the 4th slot, but using the flat
   // form keeps the call type-checked without a cast.
+  //
+  // `diffArgs` pins the patch format: the fold ranges, `Enter` and the
+  // host's `.diff` highlighting all read this file's `diff --git` /
+  // `+++ b/` / `@@` rows, which user config can otherwise reshape.
   return editor.spawnProcess(
     "git",
-    ["show", "--stat", "--patch", hash],
+    diffArgs(["show"], "--stat", "--patch", hash),
     cwd,
     cachePathForHash(hash),
   );

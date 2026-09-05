@@ -18,7 +18,7 @@ import {
   fetchCommitShow,
   fetchGitLog,
 } from "./lib/git_history.ts";
-import { type GitRepo, resolveGitRepo } from "./lib/git_repo.ts";
+import { type GitRepo, diffArgs, resolveGitRepo, withDiffArgs } from "./lib/git_repo.ts";
 import type { HintEntry, TreeNode, WidgetSpec } from "./lib/widgets.ts";
 import {
   WidgetPanel,
@@ -845,56 +845,9 @@ async function getGitStatus(): Promise<GitStatusResult> {
     };
 }
 
-/**
- * Restore git's default `a/` / `b/` path prefixes. Written as `-c` overrides
- * rather than `--src-prefix=`/`--dst-prefix=`: `git stash show` garbles those
- * two, while `-c` behaves the same for every sub-command.
- */
-const DIFF_PREFIX_CONFIG = [
-    "-c", "diff.noprefix=false",
-    "-c", "diff.mnemonicPrefix=false",
-    "-c", "diff.srcPrefix=a/",
-    "-c", "diff.dstPrefix=b/",
-];
-
-/**
- * Build the `git` argv for a diff-producing sub-command whose stdout
- * `parseDiffOutput` parses and `buildHunkPatch` rebuilds for `git apply`.
- * Each knob neutralised here is one a user may legitimately have set, and any
- * one alone leaves the parser with zero hunks: `diff.external` swaps in a
- * tool's own format, textconv diffs converted text (so hunk line numbers stop
- * addressing the real file), `color.diff=always` wraps every line in escapes,
- * and the prefix settings break the `a/`/`b/` paths it matches on.
- */
-function diffArgs(subcommand: string[], ...rest: string[]): string[] {
-    return [
-        // Top-level, so it has to precede the sub-command. `git diff`
-        // refreshes the index and writes it back under `.git/index.lock`
-        // just as `git status` does, and the watch runs both on a timer
-        // (#3126) — pinning the flag here rather than at one call site
-        // keeps the panel from racing the user's own `git` for that lock
-        // whichever sub-command the tick reaches for.
-        "--no-optional-locks",
-        ...DIFF_PREFIX_CONFIG,
-        ...subcommand,
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        ...rest,
-    ];
-}
-
-/**
- * Route an already-assembled git argv through `diffArgs`, splitting it at its
- * first option so the leading sub-command words (`diff`, `stash show`, …) stay
- * in front. Lets callers that build the argv dynamically inherit the format
- * pinning instead of each having to repeat the flag list.
- */
-function withDiffArgs(command: string[]): string[] {
-    const firstOption = command.findIndex(a => a.startsWith("-"));
-    const cut = firstOption === -1 ? command.length : firstOption;
-    return diffArgs(command.slice(0, cut), ...command.slice(cut));
-}
+// `diffArgs` / `withDiffArgs` — the argv that pins git's patch output to the
+// shape `parseDiffOutput` and `buildHunkPatch` expect — are shared with the
+// git log plugin and live in `./lib/git_repo.ts`.
 
 /**
  * Fetch unified diffs for the given file entries.
@@ -7798,10 +7751,13 @@ async function side_by_side_diff_current_file() {
     const gitRoot = gitRootResult.stdout.trim();
 
     // Get relative path from git root using git itself (handles Windows paths correctly)
-    const relPathResult = await editor.spawnProcess("git", ["-C", fileDir, "ls-files", "--full-name", fileName]);
+    // `-z`: without it a path with non-ASCII (or `"`, `\`) bytes comes back
+    // quoted and octal-escaped, and no later git call would match it.
+    const relPathResult = await editor.spawnProcess("git", ["-C", fileDir, "ls-files", "-z", "--full-name", fileName]);
+    const relPath = relPathResult.stdout.split("\0")[0] ?? "";
     let filePath: string;
-    if (relPathResult.exit_code === 0 && relPathResult.stdout.trim()) {
-        filePath = relPathResult.stdout.trim();
+    if (relPathResult.exit_code === 0 && relPath) {
+        filePath = relPath;
     } else {
         // File might be untracked, compute relative path manually
         // Normalize paths: replace backslashes with forward slashes for comparison

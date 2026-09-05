@@ -100,6 +100,72 @@ export function git(
 }
 
 /**
+ * User settings that reshape git's patch output, pinned back to the documented
+ * default. Written as top-level `-c` overrides rather than per-sub-command
+ * flags: `git stash show` mangles `--src-prefix=`/`--dst-prefix=`, and `-c`
+ * behaves the same for every sub-command (`diff`, `show`, `stash show`, ...).
+ * Plumbing (`diff-files -p` and friends) is no escape hatch: `core.quotePath`
+ * and `diff.suppressBlankEmpty` are honoured there too.
+ */
+const DIFF_FORMAT_CONFIG = [
+  // The `a/` / `b/` path prefixes the parsers match on.
+  "-c", "diff.noprefix=false",
+  "-c", "diff.mnemonicPrefix=false",
+  "-c", "diff.srcPrefix=a/",
+  "-c", "diff.dstPrefix=b/",
+  // Non-ASCII paths otherwise come out quoted and octal-escaped in every
+  // header (`diff --git "a/caf\303\251"`), and in `--numstat`/`--stat` rows.
+  "-c", "core.quotepath=false",
+  // Empty context lines otherwise lose their leading space, so a parser
+  // classifying rows by their first byte drops them.
+  "-c", "diff.suppressBlankEmpty=false",
+  // Paths stay repo-relative, and files outside git's cwd are not omitted.
+  "-c", "diff.relative=false",
+  // A changed submodule is one `Subproject commit` hunk, not a nested diff
+  // whose `diff --git` paths are relative to the submodule.
+  "-c", "diff.submodule=short",
+];
+
+/**
+ * Build the `git` argv for a patch-producing sub-command whose stdout a plugin
+ * parses (`diff --git` / `+++ b/` / `@@` headers, `+`/`-`/` ` rows). Every
+ * knob neutralised here is one a user may legitimately have set, and any one
+ * alone breaks the parse: `diff.external` swaps in a tool's own format,
+ * textconv diffs converted text (so hunk line numbers stop addressing the
+ * real file), `color.diff=always` wraps every line in escapes, and the
+ * config knobs above reshape the headers and rows.
+ */
+export function diffArgs(subcommand: string[], ...rest: string[]): string[] {
+  return [
+    // Top-level, so it has to precede the sub-command. `git diff` refreshes
+    // the index and writes it back under `.git/index.lock` just as
+    // `git status` does, and the review watch runs both on a timer (#3126)
+    // — pinning the flag here rather than at one call site keeps the panel
+    // from racing the user's own `git` for that lock whichever sub-command
+    // the tick reaches for.
+    "--no-optional-locks",
+    ...DIFF_FORMAT_CONFIG,
+    ...subcommand,
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    ...rest,
+  ];
+}
+
+/**
+ * Route an already-assembled git argv through `diffArgs`, splitting it at its
+ * first option so the leading sub-command words (`diff`, `stash show`, ...)
+ * stay in front. Lets callers that build the argv dynamically inherit the
+ * format pinning instead of each having to repeat the flag list.
+ */
+export function withDiffArgs(command: string[]): string[] {
+  const firstOption = command.findIndex((a) => a.startsWith("-"));
+  const cut = firstOption === -1 ? command.length : firstOption;
+  return diffArgs(command.slice(0, cut), ...command.slice(cut));
+}
+
+/**
  * Absolute path for a repo-relative path (e.g. a line of `git ls-files` or
  * `git grep` output). In a monorepo the workspace root differs from the repo
  * root, so a repo-relative path must be joined onto the repo root to open.
