@@ -615,9 +615,9 @@ fn fetch_and_verify(
     if skip_attestation {
         // Said plainly, every time, because the user gave up the check that
         // separates "these bytes are intact" from "GitHub published them".
-        println!("Skipping the release attestation check ({SKIP_ATTESTATION_FLAG}).");
-        println!("These bytes are verified only against a checksum served from the same");
-        println!("origin as the artifact, which catches corruption but not tampering.");
+        println!("Skipping the release attestation check: these bytes are verified");
+        println!("only by a checksum from the same origin, which catches corruption");
+        println!("but not tampering.");
     } else if trusted {
         println!("Verifying release attestation ...");
         // The digest is computed from the bytes on disk, never read from the
@@ -645,10 +645,7 @@ fn fetch_and_verify(
 fn attestation_failure(e: &crate::attestation::AttestationError) -> String {
     let bypass = matches!(e, crate::attestation::AttestationError::RateLimited(_));
     if bypass {
-        format!(
-            "{e}\n\nIf a checksum-only install is acceptable — the verification \
-             `install.sh` does, and no more — re-run with {SKIP_ATTESTATION_FLAG}."
-        )
+        format!("{e} Re-run later, or {SKIP_ATTESTATION_FLAG} to install on the checksum alone.")
     } else {
         e.to_string()
     }

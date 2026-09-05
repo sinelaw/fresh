@@ -401,7 +401,7 @@ mod server_tests {
         assert!(err.contains("rate limit"), "got: {err}");
         assert!(err.contains("10 minutes"), "the wait must be named: {err}");
         assert!(
-            err.contains("FRESH_GITHUB_TOKEN"),
+            err.contains("GITHUB_TOKEN"),
             "the message must name the way out: {err}"
         );
     }

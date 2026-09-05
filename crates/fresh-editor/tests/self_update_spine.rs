@@ -439,8 +439,9 @@ fn skipping_the_attestation_is_wired_through_and_announced() {
         "{}",
         report("the skipped check was not announced", &out)
     );
+    // Wrapped across lines in the output, so match the halves.
     assert!(
-        stdout.contains("catches corruption but not tampering"),
+        stdout.contains("catches corruption") && stdout.contains("not tampering"),
         "{}",
         report("the announcement did not say what was given up", &out)
     );

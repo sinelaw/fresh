@@ -76,10 +76,8 @@ impl std::fmt::Display for AttestationError {
             // that is the thing this module exists to refuse.
             AttestationError::RateLimited(detail) => write!(
                 f,
-                "{detail}\n\nThe download matched its checksum, but the release \
-                 attestation could not be checked, and fresh does not install \
-                 unverified bytes. Re-run once the limit resets, or set a token as \
-                 above and re-run now."
+                "{detail} The release attestation could not be checked, so nothing \
+                 was installed."
             ),
         }
     }
@@ -371,11 +369,7 @@ mod tests {
         assert!(message.contains("10 minutes"), "{message}");
         assert!(message.contains("GITHUB_TOKEN"), "{message}");
         assert!(
-            message.contains("matched its checksum"),
-            "the message must say what did verify: {message}"
-        );
-        assert!(
-            message.contains("does not install unverified bytes"),
+            message.contains("nothing was installed"),
             "the message must say the install stopped: {message}"
         );
     }

@@ -127,26 +127,20 @@ impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FetchError::RateLimited {
-                url,
+                url: _,
                 wait,
                 authenticated,
             } => {
-                write!(
-                    f,
-                    "GitHub's API rate limit is used up, so {url} was refused"
-                )?;
-                if let Some(wait) = wait {
-                    write!(f, "; it resets in about {}", humanize(*wait))?;
+                write!(f, "GitHub's API rate limit is used up")?;
+                match wait {
+                    Some(wait) => write!(f, ", resets in about {}.", humanize(*wait))?,
+                    None => write!(f, ".")?,
                 }
-                write!(f, ".")?;
                 if !authenticated {
-                    write!(
-                        f,
-                        " Unauthenticated callers get 60 requests an hour per IP address, \
-                         shared with everyone else behind it. Set {} to a personal access \
-                         token — it needs no scopes for a public repository — to get 5000.",
-                        TOKEN_ENVS.join(" or ")
-                    )?;
+                    // The limit is per address and shared with everyone behind
+                    // it, which is why it runs out; a token is the fix. The
+                    // other two variable names are in the docs.
+                    write!(f, " Set GITHUB_TOKEN to raise it from 60 an hour to 5000.")?;
                 }
                 Ok(())
             }

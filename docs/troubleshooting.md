@@ -109,17 +109,11 @@ as the download. If that one is refused:
   It is sent to `api.github.com` and nowhere else.
 - **Re-run the installer**, which fetches the release directly from
   `github.com` and verifies its published checksum.
-- **Skip the attestation** for this one run, accepting the same verification
-  the installer does and no more:
-
-  ```bash
-  fresh --cmd update --yes --skip-attestation
-  ```
-
-  The download is still checked against its published SHA-256, but that
-  checksum comes from the same origin as the artifact — so it catches a
-  corrupted download, not a tampered release. Fresh prints that trade-off
-  whenever the flag is used.
+- **Skip the attestation** for this one run — `fresh --cmd update --yes
+  --skip-attestation`. The download is still checked against its published
+  SHA-256, but that checksum shares an origin with the artifact, so it catches
+  a corrupted download and not a tampered release. Fresh says so whenever the
+  flag is used.
 
 `fresh --cmd update --pre` also needs the API, because pre-releases are only
 listed there.
