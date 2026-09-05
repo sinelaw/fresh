@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use crossterm::event::KeyCode;
 use fresh::input::keybindings::{KeyName, NAMED_KEYS, PUNCTUATION_KEYS};
 use fresh_input_parser::keypad::KEYPAD_KEYS;
+use fresh_input_parser::media_modifier::{MEDIA_KEYS, MODIFIER_KEYS};
 
 const BEGIN: &str = "<!-- BEGIN GENERATED KEY NAMES -->";
 const END: &str = "<!-- END GENERATED KEY NAMES -->";
@@ -73,8 +74,8 @@ fn render() -> String {
     }
 
     out.push_str("\nAny single character is also a key name — `\"a\"`, `\"7\"`, `\"é\"` — \
-                  as is a function key, `\"f1\"` through `\"f24\"`. Names are \
-                  case-insensitive.\n\n");
+                  as is a function key, `\"f1\"` through `\"f35\"` (F13 and up need a \
+                  terminal that reports them). Names are case-insensitive.\n\n");
 
     out.push_str("### Punctuation\n\n");
     out.push_str(
@@ -97,6 +98,23 @@ fn render() -> String {
     );
     out.push_str("| Name | Binds the same key as |\n|---|---|\n");
     for k in KEYPAD_KEYS {
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            code_span(k.keysym),
+            describe(k.code)
+        ));
+    }
+
+    out.push_str("\n### Media and modifier keys\n\n");
+    out.push_str(
+        "Reported only by a terminal speaking the kitty keyboard protocol, and \
+         for the modifier keys only when it is asked to report every key event. \
+         Unlike the keypad these are **not** aliases: nothing on the main \
+         keyboard means `volume_mute` or `left_hyper`, so each binds a key of \
+         its own.\n\n",
+    );
+    out.push_str("| Name | Key |\n|---|---|\n");
+    for k in MEDIA_KEYS.iter().chain(MODIFIER_KEYS) {
         out.push_str(&format!(
             "| {} | {} |\n",
             code_span(k.keysym),
@@ -135,6 +153,22 @@ fn generated_key_name_docs_match_the_code() {
         let updated = format!("{}{}{}", &doc[..start], expected, &doc[end..]);
         fs::write(&path, updated).unwrap();
         return;
+    }
+
+    // Say so when the only difference is the line terminator. `.gitattributes`
+    // pins this file to LF for exactly that reason, but a working copy that
+    // predates the attribute still has CRLF — and "the tables are out of date"
+    // sends whoever hits it to regenerate a block that is already correct.
+    if current.replace("\r\n", "\n") == expected.replace("\r\n", "\n") {
+        panic!(
+            "{} differs from the generated tables only in its line endings — \
+             the tables themselves match. This checkout has CRLF where the \
+             repository stores LF; `.gitattributes` pins the file, so refresh \
+             the working copy:\n  git rm --cached {} && git checkout -- {}",
+            path.display(),
+            "docs/configuration/keyboard.md",
+            "docs/configuration/keyboard.md",
+        );
     }
 
     panic!(

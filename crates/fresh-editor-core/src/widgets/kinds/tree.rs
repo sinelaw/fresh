@@ -225,6 +225,7 @@ impl WidgetImpl for Tree {
             // (`Alt`+arrows are back/forward, `Ctrl`+arrows word-wise; both
             // are bound.) Issue #1580.
             "S-Left" | "S-Right" | "S-Home" | "S-End" => {
+                let bounds = crate::widgets::render::pan_bounds(spec);
                 let delta = match key {
                     "S-Left" => Some(-PAN_COLUMNS),
                     "S-Right" => Some(PAN_COLUMNS),
@@ -234,10 +235,12 @@ impl WidgetImpl for Tree {
                     // match back should not have to pan to find it.
                     "S-Home" => None,
                     // Far enough that the per-row clamp lands every row on
-                    // its own tail; `pan_h` bounds the stored value.
-                    _ => Some(i32::MAX / 4),
+                    // its own tail — and no further, so `S-Left` walks back
+                    // from the end of the longest row rather than from a
+                    // number no content justifies.
+                    _ => Some(bounds.1),
                 };
-                if !panel.pan_h(widget_key, delta) {
+                if !panel.pan_h(widget_key, delta, bounds) {
                     // Already home, or already at the value asked for: say so,
                     // so the key can mean something else further out rather
                     // than being swallowed by a tree that did nothing.

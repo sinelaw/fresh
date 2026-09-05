@@ -2850,8 +2850,12 @@ pub fn window_row_body(
 
     // Two passes, because whether a trailing marker is owed is only known
     // once the first pass has seen whether anything is left over.
+    //
+    // `content_budget == 0` is the one-column panel with a lead marker: the
+    // marker *is* the whole window, and a trailing one would draw a second
+    // column the row does not have. Say "no tail owed" rather than emit it.
     let full_end = byte_after_cols(body, slice_start, content_budget);
-    let trail = full_end < content.len();
+    let trail = content_budget > 0 && full_end < content.len();
     let slice_end = if trail {
         byte_after_cols(body, slice_start, content_budget.saturating_sub(1))
     } else {
@@ -2874,6 +2878,65 @@ pub fn window_row_body(
     }
 }
 
+/// How far, in display columns, `widget` can usefully be panned each way.
+///
+/// The clamp that decides what is *drawn* is per row and lives in
+/// [`window_row_body`] — that is what keeps rows of different lengths sliding
+/// together instead of drifting apart at the ends. But the pan the panel
+/// *stores* is what the next keystroke moves from, so it has to be bounded by
+/// something the content justifies: `S-End` asks for "past the end of the
+/// longest row", and a nominal bound left a number a reader then had to walk
+/// back eight columns at a time, in silence, before anything moved.
+///
+/// **Two bounds, because a pan is a delta from where each row rests** — its
+/// own match, not column zero. A row whose match sits 259 columns along a 403
+/// column line can go 259 columns left and only ~80 right, and one number for
+/// both would be wrong on whichever side is shorter by the difference.
+///
+/// The numbers are upper bounds rather than the exact clamp, which only the
+/// paint can compute because only it knows the panel's width. Two
+/// conversions, both safe in that direction: a row's byte length is at least
+/// its column count (a two-column glyph costs three bytes), and an anchor's
+/// char offset is at most its column offset doubled. Both are O(1) per row,
+/// so a pan keystroke over a ten-thousand-row tree stays a length walk rather
+/// than a width walk.
+///
+/// `(0, 0)` for every kind whose paint does not thread the pan, which is
+/// every kind but `Tree`: a widget that cannot show a pan should not
+/// accumulate one.
+pub fn pan_bounds(widget: &WidgetSpec) -> (i32, i32) {
+    let WidgetSpec::Tree { nodes, .. } = widget else {
+        return (0, 0);
+    };
+    fn row_bytes(e: &TextPropertyEntry) -> usize {
+        // `text` is rebuilt from `segments` when those are present, so the
+        // larger of the two bounds the row in either shape. Trailing padding
+        // is excluded for the same reason `window_row_body` does not elide
+        // it: it is not content, and panning onto it shows nothing.
+        let segs: usize = e
+            .segments
+            .iter()
+            .map(|s| s.text.trim_end_matches(' ').len())
+            .sum();
+        e.text.trim_end_matches(' ').len().max(segs)
+    }
+    let (mut left, mut right) = (0usize, 0usize);
+    for n in nodes {
+        let len = row_bytes(&n.text).max(
+            // `extra_lines` pan with the row they continue, so they bound it
+            // too. They carry no anchor of their own and so rest at zero.
+            n.extra_lines.iter().map(row_bytes).max().unwrap_or(0),
+        );
+        // No anchor means the row rests at column zero: nothing to its left,
+        // and its whole length to its right.
+        let rest = n.window_anchor.map(|a| a.start as usize).unwrap_or(0);
+        left = left.max((rest * 2).min(len));
+        right = right.max(len.saturating_sub(rest));
+    }
+    let cap = |v: usize| v.min(i32::MAX as usize) as i32;
+    (cap(left), cap(right))
+}
+
 /// Carry one overlay across a [`WindowedBody`] cut.
 ///
 /// `None` when the overlay fell entirely outside the drawn slice — a
@@ -2891,6 +2954,7 @@ fn rebase_overlay(o: &InlineOverlay, w: &WindowedBody, shift: usize) -> Option<I
     Some(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_tree_row(
     node: &TreeNode,
     expanded: bool,
@@ -4355,16 +4419,25 @@ pub mod tests {
     /// A window never splits a double-width cell across its edge.
     #[test]
     fn window_row_body_never_splits_a_wide_cell() {
-        let body = "漢".repeat(20);
-        for budget in 1..=40usize {
-            let w = window_row_body(&body, budget, None, 0);
-            assert!(
-                str_width(&w.text) <= budget,
-                "budget {budget} overflowed by {:?}",
-                w.text
-            );
-            assert!(body.is_char_boundary(w.slice_start));
-            assert!(body.is_char_boundary(w.slice_end));
+        // Panned as well as at rest. A window that has been panned owes a
+        // leading marker, which spends a column the resting window does not,
+        // so the budgets where a row can overrun are only reachable with a
+        // non-zero pan — at `budget == 1` the marker *is* the whole window
+        // and a trailing one would draw a second column.
+        for body in ["漢".repeat(20), "abcdefghij".to_string()] {
+            for budget in 1..=40usize {
+                for pan in [-40, -1, 0, 1, 5, 40] {
+                    let w = window_row_body(&body, budget, None, pan);
+                    assert!(
+                        str_width(&w.text) <= budget,
+                        "budget {budget}, pan {pan}: {:?} is {} columns",
+                        w.text,
+                        str_width(&w.text)
+                    );
+                    assert!(body.is_char_boundary(w.slice_start));
+                    assert!(body.is_char_boundary(w.slice_end));
+                }
+            }
         }
     }
 
@@ -6194,6 +6267,69 @@ pub mod tests {
             indent_cols: 2,
             key: key.map(|s| s.to_string()),
         }
+    }
+
+    /// A pan is a delta from where each row *rests*, so the two directions
+    /// are bounded by different numbers: a row whose match is far along a long
+    /// line has a great deal to its left and little to its right.
+    ///
+    /// One number for both is what let `S-End` store a value `S-Left` could
+    /// not walk back.
+    #[test]
+    fn pan_bounds_are_measured_from_where_rows_rest() {
+        let mut node = tnode(&"x".repeat(400), 0, false);
+        node.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+            pinned: 0,
+            start: 380,
+            len: 5,
+        });
+        let (left, right) = pan_bounds(&make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t")));
+        assert!(
+            right < 100,
+            "a match 380 columns along a 400 column row has almost nothing to \
+             its right, but the bound says {right}"
+        );
+        assert!(
+            left >= 380,
+            "the head of that row is 380 columns to its left and must stay \
+             reachable, but the bound says {left}"
+        );
+    }
+
+    /// A row with no anchor rests at column zero: nothing to its left, its
+    /// whole length to its right. And a kind whose paint cannot show a pan
+    /// does not accumulate one.
+    #[test]
+    fn pan_bounds_without_an_anchor_and_without_a_tree() {
+        let tree = make_tree(
+            vec![tnode(&"x".repeat(400), 0, false)],
+            vec!["a"],
+            0,
+            10,
+            vec![],
+            Some("t"),
+        );
+        assert_eq!(pan_bounds(&tree), (0, 400));
+        assert_eq!(
+            pan_bounds(&WidgetSpec::Spacer {
+                cols: 1,
+                flex: false,
+                key: None,
+            }),
+            (0, 0),
+            "a kind that never threads the pan has nothing to pan"
+        );
+    }
+
+    /// Trailing padding is not content on this path either: a row padded out
+    /// to the panel's width must not claim a pan that would show only spaces.
+    #[test]
+    fn pan_bounds_ignore_trailing_padding() {
+        let node = tnode(&format!("{}{}", "x".repeat(40), " ".repeat(360)), 0, false);
+        assert_eq!(
+            pan_bounds(&make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t"))),
+            (0, 40)
+        );
     }
 
     #[test]

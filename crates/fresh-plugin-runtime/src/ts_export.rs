@@ -181,6 +181,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "WidgetAction" => Some(fresh_core::api::WidgetAction::decl(&cfg)),
         "WidgetMutation" => Some(fresh_core::api::WidgetMutation::decl(&cfg)),
         "TreeNode" => Some(fresh_core::api::TreeNode::decl(&cfg)),
+        "TextWindowAnchor" => Some(fresh_core::api::TextWindowAnchor::decl(&cfg)),
 
         // Authority — payload schema for `editor.setAuthority(...)`.
         // Hand-written because the authoritative struct lives in
@@ -404,6 +405,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "HintEntry",          // Used by WidgetSpec::HintBar
     "ButtonKind",         // Used by WidgetSpec::Button.intent
     "TreeNode",           // Used by WidgetSpec::Tree.nodes
+    "TextWindowAnchor",   // Used by TreeNode::windowAnchor
     "WidgetSpec",         // Used by mountWidgetPanel/updateWidgetPanel
     "WidgetPanelOptions", // Used by mountWidgetPanel
     "ScrollAlign",        // Used by scrollToWidget

@@ -2362,7 +2362,11 @@ impl Editor {
     /// not go through a kind: a pan moves the panel's own fold rather than a
     /// window a kind resolves, so there is nothing for a `Tree` or a `List` to
     /// decide. What each kind decides is whether it *honours* the fold, which
-    /// it does at paint time by threading it into `render_tree_row`.
+    /// it does at paint time by threading it into `render_tree_row` — and
+    /// [`pan_bounds`] answers that same question from the spec, so a notch over
+    /// a kind that cannot show a pan falls through instead of being swallowed.
+    ///
+    /// [`pan_bounds`]: crate::widgets::render::pan_bounds
     pub(crate) fn pan_widget_by_key(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
@@ -2372,10 +2376,17 @@ impl Editor {
         if widget_key.is_empty() {
             return false;
         }
+        let Some(spec) = self.widget_registry.get(panel_key).map(|p| p.spec.clone()) else {
+            return false;
+        };
+        let Some(widget) = crate::widgets::find_widget_by_key(&spec, widget_key) else {
+            return false;
+        };
+        let bounds = crate::widgets::render::pan_bounds(widget);
         let Some(panel) = self.widget_registry.get_mut(panel_key) else {
             return false;
         };
-        if !panel.pan_h(widget_key, Some(delta)) {
+        if !panel.pan_h(widget_key, Some(delta), bounds) {
             return false;
         }
         self.rerender_widget_panel(panel_key);

@@ -586,20 +586,31 @@ impl WidgetPanelState {
     /// Move the keyed widget's sideways pan by `delta` columns, or home it
     /// when `delta` is `None`. Returns whether anything changed.
     ///
-    /// **Signed, and bounded only nominally.** Zero is where each row's own
-    /// content says it should rest, which for a search result is its match —
-    /// so negative is how a reader gets back to the head of the line and
-    /// positive is how they reach its tail. How far either goes depends on
-    /// the row, which only the paint knows, so the real clamp lives there:
-    /// letting the stored value run past what any one row can use, and
-    /// clamping per row, is what keeps rows of different lengths sliding
-    /// together instead of drifting apart at the ends. The bound here only
-    /// keeps the arithmetic honest.
-    pub fn pan_h(&mut self, key: &str, delta: Option<i32>) -> bool {
-        const LIMIT: i32 = i32::MAX / 2;
+    /// **Signed.** Zero is where each row's own content says it should rest,
+    /// which for a search result is its match — so negative is how a reader
+    /// gets back to the head of the line and positive is how they reach its
+    /// tail. How far either goes on any *given* row depends on that row,
+    /// which only the paint knows, so the clamp that decides what is drawn
+    /// stays there: letting the stored value run past what one row can use,
+    /// and clamping per row, is what keeps rows of different lengths sliding
+    /// together instead of drifting apart at the ends.
+    ///
+    /// `bounds` is what the widget's own content can justify — how far left
+    /// and right of where its rows rest there is anything to see — and it is
+    /// not decoration. A stored pan is what the *next* keystroke moves from,
+    /// so a value no row can reach is a value the reader has to walk back
+    /// through in silence: "jump to the end" followed by a value of
+    /// `i32::MAX / 4` cost sixty-seven million presses to undo. Past the
+    /// bound the pan stops moving and this returns `false`, which is also
+    /// what stops a dead keypress from being swallowed and repainting the
+    /// panel for nothing. See [`pan_bounds`].
+    ///
+    /// [`pan_bounds`]: crate::widgets::render::pan_bounds
+    pub fn pan_h(&mut self, key: &str, delta: Option<i32>, bounds: (i32, i32)) -> bool {
+        let (left, right) = (bounds.0.max(0), bounds.1.max(0));
         let cur = self.h_pan(key);
         let next = match delta {
-            Some(d) => cur.saturating_add(d).clamp(-LIMIT, LIMIT),
+            Some(d) => cur.saturating_add(d).clamp(-left, right),
             None => 0,
         };
         if next == cur {

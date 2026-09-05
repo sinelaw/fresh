@@ -1480,6 +1480,28 @@ type TreeNode = {
 	*/
 	windowAnchor?: TextWindowAnchor | null;
 };
+type TextWindowAnchor = {
+	/**
+	* Chars at the head of the row that never move.
+	*
+	* A row's leading pieces are usually its *identity* rather than its
+	* content — a search result's `path:line` — and a window that slid them
+	* away left rows that could not be told apart. They stay put and the
+	* rest of the row slides under them, the same relationship the indent
+	* and checkbox glyphs already have with the body.
+	*/
+	pinned: number;
+	/**
+	* Char index, in the whole row, where the span the row exists to show
+	* starts. Must be at or after `pinned`; a span inside the pinned head is
+	* always visible anyway.
+	*/
+	start: number;
+	/**
+	* Length of the span, in chars. Zero is allowed and means a point.
+	*/
+	len: number;
+};
 type WidgetSpec = {
 	"kind": "row";
 	children: Array<WidgetSpec>;

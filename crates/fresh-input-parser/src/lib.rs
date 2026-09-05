@@ -44,6 +44,7 @@ use crossterm::event::{
 };
 
 pub mod keypad;
+pub mod media_modifier;
 
 /// A key press, as the terminal reported it, plus the character the key
 /// actually types on the user's keyboard layout when the chord's own spelling
@@ -1084,8 +1085,12 @@ fn functional_or_char(codepoint: u32) -> Option<KeyCode> {
 /// Map a kitty keyboard-protocol functional key (encoded as a Private Use Area
 /// codepoint) to a crossterm [`KeyCode`]. Returns `None` for PUA codepoints the
 /// protocol does not assign, so they are dropped rather than inserted as text.
-fn kitty_functional_key(cp: u32) -> Option<KeyCode> {
-    use crossterm::event::{MediaKeyCode as M, ModifierKeyCode as Mod};
+///
+/// Public because it is the honest answer to "which keys can arrive here",
+/// and a test that wants to check every one of them against something else —
+/// that the keybinding config can *name* each, say — has no other way to
+/// enumerate them without restating the list and testing the restatement.
+pub fn kitty_functional_key(cp: u32) -> Option<KeyCode> {
     Some(match cp {
         57358 => KeyCode::CapsLock,
         57359 => KeyCode::ScrollLock,
@@ -1099,35 +1104,13 @@ fn kitty_functional_key(cp: u32) -> Option<KeyCode> {
         // key-name parser — one definition, so a name that binds and a key
         // that arrives cannot drift apart.
         57399..=crate::keypad::KP_BEGIN => return crate::keypad::code_for_kitty_codepoint(cp),
-        // Media keys.
-        57428 => KeyCode::Media(M::Play),
-        57429 => KeyCode::Media(M::Pause),
-        57430 => KeyCode::Media(M::PlayPause),
-        57431 => KeyCode::Media(M::Reverse),
-        57432 => KeyCode::Media(M::Stop),
-        57433 => KeyCode::Media(M::FastForward),
-        57434 => KeyCode::Media(M::Rewind),
-        57435 => KeyCode::Media(M::TrackNext),
-        57436 => KeyCode::Media(M::TrackPrevious),
-        57437 => KeyCode::Media(M::Record),
-        57438 => KeyCode::Media(M::LowerVolume),
-        57439 => KeyCode::Media(M::RaiseVolume),
-        57440 => KeyCode::Media(M::MuteVolume),
-        // Standalone modifier keys.
-        57441 => KeyCode::Modifier(Mod::LeftShift),
-        57442 => KeyCode::Modifier(Mod::LeftControl),
-        57443 => KeyCode::Modifier(Mod::LeftAlt),
-        57444 => KeyCode::Modifier(Mod::LeftSuper),
-        57445 => KeyCode::Modifier(Mod::LeftHyper),
-        57446 => KeyCode::Modifier(Mod::LeftMeta),
-        57447 => KeyCode::Modifier(Mod::RightShift),
-        57448 => KeyCode::Modifier(Mod::RightControl),
-        57449 => KeyCode::Modifier(Mod::RightAlt),
-        57450 => KeyCode::Modifier(Mod::RightSuper),
-        57451 => KeyCode::Modifier(Mod::RightHyper),
-        57452 => KeyCode::Modifier(Mod::RightMeta),
-        57453 => KeyCode::Modifier(Mod::IsoLevel3Shift),
-        57454 => KeyCode::Modifier(Mod::IsoLevel5Shift),
+        // The media and standalone-modifier keys, from the table
+        // `media_modifier` shares with the config key-name parser — same
+        // reason as the keypad above: a key that arrives and a name that
+        // binds cannot drift apart if there is only one of them.
+        crate::media_modifier::FIRST..=crate::media_modifier::LAST => {
+            return crate::media_modifier::code_for_kitty_codepoint(cp)
+        }
         _ => return None,
     })
 }

@@ -3535,6 +3535,42 @@ fn test_search_replace_pan_home_and_end() {
     );
 }
 
+/// Shift+End is walkable back with Shift+Left, in a number of presses the
+/// line's own length explains.
+///
+/// The stored pan is what the *next* keystroke moves from, so "jump to the
+/// end" cannot leave a number no row can reach: it did — `i32::MAX / 4` — and
+/// eight columns a press put the head of the line sixty-seven million presses
+/// away, with `Shift+Home` the only way out.
+#[test]
+fn test_search_replace_pan_end_is_walkable_back() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    let mut harness = panning_harness(&project_root);
+
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
+    harness.render().unwrap();
+    assert!(
+        row_containing(&harness, "long.txt:1").contains("TAILMARK"),
+        "precondition: panned to the tail"
+    );
+
+    // The fixture's line is 403 characters, so 60 presses of 8 columns is
+    // more than the whole line — enough to reach the head from any column of
+    // it, and nowhere near enough to walk back an unbounded pan.
+    press_shift(&mut harness, KeyCode::Left, 60);
+
+    let panned = row_containing(&harness, "long.txt:1");
+    assert!(
+        panned.contains("HEADMARK"),
+        "Shift+End left a pan that Shift+Left cannot walk back. Row:\n{panned}\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// The row's `path:line` is pinned: it is which match the row *is*, and rows
 /// that panned it away could not be told apart.
 ///

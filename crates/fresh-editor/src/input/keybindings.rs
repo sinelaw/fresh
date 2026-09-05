@@ -1946,10 +1946,12 @@ pub const PUNCTUATION_KEYS: &[KeyName] = &[
 
 /// Resolve an already-lowercased key name against every table.
 ///
-/// The keypad comes last and from the parser's own table: those names are
-/// aliases for the key the terminal actually reports (`kp_multiply` *is* `*`
-/// by the time the editor sees it), so they must agree with the decoder by
-/// construction rather than by a second hand-written list.
+/// The last two come from the parser's own tables rather than a second
+/// hand-written list, so a name that binds and a key that arrives agree by
+/// construction: the keypad, whose names are aliases for the key the terminal
+/// actually reports (`kp_multiply` *is* `*` by the time the editor sees it),
+/// and the media and modifier keys, which are not aliases — nothing on the
+/// main keyboard means "mute".
 pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
     NAMED_KEYS
         .iter()
@@ -1957,6 +1959,7 @@ pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
         .find(|k| k.names.contains(&lower))
         .map(|k| k.code)
         .or_else(|| fresh_input_parser::keypad::code_for_keysym(lower))
+        .or_else(|| fresh_input_parser::media_modifier::code_for_keysym(lower))
 }
 
 fn warn_invalid_key(key: &str, action: &str) {
@@ -6024,17 +6027,23 @@ mod tests {
     /// the editor has written a binding that silently does nothing. `Insert`
     /// was exactly that — emitted as `"Insert"`, and no `insert` arm existed —
     /// and `KeypadBegin` fell through to a `{:?}` spelling nothing claimed.
+    ///
+    /// **The codes come from the decoder, not from the name tables.** Asking
+    /// the tables which codes to check only ever asks whether the names name
+    /// themselves: `Media(MuteVolume)` and `Modifier(LeftHyper)` are keys the
+    /// input parser decodes and the keybinding editor can record, and they
+    /// stayed unnamed — the same bug, one family over — while a test called
+    /// `config_names_round_trip` passed. Sweeping the Private Use Area is
+    /// what makes "the editor can write it" and "the loader can read it" two
+    /// different questions.
     #[test]
     fn config_names_round_trip() {
         use crate::app::keybinding_editor::helpers::key_code_to_config_name;
 
         let mut codes: Vec<KeyCode> = NAMED_KEYS.iter().map(|k| k.code).collect();
         codes.extend(PUNCTUATION_KEYS.iter().map(|k| k.code));
-        codes.extend(
-            fresh_input_parser::keypad::KEYPAD_KEYS
-                .iter()
-                .map(|k| k.code),
-        );
+        // Every key the kitty keyboard protocol can deliver.
+        codes.extend((0xe000..=0xf8ff).filter_map(fresh_input_parser::kitty_functional_key));
         codes.extend((1..=24).map(KeyCode::F));
         codes.extend("azAZ09".chars().map(KeyCode::Char));
 
@@ -6069,6 +6078,7 @@ mod tests {
                     .iter()
                     .map(|k| k.keysym),
             )
+            .chain(fresh_input_parser::media_modifier::all().map(|k| k.keysym))
             .collect();
         all.sort_unstable();
         let total = all.len();

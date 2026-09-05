@@ -54,6 +54,16 @@ pub fn key_code_to_config_name(key_code: KeyCode) -> String {
         // `config_names_round_trip` is what keeps that true.
         KeyCode::KeypadBegin => "kp_begin".to_string(),
         KeyCode::F(n) => format!("F{}", n),
+        // Media and standalone-modifier keys, from the same table the input
+        // parser decodes them with. Without this they fell to the `{:?}`
+        // spelling below — `"Media(MuteVolume)"` — which `parse_key` then
+        // refused, dropping the binding at load: issue #1128, one family
+        // over.
+        KeyCode::Media(_) | KeyCode::Modifier(_) => {
+            fresh_input_parser::media_modifier::keysym_for_code(key_code)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{:?}", key_code))
+        }
         _ => format!("{:?}", key_code),
     }
 }

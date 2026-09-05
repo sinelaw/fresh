@@ -519,7 +519,14 @@ export function treeNode(
     node.checked = options.checked;
   }
   if (options?.windowAnchor) {
-    node.windowAnchor = options.windowAnchor;
+    // `pinned` is defaulted here rather than left absent: the host's
+    // `TextWindowAnchor` takes it as `#[serde(default)]`, so a missing
+    // field and a zero mean the same thing on the wire — but the
+    // generated type says `pinned: number`, and filling it in is what
+    // keeps the two spellings from being a type error for every caller
+    // that has no pinned head.
+    const { pinned, start, len } = options.windowAnchor;
+    node.windowAnchor = { pinned: pinned ?? 0, start, len };
   }
   if (options?.extraLines && options.extraLines.length > 0) {
     node.extraLines = options.extraLines;

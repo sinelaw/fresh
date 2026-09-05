@@ -253,7 +253,7 @@ The `key` field of a binding takes one of the names below.
 | `pause` | `Pause` |
 | `menu` | `Menu` |
 
-Any single character is also a key name — `"a"`, `"7"`, `"é"` — as is a function key, `"f1"` through `"f24"`. Names are case-insensitive.
+Any single character is also a key name — `"a"`, `"7"`, `"é"` — as is a function key, `"f1"` through `"f35"` (F13 and up need a terminal that reports them). Names are case-insensitive.
 
 ### Punctuation
 
@@ -329,6 +329,40 @@ The single character is always accepted and is what the keybinding editor writes
 | `kp_insert` | `Insert` |
 | `kp_delete` | `Delete` |
 | `kp_begin` | `KeypadBegin` |
+
+### Media and modifier keys
+
+Reported only by a terminal speaking the kitty keyboard protocol, and for the modifier keys only when it is asked to report every key event. Unlike the keypad these are **not** aliases: nothing on the main keyboard means `volume_mute` or `left_hyper`, so each binds a key of its own.
+
+| Name | Key |
+|---|---|
+| `media_play` | `Media(Play)` |
+| `media_pause` | `Media(Pause)` |
+| `media_play_pause` | `Media(PlayPause)` |
+| `media_reverse` | `Media(Reverse)` |
+| `media_stop` | `Media(Stop)` |
+| `media_fast_forward` | `Media(FastForward)` |
+| `media_rewind` | `Media(Rewind)` |
+| `media_next` | `Media(TrackNext)` |
+| `media_previous` | `Media(TrackPrevious)` |
+| `media_record` | `Media(Record)` |
+| `volume_down` | `Media(LowerVolume)` |
+| `volume_up` | `Media(RaiseVolume)` |
+| `volume_mute` | `Media(MuteVolume)` |
+| `left_shift` | `Modifier(LeftShift)` |
+| `left_ctrl` | `Modifier(LeftControl)` |
+| `left_alt` | `Modifier(LeftAlt)` |
+| `left_super` | `Modifier(LeftSuper)` |
+| `left_hyper` | `Modifier(LeftHyper)` |
+| `left_meta` | `Modifier(LeftMeta)` |
+| `right_shift` | `Modifier(RightShift)` |
+| `right_ctrl` | `Modifier(RightControl)` |
+| `right_alt` | `Modifier(RightAlt)` |
+| `right_super` | `Modifier(RightSuper)` |
+| `right_hyper` | `Modifier(RightHyper)` |
+| `right_meta` | `Modifier(RightMeta)` |
+| `iso_level3_shift` | `Modifier(IsoLevel3Shift)` |
+| `iso_level5_shift` | `Modifier(IsoLevel5Shift)` |
 
 <!-- END GENERATED KEY NAMES -->
 

@@ -771,7 +771,7 @@ function flatItemKey(item: FlatItem): string {
  *  plugin no longer cuts the string itself: it sends the capped context whole
  *  and says where the interesting part is, which is what makes panning left
  *  able to reach the head of the line at all. See `TreeNode.windowAnchor`. */
-type RenderedRow = { entry: TextPropertyEntry; anchor?: { start: number; len: number } };
+type RenderedRow = { entry: TextPropertyEntry; anchor?: TextWindowAnchor };
 
 function renderFlatItemEntry(item: FlatItem, W: number): RenderedRow {
   if (!panel) return { entry: { text: "" } };
