@@ -4915,6 +4915,56 @@ fn test_issue3104_multi_line_constructs_colour_every_row() {
     wait_for_fg(&mut harness, "BRAVO_MARKER", 0, comment);
 }
 
+/// A file past 9,999 lines widens the line-number gutter: `lineNumPrefix`
+/// pads a number to `LINE_NUM_W` but never truncates one. The bytes before
+/// the code are therefore not a constant, and a row whose gutter width is
+/// assumed rather than measured hands its own diff marker to the language
+/// parser as if it were source.
+///
+/// Markdown shows it, because its grammar anchors a heading to the start
+/// of a line: fed `+## ...` instead of `## ...`, the `#` is no longer at
+/// the start and the row stops being a heading.
+#[test]
+fn test_issue3104_a_five_digit_gutter_still_colours_the_code() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+    // Past 10,000 lines, so the changed row carries a five-digit number
+    // and its gutter is wider than a short file's.
+    let mut body = String::new();
+    for i in 0..10_000 {
+        body.push_str(&format!("Filler paragraph {i}.\n"));
+    }
+    body.push_str("## Section Before\n");
+    let notes = repo.create_file("notes.md", &body);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    fs::write(
+        &notes,
+        body.replace("## Section Before\n", "## Section AFTER_EDIT\n"),
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("AFTER_EDIT"))
+        .unwrap();
+
+    // The added row is a heading, and headings are coloured as keywords.
+    let keyword = harness.editor().theme().syntax_keyword;
+    wait_for_fg(&mut harness, "## Section AFTER_EDIT", 0, keyword);
+}
+
 /// Wait until the cell `dx` columns into the first on-screen occurrence of
 /// `text` is painted with foreground `fg`. The colours are the host's
 /// highlighter's, painted on the render after the rows are mounted, so

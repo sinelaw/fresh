@@ -989,18 +989,18 @@ interface DiffLine {
     commentId?: string;
 }
 
-/** Language and parser streams of a code row; see `DiffLine.syntax`. */
+/** Language, parser streams and gutter width of a code row; see
+ *  `DiffLine.syntax`. */
 interface RowSyntax {
     language: string;
     streams: number[];
-}
-
-/**
- * Bytes at the start of every code row that are not code: the
- * line-number gutter and the one-byte diff marker.
- */
-function codeRowPrefixBytes(): number {
-    return getByteLength(lineNumPrefix(undefined, undefined)) + 1;
+    /** Bytes before the code: this row's line-number gutter plus its
+     *  one-byte diff marker. Measured from the text actually emitted,
+     *  never assumed — `lineNumPrefix` pads a number to `LINE_NUM_W` but
+     *  does not truncate one, so a file past 9,999 lines has a wider
+     *  gutter, and a row of it whose prefix was guessed would hand the
+     *  language parser the tail of its own line number. */
+    prefix: number;
 }
 
 /** Compute +N / -M line counts for a file. */
@@ -1341,9 +1341,11 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         // reader is looking at.
         const oldStream = 2 * (hunkOrdinal.get(hunk) ?? 0);
         const newStream = oldStream + 1;
-        const oldSyntax: RowSyntax = { language: hunk.file, streams: [oldStream] };
-        const newSyntax: RowSyntax = { language: hunk.file, streams: [newStream] };
-        const bothSyntax: RowSyntax = { language: hunk.file, streams: [newStream, oldStream] };
+        const oldStreams = [oldStream];
+        const newStreams = [newStream];
+        const bothStreams = [newStream, oldStream];
+        const rowSyntax = (streams: number[], contentStart: number): RowSyntax =>
+            ({ language: hunk.file, streams, prefix: contentStart });
         // Hunk header — always emit the expanded triangle; collapse
         // overlays a `▸` replacement-conceal (see `applyFolds`).
         const headerInner = hunk.contextHeader
@@ -1419,7 +1421,8 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                 const removeOverlays: InlineOverlay[] = [
                     { start: 0, end: removePrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
                 ];
-                let rOffset = removePrefixLen + getByteLength(line[0]); // skip diff prefix
+                const removeContentStart = removePrefixLen + getByteLength(line[0]); // skip diff marker
+                let rOffset = removeContentStart;
                 for (const part of parts) {
                     const pLen = getByteLength(part.text);
                     if (part.type === 'removed') {
@@ -1433,7 +1436,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType: 'remove', oldLine: curOldLine, newLine: undefined, lineContent: line,
                     inlineOverlays: removeOverlays,
-                    syntax: oldSyntax,
+                    syntax: rowSyntax(oldStreams, removeContentStart),
                 });
                 // Inline comments for the removed line
                 pushLineComments(lines, hunk, 'remove', curOldLine, undefined);
@@ -1446,7 +1449,8 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                 const addOverlays: InlineOverlay[] = [
                     { start: 0, end: addPrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
                 ];
-                let aOffset = addPrefixLen + getByteLength(nextLine[0]);
+                const addContentStart = addPrefixLen + getByteLength(nextLine[0]);
+                let aOffset = addContentStart;
                 for (const part of parts) {
                     const pLen = getByteLength(part.text);
                     if (part.type === 'added') {
@@ -1460,7 +1464,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType: 'add', oldLine: undefined, newLine: newLineNum, lineContent: nextLine,
                     inlineOverlays: addOverlays,
-                    syntax: newSyntax,
+                    syntax: rowSyntax(newStreams, addContentStart),
                 });
                 pushLineComments(lines, hunk, 'add', undefined, newLineNum);
                 newLineNum++;
@@ -1474,6 +1478,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             const dimNumOverlay: InlineOverlay = {
                 start: 0, end: numPrefixLen, style: { fg: STYLE_LINE_NUM_FG },
             };
+            const contentStart = numPrefixLen + getByteLength(line[0]);
 
             if (prefix === '+') {
                 lines.push({
@@ -1482,7 +1487,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                     inlineOverlays: [dimNumOverlay],
-                    syntax: newSyntax,
+                    syntax: rowSyntax(newStreams, contentStart),
                 });
                 newLineNum++;
             } else if (prefix === '-') {
@@ -1492,7 +1497,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                     inlineOverlays: [dimNumOverlay],
-                    syntax: oldSyntax,
+                    syntax: rowSyntax(oldStreams, contentStart),
                 });
                 oldLineNum++;
             } else {
@@ -1501,7 +1506,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
                     hunkId: hunk.id, file: hunk.file,
                     lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
                     inlineOverlays: [dimNumOverlay],
-                    syntax: bothSyntax,
+                    syntax: rowSyntax(bothStreams, contentStart),
                 });
                 oldLineNum++;
                 newLineNum++;
@@ -1644,7 +1649,6 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
     // consecutive rows with the same language and streams share one
     // region, so a hunk is a handful of regions, not one per row.
     const syntaxRegions: TsSyntaxRegion[] = [];
-    const prefix = codeRowPrefixBytes();
     let openRegion: (TsSyntaxRegion & { key: string }) | null = null;
     // Byte ranges of collapsible bodies, captured in this same single
     // pass so collapse later just registers a host fold (no rebuild).
@@ -1671,7 +1675,9 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
         runningByte += getByteLength(entry.text);
         entries.push(entry);
         row++;
-        const key = syntax ? `${syntax.language}\0${syntax.streams.join(',')}` : null;
+        const key = syntax
+            ? `${syntax.language}\0${syntax.streams.join(',')}\0${syntax.prefix}`
+            : null;
         if (openRegion && openRegion.key === key) {
             openRegion.end = runningByte;
             return;
@@ -1682,7 +1688,10 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
             openRegion = null;
         }
         if (syntax && key !== null) {
-            openRegion = { key, start, end: runningByte, language: syntax.language, prefix, streams: syntax.streams };
+            openRegion = {
+                key, start, end: runningByte,
+                language: syntax.language, prefix: syntax.prefix, streams: syntax.streams,
+            };
         }
     };
 
