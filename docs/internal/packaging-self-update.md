@@ -724,6 +724,9 @@ convention (`daemon`, `config`, `grammar`, `init`):
 - `fresh --cmd update --check` — report status only (current, latest, channel,
   what the update command would be); exit non-zero if outdated. Scriptable.
 - `fresh --cmd update --yes` — non-interactive (CI, dotfiles).
+- `fresh --cmd update --skip-attestation` — install with checksum verification
+  only (§10.1). A flag rather than an environment variable on purpose: it is a
+  decision per run, not one to leave sitting in a shell profile.
 - `fresh --cmd config paths` — extend to print resolved provenance + receipt
   path (for debugging "why does it think I installed via X").
 
@@ -761,6 +764,13 @@ fallback rather than the route:
 A check therefore spends nothing, and an install spends exactly one request —
 the attestation, which is a *second origin* on purpose (§11) and so cannot be
 moved to `github.com` without becoming the thing it exists to improve on.
+
+If that one request is refused, the failure offers `--skip-attestation`, which
+installs on the checksum alone — exactly the verification `install.sh` does, and
+no more. The offer is made **only** for a rate limit: every other attestation
+failure is either "GitHub does not attest to these bytes" or "something got in
+the way of asking", and naming a bypass there would be advertising it in the
+cases the check exists for. Using it prints what was given up, every time.
 
 Three supporting pieces, in `fresh_update::net` / `fresh_update::fetch`:
 
@@ -829,6 +839,16 @@ test-only surface: it overrides the download base and nothing else.
   An overridden endpoint skips the attestation check — a local test server has
   no attestations and never could — which is the same line already drawn for
   privilege: bytes from an overridden endpoint never reach `sudo`.
+
+  `--skip-attestation` skips it on the pinned endpoints too, and is the one
+  place this design lets the user lower the bar. It is not a hole so much as a
+  choice made explicit: without it, a `.deb` user whose address has run out of
+  API budget is told to wait an hour or download the same artifact by hand from
+  the same URL, verifying *nothing* — which is a worse outcome reached by a
+  longer road. So the flag exists, it is offered only when the limit is what
+  blocked the check, it must be typed on the command line each time (no
+  environment variable), and every run that uses it prints which guarantee it
+  dropped. What it never skips is the checksum.
 - **No privilege escalation, because nothing is executed.** `fresh` spawns no
   package manager, so there is no `sudo` to consent to and no credential path to
   get wrong. Where root is genuinely required it appears only as the `sudo` in

@@ -43,6 +43,10 @@
 
 #![allow(clippy::let_underscore_must_use)]
 
+/// The flag that turns the attestation check off, named once so the hint in a
+/// failure and the CLI that parses it cannot drift apart.
+pub const SKIP_ATTESTATION_FLAG: &str = "--skip-attestation";
+
 use crate::endpoint::Endpoints;
 use crate::feed::Release;
 use crate::net::{self, Transport};
@@ -65,6 +69,20 @@ pub struct UpdateOptions {
     /// Off by default, and the refusal is enforced in [`crate::feed::select`]
     /// rather than left to the endpoint: see the note there.
     pub allow_prerelease: bool,
+    /// Do not check the release attestation before installing.
+    ///
+    /// Lowers verification to the checksum sidecar alone — the same bar
+    /// `install.sh` sets, and a weaker one than this engine's default: the
+    /// sidecar is served from the same origin as the artifact, so it catches
+    /// corruption but not a release that was tampered with at the source. It
+    /// exists because the attestation lookup is the one request an update makes
+    /// to `api.github.com`, and a rate limit there is otherwise an hour's wait
+    /// with no way through.
+    ///
+    /// Deliberately a flag and not an environment variable: this is a decision
+    /// to be taken per run, not one to leave set in a shell profile where it
+    /// silently applies to every future update.
+    pub skip_attestation: bool,
     /// Run the install path even when already on the latest version.
     ///
     /// Distinct from `allow_downgrade`, which is about *which* versions are
@@ -86,6 +104,7 @@ impl Default for UpdateOptions {
             yes: false,
             allow_downgrade: false,
             allow_prerelease: false,
+            skip_attestation: false,
             force: false,
             execution: Execution::Install,
             // An out-of-policy override is refused outright in a release build,
@@ -304,6 +323,7 @@ fn package(
         transport,
         &asset.browser_download_url,
         opts.endpoints.trusted,
+        opts.skip_attestation,
     ) {
         Ok(bytes) => bytes,
         // The name we built is not what this release published — a packaging
@@ -323,6 +343,7 @@ fn package(
                 transport,
                 &asset.browser_download_url,
                 opts.endpoints.trusted,
+                opts.skip_attestation,
             )?
         }
         Err(e) => return Err(e.into()),
@@ -411,7 +432,12 @@ fn self_contained(
     let url = opts.endpoints.asset_url(latest, &asset);
 
     let bin_name = if cfg!(windows) { "fresh.exe" } else { "fresh" };
-    let archive = fetch_and_verify(transport, &url, opts.endpoints.trusted)?;
+    let archive = fetch_and_verify(
+        transport,
+        &url,
+        opts.endpoints.trusted,
+        opts.skip_attestation,
+    )?;
     let binary = if asset.ends_with(".zip") {
         crate::archive::from_zip(&archive, bin_name)?
     } else if asset.ends_with(".tar.gz") {
@@ -444,7 +470,12 @@ fn appimage(
         "AppImage install has no recorded install_root; reinstall via install.sh".to_string()
     })?;
 
-    let bytes = fetch_and_verify(transport, &url, opts.endpoints.trusted)?;
+    let bytes = fetch_and_verify(
+        transport,
+        &url,
+        opts.endpoints.trusted,
+        opts.skip_attestation,
+    )?;
 
     // Everything happens inside one private directory next to the install root
     // — same filesystem, so the final rename is atomic, and private so nothing
@@ -564,6 +595,7 @@ fn fetch_and_verify(
     transport: &Transport,
     url: &str,
     trusted: bool,
+    skip_attestation: bool,
 ) -> Result<Vec<u8>, DownloadError> {
     println!("Downloading {url} ...");
     let scratch = crate::staging::ephemeral().map_err(DownloadError::Failed)?;
@@ -580,7 +612,13 @@ fn fetch_and_verify(
     self_update::verify_sha256(&bytes, expected.trim())
         .map_err(|e| DownloadError::Failed(e.to_string()))?;
 
-    if trusted {
+    if skip_attestation {
+        // Said plainly, every time, because the user gave up the check that
+        // separates "these bytes are intact" from "GitHub published them".
+        println!("Skipping the release attestation check ({SKIP_ATTESTATION_FLAG}).");
+        println!("These bytes are verified only against a checksum served from the same");
+        println!("origin as the artifact, which catches corruption but not tampering.");
+    } else if trusted {
         println!("Verifying release attestation ...");
         // The digest is computed from the bytes on disk, never read from the
         // network — otherwise the second origin would be checking the first
@@ -588,12 +626,32 @@ fn fetch_and_verify(
         let digest = self_update::sha256_hex(&bytes);
         let asset = url.rsplit('/').next().unwrap_or(url);
         crate::attestation::verify(transport, crate::endpoint::REPO, asset, &digest)
-            .map_err(|e| DownloadError::Failed(e.to_string()))?;
+            .map_err(|e| DownloadError::Failed(attestation_failure(&e)))?;
     } else {
         println!("Release endpoint overridden — skipping the attestation check.");
     }
 
     Ok(bytes)
+}
+
+/// What to tell the user when the attestation could not be confirmed.
+///
+/// The bypass is named for a rate limit and nothing else. Every other failure
+/// here is either "GitHub does not attest to these bytes" or "something got in
+/// the way of asking" — and pointing at a flag that skips the check would be
+/// suggesting the bypass in precisely the cases the check is for. A rate limit
+/// is different in kind: GitHub answered, over TLS, that it will not answer
+/// again for a while.
+fn attestation_failure(e: &crate::attestation::AttestationError) -> String {
+    let bypass = matches!(e, crate::attestation::AttestationError::RateLimited(_));
+    if bypass {
+        format!(
+            "{e}\n\nIf a checksum-only install is acceptable — the verification \
+             `install.sh` does, and no more — re-run with {SKIP_ATTESTATION_FLAG}."
+        )
+    } else {
+        e.to_string()
+    }
 }
 
 /// Print a command for the user to run, rather than running it.
@@ -711,6 +769,40 @@ mod tests {
             ..UpdateOptions::default()
         };
         assert!(constructed_asset(&redirect_fetched("0.4.10"), &spec, &opts).is_none());
+    }
+
+    /// The bypass is offered for a rate limit and for nothing else: naming it
+    /// when GitHub says these bytes are *not* attested would be suggesting the
+    /// way around the check in the one case the check exists for.
+    #[test]
+    fn only_a_rate_limit_is_told_how_to_go_around_the_attestation() {
+        use crate::attestation::AttestationError;
+
+        let limited = AttestationError::RateLimited("rate limited".to_string());
+        let message = attestation_failure(&limited);
+        assert!(
+            message.contains(SKIP_ATTESTATION_FLAG),
+            "a rate limit must name the way through: {message}"
+        );
+
+        for e in [
+            AttestationError::NotAttested {
+                asset: "fresh-editor.tar.gz".to_string(),
+                digest: "a".repeat(64),
+            },
+            AttestationError::NameMismatch {
+                asset: "fresh-editor.tar.gz".to_string(),
+                digest: "a".repeat(64),
+            },
+            AttestationError::Malformed("not json".to_string()),
+            AttestationError::Fetch("connection reset".to_string()),
+        ] {
+            let message = attestation_failure(&e);
+            assert!(
+                !message.contains(SKIP_ATTESTATION_FLAG),
+                "{e:?} must not advertise the bypass: {message}"
+            );
+        }
     }
 
     /// A 404 is the release saying the constructed name was wrong, and only

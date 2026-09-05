@@ -420,6 +420,37 @@ fn check_through_the_redirect_reports_without_replacing_anything() {
     );
 }
 
+/// The attestation bypass reaches the engine and says so.
+///
+/// An overridden endpoint has no attestations to look up, so this cannot prove
+/// the check was skipped — what it pins is the wiring: the flag parses, it
+/// reaches `UpdateOptions`, and the run tells the user which verification it
+/// gave up rather than doing it quietly.
+#[test]
+fn skipping_the_attestation_is_wired_through_and_announced() {
+    let (install, base) = ready(true);
+
+    let out = run_update(&install, &base, &["--yes", "--skip-attestation"]);
+    assert!(out.status.success(), "{}", report("update failed", &out));
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Skipping the release attestation check"),
+        "{}",
+        report("the skipped check was not announced", &out)
+    );
+    assert!(
+        stdout.contains("catches corruption but not tampering"),
+        "{}",
+        report("the announcement did not say what was given up", &out)
+    );
+    assert_eq!(
+        std::fs::read(&install.exe).unwrap(),
+        NEW_BINARY,
+        "the update still has to happen"
+    );
+}
+
 /// `--check` reports and stops. The binary must be untouched, because this is
 /// the mode the editor's background check uses.
 #[test]
