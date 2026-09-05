@@ -1014,6 +1014,8 @@ impl EditorState {
 
             Event::RemoveCursor { cursor_id, .. } => {
                 cursors.remove(*cursor_id);
+                // Removing the primary hands the role to another cursor.
+                self.sync_primary_cursor_line_number(cursors.primary().position);
             }
 
             // View events (Scroll, SetViewport, Recenter) are now handled at Editor level
@@ -1225,24 +1227,41 @@ impl EditorState {
         }
 
         // Update primary cursor line number if this is the primary cursor.
-        // Try to get exact line number from buffer, or estimate for large files.
         if cursor_id == cursors.primary_id() {
-            self.primary_cursor_line_number = match self.buffer.offset_to_position(new_position) {
-                Some(pos) => LineNumber::Absolute(pos.line),
-                None => {
-                    // Large file without line metadata - estimate line number
-                    // using the default estimated_line_length of 80 bytes.
-                    LineNumber::Absolute(new_position / 80)
-                }
-            };
+            self.sync_primary_cursor_line_number(new_position);
         }
+    }
+
+    /// Recompute the cached primary cursor line number from
+    /// `primary_position`, the primary cursor's current byte offset.
+    ///
+    /// `primary_cursor_line_number` is a cache the status bar (and the
+    /// relative line-number gutter) read instead of resolving the primary
+    /// cursor's line on every frame. [`Self::apply_move_cursor`] keeps it in
+    /// step for the cursor it moves, but only while that cursor is the
+    /// primary. Anything that changes *which* cursor is primary — adding one
+    /// (the new cursor becomes primary), removing one — or that writes cursor
+    /// positions without a `MoveCursor` (the multi-cursor bulk-edit path)
+    /// must call this too, or the status bar keeps reporting the line of a
+    /// cursor that is no longer the primary, while the column, read live,
+    /// is right (#3167).
+    pub(crate) fn sync_primary_cursor_line_number(&mut self, primary_position: usize) {
+        // Try to get exact line number from buffer, or estimate for large files.
+        self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_position) {
+            Some(pos) => LineNumber::Absolute(pos.line),
+            None => {
+                // Large file without line metadata - estimate line number
+                // using the default estimated_line_length of 80 bytes.
+                LineNumber::Absolute(primary_position / 80)
+            }
+        };
     }
 
     /// Insert a cursor under the exact id carried by the event. The id is
     /// preserved (rather than freshly allocated) so undo/redo stays
     /// deterministic.
     fn apply_add_cursor(
-        &self,
+        &mut self,
         cursors: &mut Cursors,
         cursor_id: crate::model::event::CursorId,
         position: usize,
@@ -1260,6 +1279,9 @@ impl EditorState {
                 crate::model::virtual_space::cursor_virtual_lines(mode, &self.buffer, c),
             )
         });
+        // The added cursor is now the primary (or, if normalization merged
+        // it away, whichever cursor took over): the cached line must follow.
+        self.sync_primary_cursor_line_number(cursors.primary().position);
     }
 
     /// Materialize an `AddOverlay` event into a tracked [`Overlay`].
@@ -1414,11 +1436,7 @@ impl EditorState {
         self.highlighter.invalidate_all();
 
         // Update primary cursor line number
-        let primary_pos = cursors.primary().position;
-        self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_pos) {
-            Some(pos) => LineNumber::Absolute(pos.line),
-            None => LineNumber::Absolute(0),
-        };
+        self.sync_primary_cursor_line_number(cursors.primary().position);
     }
 
     /// Replay the marker and margin position adjustments recorded for a bulk

@@ -25,6 +25,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **`curl ... | install.sh` no longer fails behind a shared IP or silently on error** (#3070).
 * **Keystrokes that only move the cursor no longer vanish with multiple cursors live** (#3125, reported by @X-Ryl669).
 * **A multi-cursor skip-over now lands past its delimiter** even when an earlier cursor's own edit shifts it first (#3166).
+* **The status bar's line number follows an added or removed cursor** instead of lagging until the next arrow key (#3167).
 * **Dragging a divider keeps up with the pointer** instead of lagging behind (#3140).
 * **The space below the last line follows the theme background** (#779).
 * **LSP diagnostics no longer get stuck reporting errors you already fixed** (#3038, reported by @thedadams).
