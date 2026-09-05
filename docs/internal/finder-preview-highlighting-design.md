@@ -1,181 +1,252 @@
-# Syntax highlighting in the finder preview buffers
+# Search-result previews: open the file, don't compose a snippet
 
 > _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
-**Status: PLANNED.** Design for sinelaw/fresh#3196 — the follow-up ask to
+**Status: PLANNED.** Design for sinelaw/fresh#3196 — the follow-up to
 sinelaw/fresh#3104, which put syntax colours on the source embedded in the
-Review Diff and Git Log panels. Companion to
-[`embedded-language-highlighting.md`](embedded-language-highlighting.md),
-whose fourth tool — regions a plugin declares — is the whole mechanism this
-design uses. Nothing here needs a host change.
+Review Diff and Git Log panels.
 
-## 1. What is plain today, and what is not
+The issue asks for syntax highlighting in the preview buffers the
+grep-style finders show. The answer this doc argues for is not to colour
+the snippet but to **stop composing one**: preview the real file as an
+ephemeral *preview tab*, exactly as the File Explorer does on a single
+click. Highlighting then arrives for free, along with everything else a
+real buffer has. Only the surface that genuinely cannot be a file — the
+results / Quickfix *list*, whose rows come from many files — still needs
+the declared-region mechanism of
+[`embedded-language-highlighting.md`](embedded-language-highlighting.md).
 
-Three surfaces show a search result's source, and only one of them is
-coloured:
+## 1. Three surfaces, one of them already right
 
 | Surface | What it is | Colours today |
 |---|---|---|
-| Live Grep's floating overlay, right-hand pane | a **real file buffer**, opened for preview and painted by the same per-leaf pipeline a normal split uses | **yes** — the ordinary highlighting path, nothing to do |
-| `*Preview*`, the split the Finder opens (Git Grep, Find References, any finder with `preview: true`) | a **virtual buffer** the plugin composes: a header, a rule, then `>  123 │ <line>` rows of ±5 context around the match | no |
-| the Finder's panel / the Quickfix list Live Grep exports | a **virtual buffer** the plugin composes: a title, optional file headers, then one `  path:line:col  <matched line>` row per result | no |
+| Live Grep's floating overlay, right-hand pane | a **real file buffer**, opened for preview and painted by the per-leaf pipeline a normal split uses | **yes** |
+| `*Preview*`, the split the Finder opens (Git Grep, Find References, any finder with `preview: true`) | a **composed virtual buffer**: header, rule, then `>  123 │ <line>` rows of ±5 context | no |
+| the Finder's panel / the Quickfix list Live Grep exports | a **composed virtual buffer**: title, file headers, one `  path:line:col  <matched line>` row per result | no |
 
-The asymmetry is the whole complaint: the overlay pane looks like the
-editor, and the two composed buffers beside it look like a log file.
+The first row is the tell. Live Grep already answered this question once,
+in the host, by previewing the file itself — and its pane has colours,
+gutter, wrap and scrolling that the `*Preview*` beside it does not. The
+snippet is the odd one out, not the overlay.
 
-The reason is not an oversight. A composed buffer is not a document any
-grammar can parse — a gutter, headers, a rule, rows drawn from many files —
-so the highlighting engine is deliberately a *plain text* host for it. That
-is exactly the situation `setSyntaxRegions` was added for.
+## 2. What the snippet costs
 
-## 2. The mechanism
+`Finder.updatePreview` reads the whole file through the plugin API, slices
+±5 lines around the match, prefixes each with a marker and a padded line
+number, and writes the result into a virtual buffer in a split it owns.
+What that buffer cannot have, because it is not a file:
 
-Tool 4 of `embedded-language-highlighting.md`: the plugin that composed the
-buffer tells the host where its rows carry code, and the host colours them.
-A region is `{start, end, language, prefix, streams}` over the buffer's own
-bytes:
+- syntax colours (the issue), and everything else keyed to a language;
+- the real gutter, folds, soft wrap, indent guides, rulers;
+- search inside the preview, occurrence highlighting, bracket matching;
+- LSP decoration — diagnostics squiggles on the lines you are looking at;
+- scrolling past the ±5 window, or stepping into the file to keep reading;
+- correct behaviour on anything the slice mishandles: CRLF, tabs, very
+  long lines, files whose encoding is not UTF-8.
 
-- **`language`** — a path or a language token. Nothing is opened or read; it
-  only picks the grammar, resolved through the same catalog that would pick
-  one for a file of that name. A language the catalog does not claim leaves
-  those rows exactly as they are.
-- **`prefix`** — the bytes at the start of *every* row of the region that are
-  not code. The host strips them before feeding the row to the child parser,
-  so the parser's offsets land on the source and a grammar rule anchored to
-  the start of a line still matches.
-- **`streams`** — the parsers the rows feed, first one colouring the row. A
-  stream keeps its parse state across the rows of a region *and across other
-  regions*, keyed by its id; an id the snapshot has not seen starts a fresh
-  parser. This is what makes an interleaved diff correct, and — see §3 — it
-  is also how a preview says "start clean here".
+It also duplicates work the host already does well: reading a file, and
+showing part of one.
 
-Two host-side rules shape the design:
+## 3. The proposal: preview tabs, the File Explorer's semantics
 
-- **The buffer must be virtual.** Both target buffers are (they come from
-  `createVirtualBufferInSplit`). A file's own grammar can never be taken
-  away by a plugin.
-- **Setting the content clears the regions.** Every write must be followed
-  by a fresh declaration.
+The editor already has an ephemeral-open concept with worked-out
+invariants — `Editor::open_file_preview`, what the explorer calls when you
+single-click a file:
 
-## 3. The preview pane
+- **At most one preview exists editor-wide**, anchored to a split. Opening
+  the next one in that split closes the previous.
+- **Already-open files are never demoted.** If the result's file is a tab
+  the user already had, the preview switches to it and changes no preview
+  state, so nothing of theirs is closed later.
+- **Walking away is commitment.** Focusing another split, splitting,
+  dragging the tab, or *touching* the buffer promotes it to a permanent
+  tab and fires the `after_file_open` hook that preview-opening deferred.
+- **Browsing does not pollute history.** Position history is suppressed
+  for the open, so a run of previews doesn't flood back/forward.
+- **The tab says so** — a preview tab renders with the preview indicator,
+  so the user can see the difference between "looking" and "opened".
 
-The preview is the easy and valuable case: a *contiguous* slice of a
-*single* file. It maps onto one region with one stream.
+That is precisely the behaviour the ask describes, already built, already
+tested, already the thing users know from the explorer. The finders should
+call it instead of composing a buffer.
 
-**Where the code goes.** `crates/fresh-editor/plugins/lib/finder.ts`, beside
-the entry building in `updatePreview` — one helper, and every finder with
-`preview: true` gets colours at once. Model it on
-`commitDetailSyntaxRegions` in `lib/git_history.ts`: a pure function from
-the `TextPropertyEntry[]` the buffer is filled with to the regions, walking
-the same array in the same order, so the byte offsets and the content it
-declares cannot disagree. The preview rows already carry the property the
-walk needs to classify them (`header`, `separator`, `match`, `context`);
-give the code rows the file they came from as well, so the helper stays a
-function of its entries.
+**Prompt-mode finders** (Git Grep, Find References): drop `updatePreview`,
+the `*Preview*` buffer and the preview split entirely. On every selection
+change, preview the selected result's file into the split the search was
+started from, cursor on the match. Enter commits — that is the open the
+finder already performs, and it promotes the preview it is already looking
+at rather than opening a second buffer. Escape restores (§3.2).
 
-**One region per gutter run.** The gutter is `${marker}${lineNum} │ `, and
-its byte width is *not* a constant:
+**Panel-mode finders** (Diagnostics, the Quickfix list): `navigateOnCursorMove`
+already opens the item's file in the source split as the cursor moves —
+with a *committing* open, so today arrowing down a diagnostics list leaves
+one permanent tab per file. Routing it through the preview open fixes that
+accumulation as a side effect; it is the same bug the issue is about, one
+surface over.
 
-- the line number is padded to four columns but never truncated, so past
-  line 9,999 the gutter grows — the lesson of "review-diff: measure a row's
-  gutter, don't assume it", where an assumed prefix fed a Markdown heading
-  row its own diff marker and the heading stopped being a heading;
-- `│` is three bytes in UTF-8 while it is one JavaScript character, and
-  `prefix` is bytes.
+### 3.1 The one host gap: previewing without bouncing focus
 
-So measure the gutter each row actually emitted, with the `byteLength`
-helper `lib/git_history.ts` already exports, and open a new region when the
-width changes. In a preview window that is at most a screen tall, the width
-changes at most once, so this is one region in practice and two at a
-boundary.
+`open_file_preview` targets `preferred_split_for_file()` and leaves
+keyboard focus where it was — that is how the explorer previews into the
+editor pane while the sidebar keeps the keys. A prompt-mode finder is in
+the same position: the prompt is chrome, so the preview can land in the
+editing split under it with no focus change at all.
 
-**A fresh stream per refresh.** Number the preview's stream from a counter
-that increases on every refresh. An id the host has not seen gets a new
-parser, which is what a preview wants twice over: the window starts in the
-middle of a file, so no state from above it exists to inherit, and the
-*previous* preview's state (of a different file, in a different language)
-must not leak into this one. This is the same trick the commit-detail
-regions use when they number a hunk's two streams `2h` and `2h+1` — a fresh
-pair per hunk means a fresh parse per hunk. The host keeps only the few most
-recent parsers and evicts the rest, so an ever-increasing id costs nothing.
+Panel mode is not. It reaches its source split by focusing it and focusing
+back, and a *focus change to another split promotes the preview*
+(`promote_preview_if_not_in_split` — walking away is commitment). A plugin
+doing that dance would commit every preview it opened, which is exactly
+the accumulation we are removing.
 
-**Declare after every write.** `updatePreview` has two paths — the first
-call awaits `createVirtualBufferInSplit` and only then knows the buffer id;
-later calls write with `setVirtualBufferContent`, which clears the regions.
-`setSyntaxRegions` goes immediately after both.
+So the host needs one addition: **a preview open that names its split and
+changes no focus.** Either an options bag on the existing command —
+`openFileInSplit(splitId, path, line, column, { preview: true })` — or a
+sibling `previewFileInSplit`. It routes to the same preview bookkeeping
+(single preview, replace, promote, suppressed history, deferred hook) and
+must not call `set_active_split`. Everything else on the path already
+exists.
 
-**Cost.** A preview is ~12 rows. Building the regions is one linear pass
-over an array that was just built, and needs no I/O — the file content is
-the string `updatePreview` already read. The parse is the child parse the
-feature exists to perform, over a dozen lines, on a refresh the user
-triggered by moving the selection.
+### 3.2 Cancel has to restore
 
-Note the path to use for `language` is the entry's own file path, not the
-authority-resolved path the read goes through: the grammar is chosen by
-name, and a remote-authority prefix is noise the catalog does not need.
+The explorer never restores: browsing *is* the interaction, and walking
+away commits. A search is different — Escape should put the user back in
+the buffer they were reading, not in the last result they arrowed past.
 
-## 4. The results / Quickfix list
+Prior art on both sides of the FFI: the Quick Open `:N` goto-line prompt
+snapshots the split's buffer and cursor and restores them when the prompt
+is cancelled, and the Live Grep overlay does the same for its phantom
+preview, closing only the buffers *it* loaded and never one the user
+already had open. The finder wants that behaviour, so cancel is: close the
+current preview if we opened it and it is unmodified, then restore the
+split's previous active buffer and cursor.
 
-Same helper shape, weaker payoff, and worth doing only after §3 lands.
+Doing this in the plugin is possible (it knows the source split and can
+record the buffer and cursor), but it re-derives a rule the host already
+implements twice. See §6.
 
-Each row is `  path:line:col  <trimmed matched line>`, so unlike the preview
-nothing is shared between rows: the code starts at a different column on
-every row, consecutive rows may come from different files, and each row is
-an isolated line rather than a run. The declaration therefore is **one
-region per row**: `prefix` = the byte length of everything that row prints
-before its content, `language` = that row's file, `streams` = a fresh id per
-row, so every row parses standalone. Title, file headers, the blank line and
-the help footer get no region and keep the styling they have.
+## 4. What it buys, and what it costs
 
-Two honest limits to state rather than fix: the list trims each match's
-leading indentation and truncates it past 100 characters with an ellipsis,
-and the parser sees exactly that — a token-level colouring of a line that is
-not quite the line in the file.
+Buys: every item in §2, plus one less bespoke buffer shape in the tree,
+plus the finders finally matching the Live Grep overlay users already see.
 
-## 5. Deliberately out of scope
+Costs, honestly:
 
-- **The Live Grep overlay pane.** Already correct; it is a real buffer.
-- **Terminal-scrollback matches.** Universal Search can match inside a
-  terminal's backing file under the data dir. Those have no language and
-  their preview is a real buffer anyway; they stay plain.
-- **A new host API.** `prefix`, `language` and `streams` are per-region
-  already, and a fresh stream id is a supported way to say "start clean".
-  If a later consumer wants to restart a parser without consuming an id,
-  that is a host change to argue for then, not a prerequisite now.
-- **A setting.** The diff panels colour their source unconditionally; a
-  preview that matches the editor is the expected behaviour, not a mode.
+- **LSP churn is the real one.** Each preview open is a `didOpen` and each
+  replacement a `didClose`; `open_file_preview` already carries a
+  `TODO(perf)` saying so for the explorer. A finder previews on every
+  selection move *and* on the first result of every search refresh — i.e.
+  per keystroke — so this must be debounced (preview only after the
+  selection has been still briefly), and the debounce belongs in the
+  Finder where the keystrokes are. Without it, rapid typing walks a heavy
+  server through dozens of open/close pairs. The snippet had no LSP cost
+  at all; this is the one place the trade is genuinely worse.
+- **Whole files, not slices.** In practice a wash: `updatePreview` already
+  reads the entire file across the FFI to show eleven lines. But a preview
+  must never *prompt* — the explorer's path can surface a large-file
+  encoding confirmation, and a modal over a live search is unacceptable.
+  A preview that would need confirmation is a preview that is skipped.
+- **Buffers the user modifies.** Type in a preview and it is promoted, by
+  the existing mutation rule; cancel must then leave it alone rather than
+  close it.
+- **Remote authority.** Content arrives asynchronously, so a preview can
+  paint empty for a frame. The overlay already lives with this.
+- **File watching.** Each open registers a watch; confirm the close path
+  drops it, or a long search session accumulates watchers.
+- **The setting's name.** The preview-tab mechanism is gated by
+  `file_explorer.preview_tabs`, and with it off the explorer falls back to
+  a *committing* open. A finder must not: with previews off it should
+  simply not preview, rather than open a permanent tab per result. The
+  honest fix is to grow the key into an editor-level one and alias the old
+  path.
+- **What is lost from the snippet**: the `path:line:col` header line, the
+  `>` marker on the match row, and the deliberate ±5 framing. The gutter,
+  the cursor and the status bar carry the first two; the third becomes
+  "the file, positioned at the match", which is what a peek should be.
 
-## 6. Properties worth a test
+## 5. The results list still needs declared regions
 
-E2E, in the Rust plugin suites (`tests/e2e/plugins/` — `lsp_find_references`
-is the natural home for the preview cases), asserting on rendered cell
-colour with the `wait_for_fg` shape the diff-highlighting tests use:
+The Quickfix / panel list is not a file and cannot become one: its rows
+are `  path:line:col  <trimmed matched line>`, drawn from many files, each
+row an isolated line at its own offset. Colouring it stays a
+`setSyntaxRegions` job, and the design is unchanged from the region
+mechanism's other consumers:
 
-1. **It colours.** A preview of a `.rs` result paints a keyword in the
-   keyword colour.
-2. **The gutter is measured, not assumed.** A preview of a Markdown file at
-   a line past 9,999 still paints the heading as a heading — the case that
-   catches an off-by-N prefix, because the grammar anchors the rule to the
-   start of the line.
-3. **An unknown language is unchanged.** A preview of a file the catalog
-   does not claim renders exactly as it does today.
-4. **The match still wins.** The search-match highlight on the matched token
-   sits above the syntax colour, mirroring the existing "word-level diff
-   still wins over the syntax colour" test.
-5. **No leak between previews.** Moving the selection from a `.rs` result to
-   a `.md` one repaints with Markdown colours and nothing carried over —
-   the regression a reused stream id would produce.
-6. **The window's edge is a known behaviour.** A preview whose first row
-   falls inside a block comment colours from the window's top, not from the
-   file's. Assert it so a later change to the context window has to say so.
+- **one region per row** — `prefix` is the byte length of everything that
+  row prints before its content, `language` is that row's file, and
+  `streams` is a fresh id per row so each row parses standalone (an id the
+  host has not seen gets a new parser; the host keeps only the few most
+  recent and evicts the rest, which is what "start clean" costs);
+- title, file headers, the blank line and the help footer get no region
+  and keep the styling they have;
+- `prefix` is **measured**, never assumed — the lesson of "review-diff:
+  measure a row's gutter, don't assume it", where a padded-but-untruncated
+  line number and a three-byte `│` counted as one character fed a Markdown
+  heading its own marker and it stopped being a heading. `lib/git_history.ts`
+  exports the `byteLength` helper this needs, and
+  `commitDetailSyntaxRegions` is the shape to copy: a pure function from
+  the entries the buffer is filled with to the regions, so offsets and
+  content cannot disagree;
+- regions are cleared when the content is set, so re-declare after every
+  write.
 
-## 7. Limits, stated up front
+Two limits to state rather than fix: the list trims each match's leading
+indentation and truncates past 100 characters with an ellipsis, and the
+parser sees exactly that.
 
-- The window starts mid-file, so a construct opened above it — a block
-  comment, a raw string — is invisible to the parser and those rows colour
-  as if the construct began at the window. The diff panels make the same
-  trade-off; a handful of context lines makes it rare and never wrong for
-  more than the top of one pane.
-- The grammar is chosen by path. A file whose language the catalog does not
-  claim keeps today's plain rows, and the host says so once per language in
-  the log.
+## 6. Where this points: one preview primitive
+
+There are three preview implementations in the tree today — the explorer's
+preview tab (host), Live Grep's overlay phantom buffer with its own
+`loaded_buffers` bookkeeping and restore (host), and the Finder's composed
+snippet (plugin). They agree on the hard parts (at most one live preview,
+never close a buffer the user already had, never close a modified one,
+restore what was there) and each states them separately.
+
+The consolidation this design points at is a host-owned **preview session**:
+begin one against a split, preview files into it, end it with either
+*commit* (the user chose a result) or *restore* (they cancelled). The
+explorer's preview tab is that session with no restore; the overlay's
+phantom buffer is that session rendered into a card instead of a split;
+the finder becomes the third consumer instead of the third implementation.
+
+Not a prerequisite. §3.1 plus a plugin-side cancel is enough to ship the
+behaviour; the session is what to build if a fourth consumer appears, or
+when the overlay and the finder start disagreeing about an edge case.
+
+## 7. Properties worth a test
+
+E2E, in the Rust plugin suites (`tests/e2e/plugins/`; `lsp_find_references`
+is the natural home):
+
+1. **It is a real buffer.** A preview of a `.rs` result paints a keyword in
+   the keyword colour — the issue's actual ask, satisfied without a region.
+2. **Browsing does not accumulate tabs.** Arrowing through results across
+   several files leaves exactly one preview tab, and it is the last one.
+3. **Confirm promotes rather than reopens.** Enter on a result leaves that
+   file as a permanent tab, with no second buffer for the same path and
+   the deferred `after_file_open` fired exactly once.
+4. **Cancel restores.** Escape returns the split to the buffer and cursor
+   the search started from, and closes only what the search opened.
+5. **A file the user already had open is untouched.** Previewing it and
+   then cancelling leaves its tab open and un-demoted.
+6. **A modified preview survives.** Type in a preview, cancel the search:
+   the buffer stays, promoted.
+7. **The panel case.** Cursor movement in the Diagnostics/Quickfix panel
+   previews without stealing focus from the panel and without promoting on
+   each move — the regression the focus bounce would cause.
+8. **The list's own colours** (§5): rows colour by their own file; an
+   unknown language is unchanged; the search-match highlight still wins
+   over the syntax colour, mirroring the word-level-diff test.
+
+## 8. Open questions
+
+- **Does the preview belong in the source split, or in a split of its
+  own?** The explorer model says source split, and it needs no split
+  management. Find References may want the list and the code side by side —
+  but in prompt mode the list is chrome floating over the editor, so the
+  source split already reads as a peek pane. Start with the source split.
+- **Debounce interval**, and whether it belongs in the Finder or beside the
+  preview open in the host.
+- **Whether `preview: true` rides `openFileInSplit`** or gets its own
+  command. An options bag keeps one call site; a sibling command keeps the
+  committing open's signature honest about what it does.
