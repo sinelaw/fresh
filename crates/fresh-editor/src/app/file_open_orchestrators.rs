@@ -176,6 +176,20 @@ impl Editor {
 
         self.set_active_buffer(buffer_id);
 
+        // Deliberately opening the file that is currently being previewed is
+        // the commitment the preview was waiting for, so the tab stops being
+        // ephemeral here rather than at each gesture that can mean "open".
+        // The File Explorer's double-click promotes explicitly (it wants the
+        // status message either way); this covers everyone else — a finder
+        // confirming a result it was previewing, Quick Open landing on the
+        // same file, a plugin's `openFile`. Without it the tab a search
+        // opened stays marked `(preview)` and the next preview closes the
+        // file the user chose.
+        if kind == OpenKind::Commit {
+            self.active_window_mut()
+                .promote_buffer_from_preview(buffer_id);
+        }
+
         // Opening a file focuses a buffer in the active split. If a
         // *different* split is maximized (most commonly the docked
         // terminal), the renderer shows only the maximized split, so the

@@ -436,6 +436,24 @@ fn format_js_error(
 
 /// Log a JavaScript error with full details
 /// If panic_on_js_errors is enabled, this will panic to surface JS errors immediately
+/// A JS expression reading `name` off `globalThis`, as a quoted key.
+///
+/// Handler names are strings a plugin chose, and plugin ids routinely carry
+/// characters that are not JS identifiers — every Finder-based plugin
+/// registers handlers like `_finder_git-grep_preview_tick`. Interpolated
+/// after a dot, that name is not a lookup but an expression (`git` minus
+/// `grep_preview_tick`), and the call dies with a ReferenceError naming a
+/// function nobody wrote. Quoting the key makes any name work, including
+/// one holding a quote or a backslash.
+fn js_global_accessor(name: &str) -> String {
+    let escaped = name
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    format!("globalThis[\"{escaped}\"]")
+}
+
 fn log_js_error(ctx: &rquickjs::Ctx<'_>, err: rquickjs::Error, context: &str) {
     let error = format_js_error(ctx, err, context);
     tracing::error!("{}", error);
@@ -9593,6 +9611,14 @@ impl QuickJsBackend {
             "()".to_string()
         };
 
+        // Look the handler up by *key*, not by property path: a handler name
+        // is an arbitrary string a plugin chose, and plugin ids carry
+        // hyphens (`_finder_git-grep_preview_tick`). Interpolated after a
+        // dot, such a name parses as an expression — `git` minus
+        // `grep_preview_tick` — and the call fails with a ReferenceError
+        // naming half of it. `js_global_accessor` quotes it instead.
+        let fn_ref = js_global_accessor(&function_name);
+
         let code = match request_id {
             // Answerable call: settle the request with whatever the handler
             // returns (awaiting a promise), or with its error.
@@ -9608,8 +9634,8 @@ impl QuickJsBackend {
                     editor.completeCommand(__rid, ok, out, err);
                 }};
                 try {{
-                    if (typeof globalThis.{fn} === 'function') {{
-                        Promise.resolve(globalThis.{fn}{args}).then(
+                    if (typeof {fn} === 'function') {{
+                        Promise.resolve({fn}{args}).then(
                             function(r) {{ __done(true, r, null); }},
                             function(e) {{ __done(false, null, (e && e.message) ? String(e.message) : String(e)); }}
                         );
@@ -9622,7 +9648,7 @@ impl QuickJsBackend {
             }})();
             "#,
                 rid = rid,
-                fn = function_name,
+                fn = fn_ref,
                 args = call_args
             ),
             None => format!(
@@ -9630,10 +9656,10 @@ impl QuickJsBackend {
             (function() {{
                 console.log('[JS] start_action: calling {fn}');
                 try {{
-                    if (typeof globalThis.{fn} === 'function') {{
-                        console.log('[JS] start_action: {fn} is a function, invoking...');
-                        globalThis.{fn}{args};
-                        console.log('[JS] start_action: {fn} invoked (may be async)');
+                    if (typeof {fn} === 'function') {{
+                        console.log('[JS] start_action: {action} is a function, invoking...');
+                        {fn}{args};
+                        console.log('[JS] start_action: {action} invoked (may be async)');
                     }} else {{
                         console.error('[JS] Action {action} is not defined as a global function');
                     }}
@@ -9642,7 +9668,7 @@ impl QuickJsBackend {
                 }}
             }})();
             "#,
-                fn = function_name,
+                fn = fn_ref,
                 action = action_name,
                 args = call_args
             ),
@@ -9693,8 +9719,8 @@ impl QuickJsBackend {
             r#"
             (async function() {{
                 try {{
-                    if (typeof globalThis.{fn} === 'function') {{
-                        const result = globalThis.{fn}();
+                    if (typeof {fn} === 'function') {{
+                        const result = {fn}();
                         // If it's a Promise, await it
                         if (result && typeof result.then === 'function') {{
                             await result;
@@ -9707,7 +9733,7 @@ impl QuickJsBackend {
                 }}
             }})();
             "#,
-            fn = function_name,
+            fn = js_global_accessor(&function_name),
             action = action_name
         );
 
@@ -13459,6 +13485,25 @@ mod tests {
         assert!(
             result.is_err(),
             "Non-%-prefixed names should still collide across plugins"
+        );
+    }
+
+    /// A handler name is an arbitrary string, and every Finder-based plugin
+    /// registers names built from a hyphenated plugin id
+    /// (`_finder_git-grep_preview_tick`). Interpolated after a dot those
+    /// parse as arithmetic and the call dies with a ReferenceError naming a
+    /// function nobody wrote, so the accessor must quote the key.
+    #[test]
+    fn a_hyphenated_handler_name_is_looked_up_by_key() {
+        assert_eq!(
+            js_global_accessor("_finder_git-grep_preview_tick"),
+            "globalThis[\"_finder_git-grep_preview_tick\"]"
+        );
+        assert_eq!(js_global_accessor("plain"), "globalThis[\"plain\"]");
+        // A name carrying a quote or a backslash must not end the literal.
+        assert_eq!(
+            js_global_accessor("odd\"name\\"),
+            "globalThis[\"odd\\\"name\\\\\"]"
         );
     }
 }

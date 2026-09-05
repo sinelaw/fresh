@@ -238,3 +238,44 @@ fn a_file_that_would_prompt_is_skipped_not_asked_about() {
         "the user stays where they were"
     );
 }
+
+/// Choosing a result is the commitment the preview was waiting for. The
+/// finder's confirm just opens the file it was already previewing, so the
+/// open path is what has to promote the tab — otherwise the file the user
+/// picked stays marked `(preview)` and the next browse closes it.
+#[test]
+fn opening_the_previewed_file_promotes_its_tab() {
+    let (mut harness, project) = setup(&["start.txt", "a.txt", "b.txt"], "start.txt");
+
+    preview(&mut harness, &project, "a.txt");
+    assert!(tab_bar(&harness).contains("(preview)"));
+
+    // What the Finder does on Enter.
+    harness
+        .editor_mut()
+        .open_file(&project.join("a.txt"))
+        .unwrap();
+    harness.render().unwrap();
+
+    let row = tab_bar(&harness);
+    assert!(
+        row.contains("a.txt") && !row.contains("(preview)"),
+        "confirming a result must leave a permanent tab; got:\n{row}"
+    );
+    assert!(
+        harness.editor().active_window().current_preview().is_none(),
+        "the chosen file is no longer the preview"
+    );
+
+    // And the commitment holds: browsing on does not close it.
+    preview(&mut harness, &project, "b.txt");
+    let row = tab_bar(&harness);
+    assert!(
+        row.contains("a.txt"),
+        "a committed tab survives the next preview; got:\n{row}"
+    );
+    assert!(
+        row.contains("b.txt") && row.matches("(preview)").count() == 1,
+        "and the new browse is the only preview; got:\n{row}"
+    );
+}
