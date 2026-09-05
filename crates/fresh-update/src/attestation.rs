@@ -44,6 +44,10 @@ pub enum AttestationError {
     /// Attestations exist for this digest, but none records it under the asset
     /// name we asked for.
     NameMismatch { asset: String, digest: String },
+    /// The attestation endpoint refused because GitHub's API rate limit for
+    /// this address is spent. Distinct from [`AttestationError::Fetch`]
+    /// because it is temporary and has remedies nothing else here has.
+    RateLimited(String),
 }
 
 impl std::fmt::Display for AttestationError {
@@ -64,6 +68,18 @@ impl std::fmt::Display for AttestationError {
                 f,
                 "the release attestation for sha256:{digest} does not record it \
                  as {asset}; refusing to install it"
+            ),
+            // Fail-closed is the whole design (see the module note), so this
+            // reports a stop, not a warning — and then says how to get past it.
+            // The download itself is fine: it matched its checksum. What could
+            // not happen is the second origin agreeing, and installing without
+            // that is the thing this module exists to refuse.
+            AttestationError::RateLimited(detail) => write!(
+                f,
+                "{detail}\n\nThe download matched its checksum, but the release \
+                 attestation could not be checked, and fresh does not install \
+                 unverified bytes. Re-run once the limit resets, or set a token as \
+                 above and re-run now."
             ),
         }
     }
@@ -96,13 +112,15 @@ pub fn verify(
     // redirect away from it would defeat the point of asking a second host.
     crate::endpoint::check(&url).map_err(|e| AttestationError::Fetch(e.to_string()))?;
 
-    let body = transport
-        .get_text_optional(&url, ATTESTATION_MAX_BYTES)
-        .map_err(AttestationError::Fetch)?
-        .ok_or_else(|| AttestationError::NotAttested {
-            asset: asset.to_string(),
-            digest: digest.clone(),
-        })?;
+    let body = match transport.get_text_optional(&url, ATTESTATION_MAX_BYTES) {
+        Ok(body) => body,
+        Err(e) if e.is_rate_limited() => return Err(AttestationError::RateLimited(e.to_string())),
+        Err(e) => return Err(AttestationError::Fetch(e.to_string())),
+    }
+    .ok_or_else(|| AttestationError::NotAttested {
+        asset: asset.to_string(),
+        digest: digest.clone(),
+    })?;
 
     if attests(&body, asset, &digest)? {
         Ok(())

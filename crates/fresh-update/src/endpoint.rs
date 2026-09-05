@@ -215,6 +215,23 @@ impl Endpoints {
         }
     }
 
+    /// The web redirect that names the latest release without spending any of
+    /// the API's rate-limit budget: `github.com/<repo>/releases/latest` is a
+    /// 302 to that release's page, and the tag is in the `Location` header.
+    ///
+    /// `None` unless the endpoints are the pinned production ones. An override
+    /// points at a mirror or a tag endpoint whose shape we were handed and do
+    /// not get to reinterpret — and the whole point of this URL is that it is
+    /// the *same repository* the feed describes, reached another way.
+    ///
+    /// See [`crate::fetch`] for when this is used and what it cannot answer.
+    pub fn latest_redirect_url(&self) -> Option<String> {
+        let pinned = self.trusted
+            && self.releases_url == DEFAULT_RELEASES_URL
+            && self.download_base == Endpoints::production().download_base;
+        pinned.then(|| format!("https://github.com/{REPO}/releases/latest"))
+    }
+
     /// The URL of a release asset, given its filename.
     pub fn asset_url(&self, version: &str, file_name: &str) -> String {
         let base = self.download_base.trim_end_matches('/');
@@ -276,6 +293,37 @@ mod endpoint_list_tests {
         ep.releases_url = "https://example.invalid/feed/latest".to_string();
         ep.trusted = false;
         assert_eq!(ep.list_url(), "https://example.invalid/feed/latest");
+    }
+}
+
+#[cfg(test)]
+mod redirect_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn the_pinned_default_has_a_web_redirect_to_fall_back_on() {
+        let url = Endpoints::production()
+            .latest_redirect_url()
+            .expect("the pinned endpoints have one");
+        assert_eq!(url, format!("https://github.com/{REPO}/releases/latest"));
+        check(&url).expect("the fallback must satisfy the same policy");
+    }
+
+    /// A mirror's `latest` is not this repository's `latest`, and a tag
+    /// endpoint is not asking for `latest` at all.
+    #[test]
+    fn an_overridden_feed_has_none() {
+        let mut ep = Endpoints::production();
+        ep.set_releases_url(format!(
+            "https://api.github.com/repos/{REPO}/releases/tags/v0.4.7"
+        ))
+        .expect("an allowlisted host is within policy");
+        assert_eq!(ep.latest_redirect_url(), None);
+
+        let mut ep = Endpoints::production();
+        ep.releases_url = "https://example.invalid/feed/latest".to_string();
+        ep.trusted = false;
+        assert_eq!(ep.latest_redirect_url(), None);
     }
 }
 

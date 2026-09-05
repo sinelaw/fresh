@@ -79,3 +79,32 @@ If a keybinding isn't working as expected, use **Help → Debug Keyboard Events*
 - Incorrect escape sequences from your terminal
 
 Press any key to see its code, modifiers, and event type. Press `c` to clear history, `q` or `Esc` to close.
+
+## Updating
+
+### `fresh --cmd update` fails with a 403, but the install script works
+
+`fresh --cmd update` asks `api.github.com` which release is newest, and that
+host allows an unauthenticated caller 60 requests an hour **per IP address** —
+shared with everyone else behind the same router, VPN or corporate NAT. The
+install script never touches that API, which is why
+`curl -fsSL …/install.sh | sh` can succeed seconds after an update was refused.
+
+Fresh reports this as a rate limit rather than a bare 403, tells you when it
+resets, and reads the version from GitHub's release redirect instead so
+`--check` and the in-editor indicator keep working. Installing still needs the
+API for the release attestation, which is verified fail-closed, so you have
+three options:
+
+- **Wait** for the window named in the message (at most an hour).
+- **Use a token** — a GitHub personal access token needs no scopes at all for a
+  public repository and raises the limit to 5000/hour:
+
+  ```bash
+  export FRESH_GITHUB_TOKEN=ghp_...   # or GITHUB_TOKEN / GH_TOKEN
+  fresh --cmd update
+  ```
+
+  It is sent to `api.github.com` and nowhere else.
+- **Re-run the installer**, which fetches the release directly from
+  `github.com` and verifies its published checksum.

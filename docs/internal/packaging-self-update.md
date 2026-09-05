@@ -737,6 +737,46 @@ Config (`config.rs`): keep `check_for_updates` and `--no-upgrade-check`. Add
 SelfContained installs update without a prompt; **off by default** per the
 non-goal on silent installs.
 
+### 10.1 GitHub's API rate limit
+
+Two of the requests an update makes go to `api.github.com`: the release feed,
+and the attestation lookup (§11). That host allows an unauthenticated caller
+**60 requests an hour per source address**, shared with everything else behind
+the same NAT — so `fresh --cmd update` can be refused with a 403 on a machine
+where `curl … install.sh | sh` succeeds seconds later. The install script is
+not luckier; it never touches the API at all, fetching the asset straight from
+`github.com`.
+
+Three things follow, all in `fresh_update::net` / `fresh_update::fetch`:
+
+- **A rate limit is reported as itself.** GitHub answers both of its limits
+  with a 403 (or 429), so the status alone cannot distinguish "your budget is
+  gone" from "you may not have this". The headers can — `x-ratelimit-remaining:
+  0` for the primary limit, `retry-after` for the secondary — and only those
+  produce `FetchError::RateLimited`, whose message carries the wait and the way
+  out. A real 403 stays reported as a 403.
+- **A token lifts it.** `FRESH_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` (in
+  that order) is attached to `api.github.com` requests — and *only* to those,
+  over https, with `ureq` configured to drop `Authorization` across redirects,
+  so a hop to the asset CDN cannot carry the credential. A token needs no
+  scopes for a public repository and raises the limit to 5000/hour.
+- **The version has a second route.** `github.com/<repo>/releases/latest`
+  redirects to the newest release's page, and the tag is in the `Location`
+  header: one request, same host allowlist, no API budget. When — and only when
+  — the feed was refused for rate limiting, the version is read from there
+  instead, so `--check`, the daily background check and a SelfContained update
+  all keep working. It is a fallback, never the default: the redirect carries
+  no `prerelease`/`draft` flag, and making it the default would hand those
+  guarantees back to GitHub's web behaviour, which is what `feed::select`
+  exists to stop.
+
+What the redirect cannot supply is the release's **asset list**, so a
+`DownloadPackage` channel (a `.deb`/`.rpm` whose filename embeds a packaging
+revision) says exactly that rather than claiming the release publishes nothing
+for the architecture. Neither can the attestation lookup be routed around: it
+is fail-closed by design, so a rate-limited attestation stops the install and
+the message names the two remedies (wait, or set a token).
+
 ---
 
 ## 11. Security

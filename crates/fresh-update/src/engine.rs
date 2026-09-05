@@ -165,16 +165,16 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
     );
 
     let transport = Transport::new(&opts.endpoints);
-    // Pre-releases are absent from `/releases/latest`, so opting in means
-    // asking the list endpoint; without the flag this is the pinned default.
-    let feed_url = if opts.allow_prerelease {
-        opts.endpoints.list_url()
-    } else {
-        opts.endpoints.releases_url.clone()
-    };
-    let body = transport.get_text(&feed_url, net::FEED_MAX_BYTES)?;
-    let release = crate::feed::select(&body, opts.allow_prerelease)?;
+    let fetched = crate::fetch::latest(&transport, &opts.endpoints, opts.allow_prerelease)?;
+    let release = fetched.release;
     let latest = release.version().to_string();
+    if fetched.source == crate::fetch::Source::ReleaseRedirect {
+        // Say it, rather than leaving a user to wonder why an update that just
+        // failed now works: this run knows the version but not the release's
+        // asset list, and `package` below turns that into a real answer.
+        println!("GitHub's API is rate-limited right now; read the version from the");
+        println!("release redirect instead.");
+    }
 
     println!("Current version: {current_version}");
     println!("Latest version:  {latest}");
@@ -217,6 +217,23 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
             if opts.check_only {
                 println!("An update is available. Run `fresh --cmd update` to fetch it.");
                 return Ok(UpdateStatus::Done);
+            }
+            if !fetched.source.lists_assets() {
+                // The version came from the release redirect, which names no
+                // assets, and this channel's artifact is whichever `.deb`/`.rpm`
+                // the release actually published — a name that embeds a
+                // packaging revision we cannot derive. Saying so beats
+                // "release 0.4.8 publishes no .deb for amd64", which would be
+                // false as well as unactionable.
+                return Err(format!(
+                    "{latest} is available, but naming its {} package needs GitHub's API, \
+                     which is rate-limited right now. Wait for the limit to reset, set {} to \
+                     a personal access token, or download it from \
+                     https://github.com/{}/releases/latest",
+                    prov.channel.label(),
+                    net::TOKEN_ENVS.join(" or "),
+                    crate::endpoint::REPO,
+                ));
             }
             package(&prov, &release, &transport, opts)
         }

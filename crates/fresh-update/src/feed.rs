@@ -52,6 +52,21 @@ pub struct Release {
 }
 
 impl Release {
+    /// A release known only by its tag.
+    ///
+    /// This is what [`crate::fetch`] can recover when the API refuses to serve
+    /// the feed: the `releases/latest` redirect names the release and nothing
+    /// else. The empty asset list is *unknown*, not *empty*, and callers must
+    /// keep the two apart — [`crate::fetch::Source::lists_assets`] is how.
+    pub fn from_tag(tag_name: impl Into<String>) -> Self {
+        Release {
+            tag_name: tag_name.into(),
+            assets: Vec::new(),
+            prerelease: false,
+            draft: false,
+        }
+    }
+
     /// Parse a release-metadata document.
     pub fn parse(json: &str) -> Result<Self, String> {
         serde_json::from_str(json).map_err(|e| format!("could not read the release feed: {e}"))

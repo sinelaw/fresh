@@ -55,6 +55,8 @@ pub mod attestation;
 #[cfg(feature = "engine")]
 pub mod engine;
 #[cfg(feature = "net")]
+pub mod fetch;
+#[cfg(feature = "net")]
 pub mod net;
 pub mod offer;
 
