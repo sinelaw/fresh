@@ -407,20 +407,70 @@ a manual; "It's a project now" is a thing that happens to you.
 
 ---
 
+## 6b. The Contents section, and the UI row
+
+**The page is a long document, so it gets an outline.** That is what a
+Markdown file gets in this editor (`markdown_toc.ts`, the first consumer of
+the sidebar-sections API), and it comes from the same `mountSidebarSection`
+call — a `Tree` of the three levels with each card nested under its own.
+
+Three things about it are decisions rather than defaults.
+
+*The outline is recorded as the page is built*, not listed in a table beside
+it. `banner()` and `card()` push one entry each while `buildSpec()` walks the
+page top to bottom, so an entry cannot name a card that is not there or miss
+one that is. A second copy of this page's structure has gone stale at least
+once before (the level captions the jump keys used to match as strings).
+
+*An arrow browses; a click or Enter goes.* Going means moving the caret
+(`scrollToWidget` seats it), and the caret is what focus follows here — so
+scrolling on every arrow key would hand the keyboard to the page and the
+reader would lose the outline they were walking after one press.
+
+*The "you are here" mark is in the label, not the selection.* A `Tree` paints
+its selection band only while it has the keyboard, and this section spends
+its life blurred — which is the whole point, since it is there to say where
+you are while you read the page. So a `▸` goes in the row's own text, and
+`setSelectedIndex` goes too, for the arrow key that starts here later. The
+mark follows *focus* on a heading rather than the caret's exact row: a plugin
+cannot ask where its own widgets were painted, and with the caret driving
+focus that is most of the way there. A level banner is deliberately not
+focusable, so `jumpTo` marks its entry itself.
+
+**The UI row** in the first viewport is the first thing on the page that says
+the editor has furniture, and it says it by handing you the furniture: every
+entry runs the real action (`toggle_file_explorer`, `open_terminal`,
+`split_vertical`, `open_settings`) and `Contents` mounts and focuses the
+section above — which is why the button exists at all, since a sidebar
+section can be closed, collapsed, or buried under the explorer.
+
+The one button that was written and then removed is instructive:
+"Side-by-side this file", next to "Review the working tree" on the Review Diff
+card. The working tree is something this page can point at; *this file*, from
+the welcome screen, is the welcome screen.
+
 ## 7. Interaction
 
 | Input | Effect |
 |---|---|
 | `1` / `2` / `3` | scroll to that level; the path card and depth meter update |
-| `0` | back to the top |
 | scroll / `PgUp` / `PgDn` / mouse wheel | ordinary buffer scrolling; the depth meter follows |
 | `Tab` / `Shift+Tab` | move focus between interactive widgets — the caret comes with it |
 | arrow / page keys / a click on the text | move the caret; the control on the row it lands on takes focus, and a row with none clears it |
 | `Enter` / `Space` | activate the focused widget — nothing, on a paragraph |
 | click on a fold arrow, or `za` on its row | fold / unfold that card |
-| typing, while the finder is focused | it is a real text input; it really searches |
+| typing, while the caret is in the finder | it is a real text input; it really searches |
+| the Contents section in the sidebar | this page's own outline: an arrow browses it, a click or Enter goes |
 | `Ctrl+P`, `F1`, `Alt+O`, the menu bar | all work — this is a normal pane, not a modal |
 | `Ctrl+W` / the tab's `×` | close it, like any tab |
+
+**Two keys this page used to bind and no longer does.** `/` put focus in the
+finder and `0` went back to the top, and both existed only because the page
+had no caret to navigate with. It has one: the finder's field takes focus by
+having the caret on it, which gives `/` back its real job of being the one
+separator every path contains, and the Contents section's first entry is the
+way to the top. The digits stay, because the door cards say `jump ↓ · or
+press 1` in print.
 
 **Focus.** A `welcome` mode (via `defineMode`) with `inheritNormalBindings:
 false`: on a cursorless page, every key is either bound here or intentionally

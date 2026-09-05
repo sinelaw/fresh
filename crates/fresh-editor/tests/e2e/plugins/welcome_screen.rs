@@ -91,6 +91,39 @@ fn open_welcome(harness: &mut EditorTestHarness) {
         .expect("welcome screen renders its three doors");
 }
 
+/// Put the caret in the finder's field, which is what gives it focus.
+///
+/// There is no hotkey for this any more. `/` used to be one, and its
+/// only job was reaching the field without counting Tab stops — which
+/// the caret does, so the key went back to being a path separator you
+/// can type. Walking down to the field is therefore also the test of
+/// that: the row count comes from what is on screen, not from the card's
+/// structure.
+fn put_the_caret_in_the_finder(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("find ["))
+        .expect("the finder card is on screen");
+    let (_, field_row) = harness
+        .find_text_on_screen("find [")
+        .expect("the finder field is on screen");
+    let caret_row = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret")
+        .1;
+    assert!(
+        caret_row < field_row,
+        "expected the caret above the finder field, got {caret_row} and {field_row}"
+    );
+    for _ in 0..(field_row - caret_row) {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+}
+
 /// The page renders, at the width the design is drawn for.
 #[test]
 fn welcome_screen_renders_its_three_doors() {
@@ -113,19 +146,14 @@ fn welcome_screen_renders_its_three_doors() {
 /// digit, the one separator every path contains, and the space.
 ///
 /// The host now gives a focused text widget the key first. This types a
-/// string containing all three kinds and asserts the field got them.
+/// string containing all three kinds and asserts the field got them —
+/// `/` included, which is no longer a binding of this page's at all.
 #[test]
 fn the_finder_receives_the_characters_the_page_also_binds() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    // `/` focuses the finder — the one use of the key that is not typing.
-    harness
-        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("find ["))
-        .expect("the finder field takes focus");
+    put_the_caret_in_the_finder(&mut harness);
 
     for ch in "src/main1 x".chars() {
         harness
@@ -155,12 +183,7 @@ fn leaving_the_finder_does_not_park_focus_on_the_startup_switch() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    harness
-        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("find ["))
-        .expect("the finder field takes focus");
+    put_the_caret_in_the_finder(&mut harness);
 
     // Escape leaves the field (it does not close the page from here).
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -754,9 +777,7 @@ fn walking_down_the_page_does_not_get_stuck_in_the_finder() {
     let (mut harness, _tmp) = harness_with_welcome_in_a_repo();
     open_welcome(&mut harness);
 
-    harness
-        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
-        .unwrap();
+    put_the_caret_in_the_finder(&mut harness);
     harness
         .wait_until(|h| h.screen_to_string().contains("README.md"))
         .expect("the finder lists the repo's files");
@@ -787,35 +808,147 @@ fn walking_down_the_page_does_not_get_stuck_in_the_finder() {
     );
 }
 
-/// **`/` shows the card, not just the field.** Focusing the field brings
-/// the caret with it and so reveals it — but a reveal is minimal by
-/// design, which put the field on the bottom row of the pane with its
-/// own result list below the fold. The one thing this card is for is the
-/// list.
+/// **The page's own outline, in the sidebar.** A long document in this
+/// editor gets a Contents section — that is what Markdown files do — and
+/// this page is a long document. It is built from the page's own
+/// structure as the page is built, so it cannot name a card that is not
+/// there or miss one that is.
 #[test]
-fn the_finder_hotkey_brings_the_whole_card_into_view() {
-    let (mut harness, _tmp) = harness_with_welcome_in_a_repo();
+fn the_page_puts_its_outline_in_the_sidebar() {
+    let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
-
-    harness
-        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("find ["))
-        .expect("the finder field is on screen");
     harness.wait_for_async_quiescence(4).unwrap();
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("README.md"),
-        "the results are below the fold — the field was revealed on its \
-         own. Screen:\n{screen}"
+        screen.contains("Welcome — Contents"),
+        "no Contents section in the sidebar:\n{screen}"
     );
-    assert!(
-        screen.contains("Hot Exit"),
-        "the card's own closing prose is below the fold, so the card is \
-         clipped at the pane's bottom edge. Screen:\n{screen}"
+    for entry in [
+        "LEVEL 1 · JUST EDIT",
+        "LEVEL 2 · IT'S A PROJECT NOW",
+        "LEVEL 3 · RUN THE WHOLE SHOP",
+    ] {
+        assert!(
+            screen.contains(entry),
+            "the outline is missing {entry:?}:\n{screen}"
+        );
+    }
+}
+
+/// **`/` and `0` are gone.** Both existed only because the page had no
+/// caret to navigate with. `/` put focus in the finder — which is now
+/// what having the caret on the field means — so the key goes back to
+/// being the one separator every path contains; `0` went to the top,
+/// which the Contents section's first entry does.
+#[test]
+fn the_page_no_longer_binds_slash_or_zero() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    // Somewhere that is not the top, so a stray "go to the top" shows.
+    harness
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("LEVEL 2 · IT'S A PROJECT NOW")
+        })
+        .expect("`2` still jumps — the door cards promise it in print");
+    let before = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret");
+
+    for key in ['/', '0'] {
+        harness
+            .send_key(KeyCode::Char(key), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let after = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("the page draws a caret");
+    assert_eq!(
+        after,
+        before,
+        "`/` or `0` still moves the page. Screen:\n{}",
+        harness.screen_to_string()
     );
+}
+
+/// **The UI row opens the real thing.** It is a first-viewport block that
+/// says the editor has furniture, and it says it by handing you the
+/// furniture — so the buttons have to actually work, and a button whose
+/// action nothing defines fails silently in the log rather than on
+/// screen.
+#[test]
+fn the_ui_row_opens_the_file_explorer() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let (col, row) = harness
+        .find_text_on_screen("File explorer")
+        .expect("the UI row is in the first viewport");
+    let before = harness.screen_to_string().contains("File Explorer");
+    harness.mouse_click(col + 2, row).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let after = harness.screen_to_string().contains("File Explorer");
+    assert_ne!(
+        before,
+        after,
+        "clicking `File explorer` did not toggle the explorer. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// **The Review Diff card teaches keys the tool actually binds.** Every
+/// chord on it is one `audit_mode.ts` binds in `review-mode`; a welcome
+/// screen that teaches a chord the editor does not have is worse than
+/// one that teaches nothing.
+#[test]
+fn the_review_diff_card_is_on_the_page_with_its_keys() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Review Diff — read a change"))
+        .expect("the Review Diff card is under Level 2");
+
+    // Page down until the card's key table is on screen. How far that is
+    // belongs to the layout — the card sits below the git card, whose
+    // height depends on what `git status` says about the working tree —
+    // so this walks rather than counting.
+    for _ in 0..6 {
+        if harness.screen_to_string().contains("next / previous hunk") {
+            break;
+        }
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_async_quiescence(2).unwrap();
+    }
+
+    let screen = harness.screen_to_string();
+    for line in [
+        "next / previous hunk",
+        "stage · unstage · discard the hunk under the cursor",
+        "export the session as Markdown",
+        "Review the working tree",
+    ] {
+        assert!(
+            screen.contains(line),
+            "the Review Diff card is missing {line:?}:\n{screen}"
+        );
+    }
 }
 
 /// **A banner and its opening sentence are two things.** Set tight, the
