@@ -257,7 +257,17 @@ pub fn card(c: &Card) -> Node<UiMsg> {
                     .theme(ring())
                     .w(Sizing::Cells(c.at.w))
                     .h(Sizing::Cells(c.at.h))
-                    .children([col().border().clip(true).child(body(c)), caption(c)]),
+                    .children([
+                        col()
+                            .border()
+                            .clip(true)
+                            // The bands fill the card: the middle one is a
+                            // flex child, and flex divides what is left, so
+                            // the column holding it takes the card's height
+                            // rather than its own natural one (rule L15).
+                            .child(body(c).h(Sizing::Flex(1))),
+                        caption(c),
+                    ]),
             ),
         )
 }

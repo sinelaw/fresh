@@ -276,6 +276,67 @@ form*: a box whose ground is a wash (`Node::wash`, `Draw::Wash`) recolours
 what is under it and keeps the text — the drop-zone highlight's primitive.
 The run form is open.
 
+**What the patches actually are, for whoever takes this next.** Two of them
+are background tints the pipeline applies over its own finished cells
+(`post_pass::render_ruler_bg`, `render_cursor_column_bg`); the third,
+`render_column_guides`, writes a glyph rather than a ground and is not one of
+these. The ruler's is the one worth reading first: it decides *which* cell to
+tint by measuring the grapheme already painted one cell to its left
+(`buf[(guide_x - 1, y)].symbol().width() > 1`), which is a second authority
+for a fact the cell pass holds while it builds — the same shape this
+migration removes everywhere else, and the reason converting it is a
+simplification and not only a move. **The rows past the last line are the
+thing to keep**: rulers tint the pane's full height, including rows no line
+rendered, while the cursor column tints only `content_lines_rendered`. A
+conversion that resolves the tint per rendered cell drops the first — which
+`e2e::vertical_rulers::test_rulers_span_full_height_short_buffer` catches,
+along with `test_rulers_horizontal_scroll` for the scrolled case, so the
+behaviour is pinned before anyone starts.
+
+*Landed, the run form, for both tints.* `post_pass::tint_columns_in_lines`
+styles the rows a pane is about to draw instead of colouring cells it has
+already drawn: the ruler and the cursor column are runs in the line now, the
+row list is padded to the pane's height so a ruler still spans the empty rows
+below a short buffer (#2631), and `render_ruler_bg` and
+`render_cursor_column_bg` are deleted. Two facts moved to where they are
+known rather than re-derived: which cell holds a display column is the line's
+own widths (the ruler measured the grapheme *painted* beside it before), and
+a combining mark shares its base's column because it shares its cell —
+recording it at the running column instead files it under the next cell and
+splits one grapheme across two of them, which is what
+`test_ruler_on_combining_sequence_needs_no_snap` catches. `render_column_guides`
+stays: it writes a glyph, not a ground, and is not one of these.
+
+**The two prerequisites this had, and what became of them.** They are why it
+was a slice and not a tidy-up:
+
+1. **A ground where there is no text.** The ruler's tint spans the pane's
+   whole height by decision, not by accident (`#2631`: bounding it to the
+   rendered lines "made a short buffer show the ruler only on written lines,
+   leaving the rest of the pane blank and the guide looking truncated"). A run
+   that only styles glyphs cannot say that. *Answered inside the pipeline*:
+   padding a row out to the column being tinted is the same thing
+   `apply_background_to_lines` already does for the ANSI background, so the
+   pipeline's own span model supplies the ground and no library primitive was
+   needed for this half. The `fresh-ui` run counterpart of `Draw::Wash` is
+   still open, and is what the *tree* will need when a pane's rows become
+   display-list runs (S9), not what this needed.
+2. **The tint belongs over the built lines, not inside the cell pass.** The
+   cursor column is tinted in every row, and its column is an *output* of the
+   line pass (`render_output.cursor` → `resolve_cursor_fallback` →
+   `caret_cell`), so a *cell* pass cannot ask for it while it runs — the rows
+   above the cursor's own line are resolved before anything has reported it.
+   That is an argument about where the conversion goes, not a blocker:
+   `render_buffer` already holds the caret as a parameter by the time it has
+   a `Vec<Line>` to draw, and `post_pass::apply_background_to_lines` is the
+   precedent for styling those lines before they are drawn — including
+   padding a short row so a ground exists where there is no text, which is
+   prerequisite 1 already solved in the pipeline's own span model. So the run
+   form here is: tint over the lines, splitting spans at the display column
+   the tint names (the wide-grapheme snap becomes "the character covering
+   that column" instead of a measurement of cells already painted), and the
+   two `post_pass` tint functions go.
+
 **L13 — A host leaf answers the scroll-facts read.** The viewport publishes
 offset, content and window; a host leaf that scrolls its own content (the
 buffer, the terminal's scroll-back) must be able to answer the same read so
@@ -305,6 +366,20 @@ the library's rule is what lets a menu dropdown and an anchored panel say
 dialog and the keybinding editor both place flex children under a loose
 measure today and read the maximum, so the rule lands with those surfaces
 sized by what they hold (S5), not before.
+
+*Landed*, with `menu::content_width` deleted — a dropdown says `Auto` and
+its separator's flexed rule divides the width the box settled on. **What it
+found is what it was for**: five described surfaces said `Auto` where they
+meant *fill*, and the old behaviour hid it, because a flex descendant took
+the whole loose maximum and inflated the box back to the size the surface
+wanted by accident. Each now states it — the settings dialog's rows, the
+keybinding editor's table, the entry dialog's body, the overlay card's
+bands, and the sidebar's grip strip, which had lost its rows to exactly
+this and would have lost them to any other change of the same measure.
+`Panel::anchored_width` is *not* retired by this: its blocker is the second
+one its own doc names — the interior is built by a `layout_reader` that
+needs a width as a number, and under `Auto` the number it is handed is the
+whole screen. That one goes when the interior states its own natural width.
 
 **L16 — A frame has two halves.** `Ui::lay_out` reconciles, lays out and
 settles; `Ui::paint` produces the display list of the tree as it was left;
@@ -1023,8 +1098,8 @@ modal is up) and read by the pass — a caret that is not shown keeps its
 cell on the view, which is what the popup anchored to it reads, and a
 pane the pass did not settle this frame has no caret at all
 (`Window::clear_carets_except`); what covers a shown caret is the
-library's question (L17). Still open here: the pipeline's cell patches as runs
-(L12).
+library's question (L17). *Landed* since: the pipeline's cell patches are runs in the rows it draws
+(L12), so nothing rewrites a cell the pane has already written.
 
 #### 3.7.4 Pointer
 
@@ -1446,8 +1521,11 @@ the window it is mounted in behind a cycle guard rather than an identity
 test (issue #2035's shape), the overlay card's preview settled before the
 paint rather than after it, and a popup key marking the description stale
 so the key a closing completion list hands on resolves in the pane's
-context and not in the departing list's. Open in S7: the pipeline's cell
-patches as runs (§3.7.3), the gutter as runs.
+context and not in the departing list's. Its thirteenth: the pipeline's cell patches
+are runs in the rows it draws (§3.7.3, L12) — the ruler and the cursor
+column are styled into the line before it is drawn, padded rows carry a
+ruler below a short buffer, and `post_pass`'s two tint functions are
+deleted. Open in S7: the gutter as runs.
 Open in S3: the kinds' keys from the node, `painted`/`boxes` (the text
 projection still runs on the plugin's mount and update, and for the two
 exceptions `resolve_described_panel` names) and the anchored panel's

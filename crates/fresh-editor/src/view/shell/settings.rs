@@ -205,7 +205,14 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                     col()
                         .theme(ring.clone())
                         .border_style(BorderStyle::Rounded)
-                        .child(col().children(rows)),
+                        // **The rows fill the box, and now they say so.** The
+                        // band between the search row and the footer is a flex
+                        // child, and flex divides what is *left* — so a column
+                        // that only asked for its natural height gave it
+                        // nothing to divide (rule L15) and the dialog collapsed
+                        // to its header. It fills its parent, which is the box
+                        // whose height `fit` chose.
+                        .child(col().h(Sizing::Flex(1)).children(rows)),
                     super::modal::title_strip(
                         c.title.clone(),
                         attrs("ui.popup_border_fg", "ui.popup_bg", &["bold"]),

@@ -16,7 +16,7 @@ use super::super::layout::{
     ComposeLayout,
 };
 use super::super::post_pass::{
-    apply_background_to_lines, render_column_guides, render_cursor_column_bg, render_ruler_bg,
+    apply_background_to_lines, render_column_guides, tint_columns_in_lines,
 };
 use super::super::view_data::build_view_data;
 use super::super::view_data::BuildAnchor;
@@ -589,15 +589,8 @@ pub(crate) fn draw_buffer_in_split(
         );
     }
 
-    Clear.render(render_area, buf);
-    let editor_block = Block::default()
-        .borders(Borders::NONE)
-        .style(Style::default().bg(effective_editor_bg));
-    Paragraph::new(lines)
-        .block(editor_block)
-        .render(render_area, buf);
-
-    // The caret, local to the rows: what the column highlight follows.
+    // The caret, local to the rows: what the column highlight follows. Read
+    // before the rows are drawn, because the tints below are part of them.
     let cursor = caret.map(|(sx, sy)| {
         (
             sx.saturating_sub(render_area.x),
@@ -605,48 +598,63 @@ pub(crate) fn draw_buffer_in_split(
         )
     });
 
-    // Render config-based vertical rulers. Span the full editor height rather
-    // than stopping at the last text line: the ruler is a column guide, so it
-    // must stay visible through the empty area below the buffer (matching VS
-    // Code / Zed). Bounding it to `content_lines_rendered` made a short buffer
-    // show the ruler only on written lines, leaving the rest of the pane blank
-    // and the guide looking truncated (#2631).
-    if !rulers.is_empty() {
-        // `rulers` are 1-based *display* columns — the numbering the "Add
-        // Ruler" prompt accepts (it rejects 0), counted in screen cells, so a
-        // tab spans to the next tab stop and a full-width character takes two
-        // (#2928). `render_ruler_bg` owns the conversion to the 0-based screen
-        // offsets it paints, skips values below 1, and snaps a column landing
-        // inside a full-width grapheme onto that grapheme's leading cell so
-        // the guide stays visible on CJK lines.
-        render_ruler_bg(
-            buf,
-            rulers,
+    // **The column tints are runs in the rows, applied before they are drawn**
+    // (L12). They used to be two passes back over the painted cells; the rows
+    // carry them now, so nothing rewrites a cell the pane has already written
+    // and the ruler's "which cell holds this column" is answered by the line's
+    // own widths instead of by measuring what was painted beside it.
+    //
+    // Rulers span the pane's full height, including the rows below the last
+    // line of text (#2631), so the row list is padded out to the pane before
+    // they are applied — a row that renders nothing still shows the guide.
+    let ruler_columns: Vec<usize> = rulers
+        .iter()
+        .filter_map(|c| {
+            // 1-based display columns, as the "Add Ruler" prompt takes them.
+            let col = c.checked_sub(1)?;
+            let scrolled = col.checked_sub(layout_output.left_column)?;
+            let at = gutter_width.checked_add(scrolled)?;
+            (at < render_area.width as usize).then_some(at)
+        })
+        .collect();
+    if !ruler_columns.is_empty() {
+        let height = render_area.height as usize;
+        if lines.len() < height {
+            lines.resize_with(height, || ratatui::text::Line::from(""));
+        }
+        tint_columns_in_lines(
+            &mut lines,
+            &ruler_columns,
             theme.ruler_bg,
-            render_area,
-            gutter_width,
-            render_area.height as usize,
-            layout_output.left_column,
+            theme.editor_fg,
+            height,
         );
     }
 
-    // Highlight the cursor column (same bg tint as the current line) when
-    // `highlight_current_column` is enabled and the split is active.
+    // The cursor column takes the current line's tint, over the rendered rows
+    // only — an empty pane below the text has no line for it to follow. A
+    // column inside the gutter is not the content's and is left alone.
     if highlight_current_column {
         if let Some((cx, _)) = cursor {
-            // `cx` already accounts for the gutter offset from render_area.x,
-            // so skip highlighting if it falls inside the gutter.
             if (cx as usize) >= gutter_width {
-                render_cursor_column_bg(
-                    buf,
-                    render_area,
-                    cx,
+                tint_columns_in_lines(
+                    &mut lines,
+                    &[cx as usize],
                     theme.current_line_bg,
+                    theme.editor_fg,
                     layout_output.render_output.content_lines_rendered,
                 );
             }
         }
     }
+
+    Clear.render(render_area, buf);
+    let editor_block = Block::default()
+        .borders(Borders::NONE)
+        .style(Style::default().bg(effective_editor_bg));
+    Paragraph::new(lines)
+        .block(editor_block)
+        .render(render_area, buf);
 
     // Render compose column guides
     if let Some(guides) = compose_column_guides {

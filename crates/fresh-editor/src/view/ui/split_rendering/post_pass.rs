@@ -45,91 +45,103 @@ pub(super) fn render_column_guides(
     }
 }
 
-/// Tint the background of a single column (the cursor's column) to make it
-/// easier to track vertical alignment. `column_x` is relative to
-/// `render_area.x` (i.e. the same coordinate as `cursor` from
-/// `resolve_cursor_fallback`), and already includes any gutter offset.
-pub(super) fn render_cursor_column_bg(
-    buf: &mut ratatui::buffer::Buffer,
-    render_area: Rect,
-    column_x: u16,
-    color: Color,
-    content_height: usize,
-) {
-    if column_x >= render_area.width {
-        return;
+/// Tint the background of one or more **display columns** across the lines a
+/// pane is about to draw, padding a line that ends before a column so the
+/// ground exists where there is no text.
+///
+/// **The tint is a run over the lines, not a patch over painted cells** (L12).
+/// Both tints this replaced ran after `Paragraph` had written the rows and
+/// coloured cells back: the cursor column's tinted a screen column outright,
+/// and the ruler's decided *which* cell to colour by measuring the grapheme
+/// already painted beside it (`buf[(x - 1, y)].symbol().width() > 1`) — a
+/// second authority for a fact the line itself carries. Here the question is
+/// put to the line: the character **covering** that display column takes the
+/// ground, which is the same rule stated where the widths are known (#2928),
+/// and a double-width character covering the column is coloured whole rather
+/// than in the half the ruler happened to land on.
+///
+/// `columns` are absolute display columns within the line, gutter included.
+/// `rows` bounds how many lines are tinted — the cursor column stops at the
+/// rendered rows, while a ruler runs the pane's full height (#2631), which is
+/// why the caller hands this one a padded `lines`.
+/// The first index sharing `at`'s start column — a grapheme's base, walking
+/// back over the zero-width marks that ride on it.
+fn start_of(starts: &[usize], at: usize) -> usize {
+    let mut i = at;
+    while i > 0 && starts[i - 1] == starts[at] {
+        i -= 1;
     }
-    let guide_x = render_area.x + column_x;
-    let guide_height = content_height.min(render_area.height as usize);
-    for row in 0..guide_height {
-        let cell = &mut buf[(guide_x, render_area.y + row as u16)];
-        cell.set_bg(color);
-    }
+    i
 }
 
-/// Render vertical rulers as a subtle background color tint.
-/// Unlike `render_column_guides` which draws │ characters (for compose guides),
-/// this preserves the existing text content and only adjusts the background color.
-///
-/// `columns` holds ruler columns exactly as configured: **1-based** display
-/// columns, so a ruler at N tints the cell holding the Nth display column of
-/// the line (#2928). The 1-based -> 0-based conversion lives here rather than
-/// at the call site so a caller cannot reintroduce the off-by-one; values
-/// below 1 are not valid columns and are skipped.
-///
-/// When a ruler column falls on the *trailing* half of a double-width
-/// grapheme, the tint is moved onto that grapheme's leading cell. A background
-/// set on a continuation cell never reaches the terminal — `Buffer::diff`
-/// computes `to_skip` from the preceding symbol's width and gates every update
-/// on `to_skip == 0` — so without this the guide silently disappeared on rows
-/// of full-width text while still rendering on the blank rows above and below
-/// (#2928). Snapping keeps the bar continuous and keeps it pointing at the
-/// character that actually occupies the column.
-pub(super) fn render_ruler_bg(
-    buf: &mut ratatui::buffer::Buffer,
+pub(super) fn tint_columns_in_lines(
+    lines: &mut [Line<'static>],
     columns: &[usize],
     color: Color,
-    render_area: Rect,
-    gutter_width: usize,
-    content_height: usize,
-    left_column: usize,
+    default_fg: Color,
+    rows: usize,
 ) {
-    use unicode_width::UnicodeWidthStr;
+    use unicode_width::UnicodeWidthChar;
 
-    let guide_height = content_height.min(render_area.height as usize);
-    let content_x = render_area.x + gutter_width as u16;
-    for &column in columns {
-        // 1-based -> 0-based; `0` (and anything scrolled off the left edge)
-        // is not a column this pane can draw.
-        let Some(col) = column.checked_sub(1) else {
-            continue;
-        };
-        let Some(scrolled_col) = col.checked_sub(left_column) else {
-            continue;
-        };
-        // A ruler far off the right edge must stay off-screen rather than
-        // wrap around when narrowed to the buffer's `u16` coordinates.
-        let Some(guide_x) = u16::try_from(scrolled_col)
-            .ok()
-            .and_then(|c| content_x.checked_add(c))
-        else {
-            continue;
-        };
-        if guide_x < render_area.x + render_area.width {
-            for row in 0..guide_height {
-                let y = render_area.y + row as u16;
-                // Snap per row, not per column: whether the ruler lands inside
-                // a wide grapheme depends on that row's text. Only one cell
-                // back needs checking because no terminal grapheme is wider
-                // than two cells.
-                let x = if guide_x > content_x && buf[(guide_x - 1, y)].symbol().width() > 1 {
-                    guide_x - 1
-                } else {
-                    guide_x
+    if columns.is_empty() {
+        return;
+    }
+    let furthest = columns.iter().copied().max().unwrap_or(0);
+    for line in lines.iter_mut().take(rows) {
+        // Flattened to per-character styles, as `apply_background_to_lines`
+        // does: a span is a run of one style, and a tint cuts it.
+        let mut chars: Vec<(char, Style)> = Vec::new();
+        let mut starts: Vec<usize> = Vec::new();
+        let mut col = 0usize;
+        for span in std::mem::take(&mut line.spans) {
+            let style = span.style;
+            for ch in span.content.chars() {
+                // **A combining mark shares its base's column**, because it
+                // shares its cell: `width()` is 0 for one, so rounding it up
+                // to 1 would push every column after an accent one cell right,
+                // and recording it at the running column would file it under
+                // the *next* cell — which then styles the two halves of one
+                // grapheme differently and splits it across two cells.
+                let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+                let start = match w {
+                    0 => starts.last().copied().unwrap_or(col),
+                    _ => col,
                 };
-                buf[(x, y)].set_bg(color);
+                starts.push(start);
+                col += w;
+                chars.push((ch, style));
             }
         }
+        // The ground where there is no text: a short line is padded out to the
+        // furthest column asked for, so the tint has a cell to colour.
+        while col <= furthest {
+            starts.push(col);
+            col += 1;
+            chars.push((' ', Style::default().fg(default_fg)));
+        }
+        for &column in columns {
+            // The cell *covering* `column`, which is a grapheme rather than a
+            // char: the last char that starts at or before it, then back to
+            // the first char sharing that start, so a base and its combining
+            // marks are tinted together and stay one run.
+            let Some(last) = starts.iter().rposition(|start| *start <= column) else {
+                continue;
+            };
+            let first = start_of(&starts, last);
+            let start = starts[last];
+            let width = chars[first..=last]
+                .iter()
+                .map(|(ch, _)| UnicodeWidthChar::width(*ch).unwrap_or(0))
+                .max()
+                .unwrap_or(0)
+                .max(1);
+            if start + width > column {
+                for (_, style) in chars[first..=last].iter_mut() {
+                    *style = style.bg(color);
+                }
+            }
+        }
+        line.spans = compress_chars(chars);
     }
 }
 

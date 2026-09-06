@@ -474,7 +474,11 @@ fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
 /// stacked over the frame, and the row says where each sits instead of two
 /// widgets each computing an `x`.
 pub fn body(b: &Body) -> Node<UiMsg> {
-    let inner = col().children([
+    // **The content fills the popup, and says so.** It is a flex child under
+    // the description, and flex divides what is *left* — so a column that
+    // asked only for its natural height gave it nothing to divide (rule L15)
+    // and the popup came out empty inside its own frame.
+    let inner = col().h(Sizing::Flex(1)).children([
         match &b.description {
             Some(d) => description(d),
             None => col().h(Sizing::Cells(0)),
