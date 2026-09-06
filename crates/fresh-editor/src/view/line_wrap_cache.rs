@@ -572,7 +572,7 @@ pub fn compute_line_layout(
     // width matters, not colour.
     if !state.virtual_texts.is_empty() {
         let hints = crate::view::ui::split_rendering::transforms::resolve_inline_hints(
-            state, None, line_start, line_end,
+            state, None, line_start, line_end, is_compose,
         );
         tokens = splice_inline_virtual_text(tokens, &hints);
     }

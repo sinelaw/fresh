@@ -671,6 +671,78 @@ function widthsForRow(byte: number): number[] | undefined {
   return w && w.length ? w : undefined;
 }
 
+/** How a table row is laid out across visual rows: the row texts the conceal
+ * pass draws, and the source positions the soft-break pass breaks at.
+ *
+ * One function because the two passes have to agree exactly — the conceal for
+ * visual row N covers the source between break N-1 and break N, so a break the
+ * other pass didn't pick puts a row's text on the wrong side of a fold. They
+ * were two copies of the same loop under a "must match" comment, which is how
+ * they came to disagree.
+ *
+ * Returns `null` for a row that fits on one visual line.
+ *
+ * Break positions must be spaces: a Space token carries its own source offset,
+ * while the characters inside a Text token all share the token's start, so a
+ * break asked for mid-token silently never happens. They must also be spread
+ * out — segment N+1 runs from the previous break + 1 up to this one, so two
+ * adjacent spaces leave it empty, and a conceal over an empty range renders
+ * nothing at all: the row it was carrying disappears into a blank line through
+ * the middle of the table.
+ */
+interface TableRowLayout { visualLines: string[]; breakChars: number[] }
+function tableRowLayout(
+  lineContent: string,
+  colWidths: number[],
+): TableRowLayout | null {
+  let inner = lineContent.trim();
+  if (inner.startsWith('|')) inner = inner.slice(1);
+  if (inner.endsWith('|')) inner = inner.slice(0, -1);
+  const cells = inner.split('|');
+  const numCols = Math.min(cells.length, colWidths.length);
+
+  const cellWrapped: string[][] = [];
+  let maxVisualLines = 1;
+  for (let ci = 0; ci < numCols; ci++) {
+    // 1 leading + 1 trailing space margin, matching the frame's cell padding.
+    const wrapped = wrapText(
+      concealedText(cells[ci]).trim(), Math.max(1, colWidths[ci] - 2),
+    );
+    cellWrapped.push(wrapped);
+    maxVisualLines = Math.max(maxVisualLines, wrapped.length);
+  }
+
+  // Cap to available source characters (excluding the trailing newline): each
+  // extra visual row costs one break position, and there are only so many.
+  let effLen = lineContent.length;
+  if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
+  if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
+  maxVisualLines = Math.min(maxVisualLines, effLen);
+  if (maxVisualLines <= 1) return null;
+
+  const breakChars: number[] = [];
+  let lastBreak = -1;
+  for (let i = 1; i < effLen - 1 && breakChars.length < maxVisualLines - 1; i++) {
+    if (lineContent[i] !== ' ' || i <= lastBreak + 1) continue;
+    breakChars.push(i);
+    lastBreak = i;
+  }
+  // A row with too few usable break positions renders the rows it can.
+  const rows = breakChars.length + 1;
+
+  const visualLines: string[] = [];
+  for (let vl = 0; vl < rows; vl++) {
+    let vline = '│';
+    for (let ci = 0; ci < numCols; ci++) {
+      const wrapW = Math.max(1, colWidths[ci] - 2);
+      const text = cellWrapped[ci][vl] ?? '';
+      vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - displayWidth(text))) + ' │';
+    }
+    visualLines.push(vline);
+  }
+  return { visualLines, breakChars };
+}
+
 /** Whether a source line is a list item, for the inter-item spacing pass.
  * Indent widening doesn't matter here, so the measure is irrelevant. */
 function isListItemContent(content: string): boolean {
@@ -694,10 +766,19 @@ function tableCells(content: string): string[] {
 }
 
 // Viewport-constrained per-column widths from accumulated max raw widths.
+//
+// The frame's own columns come off the top: one `│` per column plus the
+// closing one. Two more go the way the thematic-break rule's do — the renderer
+// reserves an end-of-line column, and a frame that reaches it wraps its right
+// edge onto a row of its own. A table laid out at the full measure only got
+// away with it while the pane was wider than the measure; in a pane narrower
+// than the configured compose width (a vertical split, the file explorer
+// open), `effectiveComposeWidth` clamps to the pane and every border line
+// folded.
 function allocatedFor(maxW: number[]): number[] {
   const viewport = editor.getViewport();
   const composeW = effectiveComposeWidth(viewport ? viewport.width : 80);
-  const available = composeW - (maxW.length + 1);
+  const available = composeW - 2 - (maxW.length + 1);
   return distributeColumnWidths(maxW, available);
 }
 
@@ -1148,7 +1229,14 @@ function enableMarkdownCompose(bufferId: number): void {
   // Enable native line wrapping so that long lines without whitespace
   // (which the plugin can't soft-break) are force-wrapped by the Rust
   // wrapping transform at the content width.
-  editor.setLineWrap(bufferId, null, true);
+  //
+  // Scoped to THIS split, not to every split showing the buffer (which is what
+  // a `null` split id means). Compose mode is a property of one pane: a
+  // markdown buffer open in two panes, one composing and one in source, had
+  // wrap forced on in the source pane every time focus landed on the composing
+  // one — this hook runs on `buffer_activated`, so merely switching between
+  // the two rewrote the source pane's setting.
+  editor.setLineWrap(bufferId, editor.getActiveSplitId(), true);
 
   // Set layout hints for centered margins. With no explicit session choice
   // this resolves to the configured page width (default 80), so compose opens
@@ -1827,45 +1915,15 @@ function processLineConceals(
     // the wrapped rendering is the cursor-OFF variant).
     let handledByWrapping = false;
     if (colWidths && !isSeparator) {
-      const numCols = Math.min(cells.length, colWidths.length);
-      const cellWrapped: string[][] = [];
-      let maxVisualLines = 1;
-      for (let ci = 0; ci < numCols; ci++) {
-        const cellText = concealedText(cells[ci]).trim();
-        const wrapW = Math.max(1, colWidths[ci] - 2); // 1 leading + 1 trailing space margin
-        const wrapped = wrapText(cellText, wrapW);
-        cellWrapped.push(wrapped);
-        maxVisualLines = Math.max(maxVisualLines, wrapped.length);
-      }
-      // Cap to available source bytes (excluding trailing newline)
-      let effLen = lineContent.length;
-      if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
-      if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
-      maxVisualLines = Math.min(maxVisualLines, effLen);
-
-      if (maxVisualLines > 1) {
-        // Build formatted visual line for each wrapped row
-        const visualLines: string[] = [];
-        for (let vl = 0; vl < maxVisualLines; vl++) {
-          let vline = '│';
-          for (let ci = 0; ci < numCols; ci++) {
-            const wrapW = Math.max(1, colWidths[ci] - 2);
-            const wrapped = cellWrapped[ci] || [];
-            const text = vl < wrapped.length ? wrapped[vl] : '';
-            vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - displayWidth(text))) + ' │';
-          }
-          visualLines.push(vline);
-        }
+      const layout = tableRowLayout(lineContent, colWidths);
+      if (layout) {
+        const { visualLines, breakChars } = layout;
 
         // Divide source bytes into segments, one per visual line.
-        // Soft breaks at segment boundaries (added by processLineSoftBreaks)
-        // create the visual line breaks; conceals replace each segment.
+        // Soft breaks at segment boundaries (added by processFlowBlock, from
+        // the same `tableRowLayout`) create the visual line breaks; conceals
+        // replace each segment.
         //
-        // IMPORTANT: break positions MUST land on Space characters.
-        // Space tokens have individual source_offset values matching their
-        // byte positions, so soft breaks will reliably trigger. Non-space
-        // characters inside Text tokens share the token's START offset,
-        // so breaks at mid-token positions silently fail.
         // The consumed space (replaced by Newline) must NOT be covered by
         // any segment's conceal range, so segment N+1 starts at spacePos+1.
         // Exclude trailing newline from segment range so the Newline token
@@ -1874,17 +1932,10 @@ function processLineConceals(
         let lineCharLen = lineContent.length;
         if (lineCharLen > 0 && lineContent[lineCharLen - 1] === '\n') lineCharLen--;
         if (lineCharLen > 0 && lineContent[lineCharLen - 1] === '\r') lineCharLen--;
-        const spacePositions: number[] = [];
-        for (let i = 1; i < lineCharLen; i++) {
-          if (lineContent[i] === ' ') spacePositions.push(i);
-        }
-        const breakChars = spacePositions.slice(0, maxVisualLines - 1);
-        // Trim visual lines if we couldn't find enough break positions
-        const actualVisualLines = breakChars.length + 1;
         // Segments: first starts at 0, subsequent start AFTER the consumed space
         const segStarts = [0, ...breakChars.map(c => c + 1)];
         const segEnds = [...breakChars, lineCharLen];
-        for (let vl = 0; vl < actualVisualLines; vl++) {
+        for (let vl = 0; vl < visualLines.length; vl++) {
           const sByteS = charToByte(lineContent, segStarts[vl], byteStart);
           const sByteE = charToByte(lineContent, segEnds[vl], byteStart);
           editor.addConceal(
@@ -1936,6 +1987,59 @@ function processLineConceals(
         }
       }
 
+      // A data cell's surrounding spaces are alignment, not content.
+      //
+      // The wrapping path above already reads a cell as `concealedText(...)
+      // .trim()` and re-lays it out as `␣content␣pad`. This path used to
+      // measure the cell verbatim, so a hand-aligned source — `|What
+      // ..........|`, which is how most people write a markdown table — read
+      // as a cell 14 columns wide, overflowed a 10-column allocation, and came
+      // out truncated to `What     -`: the header row of an otherwise fine
+      // table, mangled and a column out of step with the rows under it.
+      //
+      // So normalise here too. Concealing the cell's two whitespace RUNS
+      // rather than the whole cell is what keeps the content's own conceals
+      // and emphasis overlays alive inside it — the whole-cell replacement
+      // below is still the fallback for content that genuinely doesn't fit.
+      // `lead === 0` has no run to conceal, so its single space is appended to
+      // the *opening* pipe's replacement instead.
+      interface CellNorm {
+        charStart: number; charEnd: number;
+        lead: number; trail: number;
+        width: number;      // display width of the trimmed, concealed content
+        truncate: boolean;
+      }
+      //
+      // Only for a row that opens with a pipe, which is what makes `cells[ci]`
+      // the text between `pipePositions[ci]` and `[ci + 1]`. A row written
+      // without its leading `|` shifts that correspondence by one, and this
+      // pass conceals source rather than merely padding it — so it stands down
+      // there and the old width-only path below handles the row.
+      const cellNorms = new Map<number, CellNorm>();
+      if (colWidths && !isSeparator && trimmed.startsWith('|')) {
+        for (let ci = 0; ci < Math.min(cells.length, colWidths.length); ci++) {
+          const prevPipe = pipePositions[ci];
+          const nextPipe = pipePositions[ci + 1];
+          if (prevPipe === undefined || nextPipe === undefined) continue;
+          const charStart = prevPipe + 1;
+          const raw = lineContent.slice(charStart, nextPipe);
+          const trimmedStart = raw.trimStart();
+          // An all-whitespace cell is one run, not two: counting it twice
+          // would emit two overlapping conceals over the same bytes.
+          const lead = raw.length - trimmedStart.length;
+          const trail = trimmedStart.length === 0
+            ? 0
+            : raw.length - raw.trimEnd().length;
+          const width = displayWidth(concealedText(raw).trim());
+          cellNorms.set(ci, {
+            charStart, charEnd: nextPipe, lead, trail, width,
+            // One column goes to the leading space, so the content has
+            // `allocated - 1` to live in.
+            truncate: width > colWidths[ci] - 1,
+          });
+        }
+      }
+
       // Track which pipe index we're on (0 = leading pipe)
       let pipeIdx = 0;
       for (let i = 0; i < lineContent.length; i++) {
@@ -1957,33 +2061,70 @@ function processLineConceals(
           // stays fully visible for editing.
           let padOff = ""; // cursor elsewhere: concealed text width
           let padOn = ""; // cursor on this row: raw text width
+          // The single leading space of the cell this pipe OPENS, when that
+          // cell has no whitespace run of its own to normalise into one.
+          let leadOff = "";
           const cellIdx = pipeIdx - 1;
           if (colWidths && pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
-            const offText = concealedText(cells[cellIdx]);
-            const offWidth = displayWidth(offText);
             const rawWidth = displayWidth(cells[cellIdx]);
             const allocatedWidth = colWidths[cellIdx];
+            const norm = cellNorms.get(cellIdx);
 
-            if (offWidth > allocatedWidth) {
-              // Truncate (cursor-off only): conceal entire cell content and
-              // replace with truncated text. Separator rows use box-drawing ─
-              // to match the non-truncated path (per-char conceals replace
-              // source `-` with ─ and pad via pipe replacement).
-              const prevPipeCharPos = pipePositions[pipeIdx - 1];
-              const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
-              const cellByteEnd = pipeByte;
-              const truncated = isSeparator
-                ? '─'.repeat(allocatedWidth)
-                : offText.slice(0, allocatedWidth - 1) + '-';
+            if (norm && !norm.truncate) {
+              // Normalised: `␣` + content + pad, the two whitespace runs
+              // concealed away so the content keeps its own decorations.
+              if (norm.lead > 0) {
+                editor.addConceal(
+                  bufferId, "md-syntax",
+                  charToByte(lineContent, norm.charStart, byteStart),
+                  charToByte(lineContent, norm.charStart + norm.lead, byteStart),
+                  " ", "unless-cursor-in", byteStart, lineScopeStrictEnd,
+                );
+              }
+              if (norm.trail > 0) {
+                editor.addConceal(
+                  bufferId, "md-syntax",
+                  charToByte(lineContent, norm.charEnd - norm.trail, byteStart),
+                  pipeByte, "", "unless-cursor-in", byteStart, lineScopeStrictEnd,
+                );
+              }
+              const padCount = allocatedWidth - 1 - norm.width;
+              if (padCount > 0) padOff = " ".repeat(padCount);
+            } else if (norm) {
+              // Content too wide even trimmed: replace the whole cell, leading
+              // space included, and mark the range so the inline passes below
+              // don't decorate bytes that are no longer drawn.
+              const cellByteStart = charToByte(lineContent, norm.charStart, byteStart);
+              const content = concealedText(
+                lineContent.slice(norm.charStart, norm.charEnd),
+              ).trim();
               editor.addConceal(
-                bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated,
+                bufferId, "md-syntax", cellByteStart, pipeByte,
+                " " + content.slice(0, Math.max(0, allocatedWidth - 2)) + "-",
                 "unless-cursor-in", byteStart, lineScopeStrictEnd,
               );
-              truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
-              // padOff stays "" — the truncate conceal fills the cell.
+              truncatedByteRanges.push({start: cellByteStart, end: pipeByte});
+              // padOff stays "" — the replacement fills the cell.
             } else {
-              const padCount = allocatedWidth - offWidth;
-              if (padCount > 0) {
+              // A separator row — whose `─` fill is the whole point, so it is
+              // never normalised — or a row whose pipes and cells don't line
+              // up, which leaves the cell without a normalisation to apply.
+              // Both pad from the concealed width, as this path always did.
+              const offText = concealedText(cells[cellIdx]);
+              const offWidth = displayWidth(offText);
+              if (offWidth > allocatedWidth) {
+                const prevPipeCharPos = pipePositions[pipeIdx - 1];
+                const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
+                editor.addConceal(
+                  bufferId, "md-syntax", cellByteStart, pipeByte,
+                  isSeparator
+                    ? '─'.repeat(allocatedWidth)
+                    : offText.slice(0, allocatedWidth - 1) + '-',
+                  "unless-cursor-in", byteStart, lineScopeStrictEnd,
+                );
+                truncatedByteRanges.push({start: cellByteStart, end: pipeByte});
+              } else if (allocatedWidth > offWidth) {
+                const padCount = allocatedWidth - offWidth;
                 padOff = isSeparator ? "─".repeat(padCount) : " ".repeat(padCount);
               }
             }
@@ -1996,6 +2137,8 @@ function processLineConceals(
             // rawWidth > allocatedWidth: the cursor row keeps the too-wide
             // cell raw (no padding, no truncation) so it stays editable.
           }
+          const opening = cellNorms.get(pipeIdx);
+          if (opening && opening.lead === 0 && !opening.truncate) leadOff = " ";
 
           let glyph = "│";
           if (isSeparator) {
@@ -2005,12 +2148,12 @@ function processLineConceals(
             if (pipeIndex === 1) glyph = '├';
             else if (pipeIndex === totalPipes) glyph = '┤';
           }
-          if (padOff === padOn) {
+          if (padOff === padOn && leadOff === "") {
             // Same rendering in both cursor states — one always-active conceal.
             editor.addConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph);
           } else {
             editor.addConceal(
-              bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph,
+              bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph + leadOff,
               "unless-cursor-in", byteStart, lineScopeStrictEnd,
             );
             editor.addConceal(
@@ -2678,45 +2821,18 @@ function processFlowBlock(
   // while the cursor is on the row (strict scope, matching the segment
   // conceals), where the row renders as a plain single line.
   if (parsed.type === 'table-row') {
-    const trimmedLine = lineContent.trim();
-    const isSep = /^\|[-:\s|]+\|$/.test(trimmedLine);
+    const isSep = /^\|[-:\s|]+\|$/.test(lineContent.trim());
     if (!isSep) {
       const colWidths = widthsForRow(byteStart);
-      if (colWidths) {
-        let innerLine = trimmedLine;
-        if (innerLine.startsWith('|')) innerLine = innerLine.slice(1);
-        if (innerLine.endsWith('|')) innerLine = innerLine.slice(0, -1);
-        const tableCells = innerLine.split('|');
-        let maxVisualLines = 1;
-        const numCols = Math.min(tableCells.length, colWidths.length);
-        for (let ci = 0; ci < numCols; ci++) {
-          const cellText = concealedText(tableCells[ci]).trim();
-          const wrapW = Math.max(1, colWidths[ci] - 2);
-          const wrapped = wrapText(cellText, wrapW);
-          maxVisualLines = Math.max(maxVisualLines, wrapped.length);
-        }
-        // Exclude trailing newline (same as processLineConceals)
-        let effLineLen = lineContent.length;
-        if (effLineLen > 0 && lineContent[effLineLen - 1] === '\n') effLineLen--;
-        if (effLineLen > 0 && lineContent[effLineLen - 1] === '\r') effLineLen--;
-        maxVisualLines = Math.min(maxVisualLines, effLineLen);
-
-        if (maxVisualLines > 1) {
-          // Must match the break positions from processLineConceals:
-          // pick Space chars (they have individual source_offsets that match).
-          const spacePositions: number[] = [];
-          for (let i = 1; i < effLineLen; i++) {
-            if (lineContent[i] === ' ') spacePositions.push(i);
-          }
-          const breakChars = spacePositions.slice(0, maxVisualLines - 1);
-          for (const charPos of breakChars) {
-            const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, charPos));
-            editor.addSoftBreak(
-              bufferId, "md-wrap", breakBytePos, 0,
-              "unless-cursor-in", byteStart, byteEnd,
-            );
-          }
-        }
+      // Exactly the positions `processLineConceals` cut its segments at — one
+      // layout, so a fold can never land somewhere no conceal ends.
+      const layout = colWidths ? tableRowLayout(lineContent, colWidths) : null;
+      for (const charPos of layout?.breakChars ?? []) {
+        const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, charPos));
+        editor.addSoftBreak(
+          bufferId, "md-wrap", breakBytePos, 0,
+          "unless-cursor-in", byteStart, byteEnd,
+        );
       }
     }
   }

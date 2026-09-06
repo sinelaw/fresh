@@ -935,3 +935,139 @@ fn test_drag_tab_to_fresh_split_then_type_does_not_panic() {
         screen
     );
 }
+
+/// Run a command-palette command by typing a query and accepting the first hit.
+fn run_palette_command(harness: &mut EditorTestHarness, query: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text(query).unwrap();
+    harness.wait_for_screen_contains(query).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+}
+
+/// The screen rows of `pane`, clipped to its own columns.
+fn pane_rows(harness: &EditorTestHarness, pane: LeafId) -> Vec<String> {
+    let rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the pane out");
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .skip(rect.y as usize)
+        .take(rect.height as usize)
+        .map(|line| {
+            line.chars()
+                .skip(rect.x as usize)
+                .take(rect.width as usize)
+                .collect()
+        })
+        .collect()
+}
+
+/// The pane currently showing `buffer_id`.
+fn pane_showing(harness: &EditorTestHarness, buffer_id: BufferId) -> LeafId {
+    harness
+        .editor()
+        .get_split_areas()
+        .iter()
+        .find(|(_, buf, ..)| *buf == buffer_id)
+        .map(|(pane, ..)| *pane)
+        .expect("the dragged buffer is on screen")
+}
+
+/// Regression: a tab dragged into a new pane keeps the view mode it was being
+/// read in.
+///
+/// A new pane's view state was built from config defaults and given only the
+/// source pane's *cursors*, so a document being read in page view (what
+/// markdown compose runs on) snapped back to source the moment it was dragged
+/// from a vertical split to a horizontal one. Nothing told the compose plugin
+/// the mode had changed either, so it kept emitting the buffer-wide decorations
+/// a composing pane wants — which the reverted pane then drew over its raw
+/// source.
+///
+/// `BufferViewState`'s `Clone` already carries `view_mode` and the compose
+/// settings for exactly this reason; the drag just has to use it.
+#[test]
+fn test_drag_tab_to_new_split_keeps_page_view() {
+    let temp_dir = TempDir::new().unwrap();
+    let doc = temp_dir.path().join("doc.md");
+    std::fs::write(&doc, "Hello\n").unwrap();
+    let other = temp_dir.path().join("other.txt");
+    std::fs::write(&other, "elsewhere\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.open_file(&other).unwrap();
+    harness.open_file(&doc).unwrap();
+    harness.render().unwrap();
+
+    let doc_buffer = harness
+        .editor()
+        .get_split_buffer(harness.editor().get_active_split().into())
+        .expect("the opened document is active");
+
+    // A digit anywhere on the `Hello` row can only be the line-number gutter.
+    let hello_row_has_gutter = |harness: &EditorTestHarness| -> bool {
+        pane_rows(harness, pane_showing(harness, doc_buffer))
+            .iter()
+            .find(|row| row.contains("Hello"))
+            .map(|row| row.chars().any(|c| c.is_ascii_digit()))
+            .expect("the document is on screen")
+    };
+    assert!(
+        hello_row_has_gutter(&harness),
+        "source mode should show the line-number gutter to begin with"
+    );
+
+    run_palette_command(&mut harness, "Toggle Page View");
+    harness.render().unwrap();
+    assert!(
+        !hello_row_has_gutter(&harness),
+        "page view should hide the line-number gutter"
+    );
+
+    // Drag the document's tab onto the bottom edge of its own pane: a
+    // horizontal split, made from the tab.
+    let tab = get_all_tabs(&harness)
+        .into_iter()
+        .find(|t| t.buffer_id == doc_buffer)
+        .expect("the document has a tab");
+    let content_rect = harness
+        .editor()
+        .pane_content_rect(tab.split_id)
+        .expect("the shell laid the only pane out");
+    let bottom_row = content_rect.y + content_rect.height - 2;
+    let centre_col = content_rect.x + content_rect.width / 2;
+    assert!(
+        matches!(
+            harness
+                .editor()
+                .compute_drop_zone(centre_col, bottom_row, tab.split_id),
+            Some(TabDropZone::SplitBottom(_))
+        ),
+        "expected the bottom edge to be a SplitBottom drop zone"
+    );
+
+    harness
+        .mouse_drag(tab.center_col(), tab.tab_row, centre_col, bottom_row)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.editor().get_split_count(),
+        2,
+        "dragging to the bottom edge should create a new split"
+    );
+    assert!(
+        !hello_row_has_gutter(&harness),
+        "the dragged tab reverted to source mode in its new pane: its \
+         line-number gutter is back.\nScreen:\n{}",
+        harness.screen_to_string(),
+    );
+}
