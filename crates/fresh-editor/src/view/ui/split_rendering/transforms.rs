@@ -11,10 +11,11 @@
 use super::style::{create_wrapped_virtual_lines, token_style_from_ratatui};
 use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
+use crate::view::compose_only::is_compose_only_virtual_text;
 use crate::view::soft_break::SoftBreakRender;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
-use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
+use crate::view::virtual_text::VirtualTextPosition;
 use crate::view::wrap_machine::{WrapMachine, WrapRule};
 use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
 use std::collections::{HashMap, HashSet};
@@ -517,16 +518,16 @@ pub(super) fn inject_virtual_lines(
             .virtual_texts
             .query_lines_in_range(&state.marker_list, viewport_start, viewport_end);
 
-    // markdown_compose's table-border virtual lines (`md-tb`) frame the composed
-    // table and belong only to a Compose-mode split. Virtual lines live on the
-    // buffer, so in a Source-mode split sharing a buffer with a composing sibling
-    // they would otherwise draw a frame around the raw source. Drop that
-    // compose-only namespace here — mirroring the `md-syntax` conceal gate in
-    // `view_data.rs` and the `md-emphasis` overlay gate in `overlays.rs`. Every
-    // other virtual-line namespace (git blame, diff, …) renders in both modes.
+    // markdown_compose's frame lines — the table border (`md-tb`) and the
+    // spacer rows between list items (`md-ls`) — belong only to a Compose-mode
+    // split. Virtual lines live on the buffer, so in a Source-mode split
+    // sharing a buffer with a composing sibling they would otherwise draw a
+    // frame around the raw source. Drop the compose-only ones here — mirroring
+    // the `md-syntax` conceal gate in `view_data.rs` and the `md-emphasis`
+    // overlay gate in `overlays.rs`. Every other virtual-line namespace (git
+    // blame, diff, …) renders in both modes.
     if !is_compose {
-        let md_border_ns = VirtualTextNamespace::from_string("md-tb".to_string());
-        virtual_lines.retain(|(_, vt)| vt.namespace.as_ref() != Some(&md_border_ns));
+        virtual_lines.retain(|(_, vt)| !is_compose_only_virtual_text(vt));
     }
 
     if virtual_lines.is_empty() {
@@ -663,16 +664,31 @@ pub struct InlineHint {
 /// The state-dependent half of the splice, split out so the transform itself is
 /// pure. `theme` is `Some` on the draw path (so hint colours resolve) and `None`
 /// wherever the output is measured but never drawn.
+///
+/// `include_compose_only` is `false` only on the *draw* path of a Source-mode
+/// split, where markdown_compose's code-block side rails must be dropped the
+/// same way [`inject_virtual_lines`] drops its frame lines: the rails are
+/// emitted whenever any split composes the buffer, and a source pane has to
+/// show the code literally.
+///
+/// Every *measuring* caller passes `true`, rails included, because the row
+/// counts they feed are not per split. Scroll math asks for its index under a
+/// fixed `CacheViewMode::Source` label that says nothing about any split's
+/// actual mode (`scrollbar_math::scroll_geometry`), so gating on it there takes
+/// compose's own decorations out of the row count of a *composing* buffer and
+/// the scrollbar stops short of the end of the document.
 pub fn resolve_inline_hints(
     state: &EditorState,
     theme: Option<&Theme>,
     start: usize,
     end: usize,
+    include_compose_only: bool,
 ) -> Vec<InlineHint> {
     state
         .virtual_texts
         .query_inline_in_range(&state.marker_list, start, end)
         .into_iter()
+        .filter(|(_, vtext)| include_compose_only || !is_compose_only_virtual_text(vtext))
         .map(|(anchor, vtext)| InlineHint {
             anchor,
             text: vtext.text.clone(),

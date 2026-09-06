@@ -351,6 +351,19 @@ impl Editor {
         // non-terminal clears terminal mode. Single restore authority.
         self.sync_terminal_mode_to_active_buffer();
 
+        // Refresh the snapshot BEFORE the hook, for the reason
+        // `set_active_buffer` gives: the handler has to see the split that is
+        // active *now*. Focus moving between two splits on the SAME buffer
+        // never reaches `set_active_buffer` (it early-returns when the buffer
+        // does not change), so without this the plugin mirror still answers
+        // with the split focus just left. `markdown_compose` reads
+        // `getBufferInfo().view_mode` here to decide whether to restore
+        // compose, and a mirror one split behind told it "compose" as focus
+        // landed on a *source* pane — which it then composed: gutter hidden,
+        // wrap forced on, view mode flipped. Whether that happened at all came
+        // down to which thread won the race.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
         // Emit buffer_activated hook for plugins
         self.plugin_manager.read().unwrap().run_hook(
             "buffer_activated",
@@ -645,6 +658,10 @@ impl Editor {
         self.active_window_mut()
             .ensure_active_tab_visible(next_split, next_buf, tabs_width);
 
+        // Snapshot first, then the hook — see the note at the other
+        // split-focus site above.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
         // Emit the buffer_activated hook for plugins, matching every other
         // focus-changing command.
         self.plugin_manager.read().unwrap().run_hook(

@@ -253,8 +253,7 @@ pub(crate) fn decoration_context(
     // Semantic tokens are stored as overlays so their ranges track edits.
     // Convert them into highlight spans for the render pipeline.
     let is_compose = matches!(view_mode, ViewMode::PageView);
-    let md_emphasis_ns =
-        fresh_core::overlay::OverlayNamespace::from_string("md-emphasis".to_string());
+    let md_emphasis_ns = crate::view::compose_only::md_emphasis_namespace();
     let mut semantic_token_spans = Vec::new();
     let mut viewport_overlays = Vec::new();
     for (overlay, range) in

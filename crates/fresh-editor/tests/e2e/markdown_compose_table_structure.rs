@@ -182,3 +182,93 @@ after
          is {below:?}.\nScreen:\n{after}"
     );
 }
+
+/// A hand-aligned table — cells padded with spaces so the source lines up — is
+/// the common way people write markdown tables, and its header row used to come
+/// out mangled.
+///
+/// The two passes that render a row measured its cells differently. The
+/// wrapping path read a cell as `concealedText(...).trim()`, so a header cell
+/// written `|What          |` was four characters of content. The padding path,
+/// which handles every row short enough to fit on one line, measured it
+/// verbatim at 14 columns, decided it overflowed its 10-column allocation, and
+/// truncated it to `What     -` — no cell padding, a spurious `-`, and a header
+/// a column out of step with the rows beneath it.
+///
+/// Asserted on rendered output: the header's cells read the same way the body's
+/// do, `␣content␣…`, and nothing on the row was truncated.
+#[cfg(feature = "plugins")]
+#[test]
+fn hand_aligned_table_header_is_not_truncated() {
+    let md = "\
+# Doc
+
+|What          |Before       |After        |
+|--------------|-------------|-------------|
+|Rendering     |Direct       |Retained     |
+";
+    let (mut harness, _tmp) = compose_harness(md, 100, 30);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let header = screen
+        .lines()
+        .nth(row_of(&screen, "What"))
+        .unwrap()
+        .to_string();
+    assert!(
+        header.contains("│ What"),
+        "the header's cells lost their padding: {header:?}.\nScreen:\n{screen}"
+    );
+    assert!(
+        !header.contains('-'),
+        "the header row was truncated — its padding spaces were measured as \
+         content: {header:?}.\nScreen:\n{screen}"
+    );
+}
+
+/// A row whose cells wrap must not lose a visual line to a blank row through
+/// the middle of the frame.
+///
+/// A wrapped row is drawn as one conceal per visual line, each covering the
+/// source between two chosen break positions, and the breaks have to be spaces
+/// (only a Space token carries its own source offset). The first N-1 spaces in
+/// the line were taken verbatim — and in a hand-aligned table those are a run
+/// of consecutive padding spaces, which makes every segment after the first
+/// empty. A conceal over an empty range draws nothing, so the visual line it
+/// was carrying vanished and left a blank row cutting through the table.
+#[cfg(feature = "plugins")]
+#[test]
+fn wrapped_table_row_keeps_every_visual_line() {
+    let md = "\
+# Doc
+
+|What          |Detail                                                  |
+|--------------|--------------------------------------------------------|
+|Layout        |Imperative logic per case, duplicated in multiple flows  |
+";
+    let (mut harness, _tmp) = compose_harness(md, 100, 30);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let top = row_of(&screen, "┌");
+    let bottom = row_of(&screen, "└");
+    for (offset, line) in screen.lines().skip(top).take(bottom - top + 1).enumerate() {
+        assert!(
+            line.contains('│') || line.contains('┌') || line.contains('├') || line.contains('└'),
+            "row {} of the table frame is blank — a wrapped row's visual line \
+             was dropped: {line:?}.\nScreen:\n{screen}",
+            top + offset,
+        );
+    }
+    // The wrapped cell's continuation must actually be on screen, not merely
+    // absent from a row that still has its edges.
+    assert!(
+        screen.contains("flows"),
+        "the wrapped row's last line never rendered.\nScreen:\n{screen}"
+    );
+}

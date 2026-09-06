@@ -704,7 +704,8 @@ impl EditorState {
     /// `view_mode` decides the one namespace that is mode-specific:
     /// markdown_compose's `md-syntax` conceals are emitted whenever any split
     /// composes the buffer, so a Source-mode split must ignore them — the same
-    /// gate `build_view_data` applies.
+    /// gate `build_view_data` applies. Compose's frame lines and code rails are
+    /// deliberately *not* gated here; see the comment on `virtual_lines`.
     /// Collapsed byte ranges for `folds`, sorted — the form the index and the
     /// renderer both want. Folds live on the split, so they arrive as an
     /// argument rather than off `self`.
@@ -740,11 +741,12 @@ impl EditorState {
                 .query_viewport_rendered(0, end, &self.marker_list, &no_cursors, None)
         };
 
+        let is_compose = matches!(view_mode, CacheViewMode::Compose);
+
         let conceals = if self.conceals.is_empty() {
             Vec::new()
         } else {
-            let exclude = (!matches!(view_mode, CacheViewMode::Compose))
-                .then(|| fresh_core::overlay::OverlayNamespace::from_string("md-syntax".into()));
+            let exclude = (!is_compose).then(crate::view::compose_only::md_syntax_namespace);
             self.conceals
                 .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), &no_cursors)
                 .into_iter()
@@ -755,9 +757,20 @@ impl EditorState {
         let inline_hints = if self.virtual_texts.is_empty() {
             Vec::new()
         } else {
-            crate::view::ui::split_rendering::transforms::resolve_inline_hints(self, None, 0, end)
+            crate::view::ui::split_rendering::transforms::resolve_inline_hints(
+                self, None, 0, end, true,
+            )
         };
 
+        // Every virtual line the buffer has, compose's frame included — and the
+        // same for the rails above. The renderer drops the compose-only ones
+        // when the split it is drawing is in source mode, but this index is not
+        // per split: scroll math asks for it under a fixed
+        // `CacheViewMode::Source` label that says nothing about any split's
+        // mode (`scrollbar_math::scroll_geometry`). Dropping them on that label
+        // took the table borders and list spacers out of the row count of a
+        // *composing* buffer, and the wheel and the scrollbar stopped short of
+        // the end of the document.
         let virtual_lines = if self.virtual_texts.is_empty() {
             Vec::new()
         } else {

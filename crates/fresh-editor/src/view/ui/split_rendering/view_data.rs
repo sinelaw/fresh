@@ -15,18 +15,11 @@ use super::transforms::{
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
+use crate::view::compose_only::md_syntax_namespace;
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine, ViewLineIterator};
 use crate::view::viewport::Viewport;
-
-/// markdown_compose's conceal namespace (`md-syntax`): the cell-separator /
-/// emphasis-marker conceals that turn raw `|`/`**` into the composed table. Only
-/// valid in a Compose-mode split; suppressed in Source mode (see the conceal
-/// pass below). Mirrors the `md-emphasis` overlay gate in `overlays.rs`.
-fn md_syntax_namespace() -> fresh_core::overlay::OverlayNamespace {
-    fresh_core::overlay::OverlayNamespace::from_string("md-syntax".to_string())
-}
 
 /// Processed view data containing display lines from the view pipeline.
 pub(super) struct ViewData {
@@ -338,7 +331,13 @@ pub(super) fn build_view_data(
             .unwrap_or(viewport.top_byte());
         tokens = splice_inline_virtual_text(
             tokens,
-            &resolve_inline_hints(state, Some(theme), viewport.top_byte(), viewport_end),
+            &resolve_inline_hints(
+                state,
+                Some(theme),
+                viewport.top_byte(),
+                viewport_end,
+                is_compose,
+            ),
         );
     }
 

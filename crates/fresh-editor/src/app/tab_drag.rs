@@ -119,6 +119,31 @@ impl Editor {
         (split_id != source_split_id).then_some(TabDropZone::SplitCenter(split_id))
     }
 
+    /// The view state a dragged tab takes with it: the source split's entry
+    /// for *that buffer*, not the split's active one.
+    ///
+    /// A tab carries how it was being viewed. Dropping a composing markdown tab
+    /// into another pane used to hand it a freshly defaulted state, so the
+    /// document snapped back to source mode — with the compose plugin none the
+    /// wiser, since nothing told it the mode had changed. `BufferViewState`'s
+    /// `Clone` already carries `view_mode` and the compose settings for exactly
+    /// this reason (and resets `folds`, which are markers this split owns).
+    fn carried_view_state(
+        &self,
+        source_split_id: LeafId,
+        buffer_id: BufferId,
+    ) -> Option<crate::view::split::BufferViewState> {
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&source_split_id)?
+            .keyed_states
+            .get(&buffer_id)
+            .cloned()
+    }
+
     /// Where among `tabs` a tab dropped at `col` goes: before the tab whose
     /// left half it is over, after the one whose right half, at the end past
     /// them all.
@@ -305,6 +330,18 @@ impl Editor {
         let active_id = self.active_window;
         let source_showed_buffer =
             self.split_manager().get_buffer_id(source_split_id.into()) == Some(buffer_id);
+        // The tab's own view state travels with it (see `carried_view_state`),
+        // unless the destination already has an opinion about this buffer.
+        let carried_state = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&target_split_id)
+            .is_none_or(|target| !target.keyed_states.contains_key(&buffer_id))
+            .then(|| self.carried_view_state(source_split_id, buffer_id))
+            .flatten();
         let mut next_buffer_for_source: Option<BufferId> = None;
         // Remove from source split's tab bar
         if let Some((mgr, vs)) = self
@@ -358,6 +395,20 @@ impl Editor {
         // `apply_event_to_state` on `keyed_states.get_mut(...).unwrap()`.
         self.active_window_mut()
             .set_pane_buffer(target_split_id, buffer_id);
+        // `set_pane_buffer` seeds a default entry for the buffer; overwrite it
+        // with the state the tab was carrying, so a composing tab keeps
+        // composing after the move.
+        if let Some(carried) = carried_state {
+            if let Some(target_view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&target_split_id)
+            {
+                target_view_state.keyed_states.insert(buffer_id, carried);
+            }
+        }
         self.windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_manager_mut())
@@ -438,6 +489,7 @@ impl Editor {
         let active_id = self.active_window;
         let source_showed_buffer =
             self.split_manager().get_buffer_id(source_split_id.into()) == Some(buffer_id);
+        let carried_state = self.carried_view_state(source_split_id, buffer_id);
         let mut next_buffer_for_source: Option<BufferId> = None;
         let source_had_buffer = if let Some((mgr, vs)) = self
             .windows
@@ -512,16 +564,11 @@ impl Editor {
                     scroll_offset: self.config.editor.scroll_offset,
                 });
 
-                // Copy cursor position from source split's view state
-                if let Some(source_vs) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&source_split_id)
-                {
-                    new_view_state.cursors = source_vs.cursors.clone();
+                // The dragged tab's own view state, cursors included — not the
+                // source split's *active* buffer's, which is a different tab
+                // whenever the drag started from an unfocused one.
+                if let Some(carried) = carried_state {
+                    new_view_state.keyed_states.insert(buffer_id, carried);
                 }
 
                 self.windows
