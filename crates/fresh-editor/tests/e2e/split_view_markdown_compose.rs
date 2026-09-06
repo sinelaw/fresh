@@ -648,44 +648,68 @@ fn test_composing_one_split_leaves_a_sibling_splits_line_wrap_alone() {
     // One line far wider than either pane, so wrap on / off is visible as a
     // different number of rows carrying its text.
     let long = "word ".repeat(60);
-    let (mut harness, _tmp) = compose_split_harness(&format!("# Title\n\n{long}\n"), false);
+    // `## Section` is the compose signal below — deliberately not line 1, which
+    // is where the caret sits: compose reveals the markup on the caret's own
+    // row, so a heading there stays raw forever and waiting on it never ends.
+    let (mut harness, _tmp) =
+        compose_split_harness(&format!("# Title\n\n{long}\n\n## Section\n"), false);
+
+    // Rows of `pane` carrying the long line: 1 with wrap off, several with it on.
+    fn long_line_rows(harness: &EditorTestHarness, pane: fresh::model::event::LeafId) -> usize {
+        pane_rows(harness, pane)
+            .iter()
+            .filter(|r| r.contains("word"))
+            .count()
+    }
 
     run_palette_command(&mut harness, "Split Vertical");
     harness.wait_for_async_quiescence(6).unwrap();
     let source_pane = harness.editor().get_active_split();
 
-    // The new right split is active: turn its wrap off, and record how many
-    // rows of it the long line occupies as a result.
-    run_palette_command(&mut harness, "Toggle Line Wrap (Current");
-    harness.render().unwrap();
-    let rows_with_wrap_off = pane_rows(&harness, source_pane)
-        .iter()
-        .filter(|r| r.contains("word"))
-        .count();
-    assert_eq!(
-        rows_with_wrap_off, 1,
-        "wrap should be off in the source split to begin with"
-    );
+    // The new right split is active. Get its wrap *off*, whichever way
+    // `editor.line_wrap` happens to default — asserting the toggle's direction
+    // instead made this depend on the harness's config, and a render taken
+    // before the toggle had settled read the old layout and let the setup pass
+    // while leaving wrap on.
+    if long_line_rows(&harness, source_pane) != 1 {
+        run_palette_command(&mut harness, "Toggle Line Wrap (Current");
+    }
+    harness
+        .wait_until_stable(|h| long_line_rows(h, source_pane) == 1)
+        .unwrap();
 
     // Compose the LEFT split, then come back. Both moves fire
     // `buffer_activated`, which is where the wrap request lives.
     run_palette_command(&mut harness, "Previous Split");
     harness.render().unwrap();
+    let compose_pane = harness.editor().get_active_split();
+    assert_ne!(
+        compose_pane, source_pane,
+        "the test needs focus on the other split before composing"
+    );
     run_palette_command(&mut harness, "Toggle Compose");
-    harness.wait_for_async_quiescence(6).unwrap();
+    // Wait for the sibling to be *actually* composing rather than for a timer:
+    // compose conceals a heading's `##` markers, so a `Section` heading that
+    // still reads `## Section` is a pane that is not composing yet. The scenario
+    // does not exist until then, and a run where the toggle never landed would
+    // otherwise report on an invariant it never exercised.
+    harness
+        .wait_until_stable(|h| {
+            pane_rows(h, compose_pane)
+                .iter()
+                .any(|r| r.contains("Section") && !r.contains("## Section"))
+        })
+        .unwrap();
     run_palette_command(&mut harness, "Next Split");
     harness.wait_for_async_quiescence(6).unwrap();
 
-    let rows_now = pane_rows(&harness, source_pane)
-        .iter()
-        .filter(|r| r.contains("word"))
-        .count();
+    let rows_now = long_line_rows(&harness, source_pane);
     assert_eq!(
         rows_now,
-        rows_with_wrap_off,
+        1,
         "composing the sibling split turned line wrap back on in the source \
-         split: its long line now occupies {rows_now} rows instead of \
-         {rows_with_wrap_off}.\nScreen:\n{}",
+         split: its long line now occupies {rows_now} rows instead of 1.\
+         \nScreen:\n{}",
         harness.screen_to_string(),
     );
 }
