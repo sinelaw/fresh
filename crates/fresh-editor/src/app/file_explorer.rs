@@ -2224,6 +2224,32 @@ impl crate::app::window::Window {
     }
 }
 
+impl Editor {
+    /// Install or replace an editor-global namespace of path-independent
+    /// leading-slot rules, then rebuild the immutable render-time indexes.
+    pub fn handle_set_file_explorer_leading_slot_rules(
+        &mut self,
+        namespace: String,
+        rules: fresh_core::file_explorer::FileExplorerLeadingSlotRules,
+    ) {
+        self.file_explorer_leading_rules.insert(namespace, rules);
+        self.rebuild_file_explorer_leading_rule_cache();
+    }
+
+    /// Drop an editor-global leading-rule namespace.
+    pub fn handle_clear_file_explorer_leading_slot_rules(&mut self, namespace: &str) {
+        self.file_explorer_leading_rules.remove(namespace);
+        self.rebuild_file_explorer_leading_rule_cache();
+    }
+
+    fn rebuild_file_explorer_leading_rule_cache(&mut self) {
+        self.file_explorer_leading_rule_cache =
+            crate::view::file_tree::FileExplorerLeadingRuleCache::rebuild(
+                &self.file_explorer_leading_rules,
+            );
+    }
+}
+
 /// Generate a unique non-conflicting paste name in dst_dir for a file/dir named `name`.
 /// Returns `dst_dir/name copy.ext`, `dst_dir/name copy 2.ext`, etc.
 fn unique_paste_name(

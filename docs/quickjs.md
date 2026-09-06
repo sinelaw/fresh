@@ -118,6 +118,8 @@ The following methods need to be added to `JsEditorApi` in `quickjs_backend.rs`:
 - `clearFileExplorerDecorations(namespace)`
 - `setFileExplorerSlots(namespace, slots)`
 - `clearFileExplorerSlots(namespace)`
+- `setFileExplorerLeadingSlotRules(namespace, rules)`
+- `clearFileExplorerLeadingSlotRules(namespace)`
 
 **Priority 8 - Diagnostics/LSP:**
 - `getAllDiagnostics()` → `TsDiagnostic[]`

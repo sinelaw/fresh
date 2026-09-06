@@ -45,6 +45,7 @@ pub struct RowDesc<'a> {
     pub fuzzy: Option<&'a FuzzyMatch>,
     pub decorations: &'a crate::view::file_tree::FileExplorerDecorationCache,
     pub slot_overrides: &'a crate::view::file_tree::FileExplorerSlotOverrideCache,
+    pub leading_rules: &'a crate::view::file_tree::FileExplorerLeadingRuleCache,
     pub slot_resolver: &'a crate::view::file_tree::ExplorerSlotResolver<'static>,
     pub theme: &'a Theme,
     pub collapsed: &'a str,
@@ -101,6 +102,7 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
         is_hidden,
         decorations: d.decorations,
         slot_overrides: d.slot_overrides,
+        leading_rules: d.leading_rules,
         theme: d.theme,
         // The neutral colour the slot providers fall back to. They still work
         // in `Color`; only the description speaks in names.
@@ -153,7 +155,11 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
     if let Some(slot) = &slots.leading {
         let text_w = str_width(&slot.text);
         let pad = slot.width().saturating_sub(text_w) + 1;
-        left.push((slot.text.clone(), pair(&literal(slot.fg), ground)));
+        let foreground = match slot.color {
+            crate::view::file_tree::ExplorerLeadingSlotColor::Fixed(color) => literal(color),
+            crate::view::file_tree::ExplorerLeadingSlotColor::Filename => name_fg.clone(),
+        };
+        left.push((slot.text.clone(), pair(&foreground, ground)));
         left.push((" ".repeat(pad), pair(neutral, ground)));
     }
 
@@ -263,6 +269,27 @@ mod tests {
         slot_overrides: &FileExplorerSlotOverrideCache,
         theme: &Theme,
     ) -> Vec<(String, Style)> {
+        let leading_rules = crate::view::file_tree::FileExplorerLeadingRuleCache::default();
+        build_line_with_rules(
+            view,
+            node_id,
+            indent,
+            decorations,
+            slot_overrides,
+            &leading_rules,
+            theme,
+        )
+    }
+
+    fn build_line_with_rules(
+        view: &FileTreeView,
+        node_id: NodeId,
+        indent: usize,
+        decorations: &FileExplorerDecorationCache,
+        slot_overrides: &FileExplorerSlotOverrideCache,
+        leading_rules: &crate::view::file_tree::FileExplorerLeadingRuleCache,
+        theme: &Theme,
+    ) -> Vec<(String, Style)> {
         let resolver = crate::view::file_tree::default_slot_providers().resolver();
         let row = describe_row(RowDesc {
             view,
@@ -277,6 +304,7 @@ mod tests {
             fuzzy: None,
             decorations,
             slot_overrides,
+            leading_rules: &leading_rules,
             slot_resolver: &resolver,
             theme,
             collapsed: ">",
@@ -452,5 +480,52 @@ mod tests {
         assert!(line
             .iter()
             .any(|(text, style)| text == "M" && style.fg == Some(theme.file_status_modified_fg)));
+    }
+
+    #[tokio::test]
+    async fn renderer_line_shows_path_independent_leading_rule() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+        let slot_overrides = FileExplorerSlotOverrideCache::rebuild(
+            vec![fresh_core::file_explorer::FileExplorerSlotEntry {
+                path: schema_path,
+                leading: None,
+                trailing: None,
+                name_color: Some(fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "syntax.string".into(),
+                )),
+                priority: 1,
+                suppress_leading: false,
+                suppress_trailing: false,
+                suppress_name_color: false,
+            }],
+            view.tree().root_path(),
+            &HashMap::new(),
+        );
+        let rules = serde_json::from_value(serde_json::json!({
+            "extensions": {
+                "ts": { "text": "T", "color": { "source": "filename" }, "minWidth": 1 }
+            }
+        }))
+        .unwrap();
+        let leading_rules = crate::view::file_tree::FileExplorerLeadingRuleCache::rebuild(
+            &HashMap::from([("test".to_string(), rules)]),
+        );
+
+        let line = build_line_with_rules(
+            &view,
+            schema_id,
+            2,
+            &FileExplorerDecorationCache::default(),
+            &slot_overrides,
+            &leading_rules,
+            &theme,
+        );
+
+        assert!(line
+            .iter()
+            .any(|(text, style)| text == "T" && style.fg == Some(theme.syntax_string)));
     }
 }

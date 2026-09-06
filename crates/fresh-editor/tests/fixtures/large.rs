@@ -5772,6 +5772,8 @@ impl Editor {
             PluginCommand::ClearFileExplorerSlots { namespace } => {
                 self.handle_clear_file_explorer_slots(&namespace);
             }
+            PluginCommand::SetFileExplorerLeadingSlotRules { .. }
+            | PluginCommand::ClearFileExplorerLeadingSlotRules { .. } => {}
 
             // ==================== Status/Prompt Commands ====================
             PluginCommand::SetStatus { message } => {

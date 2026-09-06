@@ -983,6 +983,55 @@ type FileExplorerLeadingSlot = {
 	*/
 	minWidth: number;
 };
+type FileExplorerLeadingRuleColor = OverlayColorSpec | {
+	source: FileExplorerLeadingRuleColorSource;
+};
+type FileExplorerLeadingRuleColorSource = "filename";
+type FileExplorerLeadingRuleSlot = {
+	/**
+	* Text shown in the leading slot (typically one icon glyph).
+	*/
+	text: string;
+	/**
+	* Fixed colour or inheritance from the row's final filename colour.
+	*/
+	color: FileExplorerLeadingRuleColor;
+	/**
+	* Minimum display width reserved for the leading slot.
+	*/
+	minWidth?: number;
+};
+type FileExplorerLeadingSlotRules = {
+	/**
+	* Namespace priority. Higher values win within the explicit tier or the
+	* fallback tier; explicit matches always beat every fallback.
+	*/
+	priority?: number;
+	/**
+	* Match keys case-sensitively. Defaults to false.
+	*/
+	caseSensitive?: boolean;
+	/**
+	* Exact file basenames, for example `.gitignore` or `Dockerfile`.
+	*/
+	exactFiles?: { [key in string] : FileExplorerLeadingRuleSlot };
+	/**
+	* Final extensions without a leading dot, for example `rs` or `tar`.
+	*/
+	extensions?: { [key in string] : FileExplorerLeadingRuleSlot };
+	/**
+	* Exact directory basenames.
+	*/
+	directoryNames?: { [key in string] : FileExplorerLeadingRuleSlot };
+	/**
+	* Used for files only when no explicit rule from any namespace matched.
+	*/
+	fallbackFile?: FileExplorerLeadingRuleSlot;
+	/**
+	* Used for directories only when no explicit rule from any namespace matched.
+	*/
+	fallbackDirectory?: FileExplorerLeadingRuleSlot;
+};
 type FileExplorerTrailingSlot = {
 	/**
 	* Text shown in the trailing slot (for example, a badge glyph).
@@ -3970,6 +4019,14 @@ interface EditorAPI {
 	* Clear file explorer slot overrides for a namespace
 	*/
 	clearFileExplorerSlots(namespace: string): boolean;
+	/**
+	* Register path-independent leading-slot rules for a namespace.
+	*/
+	setFileExplorerLeadingSlotRules(namespace: string, rules: FileExplorerLeadingSlotRules): boolean;
+	/**
+	* Clear path-independent leading-slot rules for a namespace.
+	*/
+	clearFileExplorerLeadingSlotRules(namespace: string): boolean;
 	/**
 	* Add virtual text (inline text that doesn't exist in the buffer)
 	*/

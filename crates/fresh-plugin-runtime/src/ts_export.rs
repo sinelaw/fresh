@@ -30,8 +30,9 @@ use fresh_core::api::{
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
-    FileExplorerDecoration, FileExplorerLeadingSlot, FileExplorerSlotEntry, FileExplorerTooltip,
-    FileExplorerTrailingSlot,
+    FileExplorerDecoration, FileExplorerLeadingRuleColor, FileExplorerLeadingRuleColorSource,
+    FileExplorerLeadingRuleSlot, FileExplorerLeadingSlot, FileExplorerLeadingSlotRules,
+    FileExplorerSlotEntry, FileExplorerTooltip, FileExplorerTrailingSlot,
 };
 use fresh_core::text_property::InlineOverlay;
 
@@ -128,6 +129,12 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
         "FileExplorerSlotEntry" => Some(FileExplorerSlotEntry::decl(&cfg)),
         "FileExplorerLeadingSlot" => Some(FileExplorerLeadingSlot::decl(&cfg)),
+        "FileExplorerLeadingRuleColor" => Some(FileExplorerLeadingRuleColor::decl(&cfg)),
+        "FileExplorerLeadingRuleColorSource" => {
+            Some(FileExplorerLeadingRuleColorSource::decl(&cfg))
+        }
+        "FileExplorerLeadingRuleSlot" => Some(FileExplorerLeadingRuleSlot::decl(&cfg)),
+        "FileExplorerLeadingSlotRules" => Some(FileExplorerLeadingSlotRules::decl(&cfg)),
         "FileExplorerTrailingSlot" => Some(FileExplorerTrailingSlot::decl(&cfg)),
         "FileExplorerTooltip" => Some(FileExplorerTooltip::decl(&cfg)),
 
@@ -341,65 +348,69 @@ const REMOTE_INDICATOR_STATE_DECL: &str = r#"type RemoteIndicatorStatePayload =
 /// These are types referenced inside option structs or other complex types
 /// that aren't directly in method signatures.
 const DEPENDENCY_TYPES: &[&str] = &[
-    "TextPropertyEntry",               // Used in CreateVirtualBuffer*Options.entries
-    "TsCompositeLayoutConfig",         // Used in createCompositeBuffer opts
-    "TsCompositeSourceConfig",         // Used in createCompositeBuffer opts.sources
-    "TsCompositePaneStyle",            // Used in TsCompositeSourceConfig.style
-    "TsCompositeHunk",                 // Used in createCompositeBuffer opts.hunks
-    "TsSyntaxRegion",                  // Used by setSyntaxRegions
-    "TsCreateCompositeBufferOptions",  // Options for createCompositeBuffer
-    "ViewportInfo",                    // Used by plugins for viewport queries
-    "ScreenSize",                      // Used by editor.getScreenSize()
-    "KeyEventPayload",                 // Used by editor.getNextKey()
-    "SplitSnapshot",                   // Used by editor.listSplits()
-    "SplitCreated",                    // Resolved by editor.splitWindow()
-    "SplitWindowOptions",              // Options for editor.splitWindow()
-    "SplitAxis",                       // SplitWindowOptions.direction
-    "SplitPlacement",                  // SplitWindowOptions.place
-    "LineTarget",                      // Used by editor.setLineTargets()
-    "PaneDescription",                 // Part of WorkspaceDescription
-    "WorkspaceDescription",            // Returned by editor.describeWorkspace()
-    "LayoutHints",                     // Used by plugins for view transforms
-    "ViewTokenWire",                   // Used by plugins for view transforms
-    "ViewTokenWireKind",               // Used by ViewTokenWire
-    "TokenColor",                      // Used by ViewTokenStyle fg/bg
-    "ViewTokenStyle",                  // Used by ViewTokenWire
-    "PromptSuggestion",                // Used by plugins for prompt suggestions
-    "DirEntry",                        // Used by plugins for directory entries
-    "BufferInfo",                      // Used by listBuffers, getBufferInfo
-    "WindowInfo",                      // Used by listWindows
-    "RemoteBackendInfo",               // Used by WindowInfo.remote
-    "JsDiagnostic",                    // Used by getAllDiagnostics
-    "JsRange",                         // Used by JsDiagnostic
-    "JsPosition",                      // Used by JsRange
-    "ActionSpec",                      // Used by executeActions
-    "TsActionPopupAction",             // Used by ActionPopupOptions.actions
-    "ActionPopupOptions",              // Used by showActionPopup
-    "AddMenuItemOptions",              // Used by addMenuItem
-    "TsLspMenuItem",                   // Used by setLspMenuContributions
-    "FileExplorerDecoration",          // Used by setFileExplorerDecorations
-    "FileExplorerSlotEntry",           // Used by setFileExplorerSlots
-    "FileExplorerLeadingSlot",         // Used by FileExplorerSlotEntry
-    "FileExplorerTrailingSlot",        // Used by FileExplorerSlotEntry
-    "FileExplorerTooltip",             // Used by FileExplorerTrailingSlot
-    "FormatterPackConfig",             // Used by LanguagePackConfig.formatter
-    "ProcessLimitsPackConfig",         // Used by LspServerPackConfig.process_limits
-    "TerminalResult",                  // Used by createTerminal return type
+    "TextPropertyEntry",              // Used in CreateVirtualBuffer*Options.entries
+    "TsCompositeLayoutConfig",        // Used in createCompositeBuffer opts
+    "TsCompositeSourceConfig",        // Used in createCompositeBuffer opts.sources
+    "TsCompositePaneStyle",           // Used in TsCompositeSourceConfig.style
+    "TsCompositeHunk",                // Used in createCompositeBuffer opts.hunks
+    "TsSyntaxRegion",                 // Used by setSyntaxRegions
+    "TsCreateCompositeBufferOptions", // Options for createCompositeBuffer
+    "ViewportInfo",                   // Used by plugins for viewport queries
+    "ScreenSize",                     // Used by editor.getScreenSize()
+    "KeyEventPayload",                // Used by editor.getNextKey()
+    "SplitSnapshot",                  // Used by editor.listSplits()
+    "SplitCreated",                   // Resolved by editor.splitWindow()
+    "SplitWindowOptions",             // Options for editor.splitWindow()
+    "SplitAxis",                      // SplitWindowOptions.direction
+    "SplitPlacement",                 // SplitWindowOptions.place
+    "LineTarget",                     // Used by editor.setLineTargets()
+    "PaneDescription",                // Part of WorkspaceDescription
+    "WorkspaceDescription",           // Returned by editor.describeWorkspace()
+    "LayoutHints",                    // Used by plugins for view transforms
+    "ViewTokenWire",                  // Used by plugins for view transforms
+    "ViewTokenWireKind",              // Used by ViewTokenWire
+    "TokenColor",                     // Used by ViewTokenStyle fg/bg
+    "ViewTokenStyle",                 // Used by ViewTokenWire
+    "PromptSuggestion",               // Used by plugins for prompt suggestions
+    "DirEntry",                       // Used by plugins for directory entries
+    "BufferInfo",                     // Used by listBuffers, getBufferInfo
+    "WindowInfo",                     // Used by listWindows
+    "RemoteBackendInfo",              // Used by WindowInfo.remote
+    "JsDiagnostic",                   // Used by getAllDiagnostics
+    "JsRange",                        // Used by JsDiagnostic
+    "JsPosition",                     // Used by JsRange
+    "ActionSpec",                     // Used by executeActions
+    "TsActionPopupAction",            // Used by ActionPopupOptions.actions
+    "ActionPopupOptions",             // Used by showActionPopup
+    "AddMenuItemOptions",             // Used by addMenuItem
+    "TsLspMenuItem",                  // Used by setLspMenuContributions
+    "FileExplorerDecoration",         // Used by setFileExplorerDecorations
+    "FileExplorerSlotEntry",          // Used by setFileExplorerSlots
+    "FileExplorerLeadingSlot",        // Used by FileExplorerSlotEntry
+    "FileExplorerLeadingRuleColor",   // Used by FileExplorerLeadingRuleSlot
+    "FileExplorerLeadingRuleColorSource", // Used by FileExplorerLeadingRuleColor
+    "FileExplorerLeadingRuleSlot",    // Used by FileExplorerLeadingSlotRules
+    "FileExplorerLeadingSlotRules",   // Used by setFileExplorerLeadingSlotRules
+    "FileExplorerTrailingSlot",       // Used by FileExplorerSlotEntry
+    "FileExplorerTooltip",            // Used by FileExplorerTrailingSlot
+    "FormatterPackConfig",            // Used by LanguagePackConfig.formatter
+    "ProcessLimitsPackConfig",        // Used by LspServerPackConfig.process_limits
+    "TerminalResult",                 // Used by createTerminal return type
     "CreateWindowWithTerminalOptions", // Used by createWindowWithTerminal opts
-    "SessionWithTerminalResult",       // Used by createWindowWithTerminal return type
-    "CreatePreparingWindowOptions",    // Used by createPreparingWindow opts
-    "PreparingWindowResult",           // Used by createPreparingWindow return type
-    "CreateTerminalOptions",           // Used by createTerminal opts parameter
-    "CursorInfo",                      // Used by getPrimaryCursor, getAllCursors
-    "OverlayOptions",                  // Used by TextPropertyEntry.style and InlineOverlay
-    "OverlayColorSpec",                // Used by OverlayOptions.fg/bg
-    "InlineOverlay",                   // Used by TextPropertyEntry.inlineOverlays
-    "OffsetUnit",                      // Used by InlineOverlay.unit
-    "StyledSegment",                   // Used by TextPropertyEntry.segments
-    "GrammarInfoSnapshot",             // Used by listGrammars
-    "AnimationRect",                   // Used by animateArea
-    "PluginAnimationEdge",             // Used by PluginAnimationKind
-    "PluginAnimationKind",             // Used by animateArea/animateVirtualBuffer
+    "SessionWithTerminalResult",      // Used by createWindowWithTerminal return type
+    "CreatePreparingWindowOptions",   // Used by createPreparingWindow opts
+    "PreparingWindowResult",          // Used by createPreparingWindow return type
+    "CreateTerminalOptions",          // Used by createTerminal opts parameter
+    "CursorInfo",                     // Used by getPrimaryCursor, getAllCursors
+    "OverlayOptions",                 // Used by TextPropertyEntry.style and InlineOverlay
+    "OverlayColorSpec",               // Used by OverlayOptions.fg/bg
+    "InlineOverlay",                  // Used by TextPropertyEntry.inlineOverlays
+    "OffsetUnit",                     // Used by InlineOverlay.unit
+    "StyledSegment",                  // Used by TextPropertyEntry.segments
+    "GrammarInfoSnapshot",            // Used by listGrammars
+    "AnimationRect",                  // Used by animateArea
+    "PluginAnimationEdge",            // Used by PluginAnimationKind
+    "PluginAnimationKind",            // Used by animateArea/animateVirtualBuffer
     // Widget library types (see docs/internal/plugin-widget-library-design.md)
     "HintEntry",          // Used by WidgetSpec::HintBar
     "ButtonKind",         // Used by WidgetSpec::Button.intent
@@ -1517,6 +1528,8 @@ mod tests {
             "clearFileExplorerDecorations",
             "setFileExplorerSlots",
             "clearFileExplorerSlots",
+            "setFileExplorerLeadingSlotRules",
+            "clearFileExplorerLeadingSlotRules",
             "addVirtualText",
             "removeVirtualText",
             "removeVirtualTextsByPrefix",

@@ -68,6 +68,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
+* **Nerd Font file icons in the File Explorer** - enable `editor.nerd_font_icons` to activate the bundled `file_icons` plugin, with distinct icons for common programming languages, config files, media, archives, and folders. A new path-independent leading-slot rule API lets other icon packs register filename/extension/directory mappings without scanning the workspace (#554, #2861, #3058).
 * **Prettier Markdown Compose / Preview** - headings, block quotes, and horizontal rules get nice styling and conceal the literal `#`/`>`/`---`, lists get bullets and spacing, fenced code blocks are framed with side rails, and the default preview width is a readable centered measure instead of the full pane (#2967, requested by @mommysgoodpuppy).
 * **Review Diff - improved UX** - no soft wrap, side panels (file list, comments) can be toggled (use F and C keys), and the sidebar nests files by directory like the File Explorer instead of repeating the full path on every row.
     * **Review Diff performance improved** - a review spanning a hundred commits now lays out completely and stays responsive: cursor movement, hunk jumps, and flipping between the unified and side-by-side views no longer lag behind a stale frame. Further performance improvements are in the works and will come in future releases.

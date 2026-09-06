@@ -189,6 +189,7 @@ impl Editor {
             is_hidden,
             decorations: &self.active_window().file_explorer_decoration_cache,
             slot_overrides: &self.active_window().file_explorer_slot_override_cache,
+            leading_rules: &self.file_explorer_leading_rule_cache,
             theme: &theme,
             neutral_fg,
         };

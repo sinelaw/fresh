@@ -794,6 +794,16 @@ pub struct Editor {
     // `file_explorer_decoration_cache` all moved onto `Window`. The
     // file-explorer view itself was already per-window since Step 0b;
     // these chrome flags follow.
+    /// Path-independent leading-slot rules are editor-global: unlike exact
+    /// paths, a filename/extension policy applies to every current and future
+    /// local or remote window.
+    pub(crate) file_explorer_leading_rules:
+        HashMap<String, fresh_core::file_explorer::FileExplorerLeadingSlotRules>,
+
+    /// Immutable normalized indexes rebuilt when a rule namespace changes.
+    pub(crate) file_explorer_leading_rule_cache:
+        crate::view::file_tree::FileExplorerLeadingRuleCache,
+
     /// File explorer clipboard for cut/copy/paste of files and directories
     // `file_explorer_clipboard` moved onto `Window`.
 
