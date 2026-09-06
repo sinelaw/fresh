@@ -239,6 +239,44 @@ impl Overlay {
         overlay
     }
 
+    /// Build many namespaced overlays at once, creating every marker they
+    /// need in a single bulk tree build.
+    ///
+    /// Identical in result to [`with_namespace`] per spec, in order — the
+    /// markers get the same ids and the same right gravity. Replacing the
+    /// contents of a large decorated buffer installs one overlay per row and
+    /// three markers per overlay, and doing that a marker at a time is N
+    /// independent descents through a tree that is growing under them.
+    ///
+    /// [`with_namespace`]: Overlay::with_namespace
+    pub fn many_with_namespace(
+        marker_list: &mut MarkerList,
+        specs: Vec<(Range<usize>, OverlayFace)>,
+        namespace: OverlayNamespace,
+    ) -> Vec<Self> {
+        let ranges: Vec<Range<usize>> = specs.iter().map(|(r, _)| r.clone()).collect();
+        let markers = marker_list.create_overlay_markers_bulk(&ranges);
+        specs
+            .into_iter()
+            .zip(markers)
+            .map(
+                |((_, face), (start_marker, end_marker, span_marker))| Self {
+                    handle: OverlayHandle::new(),
+                    namespace: Some(namespace.clone()),
+                    start_marker,
+                    end_marker,
+                    span_marker,
+                    face,
+                    priority: 0,
+                    message: None,
+                    extend_to_line_end: false,
+                    url: None,
+                    theme_key: None,
+                },
+            )
+            .collect()
+    }
+
     /// Like [`with_namespace`], but the end marker uses left gravity so the
     /// overlay does not grow when text is inserted immediately after it.
     ///

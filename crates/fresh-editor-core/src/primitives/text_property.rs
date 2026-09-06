@@ -41,6 +41,16 @@ pub struct TextPropertyManager {
     /// That is not a hot path — `from_entries` assembles a `Vec` and seals
     /// it once.
     properties: Arc<[TextProperty]>,
+    /// Widest `end - start` in the set.
+    ///
+    /// Properties are sorted by start but may overlap, so a lookup at a
+    /// byte cannot stop at the first earlier property that misses it — an
+    /// earlier one may still be long enough to cover it. Knowing the
+    /// widest bounds how far back that walk has to go: nothing starting
+    /// before `pos - max_span` can reach `pos`. Without it the walk is the
+    /// whole set, which on a plugin-composed buffer is one property per
+    /// row.
+    max_span: usize,
 }
 
 impl TextPropertyManager {
@@ -48,7 +58,33 @@ impl TextPropertyManager {
     pub fn new() -> Self {
         Self {
             properties: Arc::from(Vec::new()),
+            max_span: 0,
         }
+    }
+
+    /// Seal `properties` (already sorted by start) as the new set.
+    /// The single place `max_span` is derived, so it cannot drift.
+    fn seal(&mut self, properties: Vec<TextProperty>) {
+        self.max_span = properties
+            .iter()
+            .map(|p| p.end.saturating_sub(p.start))
+            .max()
+            .unwrap_or(0);
+        self.properties = Arc::from(properties);
+    }
+
+    /// Index of the first property starting after `pos`. Everything that
+    /// can contain `pos` lies before it.
+    fn first_after(&self, pos: usize) -> usize {
+        self.properties.partition_point(|p| p.start <= pos)
+    }
+
+    /// The lowest index a property containing a byte at or after `from`
+    /// can have. Paired with [`Self::first_after`] this bounds a lookup to
+    /// the properties that can actually reach it.
+    fn lowest_reaching(&self, from: usize) -> usize {
+        let earliest = from.saturating_sub(self.max_span);
+        self.properties.partition_point(|p| p.start < earliest)
     }
 
     /// Add a text property
@@ -59,17 +95,27 @@ impl TextPropertyManager {
             .binary_search_by_key(&property.start, |p| p.start)
             .unwrap_or_else(|e| e);
         properties.insert(pos, property);
-        self.properties = Arc::from(properties);
+        self.seal(properties);
     }
 
     /// Get all properties at a specific byte position
     pub fn get_at(&self, pos: usize) -> Vec<&TextProperty> {
-        self.properties.iter().filter(|p| p.contains(pos)).collect()
+        self.properties[self.lowest_reaching(pos)..self.first_after(pos)]
+            .iter()
+            .filter(|p| p.contains(pos))
+            .collect()
     }
 
     /// Get all properties overlapping a range
     pub fn get_overlapping(&self, range: &Range<usize>) -> Vec<&TextProperty> {
-        self.properties
+        // An empty range is not short-circuited: `overlaps` reports a
+        // property straddling the point as overlapping it, and callers
+        // already see that answer. The window below reproduces it —
+        // `end - 1` keeps properties starting at `end` out, which is what
+        // `start < range.end` would have rejected anyway.
+        let lo = self.lowest_reaching(range.start);
+        let hi = self.first_after(range.end.saturating_sub(1));
+        self.properties[lo..hi]
             .iter()
             .filter(|p| p.overlaps(range))
             .collect()
@@ -77,14 +123,14 @@ impl TextPropertyManager {
 
     /// Clear all properties
     pub fn clear(&mut self) {
-        self.properties = Arc::from(Vec::new());
+        self.seal(Vec::new());
     }
 
     /// Remove all properties in a range
     pub fn remove_in_range(&mut self, range: &Range<usize>) {
         let mut properties = self.properties.to_vec();
         properties.retain(|p| !p.overlaps(range) && !range.contains(&p.start));
-        self.properties = Arc::from(properties);
+        self.seal(properties);
     }
 
     /// Get all properties
@@ -106,7 +152,7 @@ impl TextPropertyManager {
     pub fn set_all(&mut self, mut properties: Vec<TextProperty>) {
         // Ensure sorted by start position
         properties.sort_by_key(|p| p.start);
-        self.properties = Arc::from(properties);
+        self.seal(properties);
     }
 
     /// The property set, for a reader that wants to hold on to it. Cloning
@@ -177,9 +223,8 @@ impl TextPropertyManager {
         // Entries are walked in order and each property starts at its
         // entry's offset, so this is already sorted by `start`; sealing it
         // here is the one place the set is built.
-        let manager = Self {
-            properties: Arc::from(properties),
-        };
+        let mut manager = Self::new();
+        manager.seal(properties);
         (text, manager, collected_overlays)
     }
 }
@@ -359,5 +404,67 @@ mod tests {
         let all = manager.all();
         assert_eq!(all[0].get("id"), Some(&json!("first")));
         assert_eq!(all[1].get("id"), Some(&json!("third")));
+    }
+
+    /// The bounded lookups must answer exactly what a scan of the whole
+    /// set answers. The bound is `max_span`, so the shapes that could
+    /// break it are the ones where an early property is far wider than
+    /// its neighbours and still reaches a much later byte.
+    #[test]
+    fn bounded_lookup_matches_a_full_scan() {
+        let prop = |start: usize, end: usize, id: &str| {
+            let mut p = TextProperty::new(start, end);
+            p.properties.insert("id".to_string(), json!(id));
+            p
+        };
+        // Rows, plus a wide property covering all of them, plus one
+        // nested inside a row — overlapping, nested and adjacent at once.
+        let mut props = vec![prop(0, 400, "wide")];
+        for row in 0..40 {
+            props.push(prop(row * 10, row * 10 + 10, "row"));
+        }
+        props.push(prop(205, 207, "inner"));
+        props.push(prop(600, 610, "far"));
+
+        let mut manager = TextPropertyManager::new();
+        manager.set_all(props.clone());
+
+        let scan_at = |pos: usize| {
+            let mut v: Vec<&str> = props
+                .iter()
+                .filter(|p| p.contains(pos))
+                .filter_map(|p| p.get("id").and_then(|v| v.as_str()))
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        for pos in 0..640 {
+            let mut got: Vec<&str> = manager
+                .get_at(pos)
+                .into_iter()
+                .filter_map(|p| p.get("id").and_then(|v| v.as_str()))
+                .collect();
+            got.sort_unstable();
+            assert_eq!(got, scan_at(pos), "get_at({pos})");
+        }
+
+        for start in (0..640).step_by(7) {
+            for len in [0usize, 1, 5, 33] {
+                let range = start..start + len;
+                let mut want: Vec<&str> = props
+                    .iter()
+                    .filter(|p| p.overlaps(&range))
+                    .filter_map(|p| p.get("id").and_then(|v| v.as_str()))
+                    .collect();
+                let mut got: Vec<&str> = manager
+                    .get_overlapping(&range)
+                    .into_iter()
+                    .filter_map(|p| p.get("id").and_then(|v| v.as_str()))
+                    .collect();
+                want.sort_unstable();
+                got.sort_unstable();
+                assert_eq!(got, want, "get_overlapping({start}..{})", start + len);
+            }
+        }
     }
 }
