@@ -1,0 +1,39 @@
+{
+  "theme": "builtin://word6",
+  "check_for_updates": false,
+  "editor": {
+    "animations": true
+  },
+  "file_explorer": {
+    "width": "22"
+  },
+  "plugins": {
+    "dashboard": {
+      "enabled": false
+    },
+    "git_heatmap": {
+      "enabled": false
+    },
+    "orchestrator": {
+      "enabled": false
+    },
+    "vi_mode": {
+      "enabled": false
+    },
+    "markdown_compose": {
+      "enabled": false
+    }
+  },
+  "keybindings": [
+    {
+      "keys": [
+        {
+          "key": "F9",
+          "modifiers": []
+        }
+      ],
+      "action": "trigger_wave_animation",
+      "when": "normal"
+    }
+  ]
+}

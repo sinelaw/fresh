@@ -26,22 +26,24 @@
 //     WEB_THEME_FURNITURE and built by renderFurniture(). shell.html ships an
 //     empty #device, so a theme's title bars / readouts / knobs live with the
 //     theme instead of in the page.
-const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact", "winamp"];
-const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact", winamp: "Winamp Classic" };
+const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact", "winamp", "word"];
+const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact", winamp: "Winamp Classic", word: "Word" };
 const WEB_THEME_DESC = {
   cosmos: "Wallpaper, glass & hardware bezel",
   macos: "Native macOS — light & vibrant",
   "macos-dark": "Native macOS — dark & vibrant",
   compact: "Dense, chrome-light IDE",
   winamp: "Brushed metal, bevels & LCD green",
+  word: "Grey bevels, teal desktop & a blue caption",
 };
 // The macOS variants share one structural stylesheet (title bar, traffic
 // lights, system font, control shapes); only their colour tokens differ.
 const MACOS_THEMES = ["macos", "macos-dark"];
 // Themes built on the COSMOS shell layout: the grid is inset inside the #device
 // bezel and the dock floats beside it as its own panel (Cosmos dresses that as
-// hardware, Winamp as a stack of skin windows). macOS / Compact run full-bleed.
-const SHELL_THEMES = ["cosmos", "winamp"];
+// hardware, Winamp as a stack of skin windows, Word as one application window).
+// macOS / Compact run full-bleed.
+const SHELL_THEMES = ["cosmos", "winamp", "word"];
 function shellTheme() { return SHELL_THEMES.includes(webTheme); }
 // The inline custom properties applyTheme() (js/20-cells.js) owns. applyWebTheme
 // must NOT clear these when a theme leaves them unset — applyTheme just re-wrote
@@ -49,7 +51,7 @@ function shellTheme() { return SHELL_THEMES.includes(webTheme); }
 const THEME_KEYS = ["--bg", "--fg", "--accent", "--muted", "--bg2", "--bg3",
   "--menuhi", "--border", "--status-bg", "--status-fg", "--on-accent", "--on-sel", "--shell"];
 // Density multiplier per theme (layered under user zoom in measureMetrics).
-const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, winamp: 1 };
+const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, winamp: 1, word: 1 };
 
 // Per-theme chrome palettes. Cosmos = {} (identity — inherit the TUI theme).
 // The macOS variants are fixed "System" palettes (light / dark) built from the
@@ -145,6 +147,39 @@ const WEB_THEME_VARS = {
     // SHELL reads these live (js/10-core.js), so #device + the grid re-fit.
     "--bezel-side": "17px", "--bezel-top": "42px", "--bezel-bot": "44px",
   },
+  // Word — Microsoft Word 6.0 on Windows 3.1. The system palette is four
+  // colours and no more: #C0C0C0 face, #808080 shadow, white, black, with
+  // #000080 for selection and #0000C0 for the caption. Windows 3.1 has no
+  // "button light" tone (that arrived with Win95), so every raised edge is
+  // white against shadow or black, and every corner is square. The shadow is
+  // a hard offset with no blur, because 1993 could not afford one.
+  //
+  // `--bg` is left alone as always, so the buffer keeps the TUI theme's
+  // surface. Pair it with the `word6` built-in for the full effect: a white
+  // page under a grey window.
+  word: {
+    "--fg": "#000000", "--muted": "#808080",
+    "--bg2": "#ffffff", "--bg3": "#c0c0c0",
+    "--menuhi": "#000080", "--border": "#808080",
+    "--status-bg": "#c0c0c0", "--status-fg": "#000000",
+    "--shell": "#c0c0c0",
+    "--accent": "#000080", "--ui-accent": "#000080",
+    "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#ffffff",
+    "--ok": "#008000",
+    "--surface": "#c0c0c0", "--surface-2": "#ffffff",
+    "--hairline": "rgba(0,0,0,.30)", "--hairline-strong": "rgba(0,0,0,.55)",
+    "--hover": "rgba(0,0,128,.14)",
+    "--sel": "#000080", "--sel-ring": "none",
+    "--shadow": "2px 2px 0 rgba(0,0,0,.45), 0 0 0 1px #000000",
+    "--r-sm": "0px", "--r-md": "0px", "--r-lg": "0px",
+    // Caption + menu bar + one toolbar row + ruler above the grid; a thin frame
+    // elsewhere. The menu-bar band is 22px between two black rules (4+20 caption,
+    // 1 rule, 22 band, 1 rule, 28 toolbar, 16 ruler = 92); the theme's stylesheet
+    // translates fresh's real .region.menubar onto it, and reads this value back
+    // to work out how far. No status bar: the window is taller than the screen,
+    // so the document runs off the bottom and there is visibly more to scroll to.
+    "--bezel-side": "9px", "--bezel-top": "92px", "--bezel-bot": "9px",
+  },
 };
 // ---- theme FURNITURE (declarative bezel decoration) ------------------------
 // Purely decorative DOM a theme wants inside #device — title bars, readouts,
@@ -154,10 +189,18 @@ const WEB_THEME_VARS = {
 // #device and each theme declares what lives in it, so no theme's chrome is
 // baked into the page.
 //
-// A node is [ "tag.class.class", ...children ], where a child is another node
-// or a string (text). "×N" after the selector repeats the node (bar arrays).
-// Everything is decoration: the host is pointer-transparent, aria-hidden, and
-// nothing here may affect the cell grid's geometry.
+// A node is [ "tag.class.class", ...children ], where a child is another node,
+// a string (text), or a plain object of attributes. "×N" after the selector
+// repeats the node (bar arrays).
+//
+// Furniture is decoration by default: the host is pointer-transparent and
+// aria-hidden. A node whose attributes carry an `action` is the exception --
+// it becomes a real control that sends that editor action, the host stops
+// being inert, and the node needs `pointer-events:auto` from the theme's
+// stylesheet. Action names are the editor's own (`save`, `undo`,
+// `command_palette`); they take the same path as the desktop chrome's menus,
+// so a toolbar button is not a reimplementation of the command, just another
+// way to ask for it. Nothing here may affect the cell grid's geometry.
 const WEB_THEME_FURNITURE = {
   cosmos: [
     ["div.dv-screen"],
@@ -178,6 +221,39 @@ const WEB_THEME_FURNITURE = {
       ["span.wa-wbtns", ["i.wa-min"], ["i.wa-shade"], ["i.wa-close"]]],
     ["div.wa-edge.wa-l"], ["div.wa-edge.wa-r"], ["div.wa-foot", ["i.wa-rail"]],
   ],
+  // Word — an application window: caption, menu bar, one toolbar row, a ruler.
+  // The toolbar plates carry abstract marks rather than Word's own icons, which
+  // are Microsoft artwork and not ours to ship. The menu band is a bare white
+  // strip because what fills it is not furniture: the theme's stylesheet lifts
+  // fresh's own .region.menubar out of the grid onto it, so the menus stay the
+  // real ones. The band still has to exist so the bar has something to sit on
+  // that reads as a menu bar even where the bar is shorter than the band.
+  word: [
+    ["div.dv-screen"],
+    ["div.wd-title", ["i.wd-sysbox"],
+      ["span.wd-title-text", "Microsoft Word - FRESH.DOC"]],
+    ["div.wd-menuband"],
+    ["div.wd-toolbar",
+      ["span.wd-grp",
+        ["i.wd-btn.wd-new", { action: "new", title: "New" }],
+        ["i.wd-btn.wd-open", { action: "open", title: "Open" }],
+        ["i.wd-btn.wd-save", { action: "save", title: "Save" }]],
+      ["span.wd-grp",
+        ["i.wd-btn.wd-cut", { action: "cut", title: "Cut" }],
+        ["i.wd-btn.wd-copy", { action: "copy", title: "Copy" }],
+        ["i.wd-btn.wd-paste", { action: "paste", title: "Paste" }]],
+      ["span.wd-grp",
+        ["i.wd-btn.wd-undo", { action: "undo", title: "Undo" }],
+        ["i.wd-btn.wd-redo", { action: "redo", title: "Redo" }]],
+      ["span.wd-grp",
+        ["i.wd-btn.wd-search", { action: "search", title: "Find" }],
+        ["i.wd-btn.wd-palette", { action: "command_palette", title: "Command Palette" }],
+        ["i.wd-btn.wd-explorer", { action: "toggle_file_explorer", title: "File Explorer" }],
+        ["i.wd-btn.wd-settings", { action: "open_settings", title: "Settings" }]],
+      ["span.wd-grow"],
+      ["span.wd-zoom", "100%"], ["i.wd-arrow"]],
+    ["div.wd-ruler", ["i.wd-rmark"]],
+  ],
 };
 // Build a theme's furniture into #device. Called from applyWebTheme when the
 // theme changes (the tree is static per theme, so it is not rebuilt per frame).
@@ -187,6 +263,7 @@ function renderFurniture() {
   if (host.dataset.theme === webTheme) return;
   host.dataset.theme = webTheme;
   host.textContent = "";
+  let interactive = false;
   const build = (node, parent) => {
     let [sel, ...kids] = node;
     let times = 1;
@@ -196,11 +273,39 @@ function renderFurniture() {
     for (let i = 0; i < times; i++) {
       const el = document.createElement(parts[0] || "div");
       if (parts.length > 1) el.className = parts.slice(1).join(" ");
-      for (const k of kids) typeof k === "string" ? (el.textContent = k) : build(k, el);
+      for (const k of kids) {
+        if (typeof k === "string") el.textContent = k;
+        else if (Array.isArray(k)) build(k, el);
+        else {
+          // attributes: `action` promotes the node to a real control
+          if (k.action) {
+            el.dataset.action = k.action;
+            el.setAttribute("role", "button");
+            el.tabIndex = 0;
+            interactive = true;
+          }
+          if (k.title) { el.title = k.title; el.setAttribute("aria-label", k.title); }
+        }
+      }
       parent.appendChild(el);
     }
   };
   for (const node of (WEB_THEME_FURNITURE[webTheme] || [])) build(node, host);
+  // Decoration is inert; a theme with controls in it must not be. Removed
+  // rather than set to "false" -- aria-hidden="false" is not reliably honoured.
+  if (interactive) host.removeAttribute("aria-hidden");
+  else host.setAttribute("aria-hidden", "true");
+  // mousedown, not click: the grid takes focus on mousedown, and a click
+  // handler would fire after focus had already moved off the button.
+  for (const el of host.querySelectorAll("[data-action]")) {
+    el.onmousedown = e => { e.preventDefault(); e.stopPropagation();
+                            sendAction(el.dataset.action); };
+    el.onkeydown = e => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault(); sendAction(el.dataset.action);
+      }
+    };
+  }
 }
 
 // Union of every override key, for stale-clearing on theme switch.
