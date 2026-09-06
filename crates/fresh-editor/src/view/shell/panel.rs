@@ -149,6 +149,16 @@ pub struct Interior {
     /// measured the page. `None` for every panel whose lists window
     /// themselves.
     pub page: Option<std::rc::Rc<fresh_ui::behavior::Anchor>>,
+    /// Where the reader is on a page that asked for `focusFollowsCursor`:
+    /// `(row, column)` in the page's own content.
+    ///
+    /// **The description draws the caret for it**, because a page's reader has
+    /// no other way to be seen: the pane shows this tree rather than the
+    /// mirror buffer, so the mirror's cursor is a *report* (the status bar's
+    /// `Ln`/`Col`) and not a thing on screen. A zero-width marker at these
+    /// coordinates inside the scrolled content is the caret, and it travels
+    /// with the page the way every other row does.
+    pub reading: Option<(u32, u16)>,
     pub hovered_key: Option<String>,
     pub hovered_item_key: String,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
@@ -969,6 +979,7 @@ mod tests {
             keyboard: true,
 
             page: None,
+            reading: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1205,6 +1216,7 @@ mod tests {
             keyboard: true,
 
             page: None,
+            reading: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1257,6 +1269,7 @@ mod tests {
             keyboard: true,
 
             page: None,
+            reading: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1322,6 +1335,7 @@ mod tests {
             keyboard: true,
 
             page: None,
+            reading: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1376,6 +1390,7 @@ mod tests {
             keyboard: true,
 
             page: None,
+            reading: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),

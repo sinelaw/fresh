@@ -1798,10 +1798,32 @@ async function openWelcome(force: boolean): Promise<void> {
     // first tabbable widget on every repaint — so clearing focus did
     // not clear it, and leaving the finder parked focus on the startup
     // toggle, off screen, where the next Space switched the page off.
-    // A page: one host-owned window over the whole document rather than
-    // a list that windows itself. `scrollToWidget` and the movement keys
-    // are commands on that window.
-    panel = new WidgetPanel(bufferId, undefined, { autoFocusFirst: false, page: true });
+    // A page: one host-owned window over the whole document rather than a
+    // list that windows itself. `scrollToWidget` and the movement keys are
+    // commands on that window.
+    //
+    // The reading row and the focus ring are one thing on it. It is a
+    // document you read, so two independent "where am I" markers is one too
+    // many: Tab used to move focus while the reader stayed three cards above,
+    // and an arrow key used to move the page while Enter still fired whatever
+    // the last Tab had left focused — off screen, unasked for. The host
+    // maintains both directions now (`WidgetPanelOptions.focusFollowsCursor`),
+    // which is also what makes "nothing focused" the common case rather than a
+    // corner: most rows of this page are prose.
+    panel = new WidgetPanel(bufferId, undefined, {
+      autoFocusFirst: false,
+      page: true,
+      focusFollowsCursor: true,
+    });
+    // Re-assert the readout *after* the panel exists. `createVirtualBuffer`
+    // took `showCursors: true` and mounting a widget panel then cleared it —
+    // panel buffers default to none — so the page ran with movement keys
+    // enabled and nothing anywhere to say where the reader was. The pane draws
+    // the tree rather than this buffer, so what this turns back on is the
+    // *report*: the status bar's `Ln`/`Col`, which the host keeps on the row
+    // the reader is on. This is the order `setBufferShowCursors`'s own docs
+    // prescribe.
+    editor.setBufferShowCursors(bufferId, true);
     applyComposeWidth();
     probeThemes();
     probeWorkspaces();
@@ -2061,12 +2083,12 @@ function finderOwnsVerticalKeys(): boolean {
  *  mean something the host cannot know: with the finder focused they
  *  walk its *hits*, which are plugin state, not text in the field. */
 registerHandler("welcome_up", () => {
-  if (finderFocused()) moveFinder(-1);
-  else dispatch(widgetKey("Up"));
+  if (finderOwnsVerticalKeys() && moveFinder(-1)) return;
+  dispatch(widgetKey("Up"));
 });
 registerHandler("welcome_down", () => {
-  if (finderFocused()) moveFinder(1);
-  else dispatch(widgetKey("Down"));
+  if (finderOwnsVerticalKeys() && moveFinder(1)) return;
+  dispatch(widgetKey("Down"));
 });
 
 

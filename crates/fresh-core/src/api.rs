@@ -1937,13 +1937,63 @@ pub struct WidgetPanelOptions {
     #[serde(default)]
     #[ts(optional)]
     pub page: Option<bool>,
+    /// Keep this panel's focus and the reader's place on the same thing.
+    ///
+    /// For a [`page`](WidgetPanelOptions::page) — a document laid out by
+    /// widgets, in one window the host scrolls — focus and where the reader is
+    /// are two answers
+    /// to one question: what am I looking at. Left independent they contradict
+    /// each other, and the contradiction is not cosmetic: Tab moves focus while
+    /// the page stays three cards above, and a movement key moves the page
+    /// while Enter still fires whatever the last Tab left focused — off screen,
+    /// unasked for.
+    ///
+    /// Saying so makes the host maintain both directions. The movement keys
+    /// (`Up`/`Down`, the page keys, `Home`/`End`) move a *reading row* through
+    /// the page's content instead of scrolling the window, and focus goes to
+    /// the widget on the row it lands on — or to nothing, when the row carries
+    /// none. A focus move (Tab, Shift+Tab, a plugin's `setFocusKey`) puts the
+    /// reader on the focused widget's own region, and the window follows
+    /// minimally, so a Tab between two controls of one card does not move the
+    /// page under them.
+    ///
+    /// "Nothing focused" is a state this option produces constantly — most rows
+    /// of a page are prose — so a panel declaring it almost certainly wants
+    /// `autoFocusFirst: false` too, and the Tab ring seeds from the reader
+    /// rather than from the top of the document.
+    ///
+    /// `None` reads as `false`: every panel written before this field keeps
+    /// focus and the window independent.
+    ///
+    /// It makes `autoFocusFirst` false whatever the panel said — see
+    /// [`WidgetPanelOptions::auto_focus_first`]. The pair is not a
+    /// setting with two useful values; it is one broken combination, so
+    /// it is not representable rather than advised against.
+    #[serde(default)]
+    #[ts(optional)]
+    pub focus_follows_cursor: Option<bool>,
 }
 
 impl WidgetPanelOptions {
     /// Whether to seed focus onto the first tabbable when the focus key
     /// names none. Unspecified is the historical `true`.
+    ///
+    /// **Never true alongside `focusFollowsCursor`**, whatever the panel
+    /// asked for. Seeding re-runs on every repaint, and on a panel whose
+    /// caret follows focus that means every repaint drags the reader's
+    /// caret to the first control on the page — a plugin repainting on a
+    /// timer, or when `git status` lands, would move the cursor out from
+    /// under them. Stating it in prose and hoping was not enough: the
+    /// default for `autoFocusFirst` is `true`, so the broken pair was
+    /// what a plugin got by *not* thinking about it.
     pub fn auto_focus_first(&self) -> bool {
-        self.auto_focus_first.unwrap_or(true)
+        !self.focus_follows_cursor() && self.auto_focus_first.unwrap_or(true)
+    }
+
+    /// Whether the panel's focus and its buffer's caret track each
+    /// other. Unspecified is the historical `false`.
+    pub fn focus_follows_cursor(&self) -> bool {
+        self.focus_follows_cursor.unwrap_or(false)
     }
 
     /// Whether the panel scrolls as one page. Unspecified is `false`.

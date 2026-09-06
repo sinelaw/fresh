@@ -548,6 +548,9 @@ impl Editor {
                 // The query input holds the keyboard until a control is
                 // given it.
                 false,
+                // Not a page, and with no reading row to keep focus in step
+                // with: a toolbar is one row.
+                false,
                 false,
             );
         }
@@ -603,6 +606,8 @@ impl Editor {
                 .unwrap_or_default(),
             keyboard: true,
             page: None,
+            // Not a page, so nothing reads a page.
+            reading: None,
             hovered_key: Some(hovered).filter(|k| !k.is_empty()),
             hovered_item_key: hovered_item,
             hovered_popup_row: String::new(),

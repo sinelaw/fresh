@@ -657,6 +657,24 @@ pub fn widget_key_of(k: &fresh_ui::Key) -> Option<&str> {
     }
 }
 
+/// The widget an element's key names, whichever of the two namespaces it is
+/// in: the focus wrapper's ([`widget_focus_key`]) or the node's
+/// ([`widget_node_key`]).
+///
+/// **A widget is more than one element, and both halves answer for it.** The
+/// wrapper is what the ring walks; the node is what layout placed, and a
+/// widget the plugin emitted per row — a card several rows tall — is several
+/// nodes under one key with a wrapper on the row that takes focus. A caller
+/// asking "where is this widget" wants all of them.
+pub fn widget_key_of_any(k: &fresh_ui::Key) -> Option<&str> {
+    match k {
+        fresh_ui::Key::Str(s) => s
+            .strip_prefix("widget_focus:")
+            .or_else(|| s.strip_prefix("widget:")),
+        _ => None,
+    }
+}
+
 fn on_the_ring(spec: &WidgetSpec, cx: &Ctx<'_>, n: Node<UiMsg>) -> Node<UiMsg> {
     if !cx.slot.widgets_on_ring() {
         return n;
@@ -6991,6 +7009,7 @@ mod tests {
             keyboard: true,
 
             page: None,
+            reading: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),

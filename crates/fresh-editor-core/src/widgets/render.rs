@@ -8328,6 +8328,7 @@ pub mod tests {
             auto_focus_first: true,
 
             page: false,
+            focus_follows_cursor: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
         }

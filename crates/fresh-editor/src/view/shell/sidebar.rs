@@ -919,6 +919,7 @@ mod tests {
             keyboard: focused,
 
             page: None,
+            reading: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),

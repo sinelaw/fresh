@@ -1429,6 +1429,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     // (through `Ctx::keyboard`), and the innermost mark wins.
     let rests_here = active && !super::widgets::marks(&i.spec, &i.focus_key);
     let page = i.page.clone();
+    let reading = i.reading;
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         // **The whole pane, not `widget_panel_width`'s.** The runtime lays a
         // mounted spec two columns short — "reserve 2 cols for gutter /
@@ -1477,11 +1478,49 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
             // is, inside one viewport the pane sizes; the wheel, the bar and
             // the anchor's commands move the window, and nothing inside it
             // windows itself.
-            Some(anchor) => fresh_ui::viewport(widgets)
-                .scrollbar()
-                .anchor_to(anchor.clone())
-                .w(Sizing::Cells(inner_w))
-                .h(Sizing::Flex(1)),
+            Some(anchor) => fresh_ui::viewport(
+                match reading {
+                    // **A page's reader is drawn by the description**, because
+                    // there is nothing else on screen that could: the pane
+                    // shows this tree rather than the mirror buffer, so the
+                    // mirror's cursor is a report and not a caret. A
+                    // zero-width marker at the reader's cell, laid over the
+                    // content and scrolled with it, is that caret — the same
+                    // marker a focused field places, at coordinates the host
+                    // owns instead of a byte the field owns.
+                    Some((at_row, at_col)) => stack().children([
+                        widgets,
+                        // **Nothing here is hittable.** A stack's children all
+                        // get the whole rect and the later one is hit first, so
+                        // a caret layer that took hits would swallow every
+                        // press on the page — which is how the reader gets to
+                        // a control in the first place.
+                        col()
+                            .pointer_mode(PointerMode::Ignore)
+                            .child(row().h(Sizing::Cells(at_row.min(u16::MAX as u32) as u16)))
+                            .child(
+                                row()
+                                    .h(Sizing::Cells(1))
+                                    .child(row().w(Sizing::Cells(at_col)))
+                                    .child(
+                                        text("")
+                                            .key(super::widgets::caret_key(
+                                                super::widgets::Slot::Pane(id),
+                                            ))
+                                            .w(Sizing::Cells(0))
+                                            .h(Sizing::Cells(1))
+                                            .cursor_byte(0),
+                                    ),
+                            ),
+                    ]),
+                    None => widgets,
+                }
+                .w(Sizing::Cells(inner_w)),
+            )
+            .scrollbar()
+            .anchor_to(anchor.clone())
+            .w(Sizing::Cells(inner_w))
+            .h(Sizing::Flex(1)),
             // **The panel is the height of the pane, not of its content.** A
             // `Tree` or `List` the plugin left auto-sized (`visible_rows:
             // None`) is a `flex(1)` inside the panel's column, and flex

@@ -1233,6 +1233,21 @@ pub struct Editor {
     pub(crate) page_anchors:
         HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::Anchor>>,
 
+    /// Where the reader is on a page that asked for `focusFollowsCursor`:
+    /// `(row, column)` in the page's **content**, which is what the tree laid
+    /// out — not a screen cell and not a byte of the mirror.
+    ///
+    /// **A page's reading position is the host's, because a page has no caret
+    /// of its own.** The surface it replaced was a document in a buffer, where
+    /// the buffer's caret was both "where I am reading" and "what Enter acts
+    /// on"; a described page is a tree in one viewport, and its mirror buffer
+    /// neither scrolls nor shows a caret. So the fact moves here, beside the
+    /// window it drives (`Editor::page_anchors`): the movement keys move it,
+    /// focus is resolved from it, and the anchor reveals the row it lands on.
+    ///
+    /// Absent means the top of the page, which is where a page opens.
+    pub(crate) page_reading: HashMap<crate::widgets::PanelKey, (u32, u16)>,
+
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,

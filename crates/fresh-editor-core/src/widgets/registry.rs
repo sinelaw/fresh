@@ -470,6 +470,11 @@ pub struct WidgetPanelState {
     /// one page in a window the description owns, and its lists take
     /// their natural height.
     pub page: bool,
+    /// This panel's [`WidgetPanelOptions::focus_follows_cursor`]: focus
+    /// and the buffer's caret are the same thing, in both directions.
+    /// Read by the host on every focus move and every cursor move; the
+    /// panel itself never acts on it.
+    pub focus_follows_cursor: bool,
     /// Widget the pointer is over, `""` for none.
     ///
     /// Floating and dock panels keep this on their `FloatingWidgetPanel`
@@ -502,6 +507,9 @@ impl WidgetPanelState {
             boxes: Vec::new(),
             auto_focus_first: false,
             page: false,
+            // A host surface has no reading row to keep focus in step with:
+            // it is not a document, and nothing scrolls it as one.
+            focus_follows_cursor: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
         }
@@ -650,18 +658,6 @@ pub struct WidgetRegistry {
     panels: HashMap<PanelKey, WidgetPanelState>,
 }
 
-/// How far `col` is from `hit`'s own span: zero inside it, and the distance
-/// to the nearer edge outside.
-fn column_distance(hit: &HitArea, col: usize) -> usize {
-    if col < hit.byte_start {
-        hit.byte_start - col
-    } else if col >= hit.byte_end {
-        col - hit.byte_end + 1
-    } else {
-        0
-    }
-}
-
 impl WidgetRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -688,6 +684,7 @@ impl WidgetRegistry {
         boxes: Vec<crate::widgets::LayoutBox>,
         auto_focus_first: bool,
         page: bool,
+        focus_follows_cursor: bool,
     ) -> Option<WidgetPanelState> {
         // A re-mount under a stationary pointer keeps its highlight:
         // the pointer has not moved, so neither should what it lights.
@@ -707,6 +704,7 @@ impl WidgetRegistry {
                 boxes,
                 auto_focus_first,
                 page,
+                focus_follows_cursor,
                 hovered_widget_key,
                 hovered_item_key,
             },
@@ -879,6 +877,46 @@ impl WidgetRegistry {
             .map(|(key, _)| key.clone())
             .collect()
     }
+
+    /// Whether any panel mounted into `buffer_id` asked for
+    /// `focusFollowsCursor`.
+    ///
+    /// The cheap gate in front of the geometry: it is asked on **every
+    /// reading-row move**, almost all of them in ordinary buffers no panel is
+    /// mounted into, so it allocates nothing and never touches the buffer.
+    pub fn has_focus_follower(&self, buffer_id: BufferId) -> bool {
+        self.panels
+            .values()
+            .any(|p| p.buffer_id == Some(buffer_id) && p.focus_follows_cursor)
+    }
+
+    /// The one panel mounted into `buffer_id` that asked for
+    /// `focusFollowsCursor`, or `None`.
+    ///
+    /// **`None` when two of them share a buffer**, deliberately. Two panels
+    /// both tracking one reading row is not a state with a right answer —
+    /// each would seat it where the other did not want it — and picking one
+    /// of them here would pick it out of a `HashMap`, so the pair could
+    /// resolve differently on two consecutive calls in the same frame.
+    /// Answering "no" and saying so in the log leaves the reader alone, which
+    /// is the one behaviour that cannot be wrong.
+    pub fn focus_follower_of(&self, buffer_id: BufferId) -> Option<PanelKey> {
+        let mut found: Option<&PanelKey> = None;
+        for (key, state) in &self.panels {
+            if state.buffer_id != Some(buffer_id) || !state.focus_follows_cursor {
+                continue;
+            }
+            if found.is_some() {
+                tracing::warn!(
+                    "two focusFollowsCursor panels in buffer {:?}; neither will track the reader",
+                    buffer_id
+                );
+                return None;
+            }
+            found = Some(key);
+        }
+        found.cloned()
+    }
 }
 
 #[cfg(test)]
@@ -908,6 +946,7 @@ mod tests {
             Vec::new(),
             true,
             false,
+            false,
         );
         let evicted = reg.mount(
             PanelKey::new("beta", 1),
@@ -918,6 +957,7 @@ mod tests {
             HashMap::new(),
             Vec::new(),
             true,
+            false,
             false,
         );
         assert!(evicted.is_none(), "beta:1 must not evict alpha:1");
