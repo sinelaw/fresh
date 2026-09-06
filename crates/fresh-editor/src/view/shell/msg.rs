@@ -17,6 +17,66 @@ use crate::input::keybindings::Action;
 use crate::model::event::LeafId;
 
 /// A message from the shell's widget tree.
+impl UiMsg {
+    /// Whether applying this message can change nothing the *routing* of the
+    /// next input reads. See [`UiFact::is_pointer_transient`].
+    pub fn is_pointer_transient(&self) -> bool {
+        match self {
+            UiMsg::Action(_) => false,
+            UiMsg::Ui(f) => f.is_pointer_transient(),
+        }
+    }
+}
+
+impl UiFact {
+    /// **The facts a pointer produces on its way somewhere.** A hover moves a
+    /// highlight, a wheel moves a window the tree already owns, a grip's
+    /// press and drag move a divider while the grip holds the pointer — none
+    /// of them changes which surface the *next* input is routed to, so none
+    /// leaves the description stale for routing. Everything else does: a
+    /// press that focuses a pane, a fact that opens or closes a layer, an
+    /// action.
+    ///
+    /// The line is drawn here rather than at the event, because a motion
+    /// event's facts can open a submenu (`Hover`'s menu reaction, which marks
+    /// the description stale itself when it does) and a press's can move
+    /// nothing but a thumb.
+    pub fn is_pointer_transient(&self) -> bool {
+        matches!(
+            self,
+            UiFact::Hover(_)
+                | UiFact::PaneTabsHover(_)
+                | UiFact::PaneTabsWheel { .. }
+                | UiFact::PaneTabsPan { .. }
+                | UiFact::PaneScrollbarPress { .. }
+                | UiFact::PaneScrollbarHover(_)
+                | UiFact::PaneScrollbarDrag { .. }
+                | UiFact::PaneScrollbarRelease { .. }
+                | UiFact::PaneWheel { .. }
+                | UiFact::PanePan { .. }
+                | UiFact::CardPreviewScroll(_)
+                | UiFact::ExplorerResizeBegin { .. }
+                | UiFact::SectionResizeBegin { .. }
+                | UiFact::ExplorerScroll { .. }
+                | UiFact::DockHover(_)
+                | UiFact::DockResizeBegin
+                | UiFact::GripDrag { .. }
+                | UiFact::ThemeInfoButtonHover(_)
+                | UiFact::SeparatorPress { .. }
+                | UiFact::SeparatorHover(..)
+                | UiFact::SettingsDialogHover(_)
+                | UiFact::SettingsButtonHover(_)
+                | UiFact::WidgetPopupHover { .. }
+                | UiFact::WidgetHover { .. }
+                | UiFact::WidgetWheel { .. }
+                | UiFact::SettingsItemHover(_)
+                | UiFact::SettingsInheritHover(_)
+                | UiFact::SettingsEntryItemHover(_)
+                | UiFact::SettingsEntryButtonHover(_)
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum UiMsg {
     /// Something the user could have bound a key to. Applied through the
@@ -77,26 +137,6 @@ pub enum UiFact {
         /// `None` for an event with no pointer behind it, and for a press on
         /// a piece that is not text.
         byte: Option<usize>,
-        /// The column the press landed on, within the pressed **piece**.
-        ///
-        /// **Not a worse `byte`; a different question.** `byte` asks where in
-        /// the *text* the press was, and is what a caret wants. This asks
-        /// where in the *row* it was, and is what a control with furniture at
-        /// fixed columns wants — a `TextList` row's trailing `[x]` is at the
-        /// columns the row was built with, and no byte of the label answers
-        /// where that button is. Both are facts about one press; neither
-        /// substitutes for the other.
-        ///
-        /// **Its origin is the piece and not the row, which `byte`'s is.**
-        /// Nothing rebases a column, because nothing can: a piece knows its
-        /// byte offset in the row and not its column, and the two part company
-        /// on the first wide glyph. A consumer that wants a *row* column can
-        /// only get one from a widget drawn as a single piece — which is what
-        /// the `TextList` row is meant to be, and `None` besides. Its
-        /// one reader (`Editor::entry_text_list_press`) takes
-        /// `at.unwrap_or(0)`, so a `None` here silently reads as "column 0";
-        /// see the note on the list arm in `view::shell::widgets`.
-        at: Option<u16>,
         /// How many presses in the run this one was — `Event::clicks`.
         ///
         /// **A row's index is not the whole of what activated it.** A settings
@@ -390,15 +430,13 @@ pub enum UiFact {
         line: usize,
         col: usize,
     },
-    /// A press on the overlay card's toolbar band, in the band's own
-    /// coordinates. The controls are a plugin's `WidgetSpec`, laid out by the
-    /// widget runtime rather than by the tree, so the host hit-tests its own
-    /// boxes — the band reports where, which is all the tree can know until
-    /// `WidgetSpec` becomes a `Node`.
-    CardToolbarPress {
-        x: u16,
-        y: u16,
-    },
+    /// The overlay card's query input took the keyboard back — the ring
+    /// wrapped from the toolbar's last control, or a press landed on the
+    /// input row. The toolbar's controls report their own landings
+    /// (`WidgetFocus` on `Slot::PromptToolbar`); this is the other holder in
+    /// the card's ring saying it is the one now, so the toolbar's focus fact
+    /// can be cleared and its highlight with it.
+    CardInputFocus,
     /// A wheel over the overlay card's preview pane. The pane is a painter's
     /// still, so it has no window for the wheel to chain into.
     CardPreviewScroll(i32),
@@ -464,13 +502,6 @@ pub enum UiFact {
         x: u16,
         y: u16,
     },
-    /// The wheel over the dock column. Positive is down, and the pointer rides
-    /// along for the panel's own hit test.
-    DockScroll {
-        delta: i32,
-        x: u16,
-        y: u16,
-    },
     /// The pointer entered or left the dock column.
     ///
     /// **What an overlay scrollbar waits for.** The dock's bar is drawn while
@@ -528,23 +559,21 @@ pub enum UiFact {
         x: u16,
         y: u16,
     },
-    /// A left press in the file-open dialog, in screen coordinates. The
-    /// dialog's elements are cell spans its painter recorded, so the tree
-    /// reports where and the hit test is the painter's — the same seam as
-    /// `CardToolbarPress`.
-    BrowserPress {
-        x: u16,
-        y: u16,
-        double: bool,
-    },
-    /// The pointer moved over the dialog. The hover target is resolved against
-    /// the same recorded spans.
-    BrowserHover {
-        x: u16,
-        y: u16,
-    },
-    /// The wheel over the dialog. Positive is down.
-    BrowserScroll(i32),
+    /// A checkbox in the file-open dialog was pressed.
+    BrowserToggle(crate::app::file_open::Toggle),
+    /// One of its navigation shortcuts was pressed: go there.
+    BrowserShortcut(usize),
+    /// A press on its navigation band that landed on no shortcut: the
+    /// keyboard's section is the navigation row now.
+    BrowserNavigation,
+    /// A column header was pressed: sort by it, or flip the direction when it
+    /// is already the key.
+    BrowserSort(crate::app::file_open::SortMode),
+    /// An entry row was clicked: select it and put its name in the prompt.
+    BrowserSelect(usize),
+    /// An entry row was double-clicked: open it — or, in the folder picker,
+    /// descend into a directory.
+    BrowserActivate(usize),
     /// A radio row in the workspace-trust prompt was clicked. **Selection is
     /// not consent**: this moves the selection and leaves the prompt up, the
     /// same two-step the keyboard has.
@@ -574,25 +603,21 @@ pub enum UiFact {
             crate::model::event::SplitDirection,
         )>,
     ),
-    /// A pointer event belongs to this full-screen modal, whose interior is
-    /// still a painter's and hit-tests rectangles that painter recorded. The
-    /// event itself never left the host — see `shell::modal`.
-    ModalPointer(super::modal::Slot),
     /// A key belongs to this surface, whose interior owns what it means.
     ///
-    /// **The keyboard's half of `ModalPointer`, and the same seam.** Each of
-    /// these had a `ChromeComponent::on_layer_key` that the ranked overlay
-    /// walk offered every key to while its layer was up — a capture-all with
-    /// a bespoke dispatcher apiece, ordered by `layer_rank`. Which surface a
-    /// key belongs to is containment now: the layer owns the keyboard, focus
-    /// is inside it, and no rank decides anything. What the key *means* is
-    /// still the interior's, which is the ruling that let the pointer cross
-    /// the same seam.
+    /// **The keyboard's seam.** Each of these had a
+    /// `ChromeComponent::on_layer_key` that the ranked overlay walk offered
+    /// every key to while its layer was up — a capture-all with a bespoke
+    /// dispatcher apiece, ordered by `layer_rank`. Which surface a key
+    /// belongs to is containment now: the layer owns the keyboard, focus is
+    /// inside it, and no rank decides anything. What the key *means* is
+    /// still the interior's. (The pointer's half of this seam,
+    /// `ModalPointer`, is gone: every modal's pointer is answered by its own
+    /// nodes.)
     ///
-    /// The event does not travel with the fact, for the reason `shell::modal`
-    /// gives about the pointer: the editor already has the crossterm event,
-    /// and the tree's own `KeyPress` is a smaller vocabulary than the one the
-    /// interiors read.
+    /// The event does not travel with the fact: the editor already has the
+    /// crossterm event, and the tree's own `KeyPress` is a smaller
+    /// vocabulary than the one the interiors read.
     ModalKey(super::modal::KeySlot),
     /// A key belongs to the prompt, whose interior owns what it means — and
     /// which may hand it back.
@@ -616,11 +641,10 @@ pub enum UiFact {
     PanelKey(super::widgets::Slot),
     /// A press on one of the keybinding editor's dialogs.
     ///
-    /// **The dialogs answer for themselves, the table does not — yet.** Five
-    /// of the ten rectangles that modal's painter recorded belong to these
-    /// three boxes, and the mouse arm behind them was a chain of
-    /// `point_in_rect` against each. They are nodes now; the table and the
-    /// search bar still go through `ModalPointer`.
+    /// **The dialogs answer for themselves.** Five of the ten rectangles
+    /// that modal's painter recorded belong to these three boxes, and the
+    /// mouse arm behind them was a chain of `point_in_rect` against each.
+    /// They are nodes now, as are the table and the search bar.
     KeybindingDialog(super::keybinding::Target),
     /// A press on a row of the keybinding editor's table, by display index.
     ///
@@ -725,9 +749,8 @@ pub enum UiFact {
     /// **The one window in a described panel that is not the tree's.** Every
     /// other scrolling surface a panel puts on screen is a `viewport`, so its
     /// offset is the element's and a notch is answered by the library's own
-    /// scroll chain with nothing to say here — which is why
-    /// `handle_widget_panel_wheel_at` declines a described panel outright, and
-    /// why it is right to. A `Text`'s completion list is the exception: its
+    /// scroll chain with nothing to say here — which is why the runtime's
+    /// wheel-by-rectangle path is deleted. A `Text`'s completion list is the exception: its
     /// rows arrive already windowed (`tx::completion_popup` slices them from
     /// `completion_scroll`), scrolling it also *steps into* it — the flag that
     /// makes Enter accept the highlighted row — and both halves are state the

@@ -1468,12 +1468,11 @@ fn settings_dialog_does_not_overlap_dock() {
     // palette. The settings dialog must render fully inside
     // `chrome_area` (right of the dock) — the dialog's top-left
     // rounded corner glyph `╭` must be visible on the screen, NOT
-    // clipped by the dock's right border. With the bug,
-    // `render_settings` computes the modal x/y as *relative* offsets
-    // (line 146-147 of view/settings/render.rs) and uses them as
-    // *absolute* `Rect::new` coordinates — so the modal is placed
-    // ~6 columns from the FRAME left edge (inside the dock), and the
-    // dock then over-draws its left side, hiding the title bar.
+    // clipped by the dock's right border. With the bug, the settings
+    // painter computed the modal x/y as *relative* offsets and used
+    // them as *absolute* `Rect::new` coordinates — so the modal was
+    // placed ~6 columns from the FRAME left edge (inside the dock),
+    // and the dock then over-drew its left side, hiding the title bar.
     //
     // Observable signal: with the bug, the full "Settings" title
     // never paints in one piece — the leading characters are clipped
@@ -2345,7 +2344,8 @@ fn dock_right_click_opens_context_menu_in_compact_mode() {
 /// `dock_right_click_opens_context_menu_in_compact_mode`: the left-click
 /// path stayed byte-exact after the right-click path grew its row-wide
 /// fallback, so compact left-clicks past the label were silently dropped.
-/// Both now share `hit_test_row_aware`, so the two paths can't drift.
+/// Both are the row node's now (`view::shell::widgets::row_pieces` extends
+/// the row to its full width), so the two paths can't drift.
 #[test]
 fn dock_left_click_past_text_dives_in_compact_mode() {
     init_tracing_from_env();

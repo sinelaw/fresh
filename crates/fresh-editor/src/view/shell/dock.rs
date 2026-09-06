@@ -89,13 +89,9 @@ pub fn column_key() -> Key {
 
 fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     let described = interior.is_some();
-    let scoped = interior.as_ref().map(|i| {
-        (
-            i.has_focus_targets(),
-            i.keymap.clone(),
-            i.keyboard && i.focus_key.is_empty(),
-        )
-    });
+    let scoped = interior
+        .as_ref()
+        .map(|i| (i.keymap.clone(), i.keyboard && i.focus_key.is_empty()));
     let body = match interior {
         None => host(HostRegion::Dock.id()),
         Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
@@ -117,6 +113,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                     states: &i.states,
                     focus_key: i.focus_key.clone(),
                     keyboard: i.keyboard,
+
                     hovered_key: i.hovered_key.clone(),
                     marker_gutter: i.marker_gutter,
                     hovered_item_key: i.hovered_item_key.clone(),
@@ -139,13 +136,13 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
         }),
     };
     // The scope its keyboard layer names, and the fallback for every key its
-    // widgets decline. Only when there is something in it to focus — see
-    // `panel::Interior::has_focus_targets`.
+    // widgets decline — every described interior, whether or not anything
+    // in it is a Tab stop (see `panel::floating_body`).
     let body = match scoped {
-        Some((true, keymap, rests_empty)) => {
+        Some((keymap, rests_empty)) => {
             super::panel::interior(super::widgets::Slot::Dock, keymap, rests_empty, body)
         }
-        _ => body,
+        None => body,
     };
     gesture(body)
         .on(
@@ -173,26 +170,22 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                 // is a `viewport`, and the library chains a notch into one
                 // only when *nothing claimed it* — so a catch-all that calls
                 // `e.stop()` here is the whole reason the dock stopped
-                // scrolling. Worse than nothing: `DockScroll` moved the
-                // runtime's own `WidgetInstanceState::scroll_offset`, which
-                // the description does not read but the runtime's probes did,
-                // so a few notches put the hover highlight and the right-click
-                // menu on a different row from the one drawn. (Those probes
-                // are deleted now; the window is the viewport's either way,
-                // and this arm stands down so the chain can run.)
+                // scrolling. Worse than nothing: the fact this used to raise
+                // moved the runtime's own scroll offset, which the description
+                // does not read but the runtime's probes did, so a few notches
+                // put the hover highlight and the right-click menu on a
+                // different row from the one drawn. (The fact and the probes
+                // are deleted now; the window is the viewport's, and this arm
+                // stands down so the chain can run.)
                 //
-                // The same ruling the settings dialog's wheel got. While the
-                // interior is a painter there is no viewport to chain into and
-                // the runtime's offset *is* the scroll, so that arm stays.
+                // A column with nothing mounted has nothing to scroll, and the
+                // notch must not leak through to the window beneath it: the
+                // dock is not a modal, so nothing else swallows it.
                 if described {
                     return None;
                 }
                 e.stop();
-                Some(UiMsg::Ui(UiFact::DockScroll {
-                    delta: e.delta,
-                    x: e.pos.x.max(0) as u16,
-                    y: e.pos.y.max(0) as u16,
-                }))
+                None
             }),
         )
         // **The overlay scrollbar's zone**, and the whole of what reveals it.
@@ -382,6 +375,8 @@ mod tests {
                     states: Rc::new(Default::default()),
                     focus_key: String::new(),
                     keyboard: true,
+
+                    page: None,
                     hovered_key: None,
                     hovered_item_key: String::new(),
                     hovered_popup_row: String::new(),
@@ -578,6 +573,8 @@ mod tests {
                     states: Rc::new(Default::default()),
                     focus_key: String::new(),
                     keyboard: true,
+
+                    page: None,
                     hovered_key: None,
                     hovered_item_key: String::new(),
                     hovered_popup_row: String::new(),

@@ -1,4 +1,4 @@
-use crate::app::file_open::SortMode;
+use crate::app::file_open::BrowserPart;
 use crate::model::event::{ContainerId, LeafId, SplitDirection};
 
 /// Types of UI elements that can be hovered over
@@ -22,18 +22,11 @@ pub enum HoverTarget {
     DockBorder,
     /// Hovering over the `×` of sidebar section `index`'s header row.
     SidebarSectionClose(usize),
-    /// Hovering over a file browser navigation shortcut
-    FileBrowserNavShortcut(usize),
-    /// Hovering over a file browser file/directory entry
-    FileBrowserEntry(usize),
-    /// Hovering over a file browser column header
-    FileBrowserHeader(SortMode),
-    /// Hovering over the file browser scrollbar
-    FileBrowserScrollbar,
-    /// Hovering over the file browser "Show Hidden" checkbox
-    FileBrowserShowHiddenCheckbox,
-    /// Hovering over the file browser "Detect Encoding" checkbox
-    FileBrowserDetectEncodingCheckbox,
+    /// Hovering over one of the file-open dialog's own controls: a checkbox,
+    /// a navigation shortcut or a column header. The dialog's description
+    /// reads it back to paint the hover; its entry rows and scrollbar are the
+    /// list's own state and are not here.
+    FileBrowser(BrowserPart),
     /// Hovering over the theme-info popup's "Open in Theme Editor"
     /// button row (Ctrl+Right-Click inspector). Paint derives the
     /// button highlight from this target.

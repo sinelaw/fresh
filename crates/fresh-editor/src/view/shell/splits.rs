@@ -1270,6 +1270,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     // surface does. A widget the registry names is marked by `widgets::node`
     // (through `Ctx::keyboard`), and the innermost mark wins.
     let rests_here = active && !super::widgets::marks(&i.spec, &i.focus_key);
+    let page = i.page.clone();
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         // **The whole pane, not `widget_panel_width`'s.** The runtime lays a
         // mounted spec two columns short — "reserve 2 cols for gutter /
@@ -1286,7 +1287,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
         // one by the slack it wraps against — and the description may not use
         // them. Here nothing takes them.
         let inner_w = info.constraints.max_w.max(1);
-        super::widgets::node(
+        let widgets = super::widgets::node(
             &i.spec,
             inner_w,
             &super::widgets::Ctx {
@@ -1298,7 +1299,13 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
                 marker_gutter: i.marker_gutter,
                 hovered_item_key: i.hovered_item_key.clone(),
                 hovered_popup_row: i.hovered_popup_row.clone(),
-                avail_height: Some(info.constraints.max_h as u32),
+                // **A page's lists take their natural height**: the page is
+                // the window, not each list. Every other panel's lists window
+                // themselves to the pane.
+                avail_height: match page {
+                    Some(_) => None,
+                    None => Some(info.constraints.max_h as u32),
+                },
                 scrollbar_reveal: i.scrollbar_reveal,
                 // Not `panel_surface`: a mounted panel's rows were buffer
                 // text on the editor's own ground. See `widgets::pane_surface`.
@@ -1306,15 +1313,27 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
                 markdown: i.markdown.as_ref().map(|m| m.ctx()),
             },
         )
-        .w(Sizing::Cells(inner_w))
-        // **The panel is the height of the pane, not of its content.** A
-        // `Tree` or `List` the plugin left auto-sized (`visible_rows: None`)
-        // is a `flex(1)` inside the panel's column, and flex divides what is
-        // *left* of a bounded extent — a column that sized itself to its
-        // content would hand the list every row it asked for and let the pane
-        // clip the overflow, so the match list would have no window to scroll
-        // and no bar to say how far through it you are.
-        .h(Sizing::Flex(1))
+        .w(Sizing::Cells(inner_w));
+        match &page {
+            // **A page scrolls as a whole.** Its content is as tall as it
+            // is, inside one viewport the pane sizes; the wheel, the bar and
+            // the anchor's commands move the window, and nothing inside it
+            // windows itself.
+            Some(anchor) => fresh_ui::viewport(widgets)
+                .scrollbar()
+                .anchor_to(anchor.clone())
+                .w(Sizing::Cells(inner_w))
+                .h(Sizing::Flex(1)),
+            // **The panel is the height of the pane, not of its content.** A
+            // `Tree` or `List` the plugin left auto-sized (`visible_rows:
+            // None`) is a `flex(1)` inside the panel's column, and flex
+            // divides what is *left* of a bounded extent — a column that
+            // sized itself to its content would hand the list every row it
+            // asked for and let the pane clip the overflow, so the match list
+            // would have no window to scroll and no bar to say how far
+            // through it you are.
+            None => widgets.h(Sizing::Flex(1)),
+        }
     });
     // **The press stays the pane's, unchanged.** The first instinct here was
     // that a panel has no byte to put a caret at, so a press only needed to

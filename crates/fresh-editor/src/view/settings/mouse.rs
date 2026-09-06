@@ -1,117 +1,21 @@
-//! Mouse input handling for the Settings dialog.
+//! What a press in the settings dialog does, once a node has said where it
+//! landed.
 //!
-//! This module contains all mouse event handling for the settings modal,
-//! including clicks, scrolling, and drag operations.
+//! Every surface of the dialog answers its own press as a `SettingsHit`
+//! (the TUI's nodes through `Editor::settings_widget_hit`, the web's
+//! `/settings` route directly), and `dispatch_settings_hit` is the one body
+//! both run. The raw mouse handler that used to sit in front of it —
+//! comparing a cell against rectangles the painter recorded, scrolling the
+//! body by hand, swallowing what nothing matched — is gone: the box, its
+//! windows and its scrim are the tree's.
 
 use crate::app::Editor;
-use anyhow::Result as AnyhowResult;
 
-use super::items::SettingControl;
 use super::state::FocusTarget;
 use super::SettingsHit;
-use crate::view::controls::DualListColumn;
+use crate::widgets::kinds::dual_list::DualOp;
 
 impl Editor {
-    /// Handle mouse events when settings modal is open.
-    pub(crate) fn handle_settings_mouse(
-        &mut self,
-        mouse_event: crossterm::event::MouseEvent,
-    ) -> AnyhowResult<bool> {
-        use crossterm::event::{MouseButton, MouseEventKind};
-
-        let col = mouse_event.column;
-        let row = mouse_event.row;
-
-        // When help overlay is open, consume all mouse events
-        if let Some(ref state) = self.settings_state {
-            if state.showing_help {
-                return Ok(false);
-            }
-        }
-
-        // **The confirm prompt answers for itself.** Its buttons are nodes and
-        // arrive as `UiFact::SettingsDialog`; the hover likewise. What was
-        // here re-derived the painter's layout to find which button a cell was
-        // on — `get_confirm_dialog_button_at` carried "same as in
-        // `render_confirm_dialog`" beside the copy — and the two could drift
-        // without either one being wrong on its own. A press that reaches here
-        // while the prompt is up landed on its scrim.
-        if self
-            .settings_state
-            .as_ref()
-            .is_some_and(|s| s.showing_confirm_dialog || s.showing_reset_dialog)
-        {
-            return Ok(false);
-        }
-
-        // **The entry-dialog stack answers for itself.** Its fields, buttons
-        // and per-field actions are nodes, and its window is a `viewport` —
-        // so the wheel, the scrollbar drag and the hover that were handled
-        // here are the framework's. A press that reaches this far while the
-        // stack is up landed on its scrim.
-        if self
-            .settings_state
-            .as_ref()
-            .is_some_and(|s| s.showing_entry_dialog())
-        {
-            return Ok(false);
-        }
-
-        match mouse_event.kind {
-            // **Every surface reports its own hover.** A card, a category
-            // row, a footer button and a search result each say when the
-            // pointer enters and leaves them; this arm compared the cell
-            // against every recorded rectangle in the dialog on every move.
-            MouseEventKind::Moved => {
-                if let Some(ref mut state) = self.settings_state {
-                    state.hover_position = Some((col, row));
-                }
-                return Ok(false);
-            }
-            MouseEventKind::ScrollUp => {
-                // If a dropdown is open, forward scroll to it
-                if let Some(ref mut state) = self.settings_state {
-                    if state.is_dropdown_open() {
-                        state.dropdown_scroll(-3);
-                        return Ok(true);
-                    }
-                }
-                // A wheel over the category tree is the tree's: it is a
-                // `viewport` now, so its window moves without the selection
-                // moving with it — which is what this arm and
-                // `over_categories_panel`'s recorded rectangle did between
-                // them. The tree's layer answers first, so nothing reaches
-                // here from over it.
-                return Ok(self.settings_scroll_up(3));
-            }
-            MouseEventKind::ScrollDown => {
-                // If a dropdown is open, forward scroll to it
-                if let Some(ref mut state) = self.settings_state {
-                    if state.is_dropdown_open() {
-                        state.dropdown_scroll(3);
-                        return Ok(true);
-                    }
-                }
-                return Ok(self.settings_scroll_down(3));
-            }
-            // Both bars in the dialog — the body's and the results' — are
-            // their windows' own, and the framework maps a press or a drag on
-            // one to an offset.
-            MouseEventKind::Drag(MouseButton::Left) => return Ok(false),
-            // **Every surface in the dialog answers its own press**, and the
-            // tree's layers answer before this handler runs. What reached
-            // here was `SettingsLayout::hit_test`: the modal's rectangle, each
-            // control's chip, each visible search row and two scrollbar
-            // tracks, compared against the cell in the order the painter had
-            // registered them. A press that gets this far landed on the box
-            // or its scrim, which is `Background` — and `Background` did
-            // nothing. It is still swallowed, because the dialog is modal and
-            // the editor behind it must not see the click.
-            MouseEventKind::Down(MouseButton::Left) => Ok(true),
-            _ => Ok(false),
-        }
-    }
-
     /// Perform the action for a resolved `SettingsHit` — the one body both
     /// frontends run. The TUI's nodes resolve their own presses to a hit
     /// through `Editor::settings_widget_hit`; the web's `/settings` route
@@ -144,7 +48,6 @@ impl Editor {
                     state.selected_category = idx;
                     state.selected_item = 0;
                     state.body_anchor.scroll_to(fresh_ui::Point::ZERO);
-                    state.sub_focus = None;
                     state.tree_cursor_section = None;
                     state.auto_expand_current_category();
                 }
@@ -171,7 +74,7 @@ impl Editor {
                 // Click on a dropdown option - select it and close dropdown
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.dropdown_select(option_idx);
+                    state.select_dropdown_option(option_idx);
                 }
             }
             SettingsHit::ControlDecrement(idx) => {
@@ -188,108 +91,105 @@ impl Editor {
             }
             SettingsHit::ControlNumberValue(idx) => {
                 // Click on the value between the brackets — focus the item
-                // and enter inline editing mode (matches the Enter-key flow).
+                // and open its draft (the kind's own answer to the press).
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.start_number_editing();
+                    state.press_number_value();
                 }
             }
-            SettingsHit::ControlText(idx) | SettingsHit::ControlTextListRow(idx, _) => {
+            SettingsHit::ControlText(idx) => {
+                // The caret lands where the press said, when it said
+                // (`settings_widget_hit` follows with `position_text_cursor`).
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.start_editing();
+                    state.press_text(None);
                 }
             }
-            SettingsHit::ControlMapRow(idx, row_idx) => {
-                let is_add_new_row = if let Some(ref mut state) = self.settings_state {
+            // A press on a text list's field opens it: an item's, or the add
+            // row's for a row past the items. (The caret lands where the
+            // press said: `settings_widget_hit` follows with
+            // `position_text_cursor`.)
+            SettingsHit::ControlTextListRow(idx, row) => {
+                if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-
-                    let mut is_add_new = false;
-                    if let Some(page) = state.pages.get_mut(state.selected_category) {
-                        if let Some(item) = page.items.get_mut(idx) {
-                            if let SettingControl::Map(map_state) = &mut item.control {
-                                is_add_new = row_idx >= map_state.entries.len();
-                                map_state.focused_entry = if row_idx < map_state.entries.len() {
-                                    Some(row_idx)
-                                } else {
-                                    None
-                                };
-                            }
-                        }
+                    let n = state
+                        .current_item()
+                        .and_then(|i| i.control.add_row())
+                        .unwrap_or(0);
+                    state.edit_list_row((row < n).then_some(row));
+                }
+            }
+            // A press on an item's `[x]` removes it.
+            SettingsHit::ControlTextListRemove(idx, row) => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus_on(FocusTarget::Card(idx));
+                    state.remove_list_row(row);
+                }
+            }
+            // A press on a row of a map's or an object array's list puts the
+            // cursor there. An entry opens on a double press, the add row on
+            // a single one (#604).
+            SettingsHit::ControlMapRow(idx, row) => {
+                let on_add = match self.settings_state {
+                    Some(ref mut state) => {
+                        state.focus_on(FocusTarget::Card(idx));
+                        state.select_list_row(row);
+                        state.current_item().and_then(|i| i.control.add_row()) == Some(row)
                     }
-                    is_add_new
-                } else {
-                    false
+                    None => false,
                 };
-                // "Add new" row activates on single click (#604), entries require double-click
-                if is_add_new_row || is_double_click {
+                if on_add || is_double_click {
                     self.settings_activate_current();
                 }
             }
             SettingsHit::ControlMapAddNew(idx) => {
-                // Click on map add-new row - focus it and activate immediately
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-
-                    if let Some(page) = state.pages.get_mut(state.selected_category) {
-                        if let Some(item) = page.items.get_mut(idx) {
-                            if let SettingControl::Map(map_state) = &mut item.control {
-                                map_state.focused_entry = None; // Focus add-new row
-                            }
-                        }
+                    if let Some(add) = state.current_item().and_then(|i| i.control.add_row()) {
+                        state.select_list_row(add);
                     }
                 }
-                // Single click on add-new activates immediately
                 self.settings_activate_current();
             }
+            // A press on a dual list's cell selects that row and makes the
+            // control live; the web's buttons beside its columns are the
+            // kind's moves, on the row its cursor is on.
             SettingsHit::ControlDualListAvailable(idx, row) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.with_dual_list_mut(idx, |dl| {
-                        dl.active_column = DualListColumn::Available;
-                        dl.available_cursor = row;
-                    });
-                    state.start_editing();
+                    state.press_dual_list(false, row);
                 }
             }
             SettingsHit::ControlDualListIncluded(idx, row) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.with_dual_list_mut(idx, |dl| {
-                        dl.active_column = DualListColumn::Included;
-                        dl.included_cursor = row;
-                    });
-                    state.start_editing();
+                    state.press_dual_list(true, row);
                 }
             }
             SettingsHit::ControlDualListAdd(idx) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.with_dual_list_mut(idx, |dl| dl.add_selected());
-                    state.on_value_changed();
-                    state.refresh_dual_list_sibling();
+                    state.dual_list_op(DualOp::Carry(true));
                 }
             }
             SettingsHit::ControlDualListRemove(idx) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.with_dual_list_mut(idx, |dl| dl.remove_selected());
-                    state.on_value_changed();
-                    state.refresh_dual_list_sibling();
+                    state.dual_list_op(DualOp::Carry(false));
                 }
             }
             SettingsHit::ControlDualListMoveUp(idx) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.with_dual_list_mut(idx, |dl| dl.move_up());
-                    state.on_value_changed();
+                    state.dual_list_op(DualOp::SwitchColumn(true));
+                    state.dual_list_op(DualOp::Reorder(-1));
                 }
             }
             SettingsHit::ControlDualListMoveDown(idx) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_on(FocusTarget::Card(idx));
-                    state.with_dual_list_mut(idx, |dl| dl.move_down());
-                    state.on_value_changed();
+                    state.dual_list_op(DualOp::SwitchColumn(true));
+                    state.dual_list_op(DualOp::Reorder(1));
                 }
             }
             SettingsHit::ControlInherit(idx) => {
@@ -374,7 +274,6 @@ impl Editor {
         dialog.focus_on_buttons = false;
         dialog.field_button_focus = None;
         dialog.selected_item = idx;
-        dialog.update_focus_states();
     }
 
     /// A press on a described entry-dialog field.
@@ -390,7 +289,6 @@ impl Editor {
         &mut self,
         hit: &crate::widgets::WidgetEvent,
         byte: Option<usize>,
-        at: Option<u16>,
         clicks: u8,
     ) {
         let key = hit.owner_key.as_deref().unwrap_or(hit.widget_key.as_str());
@@ -413,44 +311,32 @@ impl Editor {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize
         };
-        // A control's rows are numbered from its label, which is row zero —
-        // the same numbering `ScrollItem::focus_regions` handed out.
-        let sub_row = match (hit.widget_kind, part) {
-            // The sentinel is one past the last committed row.
-            ("list", "add") => match &dialog.items[idx].control {
-                SettingControl::TextList(t) => t.items.len() + 1,
-                SettingControl::Map(m) => m.entries.len() + 1,
-                SettingControl::ObjectArray(a) => a.bindings.len() + 1,
-                _ => 1,
-            },
-            ("list", _) => row() + 1,
-            _ => 0,
-        };
-        if matches!(dialog.items[idx].control, SettingControl::TextList(_)) && sub_row > 0 {
-            if let Err(e) = self.entry_text_list_press(idx, sub_row, at.unwrap_or(0)) {
-                tracing::warn!("settings entry text-list press failed: {e}");
+        let row_count = dialog.items[idx].control.list_row_count();
+        let add = dialog.items[idx].control.add_row();
+        match hit.widget_kind {
+            // A row of a map's or an object array's list.
+            "list" if row_count > 0 => {
+                let r = row();
+                let entry = (Some(r) != add).then_some(r);
+                self.entry_composite_press(idx, entry, clicks >= 2);
+                return;
             }
-            return;
-        }
-        // **A composite field's rows open the field, they do not edit it.** A
-        // `Map` or `ObjectArray` is edited through a nested dialog — which is
-        // what Enter on it does — and its `[+] Add new` row is the only way to
-        // add an entry with the mouse. Falling through to the text path below
-        // instead selected the field and put it into `editing_text`, so the
-        // add row was inert and the *next* Enter read as "commit this field"
-        // and moved on. The page's own rule decides when: an add row activates
-        // on a single press, an existing row on a double one (#604).
-        if matches!(
-            dialog.items[idx].control,
-            SettingControl::Map(_) | SettingControl::ObjectArray(_)
-        ) && hit.widget_kind == "list"
-        {
-            let entry = match part {
-                "add" => None,
-                _ => Some(row()),
-            };
-            self.entry_composite_press(idx, entry, clicks >= 2);
-            return;
+            // A field of a text list, by its row key.
+            "text" => {
+                if let Some(row) = super::live::text_list::row_of(key) {
+                    let caret = byte.and_then(|b| crate::widgets::value_byte_from_hit(hit, b));
+                    self.entry_text_list_press(idx, row, caret);
+                    return;
+                }
+            }
+            // An item's `[x]`.
+            "button" => {
+                if let Some(i) = part.strip_prefix("remove::").and_then(|i| i.parse().ok()) {
+                    self.entry_text_list_remove(idx, i);
+                }
+                return;
+            }
+            _ => {}
         }
         // A press on a text field also says where in the value the caret goes.
         //
@@ -473,11 +359,7 @@ impl Editor {
                 .as_mut()
                 .and_then(|s| s.entry_dialog_mut())
             {
-                if let Some(SettingControl::Text(ts)) =
-                    dialog.items.get_mut(idx).map(|it| &mut it.control)
-                {
-                    ts.set_cursor_from_flat(byte);
-                }
+                dialog.position_text_cursor(byte);
             }
         }
     }
@@ -495,20 +377,19 @@ impl Editor {
                 if idx >= dialog.items.len() || dialog.items[idx].read_only {
                     return;
                 }
-                // **Clicking away from a field commits it.** `editing_text` is
-                // the dialog's flag and `selected_item` names the field it
-                // applies to, so moving the selection with the flag still up
-                // pointed the edit at a field that was never seeded — and the
-                // next Esc reverted the field the user had *left*, wiping the
-                // value they had just typed. Enter and Tab already commit; a
-                // press on another field is the third way to leave one.
-                if dialog.editing_text && dialog.selected_item != idx {
+                // **Clicking away from a field commits it.** The live field
+                // is the one the store's focus key names, and `selected_item`
+                // the one the dialog's keys apply to; moving the selection
+                // with a field still live would point the next Esc at the
+                // field the user had *left*, reverting the value they had
+                // just typed. Enter and Tab already commit; a press on
+                // another field is the third way to leave one.
+                if dialog.is_editing() && dialog.selected_item != idx {
                     dialog.stop_editing();
                 }
                 dialog.focus_on_buttons = false;
                 dialog.selected_item = idx;
-                dialog.update_focus_states();
-                if !dialog.editing_text {
+                if !dialog.is_editing() {
                     dialog.start_editing();
                 }
             }
@@ -535,20 +416,6 @@ impl Editor {
         }
     }
 
-    fn settings_scroll_up(&mut self, delta: usize) -> bool {
-        self.settings_state
-            .as_mut()
-            .map(|state| state.scroll_up(delta))
-            .unwrap_or(false)
-    }
-
-    fn settings_scroll_down(&mut self, delta: usize) -> bool {
-        self.settings_state
-            .as_mut()
-            .map(|state| state.scroll_down(delta))
-            .unwrap_or(false)
-    }
-
     // **The body's scrollbar is the window's own.** Its track was a
     // rectangle the painter filed and two handlers compared a cell against;
     // the `viewport` the cards live in draws its bar in its own gutter and
@@ -569,22 +436,15 @@ impl Editor {
     // now: a layer per level, its fields in a `viewport`, and each field,
     // button and per-field action answering its own press.
 
-    /// A press on one row of a `TextList` inside an entry dialog.
-    ///
-    /// `col` is the column *within that row*, which the row's own hit
-    /// reports. The trailing `[x]` / `[+]` is then a question for the module
-    /// that wrote the row — [`super::widget_map::text_list_target`] — rather
-    /// than for a guess made from the dialog's outer width.
-    /// Focus one row of an entry-dialog `Map`/`ObjectArray` field, and open
-    /// the nested dialog for it when the press says to.
+    /// A press on a row of an entry-dialog map or object array: the field
+    /// is selected, its list's cursor put on the row, and the nested dialog
+    /// opened when the press says to — the add row on a single press, an
+    /// entry on a double one (#604).
     ///
     /// `entry` is the committed row the pointer was on, or `None` for the
-    /// trailing `[+] Add new` sentinel — which is exactly what
-    /// `open_nested_entry_dialog` reads out of `focused_entry` /
-    /// `focused_index` to decide between editing an entry and making one.
-    /// `double` is the press's own doubleness, carried on the fact by the row
-    /// that saw it (`UiFact::WidgetHit::clicks`) rather than fetched back off
-    /// the editor — B.4's side channel, one reader shorter.
+    /// trailing `[+] Add new` row. `double` is the press's own doubleness,
+    /// carried on the fact by the row that saw it
+    /// (`UiFact::WidgetHit::clicks`).
     pub(crate) fn entry_composite_press(
         &mut self,
         item_idx: usize,
@@ -598,121 +458,66 @@ impl Editor {
             return;
         };
         // The same rule the text path follows: leaving a field commits it.
-        if dialog.editing_text && dialog.selected_item != item_idx {
+        if dialog.is_editing() && dialog.selected_item != item_idx {
             dialog.stop_editing();
         }
-        let Some(item) = dialog.items.get_mut(item_idx) else {
+        let Some(item) = dialog.items.get(item_idx) else {
             return;
         };
-        // A row past the end is the add row however it was named.
-        let on_add = match &mut item.control {
-            SettingControl::Map(m) => {
-                let e = entry.filter(|r| *r < m.entries.len());
-                m.focused_entry = e;
-                e.is_none()
-            }
-            SettingControl::ObjectArray(a) => {
-                let e = entry.filter(|r| *r < a.bindings.len());
-                a.focused_index = e;
-                e.is_none()
-            }
-            _ => return,
+        let Some(add) = item.control.add_row() else {
+            return;
         };
+        let row = entry.filter(|r| *r < add).unwrap_or(add);
         dialog.focus_on_buttons = false;
         dialog.field_button_focus = None;
         dialog.selected_item = item_idx;
-        dialog.update_focus_states();
-        if on_add || double {
+        dialog.select_list_row(row);
+        if row == add || double {
             state.open_nested_entry_dialog();
         }
     }
 
+    /// A press on a field of an entry-dialog text list: the field opens —
+    /// an item's, or the add row's — with the caret where the press said.
     pub(crate) fn entry_text_list_press(
         &mut self,
         item_idx: usize,
-        sub_row: usize,
-        col: u16,
-    ) -> AnyhowResult<bool> {
-        let Some(ref mut state) = self.settings_state else {
-            return Ok(false);
+        row: Option<usize>,
+        byte: Option<usize>,
+    ) {
+        let Some(state) = self.settings_state.as_mut() else {
+            return;
         };
         let Some(dialog) = state.entry_dialog_mut() else {
-            return Ok(false);
+            return;
         };
-        let item = match dialog.items.get_mut(item_idx) {
-            Some(it) => it,
-            None => return Ok(false),
-        };
-        let tl = match &mut item.control {
-            SettingControl::TextList(s) => s,
-            _ => return Ok(false),
-        };
-
-        // sub_row 0 is the label row.
-        if sub_row == 0 {
-            // Focus the control on a generic label click; user
-            // can keyboard from there.
-            dialog.focus_on_buttons = false;
-            dialog.selected_item = item_idx;
-            dialog.update_focus_states();
-            return Ok(true);
+        if dialog.is_editing() && dialog.selected_item != item_idx {
+            dialog.stop_editing();
         }
-
-        let n_items = tl.items.len();
-        // Compute which TextList row was clicked: existing item rows
-        // are sub_row 1..=n_items, the add-new row is sub_row n_items+1.
-        let on_add_row = sub_row == n_items + 1;
-        let item_row_idx = if !on_add_row { Some(sub_row - 1) } else { None };
-
-        // The trailing `[x]` / `[+]`, at the columns the row was built with.
-        let in_trailing_button = matches!(
-            super::widget_map::text_list_target(col),
-            super::widget_map::TextListTarget::Button
-        );
-
-        match (on_add_row, item_row_idx, in_trailing_button) {
-            // Click on `[+]` of an active input: commit pending.
-            (true, _, true) if tl.pending_active || !tl.new_item_text.is_empty() => {
-                tl.add_item();
-                dialog.user_edited = true;
-                dialog.focus_on_buttons = false;
-                dialog.selected_item = item_idx;
-                tl.focused_item = None;
-                tl.pending_active = false;
-                dialog.update_focus_states();
-                Ok(true)
-            }
-            // Click anywhere on the (collapsed) `[+] Add new` row, or
-            // on the input text area: focus the trailing slot and
-            // activate input mode so the user can start typing.
-            (true, _, _) => {
-                dialog.focus_on_buttons = false;
-                dialog.selected_item = item_idx;
-                tl.activate_pending();
-                dialog.editing_text = true;
-                dialog.update_focus_states();
-                Ok(true)
-            }
-            // Click on `[x]` of a committed row: remove it.
-            (false, Some(row_idx), true) if row_idx < tl.items.len() => {
-                tl.remove_item(row_idx);
-                dialog.user_edited = true;
-                dialog.focus_on_buttons = false;
-                dialog.selected_item = item_idx;
-                dialog.update_focus_states();
-                Ok(true)
-            }
-            // Click on a committed row's text area: focus that item.
-            (false, Some(row_idx), false) if row_idx < tl.items.len() => {
-                dialog.focus_on_buttons = false;
-                dialog.selected_item = item_idx;
-                tl.focused_item = Some(row_idx);
-                tl.pending_active = false;
-                dialog.update_focus_states();
-                Ok(true)
-            }
-            _ => Ok(false),
+        dialog.focus_on_buttons = false;
+        dialog.field_button_focus = None;
+        dialog.selected_item = item_idx;
+        dialog.edit_list_row(row);
+        if let Some(byte) = byte {
+            dialog.position_text_cursor(byte);
         }
+    }
+
+    /// A press on an item's `[x]` in an entry-dialog text list removes it.
+    pub(crate) fn entry_text_list_remove(&mut self, item_idx: usize, row: usize) {
+        let Some(state) = self.settings_state.as_mut() else {
+            return;
+        };
+        let Some(dialog) = state.entry_dialog_mut() else {
+            return;
+        };
+        if dialog.is_editing() && dialog.selected_item != item_idx {
+            dialog.stop_editing();
+        }
+        dialog.focus_on_buttons = false;
+        dialog.field_button_focus = None;
+        dialog.selected_item = item_idx;
+        dialog.remove_list_row(row);
     }
 
     pub(crate) fn save_settings_and_close(&mut self) {

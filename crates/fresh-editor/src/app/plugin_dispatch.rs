@@ -1000,8 +1000,8 @@ impl Editor {
             PluginCommand::SetPromptFooter { footer } => {
                 self.handle_set_prompt_footer(footer);
             }
-            PluginCommand::SetPromptToolbar { spec } => {
-                self.handle_set_prompt_toolbar(spec);
+            PluginCommand::SetPromptToolbar { plugin, spec } => {
+                self.handle_set_prompt_toolbar(plugin, spec);
             }
             PluginCommand::ToggleOverlayToolbarWidget { key } => {
                 self.toggle_overlay_toolbar_widget(&key);
@@ -1380,6 +1380,7 @@ impl Editor {
                 highlight_current_line,
                 initial_cursor_line,
                 indentation_guide,
+                scrollable,
                 request_id,
             } => {
                 self.handle_create_virtual_buffer_with_content(
@@ -1395,6 +1396,7 @@ impl Editor {
                     highlight_current_line,
                     initial_cursor_line,
                     indentation_guide,
+                    scrollable,
                     request_id,
                 );
             }
@@ -2213,10 +2215,33 @@ impl Editor {
         }
     }
 
-    fn handle_set_prompt_toolbar(&mut self, spec: Option<fresh_core::api::WidgetSpec>) {
-        if let Some(prompt) = &mut self.active_window_mut().prompt {
-            prompt.toolbar_widget = spec;
+    /// The plugin's toolbar for the open prompt's header band: its panel
+    /// `PROMPT_TOOLBAR_PANEL_ID`, mounted in the registry and described in
+    /// the card. `None` takes it down.
+    fn handle_set_prompt_toolbar(
+        &mut self,
+        plugin: String,
+        spec: Option<fresh_core::api::WidgetSpec>,
+    ) {
+        if self.active_window().prompt.is_none() {
+            return;
         }
+        let key = crate::widgets::PanelKey::new(plugin, crate::widgets::PROMPT_TOOLBAR_PANEL_ID);
+        // Another plugin's toolbar on this prompt goes with its panel.
+        if let Some(old) = self.prompt_toolbar_key().filter(|k| *k != key) {
+            let _ = self.widget_registry.unmount(&old);
+        }
+        match spec {
+            Some(spec) => self.mount_prompt_toolbar(&key, spec),
+            None => {
+                let _ = self.widget_registry.unmount(&key);
+            }
+        }
+        let toolbar = self.widget_registry.get(&key).is_some().then_some(key);
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.toolbar = toolbar;
+        }
+        self.shell_description_stale = true;
     }
 
     fn handle_set_prompt_status(&mut self, status: String) {
@@ -3617,6 +3642,7 @@ impl Editor {
         highlight_current_line: Option<bool>,
         initial_cursor_line: Option<u32>,
         indentation_guide: Option<bool>,
+        scrollable: Option<bool>,
         request_id: Option<u64>,
     ) {
         // Hidden-from-tabs buffers (e.g. composite source panes) must NOT be
@@ -3654,6 +3680,14 @@ impl Editor {
             indentation_guide,
             true,
         );
+        // A buffer a panel is mounted into opts out of scrolling: the panel
+        // (or its page's viewport) owns the scroll, the way a buffer group's
+        // `scrollable: false` leaf does.
+        if let Some(scrollable) = scrollable {
+            if let Some(state) = self.active_window_mut().buffers.get_mut(&buffer_id) {
+                state.scrollable = scrollable;
+            }
+        }
         if !hidden_from_tabs {
             let active_split = self.split_manager().active_split();
             if let Some(view_state) = self
@@ -5268,14 +5302,19 @@ impl Editor {
             panel_key.clone(),
             buffer_id,
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
             out.boxes,
             options.auto_focus_first(),
-            options.focus_follows_cursor(),
+            options.page(),
         );
+        // A page's window is the tree's; this is the host's handle on it,
+        // born with the panel and dropped with it.
+        if options.page() {
+            self.page_anchors
+                .insert(panel_key.clone(), fresh_ui::behavior::Anchor::new());
+        }
         // Mark the buffer as hosting an interactive widget panel so the
         // focus/click paths keep routing focus to it even when it opts out
         // of buffer scrolling (a non-scrollable widget panel is still an
@@ -5362,7 +5401,6 @@ impl Editor {
         match self.widget_registry.update(
             panel_key,
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -5683,6 +5721,7 @@ impl Editor {
     }
 
     fn handle_unmount_widget_panel(&mut self, panel_key: &crate::widgets::PanelKey) {
+        self.page_anchors.remove(panel_key);
         match self.widget_registry.unmount(panel_key) {
             Some(buffer_id) => {
                 tracing::debug!(
@@ -5774,7 +5813,6 @@ impl Editor {
             focused: !start_blurred,
             mode,
             entries: Vec::new(),
-            last_inner_rect: None,
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
@@ -5823,7 +5861,6 @@ impl Editor {
             panel_key.clone(),
             buffer_id,
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -5833,7 +5870,6 @@ impl Editor {
             // record what they actually rendered under rather than a
             // policy they do not read.
             true,
-            // A floating panel has no buffer caret to track.
             false,
         );
         if let Some(fwp) = self.panel_mut(slot) {
@@ -5887,7 +5923,6 @@ impl Editor {
             focused: false,
             mode: None,
             entries: Vec::new(),
-            last_inner_rect: None,
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
@@ -5933,7 +5968,6 @@ impl Editor {
             panel_key.clone(),
             slot.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -5941,7 +5975,6 @@ impl Editor {
             // As the dock: `render_floating_spec` seeds focus
             // unconditionally, so record what was rendered under.
             true,
-            // As the dock: no buffer caret of its own to track.
             false,
         );
         if let Some(fwp) = self.panel_mut(slot) {
@@ -6032,7 +6065,6 @@ impl Editor {
             .update(
                 panel_key,
                 spec,
-                out.hits,
                 out.instance_states,
                 out.focus_key,
                 out.painted,
@@ -6182,7 +6214,7 @@ impl Editor {
                     let _ = self.widget_registry.unmount(&existing.panel_key);
                 }
                 if let Some(st) = self.widget_registry.get_mut(&panel.panel_key) {
-                    st.buffer_id = to.buffer_id();
+                    st.buffer_id = Some(to.buffer_id());
                 }
                 if let Some(o) = self.panel_opt_mut(to) {
                     *o = Some(panel);

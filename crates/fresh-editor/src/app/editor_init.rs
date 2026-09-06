@@ -671,7 +671,6 @@ impl Editor {
             full_redraw_requested: false,
             suppress_chrome_cells: false,
             fold_provenance: Vec::new(),
-            menu_layout_frame: None,
             shell_frame_status_bar: None,
             shell_hover: None,
             shell_store: shell_store.clone(),
@@ -686,6 +685,7 @@ impl Editor {
             shell_description_stale: false,
             shell_pointer_event: None,
             shell_key_event: None,
+            page_anchors: HashMap::new(),
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.
@@ -718,9 +718,6 @@ impl Editor {
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],
             sidebar_drag: None,
             widget_text_drag: None,
-            split_widget_scrollbar_tracks: Vec::new(),
-            split_widget_scrollbar_mouse: Default::default(),
-            split_widget_scrollbar_drag: None,
             widget_panel_render_heights: std::collections::HashMap::new(),
         };
 

@@ -142,6 +142,7 @@ impl Editor {
         // Dismiss transient popups and clear hover state when opening a prompt
         self.active_window_mut().on_editor_focus_lost();
 
+        self.drop_prompt();
         self.active_window_mut().prompt = Some(Prompt::with_initial_text(
             message,
             prompt_type,
@@ -160,6 +161,7 @@ impl Editor {
         self.active_window_mut().status_message = None;
         self.active_window_mut().goto_line_preview = None;
 
+        self.drop_prompt();
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
         prompt.set_input_plain(prefix.to_string());
         self.active_window_mut().prompt = Some(prompt);
@@ -927,7 +929,6 @@ impl Editor {
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs => {
                     // Clear file browser state
                     self.active_window_mut().file_open_state = None;
-                    self.active_window_mut().file_browser_layout = None;
 
                     // A cancelled `editor.pickFile` browser resolves the
                     // plugin's promise with null, like a dismissed file
@@ -1006,7 +1007,7 @@ impl Editor {
             self.cleanup_overlay_preview();
         }
 
-        self.active_window_mut().prompt = None;
+        self.drop_prompt();
         self.active_window_mut().pending_search_range = None;
         self.active_window_mut().status_message = Some(t!("search.cancelled").to_string());
 
@@ -1036,7 +1037,7 @@ impl Editor {
     /// Returns (input, prompt_type, selected_index)
     /// Returns None if trying to confirm a disabled command
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
-        if let Some(prompt) = self.active_window_mut().prompt.take() {
+        if let Some(prompt) = self.drop_prompt() {
             // Capture Live Grep state on confirm too (issue #1796).
             // `cancel_prompt` already does this; without it here,
             // pressing Enter on a result jumps to the file but loses

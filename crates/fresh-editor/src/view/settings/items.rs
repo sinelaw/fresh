@@ -4,239 +4,27 @@
 
 use super::schema::{SettingCategory, SettingSchema, SettingType};
 use crate::config_io::ConfigLayer;
-use crate::view::controls::{
-    DropdownState, DualListState, FocusState, KeybindingListState, MapState, NumberInputState,
-    TextInputState, TextListState, ToggleState,
-};
-use crate::view::ui::TextEdit;
 use std::collections::{HashMap, HashSet};
 
-/// State for multiline JSON editing
-#[derive(Debug, Clone)]
-pub struct JsonEditState {
-    /// The text editor state
-    pub editor: TextEdit,
-    /// Original text (for revert on Escape)
-    pub original_text: String,
-    /// Label for the control
-    pub label: String,
-    /// Focus state
-    pub focus: FocusState,
-    /// Scroll offset for viewing (used by entry dialog)
-    pub scroll_offset: usize,
-    /// Maximum visible lines (for main settings panel)
-    pub max_visible_lines: usize,
+/// The text a JSON control shows for a value: pretty-printed, or the
+/// `null` literal when there is none.
+pub fn json_text(value: Option<&serde_json::Value>) -> String {
+    value
+        .map(|v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "null".to_string()))
+        .unwrap_or_else(|| "null".to_string())
 }
 
-impl JsonEditState {
-    /// Create a new JSON edit state with pretty-printed JSON
-    pub fn new(label: impl Into<String>, value: Option<&serde_json::Value>) -> Self {
-        let json_str = value
-            .map(|v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "null".to_string()))
-            .unwrap_or_else(|| "null".to_string());
+/// Whether a JSON control's text means "not set": the `null` literal, or
+/// nothing at all — an edit that was opened and left empty.
+pub fn json_is_unset(text: &str) -> bool {
+    let t = text.trim();
+    t.is_empty() || t == "null"
+}
 
-        Self {
-            original_text: json_str.clone(),
-            editor: TextEdit::with_text(&json_str),
-            label: label.into(),
-            focus: FocusState::Normal,
-            scroll_offset: 0,
-            max_visible_lines: 6,
-        }
-    }
-
-    /// True if the editor is showing the JSON `null` sentinel — i.e. the
-    /// value is "not set". Used by the renderer to swap the literal
-    /// `null` for a helpful placeholder line, and by `start_editing` to
-    /// wipe the buffer so the user can type fresh JSON without manually
-    /// deleting the placeholder first.
-    pub fn is_unset(&self) -> bool {
-        self.editor.value().trim() == "null"
-    }
-
-    /// Clear the `null` placeholder so subsequent keystrokes type into
-    /// an empty editor. Called at the start of an edit session — paired
-    /// with `restore_unset_if_empty` on stop so abandoning the edit
-    /// brings the placeholder back.
-    pub fn clear_placeholder_for_edit(&mut self) {
-        if self.is_unset() {
-            self.editor.set_value("");
-        }
-    }
-
-    /// If the user left the editor empty, restore the `null` sentinel
-    /// so the saved value round-trips as JSON null rather than as the
-    /// empty string (which doesn't parse).
-    pub fn restore_unset_if_empty(&mut self) {
-        if self.editor.value().trim().is_empty() {
-            self.editor.set_value("null");
-        }
-    }
-
-    /// Revert to original value (for Escape key)
-    pub fn revert(&mut self) {
-        self.editor.set_value(&self.original_text);
-        self.scroll_offset = 0;
-    }
-
-    /// Commit current value as the new original (after saving)
-    pub fn commit(&mut self) {
-        self.original_text = self.editor.value();
-    }
-
-    /// Get the full text value
-    pub fn value(&self) -> String {
-        self.editor.value()
-    }
-
-    /// Check if the JSON is valid. An empty editor counts as valid:
-    /// it's the "the user just opened a not-yet-set field" state, which
-    /// `restore_unset_if_empty` will round-trip back to JSON `null` on
-    /// close. Treating empty as invalid otherwise flashes a spurious
-    /// "Invalid JSON" footer the moment the user presses Enter on a
-    /// null field.
-    pub fn is_valid(&self) -> bool {
-        let text = self.value();
-        text.trim().is_empty() || serde_json::from_str::<serde_json::Value>(&text).is_ok()
-    }
-
-    /// Get number of lines to display (all lines)
-    pub fn display_height(&self) -> usize {
-        self.editor.line_count()
-    }
-
-    /// Get number of lines for constrained view (e.g., main settings panel)
-    pub fn display_height_capped(&self) -> usize {
-        self.editor.line_count().min(self.max_visible_lines)
-    }
-
-    /// Get lines for rendering
-    pub fn lines(&self) -> &[String] {
-        &self.editor.lines
-    }
-
-    /// Get cursor position (row, col)
-    pub fn cursor_pos(&self) -> (usize, usize) {
-        (self.editor.cursor_row, self.editor.cursor_col)
-    }
-
-    // Delegate editing methods to TextEdit
-    pub fn insert(&mut self, c: char) {
-        self.editor.insert_char(c);
-    }
-
-    pub fn insert_str(&mut self, s: &str) {
-        self.editor.insert_str(s);
-    }
-
-    pub fn backspace(&mut self) {
-        self.editor.backspace();
-    }
-
-    pub fn delete(&mut self) {
-        self.editor.delete();
-    }
-
-    pub fn move_left(&mut self) {
-        self.editor.move_left();
-    }
-
-    pub fn move_right(&mut self) {
-        self.editor.move_right();
-    }
-
-    pub fn move_up(&mut self) {
-        self.editor.move_up();
-    }
-
-    pub fn move_down(&mut self) {
-        self.editor.move_down();
-    }
-
-    pub fn move_home(&mut self) {
-        self.editor.move_home();
-    }
-
-    pub fn move_end(&mut self) {
-        self.editor.move_end();
-    }
-
-    pub fn move_word_left(&mut self) {
-        self.editor.move_word_left();
-    }
-
-    pub fn move_word_right(&mut self) {
-        self.editor.move_word_right();
-    }
-
-    // Selection methods
-    pub fn has_selection(&self) -> bool {
-        self.editor.has_selection()
-    }
-
-    pub fn selection_range(&self) -> Option<((usize, usize), (usize, usize))> {
-        self.editor.selection_range()
-    }
-
-    pub fn selected_text(&self) -> Option<String> {
-        self.editor.selected_text()
-    }
-
-    pub fn delete_selection(&mut self) -> Option<String> {
-        self.editor.delete_selection()
-    }
-
-    pub fn clear_selection(&mut self) {
-        self.editor.clear_selection();
-    }
-
-    pub fn move_left_selecting(&mut self) {
-        self.editor.move_left_selecting();
-    }
-
-    pub fn move_right_selecting(&mut self) {
-        self.editor.move_right_selecting();
-    }
-
-    pub fn move_up_selecting(&mut self) {
-        self.editor.move_up_selecting();
-    }
-
-    pub fn move_down_selecting(&mut self) {
-        self.editor.move_down_selecting();
-    }
-
-    pub fn move_home_selecting(&mut self) {
-        self.editor.move_home_selecting();
-    }
-
-    pub fn move_end_selecting(&mut self) {
-        self.editor.move_end_selecting();
-    }
-
-    pub fn move_word_left_selecting(&mut self) {
-        self.editor.move_word_left_selecting();
-    }
-
-    pub fn move_word_right_selecting(&mut self) {
-        self.editor.move_word_right_selecting();
-    }
-
-    pub fn select_all(&mut self) {
-        self.editor.select_all();
-    }
-
-    pub fn delete_word_forward(&mut self) {
-        self.editor.delete_word_forward();
-    }
-
-    pub fn delete_word_backward(&mut self) {
-        self.editor.delete_word_backward();
-    }
-
-    pub fn delete_to_end(&mut self) {
-        self.editor.delete_to_end();
-    }
+/// Whether a JSON control's text will save: unset counts as valid — it
+/// round-trips as `null` — and anything else has to parse.
+pub fn json_is_valid(text: &str) -> bool {
+    json_is_unset(text) || serde_json::from_str::<serde_json::Value>(text).is_ok()
 }
 
 /// Create a JSON control for editing arbitrary JSON values (multiline)
@@ -245,8 +33,10 @@ fn json_control(
     current_value: Option<&serde_json::Value>,
     default: Option<&serde_json::Value>,
 ) -> SettingControl {
-    let value = current_value.or(default);
-    SettingControl::Json(JsonEditState::new(name, value))
+    SettingControl::Json {
+        label: name.to_string(),
+        text: json_text(current_value.or(default)),
+    }
 }
 
 /// Extract a JSON array of strings from a value (or fall back to a default).
@@ -267,14 +57,14 @@ fn value_as_string_array(
         .unwrap_or_default()
 }
 
-/// Build a DualListState from schema options, current value, and optional sibling excluded set.
-fn build_dual_list_state(
+/// Build a dual list from schema options, current value, and optional sibling excluded set.
+fn build_dual_list(
     schema: &SettingSchema,
     options: &[crate::view::settings::schema::EnumOption],
     current_value: Option<&serde_json::Value>,
     excluded: Vec<String>,
     available_status_bar_tokens: &HashMap<String, String>,
-) -> DualListState {
+) -> SettingControl {
     // Start with static schema options (built-in tokens)
     let mut all_options: Vec<(String, String)> = options
         .iter()
@@ -292,9 +82,12 @@ fn build_dual_list_state(
     }
 
     let included = value_as_string_array(current_value, schema.default.as_ref());
-    DualListState::new(&schema.name, all_options)
-        .with_included(included)
-        .with_excluded(excluded)
+    SettingControl::DualList {
+        label: schema.name.clone(),
+        options: all_options,
+        included,
+        excluded,
+    }
 }
 
 /// A renderable setting item
@@ -341,23 +134,89 @@ pub struct SettingItem {
 /// The type of control to render for a setting
 #[derive(Debug, Clone)]
 pub enum SettingControl {
-    Toggle(ToggleState),
-    Number(NumberInputState),
-    Dropdown(DropdownState),
-    Text(TextInputState),
-    TextList(TextListState),
-    /// Dual-list picker for ordered subset selection (e.g., status bar elements)
-    DualList(DualListState),
-    /// Map/dictionary control for key-value pairs
-    Map(MapState),
-    /// Array of objects control (for keybindings, etc.)
-    ObjectArray(KeybindingListState),
-    /// Multiline JSON editor
-    Json(JsonEditState),
-    /// Complex settings that can't be edited inline
-    Complex {
-        type_name: String,
+    /// A boolean. `inherited` says the setting is unset and shows what it
+    /// falls back to, as a neutral `[-]` chip (#2345); an explicit toggle
+    /// clears it.
+    Toggle {
+        label: String,
+        checked: bool,
+        inherited: bool,
     },
+    /// A number, as the JSON carries it: an `integer` is whole, a `percent`
+    /// is the fraction its cell displays ×100.
+    Number {
+        label: String,
+        value: f64,
+        min: Option<f64>,
+        max: Option<f64>,
+        integer: bool,
+        percent: bool,
+    },
+    /// One of a set. `options` are shown; `values` are stored, and when
+    /// empty the options are the values.
+    Dropdown {
+        label: String,
+        options: Vec<String>,
+        values: Vec<String>,
+        selected: usize,
+    },
+    /// A string.
+    Text {
+        label: String,
+        value: String,
+        placeholder: String,
+    },
+    /// A list of strings (or, when `integer`, of whole numbers kept as
+    /// their text). Its rows are text fields keyed `{path}::row::{i}` and
+    /// its add row a field keyed `{path}::add`, edited by the `Text` kind:
+    /// a row's value is the model's as it is typed; the add row's draft is
+    /// the field's until Enter makes it a row.
+    TextList {
+        label: String,
+        items: Vec<String>,
+        integer: bool,
+    },
+    /// An ordered subset of a fixed set — the status bar's elements. The
+    /// `options` are `(value, display name)`; `included` is the subset in
+    /// its order; `excluded` are the options a sibling list has claimed,
+    /// which this one's Available column must not offer. Which column the
+    /// keyboard drives and where its cursors sit are the kind's instance
+    /// state while the control is live.
+    DualList {
+        label: String,
+        options: Vec<(String, String)>,
+        included: Vec<String>,
+        excluded: Vec<String>,
+    },
+    /// A key → value map, its entries in key order. The rows are a `List`
+    /// keyed by the path with the add row last — unless `no_add`, an
+    /// auto-managed map that takes no entries of the user's own. An entry
+    /// is edited through the entry dialog `value_schema` describes;
+    /// `display_field` names the value's preview column.
+    Map {
+        label: String,
+        entries: Vec<(String, serde_json::Value)>,
+        value_schema: Option<Box<SettingSchema>>,
+        display_field: Option<String>,
+        no_add: bool,
+    },
+    /// An array of objects — keybindings, a language's servers. The rows
+    /// are a `List` keyed by the path with the add row last; an item is
+    /// edited through the entry dialog `item_schema` describes, and
+    /// `display_field` names the field a row shows.
+    ObjectArray {
+        label: String,
+        items: Vec<serde_json::Value>,
+        item_schema: Option<Box<SettingSchema>>,
+        display_field: Option<String>,
+    },
+    /// A JSON value edited as text, in a multi-line field. `text` is the
+    /// value as it reads — pretty-printed, `null` or empty when unset
+    /// ([`json_is_unset`]) — and it is applied as it is typed; the surface
+    /// records it when the edit ends and it parses ([`json_is_valid`]).
+    Json { label: String, text: String },
+    /// Complex settings that can't be edited inline
+    Complex { type_name: String },
 }
 
 /// The label column a page aligns its scalar controls' value cells against:
@@ -370,175 +229,312 @@ pub fn page_label_width(items: &[SettingItem]) -> Option<u16> {
     items
         .iter()
         .filter_map(|item| match &item.control {
-            SettingControl::Toggle(s) => Some(str_width(&s.label) as u16),
-            SettingControl::Number(s) => Some(str_width(&s.label) as u16),
-            SettingControl::Dropdown(s) => Some(str_width(&s.label) as u16),
-            SettingControl::Text(s) => Some(str_width(&s.label) as u16),
+            SettingControl::Toggle { label, .. }
+            | SettingControl::Number { label, .. }
+            | SettingControl::Dropdown { label, .. }
+            | SettingControl::Text { label, .. } => Some(str_width(label) as u16),
             _ => None,
         })
         .max()
 }
 
 impl SettingControl {
-    /// Whether the control should be rendered as the *focused* widget — which
-    /// is what makes it paint its caret and its focus band.
-    ///
-    /// **Editing, not mere selection.** Outside edit mode ↑↓ walks the
-    /// settings list, so a caret drawn inside a field would promise a movement
-    /// the arrows do not make. The three controls that have a caret to draw
-    /// are the ones that answer here; every other kind draws its own
-    /// selection chrome and never wants the widget ring.
-    pub fn is_editing(&self) -> bool {
-        match self {
-            Self::Text(s) => s.editing,
-            Self::Json(s) => s.focus == crate::view::controls::FocusState::Focused,
-            Self::DualList(s) => s.editing,
-            _ => false,
+    /// A dropdown, with its selection clamped into its options.
+    pub fn dropdown(
+        label: impl Into<String>,
+        options: Vec<String>,
+        values: Vec<String>,
+        selected: usize,
+    ) -> Self {
+        debug_assert!(values.is_empty() || values.len() == options.len());
+        let selected = match options.is_empty() {
+            true => 0,
+            false => selected.min(options.len() - 1),
+        };
+        Self::Dropdown {
+            label: label.into(),
+            options,
+            values,
+            selected,
         }
     }
 
-    /// Whether the control is *live*: its keys are its own until it is
-    /// left, so nothing else — the ring's Tab included — may take them.
-    ///
-    /// Wider than [`Self::is_editing`]: a number being typed into and an open
-    /// dropdown have no caret to paint, and are live all the same.
-    pub fn is_live(&self) -> bool {
-        self.is_editing()
-            || match self {
-                Self::Number(n) => n.editing(),
-                Self::Dropdown(d) => d.open,
-                _ => false,
-            }
+    /// The label a scalar control carries; `None` for a composite, which
+    /// puts its label on a row of its own.
+    pub fn label(&self) -> Option<&str> {
+        match self {
+            Self::Toggle { label, .. }
+            | Self::Number { label, .. }
+            | Self::Dropdown { label, .. }
+            | Self::Text { label, .. } => Some(label),
+            _ => None,
+        }
     }
 
-    /// The tree key of the row a `sub_focus` id names, for a control whose
-    /// rows are a `List`.
-    ///
-    /// The ids are the ones [`ScrollItem::focus_regions`] hands out: `0` is
-    /// the control's label row, `1 + i` its `i`th entry, and the one past
-    /// the last entry its `[+] Add new` sentinel. `None` means "no row of its
-    /// own" — the label row is the card's own top, and a control whose rows
-    /// are not a `List` (a dual list, a JSON editor) has nothing finer than
-    /// the card to move the window to.
-    pub fn sub_row_key(&self, path: &str, sub: usize) -> Option<fresh_ui::Key> {
-        let n = match self {
-            Self::TextList(s) => s.items.len(),
-            Self::Map(s) => s.entries.len(),
-            Self::ObjectArray(s) => s.bindings.len(),
-            _ => return None,
+    /// The value a dropdown stores: the selected entry of `values`, or of
+    /// `options` when there are no separate values.
+    pub fn dropdown_selected_value(&self) -> Option<&str> {
+        let Self::Dropdown {
+            options,
+            values,
+            selected,
+            ..
+        } = self
+        else {
+            return None;
         };
-        let name = match sub {
-            0 => return None,
-            i if i <= n => format!("{path}::list::{}", i - 1),
-            _ => format!("{path}::add::0"),
-        };
-        Some(fresh_ui::Key::Str(name.into()))
+        match values.is_empty() {
+            true => options.get(*selected).map(String::as_str),
+            false => values.get(*selected).map(String::as_str),
+        }
     }
 
     /// Calculate the height needed for this control (in lines)
     pub fn control_height(&self) -> u16 {
         match self {
-            // TextList needs: 1 label line + items + 1 "add new" row
-            Self::TextList(state) => {
-                // 1 for label + items count + 1 for add-new row
-                (state.items.len() + 2) as u16
-            }
-            // DualList needs: 1 label + 1 header + body rows, plus the
-            // key-hint row the control grows once it is reachable
-            // (selected or being edited).
-            Self::DualList(state) => {
-                let hint_row = u16::from(
-                    state.editing || state.focus == crate::view::controls::FocusState::Focused,
-                );
-                2 + state.body_rows() as u16 + hint_row
-            }
-            // Map needs: 1 label + 1 header (if display_field) + entries + expanded content + 1 add-new row (if allowed)
-            Self::Map(state) => {
-                let header_row = if state.display_field.is_some() { 1 } else { 0 };
-                let add_new_row = if state.no_add { 0 } else { 1 };
-                let base = 1 + header_row + state.entries.len() + add_new_row; // label + header? + entries + add-new?
-                                                                               // Add extra height for expanded entries (up to 6 lines each)
-                let expanded_height: usize = state
-                    .expanded
+            // TextList: 1 label line + items + 1 add row
+            Self::TextList { items, .. } => (items.len() + 2) as u16,
+            // DualList: 1 label + 1 header + one body row per option it can
+            // show, plus the key-hint row it grows once it is reachable.
+            Self::DualList {
+                options, excluded, ..
+            } => {
+                3 + options
                     .iter()
-                    .filter_map(|&idx| state.entries.get(idx))
-                    .map(|(_, v)| {
-                        if let Some(obj) = v.as_object() {
-                            obj.len().min(5) + if obj.len() > 5 { 1 } else { 0 }
-                        } else {
-                            0
-                        }
-                    })
-                    .sum();
-                (base + expanded_height) as u16
+                    .filter(|(v, _)| !excluded.contains(v))
+                    .count() as u16
             }
-            // Dropdown needs extra height when open to show options
-            Self::Dropdown(state) if state.open => {
-                // 1 for label/button + number of options (max 8 visible)
-                1 + state.options.len().min(8) as u16
+            // Map: 1 label + 1 header (if display_field) + entries + 1 add row (if allowed)
+            Self::Map {
+                entries,
+                display_field,
+                no_add,
+                ..
+            } => {
+                (1 + usize::from(display_field.is_some()) + entries.len() + usize::from(!no_add))
+                    as u16
             }
-            // KeybindingList needs: 1 label + bindings + 1 add-new row
-            Self::ObjectArray(state) => {
-                // 1 for label + bindings count + 1 for add-new row
-                (state.bindings.len() + 2) as u16
-            }
-            // Json needs: 1 label + visible lines
-            Self::Json(state) => {
-                // 1 for label + displayed lines
-                1 + state.display_height() as u16
-            }
+            // ObjectArray: 1 label + items + 1 add row
+            Self::ObjectArray { items, .. } => (items.len() + 2) as u16,
+            // Json: 1 label + its lines
+            Self::Json { text, .. } => 1 + text.lines().count().max(1) as u16,
             // All other controls fit in 1 line
             _ => 1,
         }
     }
 
-    /// Whether this is a composite control (TextList, Map, ObjectArray) that has
-    /// internal sub-items. For composite controls, highlighting should be per-row,
-    /// not across the entire control area.
-    pub fn is_composite(&self) -> bool {
-        matches!(
-            self,
-            Self::TextList(_) | Self::DualList(_) | Self::Map(_) | Self::ObjectArray(_)
-        )
+    /// Whether the control's rows are a `List` the surface's cursor walks —
+    /// a map or an object array. (A text list's rows are fields.)
+    pub fn has_list_rows(&self) -> bool {
+        matches!(self, Self::Map { .. } | Self::ObjectArray { .. })
     }
 
-    /// Get the row offset of the focused sub-item within a composite control.
-    /// Returns 0 for non-composite controls or if no sub-item is focused.
-    /// The offset is relative to the start of the control's render area.
-    pub fn focused_sub_row(&self) -> u16 {
+    /// How many rows the control's `List` has, its add row included; the
+    /// add row's index is one past the last entry.
+    pub fn list_row_count(&self) -> usize {
         match self {
-            Self::TextList(state) => {
-                // Row 0 = label, rows 1..N = items, row N+1 = add-new
-                match state.focused_item {
-                    Some(idx) => 1 + idx as u16,          // item rows start at offset 1
-                    None => 1 + state.items.len() as u16, // add-new row
-                }
-            }
-            Self::DualList(state) => {
-                // Row 0 = label, Row 1 = headers, Rows 2+ = body
-                use crate::view::controls::DualListColumn;
-                let row = match state.active_column {
-                    DualListColumn::Available => state.available_cursor,
-                    DualListColumn::Included => state.included_cursor,
-                };
-                2 + row as u16
-            }
-            Self::ObjectArray(state) => {
-                // Row 0 = label, rows 1..N = bindings, row N+1 = add-new
-                match state.focused_index {
-                    Some(idx) => 1 + idx as u16,
-                    None => 1 + state.bindings.len() as u16,
-                }
-            }
-            Self::Map(state) => {
-                // Row 0 = label, row 1 = header (if display_field), then entries, then add-new
-                let header_offset = if state.display_field.is_some() { 1 } else { 0 };
-                match state.focused_entry {
-                    Some(idx) => 1 + header_offset + idx as u16,
-                    None => 1 + header_offset + state.entries.len() as u16,
-                }
-            }
+            Self::Map {
+                entries, no_add, ..
+            } => entries.len() + usize::from(!no_add),
+            Self::ObjectArray { items, .. } => items.len() + 1,
             _ => 0,
+        }
+    }
+
+    /// The row index of the control's add row, when it has one.
+    pub fn add_row(&self) -> Option<usize> {
+        match self {
+            Self::Map {
+                entries, no_add, ..
+            } => (!no_add).then_some(entries.len()),
+            Self::ObjectArray { items, .. } => Some(items.len()),
+            Self::TextList { items, .. } => Some(items.len()),
+            _ => None,
+        }
+    }
+
+    /// The widget key of a text list's row: an item's field, or the add
+    /// row's when `row` is `None`.
+    pub fn text_list_row_key(path: &str, row: Option<usize>) -> String {
+        match row {
+            Some(i) => format!("{path}::row::{i}"),
+            None => format!("{path}::add"),
+        }
+    }
+
+    /// The key of a composite's row in the tree — the row of its `List`, or
+    /// a text list's field — what the surface asks the window to reveal.
+    /// `row` counts the add row after the items (`add_row`).
+    pub fn row_tree_key(&self, path: &str, row: usize) -> fresh_ui::Key {
+        let row = (Some(row) != self.add_row()).then_some(row);
+        match self {
+            Self::TextList { .. } => {
+                crate::view::shell::widgets::widget_node_key(&Self::text_list_row_key(path, row))
+            }
+            _ => fresh_ui::Key::Str(Self::text_list_row_key(path, row).into()),
+        }
+    }
+}
+
+/// A map's entries from its JSON object, in key order.
+pub fn map_entries(value: &serde_json::Value) -> Vec<(String, serde_json::Value)> {
+    let mut entries: Vec<(String, serde_json::Value)> = value
+        .as_object()
+        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
+/// Set `key` to `value` in a map's entries: the entry it has, or a new one
+/// in key order.
+pub fn map_set(
+    entries: &mut Vec<(String, serde_json::Value)>,
+    key: String,
+    value: serde_json::Value,
+) {
+    if let Some(entry) = entries.iter_mut().find(|(k, _)| *k == key) {
+        entry.1 = value;
+    } else {
+        entries.push((key, value));
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+}
+
+/// The preview a map row shows for its value: the `display_field` of the
+/// value (each element's, for an array value), or a count of what it holds.
+pub fn map_display_value(display_field: Option<&str>, value: &serde_json::Value) -> String {
+    if let Some(field) = display_field {
+        // For array values (e.g. multi-server LSP entries), show each
+        // element's `display_field` so the collapsed row reflects the
+        // full set. Otherwise a row that maps `python` to two servers
+        // still rendered as just `pylsp`, making the user think the
+        // second server hadn't saved.
+        if let serde_json::Value::Array(arr) = value {
+            let parts: Vec<String> = arr
+                .iter()
+                .filter_map(|el| el.pointer(field))
+                .filter_map(|v| match v {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Bool(b) => Some(b.to_string()),
+                    serde_json::Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                })
+                .collect();
+            if !parts.is_empty() {
+                // The map row's value column truncates at ~20 chars. When
+                // the joined list would overflow, fall back to "first +N
+                // more" so the user can still tell the entry has more than
+                // one item.
+                let joined = parts.join(", ");
+                if joined.chars().count() <= 20 || parts.len() == 1 {
+                    return joined;
+                }
+                return format!("{}, +{} more", parts[0], parts.len() - 1);
+            }
+        } else if let Some(v) = value.pointer(field) {
+            return match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Null => "null".to_string(),
+                serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
+                serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
+            };
+        }
+    }
+    // Fallback to showing field count with correct pluralization
+    match value {
+        serde_json::Value::Object(obj) => match obj.len() {
+            1 => "1 field".to_string(),
+            n => format!("{n} fields"),
+        },
+        serde_json::Value::Array(arr) => match arr.len() {
+            1 => "1 item".to_string(),
+            n => format!("{n} items"),
+        },
+        other => other.to_string(),
+    }
+}
+
+/// What an object array's row says for an item: the key combination and
+/// the action, for a keybinding-shaped item, or just the display field's
+/// value — a server's command — when there is no key combination.
+pub fn object_array_row(display_field: Option<&str>, item: &serde_json::Value) -> (String, String) {
+    // `display_field` is a JSON pointer (`/command`); the lookup key is the
+    // bare field name.
+    let field = display_field
+        .and_then(|p| p.strip_prefix('/'))
+        .or(display_field)
+        .unwrap_or("action");
+    let combo = format_key_combo(item);
+    let action = item
+        .get(field)
+        .and_then(|v| v.as_str())
+        .unwrap_or("(no action)")
+        .to_string();
+    (combo, action)
+}
+
+/// Format a keybinding's key combination for display
+pub fn format_key_combo(binding: &serde_json::Value) -> String {
+    // Check for keys array (chord binding) first
+    if let Some(keys) = binding.get("keys").and_then(|k| k.as_array()) {
+        let parts: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                let mut key_str = String::new();
+                if let Some(mods) = k.get("modifiers").and_then(|m| m.as_array()) {
+                    for m in mods {
+                        if let Some(s) = m.as_str() {
+                            key_str.push_str(&capitalize_mod(s));
+                            key_str.push('+');
+                        }
+                    }
+                }
+                if let Some(key) = k.get("key").and_then(|k| k.as_str()) {
+                    key_str.push_str(&capitalize_key(key));
+                }
+                key_str
+            })
+            .collect();
+        return parts.join(" ");
+    }
+
+    // Single key binding
+    let mut result = String::new();
+    if let Some(mods) = binding.get("modifiers").and_then(|m| m.as_array()) {
+        for m in mods {
+            if let Some(s) = m.as_str() {
+                result.push_str(&capitalize_mod(s));
+                result.push('+');
+            }
+        }
+    }
+    if let Some(key) = binding.get("key").and_then(|k| k.as_str()) {
+        result.push_str(&capitalize_key(key));
+    }
+    result
+}
+
+fn capitalize_mod(s: &str) -> String {
+    match s.to_lowercase().as_str() {
+        "ctrl" | "control" => "Ctrl".to_string(),
+        "alt" => "Alt".to_string(),
+        "shift" => "Shift".to_string(),
+        "super" | "meta" | "cmd" => "Super".to_string(),
+        _ => s.to_string(),
+    }
+}
+
+fn capitalize_key(s: &str) -> String {
+    if s.len() == 1 {
+        s.to_uppercase()
+    } else {
+        let mut chars = s.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(c) => c.to_uppercase().chain(chars).collect(),
         }
     }
 }
@@ -960,7 +956,11 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                 .and_then(|v| v.as_bool())
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_bool()))
                 .unwrap_or(false);
-            SettingControl::Toggle(ToggleState::new(checked, &schema.name))
+            SettingControl::Toggle {
+                label: schema.name.clone(),
+                checked,
+                inherited: false,
+            }
         }
 
         SettingType::Integer { minimum, maximum } => {
@@ -969,33 +969,30 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_i64()))
                 .unwrap_or(0);
 
-            let mut state = NumberInputState::new(value, &schema.name);
-            if let Some(min) = minimum {
-                state = state.with_min(*min);
+            SettingControl::Number {
+                label: schema.name.clone(),
+                value: value as f64,
+                min: minimum.map(|m| m as f64),
+                max: maximum.map(|m| m as f64),
+                integer: true,
+                percent: false,
             }
-            if let Some(max) = maximum {
-                state = state.with_max(*max);
-            }
-            SettingControl::Number(state)
         }
 
         SettingType::Number { minimum, maximum } => {
-            // For floats, we display as integers (multiply by 100 for percentages)
+            // A float is a fraction its cell shows as a percentage.
             let value = current_value
                 .and_then(|v| v.as_f64())
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_f64()))
                 .unwrap_or(0.0);
-
-            // Convert to integer representation
-            let int_value = (value * 100.0).round() as i64;
-            let mut state = NumberInputState::new(int_value, &schema.name).with_percentage();
-            if let Some(min) = minimum {
-                state = state.with_min((*min * 100.0) as i64);
+            SettingControl::Number {
+                label: schema.name.clone(),
+                value,
+                min: *minimum,
+                max: *maximum,
+                integer: false,
+                percent: true,
             }
-            if let Some(max) = maximum {
-                state = state.with_max((*max * 100.0) as i64);
-            }
-            SettingControl::Number(state)
         }
 
         SettingType::String => {
@@ -1035,9 +1032,7 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                             })
                         })
                         .unwrap_or(0);
-                    let state = DropdownState::with_values(display_names, values, &schema.name)
-                        .with_selected(selected);
-                    SettingControl::Dropdown(state)
+                    SettingControl::dropdown(&schema.name, display_names, values, selected)
                 } else {
                     let mut options: Vec<String> = ctx
                         .config_value
@@ -1061,13 +1056,14 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
 
                     let current = if is_null { "" } else { value };
                     let selected = values.iter().position(|v| v == current).unwrap_or(0);
-                    let state = DropdownState::with_values(display_names, values, &schema.name)
-                        .with_selected(selected);
-                    SettingControl::Dropdown(state)
+                    SettingControl::dropdown(&schema.name, display_names, values, selected)
                 }
             } else {
-                let state = TextInputState::new(&schema.name).with_value(value);
-                SettingControl::Text(state)
+                SettingControl::Text {
+                    label: schema.name.clone(),
+                    value: value.to_string(),
+                    placeholder: String::new(),
+                }
             }
         }
 
@@ -1092,9 +1088,7 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
             let display_names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let values: Vec<String> = options.iter().map(|o| o.value.clone()).collect();
             let selected = values.iter().position(|v| v == current).unwrap_or(0);
-            let state = DropdownState::with_values(display_names, values, &schema.name)
-                .with_selected(selected);
-            SettingControl::Dropdown(state)
+            SettingControl::dropdown(&schema.name, display_names, values, selected)
         }
 
         SettingType::DualList {
@@ -1106,19 +1100,22 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                 .and_then(|path| ctx.config_value.pointer(path))
                 .map(|v| value_as_string_array(Some(v), None))
                 .unwrap_or_default();
-            SettingControl::DualList(build_dual_list_state(
+            build_dual_list(
                 schema,
                 options,
                 current_value,
                 excluded,
                 ctx.available_status_bar_tokens,
-            ))
+            )
         }
 
         SettingType::StringArray => {
             let items = value_as_string_array(current_value, schema.default.as_ref());
-            let state = TextListState::new(&schema.name).with_items(items);
-            SettingControl::TextList(state)
+            SettingControl::TextList {
+                label: schema.name.clone(),
+                items,
+                integer: false,
+            }
         }
 
         SettingType::IntegerArray => {
@@ -1150,10 +1147,11 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                 })
                 .unwrap_or_default();
 
-            let state = TextListState::new(&schema.name)
-                .with_items(items)
-                .with_integer_mode();
-            SettingControl::TextList(state)
+            SettingControl::TextList {
+                label: schema.name.clone(),
+                items,
+                integer: true,
+            }
         }
 
         SettingType::Object { .. } => {
@@ -1171,15 +1169,13 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                 .or_else(|| schema.default.clone())
                 .unwrap_or_else(|| serde_json::json!({}));
 
-            let mut state = MapState::new(&schema.name).with_entries(&map_value);
-            state = state.with_value_schema((**value_schema).clone());
-            if let Some(field) = display_field {
-                state = state.with_display_field(field.clone());
+            SettingControl::Map {
+                label: schema.name.clone(),
+                entries: map_entries(&map_value),
+                value_schema: Some(Box::new((**value_schema).clone())),
+                display_field: display_field.clone(),
+                no_add: *no_add,
             }
-            if *no_add {
-                state = state.with_no_add(true);
-            }
-            SettingControl::Map(state)
         }
 
         SettingType::ObjectArray {
@@ -1192,12 +1188,12 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
                 .or_else(|| schema.default.clone())
                 .unwrap_or_else(|| serde_json::json!([]));
 
-            let mut state = KeybindingListState::new(&schema.name).with_bindings(&array_value);
-            state = state.with_item_schema((**item_schema).clone());
-            if let Some(field) = display_field {
-                state = state.with_display_field(field.clone());
+            SettingControl::ObjectArray {
+                label: schema.name.clone(),
+                items: array_value.as_array().cloned().unwrap_or_default(),
+                item_schema: Some(Box::new((**item_schema).clone())),
+                display_field: display_field.clone(),
             }
-            SettingControl::ObjectArray(state)
         }
 
         SettingType::Complex => json_control(&schema.name, current_value, schema.default.as_ref()),
@@ -1260,9 +1256,11 @@ pub fn build_item_from_value(
                 && current_value
                     .map(|v| v.is_null())
                     .unwrap_or(schema.default.as_ref().map(|d| d.is_null()).unwrap_or(true));
-            SettingControl::Toggle(
-                ToggleState::new(checked, &schema.name).with_inherited(inherited),
-            )
+            SettingControl::Toggle {
+                label: schema.name.clone(),
+                checked,
+                inherited,
+            }
         }
 
         SettingType::Integer { minimum, maximum } => {
@@ -1271,31 +1269,30 @@ pub fn build_item_from_value(
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_i64()))
                 .unwrap_or(0);
 
-            let mut state = NumberInputState::new(value, &schema.name);
-            if let Some(min) = minimum {
-                state = state.with_min(*min);
+            SettingControl::Number {
+                label: schema.name.clone(),
+                value: value as f64,
+                min: minimum.map(|m| m as f64),
+                max: maximum.map(|m| m as f64),
+                integer: true,
+                percent: false,
             }
-            if let Some(max) = maximum {
-                state = state.with_max(*max);
-            }
-            SettingControl::Number(state)
         }
 
         SettingType::Number { minimum, maximum } => {
+            // A float is a fraction its cell shows as a percentage.
             let value = current_value
                 .and_then(|v| v.as_f64())
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_f64()))
                 .unwrap_or(0.0);
-
-            let int_value = (value * 100.0).round() as i64;
-            let mut state = NumberInputState::new(int_value, &schema.name).with_percentage();
-            if let Some(min) = minimum {
-                state = state.with_min((*min * 100.0) as i64);
+            SettingControl::Number {
+                label: schema.name.clone(),
+                value,
+                min: *minimum,
+                max: *maximum,
+                integer: false,
+                percent: true,
             }
-            if let Some(max) = maximum {
-                state = state.with_max((*max * 100.0) as i64);
-            }
-            SettingControl::Number(state)
         }
 
         SettingType::String => {
@@ -1304,8 +1301,11 @@ pub fn build_item_from_value(
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_str()))
                 .unwrap_or("");
 
-            let state = TextInputState::new(&schema.name).with_value(value);
-            SettingControl::Text(state)
+            SettingControl::Text {
+                label: schema.name.clone(),
+                value: value.to_string(),
+                placeholder: String::new(),
+            }
         }
 
         SettingType::Enum { options } => {
@@ -1329,20 +1329,18 @@ pub fn build_item_from_value(
             let display_names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let values: Vec<String> = options.iter().map(|o| o.value.clone()).collect();
             let selected = values.iter().position(|v| v == current).unwrap_or(0);
-            let state = DropdownState::with_values(display_names, values, &schema.name)
-                .with_selected(selected);
-            SettingControl::Dropdown(state)
+            SettingControl::dropdown(&schema.name, display_names, values, selected)
         }
 
         SettingType::DualList { options, .. } => {
             // Dialog context has no sibling to cross-exclude against
-            SettingControl::DualList(build_dual_list_state(
+            build_dual_list(
                 schema,
                 options,
                 current_value,
                 vec![],
                 available_status_bar_tokens,
-            ))
+            )
         }
 
         SettingType::StringArray => {
@@ -1364,8 +1362,11 @@ pub fn build_item_from_value(
                 })
                 .unwrap_or_default();
 
-            let state = TextListState::new(&schema.name).with_items(items);
-            SettingControl::TextList(state)
+            SettingControl::TextList {
+                label: schema.name.clone(),
+                items,
+                integer: false,
+            }
         }
 
         SettingType::IntegerArray => {
@@ -1397,10 +1398,11 @@ pub fn build_item_from_value(
                 })
                 .unwrap_or_default();
 
-            let state = TextListState::new(&schema.name)
-                .with_items(items)
-                .with_integer_mode();
-            SettingControl::TextList(state)
+            SettingControl::TextList {
+                label: schema.name.clone(),
+                items,
+                integer: true,
+            }
         }
 
         SettingType::Object { .. } => {
@@ -1417,15 +1419,13 @@ pub fn build_item_from_value(
                 .or_else(|| schema.default.clone())
                 .unwrap_or_else(|| serde_json::json!({}));
 
-            let mut state = MapState::new(&schema.name).with_entries(&map_value);
-            state = state.with_value_schema((**value_schema).clone());
-            if let Some(field) = display_field {
-                state = state.with_display_field(field.clone());
+            SettingControl::Map {
+                label: schema.name.clone(),
+                entries: map_entries(&map_value),
+                value_schema: Some(Box::new((**value_schema).clone())),
+                display_field: display_field.clone(),
+                no_add: *no_add,
             }
-            if *no_add {
-                state = state.with_no_add(true);
-            }
-            SettingControl::Map(state)
         }
 
         SettingType::ObjectArray {
@@ -1437,12 +1437,12 @@ pub fn build_item_from_value(
                 .or_else(|| schema.default.clone())
                 .unwrap_or_else(|| serde_json::json!([]));
 
-            let mut state = KeybindingListState::new(&schema.name).with_bindings(&array_value);
-            state = state.with_item_schema((**item_schema).clone());
-            if let Some(field) = display_field {
-                state = state.with_display_field(field.clone());
+            SettingControl::ObjectArray {
+                label: schema.name.clone(),
+                items: array_value.as_array().cloned().unwrap_or_default(),
+                item_schema: Some(Box::new((**item_schema).clone())),
+                display_field: display_field.clone(),
             }
-            SettingControl::ObjectArray(state)
         }
 
         SettingType::Complex => json_control(&schema.name, current_value, schema.default.as_ref()),
@@ -1487,22 +1487,17 @@ pub fn build_item_from_value(
 /// Extract the current value from a control
 pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
     match control {
-        SettingControl::Toggle(state) => serde_json::Value::Bool(state.checked),
+        SettingControl::Toggle { checked, .. } => serde_json::Value::Bool(*checked),
 
-        SettingControl::Number(state) => {
-            if state.is_percentage {
-                // Convert back to float (divide by 100)
-                let float_value = state.value as f64 / 100.0;
-                serde_json::Number::from_f64(float_value)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Number(state.value.into()))
-            } else {
-                serde_json::Value::Number(state.value.into())
-            }
-        }
+        SettingControl::Number { value, integer, .. } => match integer {
+            true => serde_json::Value::Number((value.round() as i64).into()),
+            false => serde_json::Number::from_f64(*value)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null),
+        },
 
-        SettingControl::Dropdown(state) => state
-            .selected_value()
+        SettingControl::Dropdown { .. } => control
+            .dropdown_selected_value()
             .map(|s| {
                 if s.is_empty() {
                     // Empty string represents null in nullable enums
@@ -1513,41 +1508,39 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
             })
             .unwrap_or(serde_json::Value::Null),
 
-        SettingControl::Text(state) => serde_json::Value::String(state.value()),
+        SettingControl::Text { value, .. } => serde_json::Value::String(value.clone()),
 
-        SettingControl::TextList(state) => {
-            let arr: Vec<serde_json::Value> = state
-                .items
+        SettingControl::TextList { items, integer, .. } => serde_json::Value::Array(
+            items
                 .iter()
-                .filter_map(|s| {
-                    if state.is_integer {
-                        s.parse::<i64>()
-                            .ok()
-                            .map(|n| serde_json::Value::Number(n.into()))
-                    } else {
-                        Some(serde_json::Value::String(s.clone()))
-                    }
+                .filter_map(|s| match integer {
+                    true => s
+                        .parse::<i64>()
+                        .ok()
+                        .map(|n| serde_json::Value::Number(n.into())),
+                    false => Some(serde_json::Value::String(s.clone())),
                 })
-                .collect();
-            serde_json::Value::Array(arr)
-        }
+                .collect(),
+        ),
 
-        SettingControl::DualList(state) => {
-            let arr: Vec<serde_json::Value> = state
-                .included
+        SettingControl::DualList { included, .. } => serde_json::Value::Array(
+            included
                 .iter()
                 .map(|s| serde_json::Value::String(s.clone()))
-                .collect();
-            serde_json::Value::Array(arr)
-        }
+                .collect(),
+        ),
 
-        SettingControl::Map(state) => state.to_value(),
+        SettingControl::Map { entries, .. } => serde_json::Value::Object(
+            entries
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
 
-        SettingControl::ObjectArray(state) => state.to_value(),
+        SettingControl::ObjectArray { items, .. } => serde_json::Value::Array(items.clone()),
 
-        SettingControl::Json(state) => {
-            // Parse the JSON string back to a value
-            serde_json::from_str(&state.value()).unwrap_or(serde_json::Value::Null)
+        SettingControl::Json { text, .. } => {
+            serde_json::from_str(text).unwrap_or(serde_json::Value::Null)
         }
 
         SettingControl::Complex { .. } => serde_json::Value::Null,
@@ -1654,28 +1647,33 @@ mod tests {
         };
 
         let item = build_item(&schema, &ctx);
-        let SettingControl::Dropdown(state) = &item.control else {
+        let SettingControl::Dropdown {
+            options, values, ..
+        } = &item.control
+        else {
             panic!("theme should render as a dropdown, not free text");
         };
 
         // The dropdown lists exactly the registry themes, in list (picker)
         // order: display = name, value = portable form.
-        assert_eq!(state.options.len(), registry.list().len());
-        for (opt_display, info) in state.options.iter().zip(registry.list().iter()) {
+        assert_eq!(options.len(), registry.list().len());
+        for (opt_display, info) in options.iter().zip(registry.list().iter()) {
             assert_eq!(opt_display, &info.name);
         }
 
         // The user theme is present and valued by its portable form.
-        let user_idx = state
-            .options
+        let user_idx = options
             .iter()
             .position(|d| d == "my-user-theme")
             .expect("user theme should be an option");
-        assert_eq!(state.values[user_idx], "my-user-theme.json");
+        assert_eq!(values[user_idx], "my-user-theme.json");
 
         // Legacy bare "dark" pre-selects the built-in whose portable form is
         // "builtin://dark".
-        assert_eq!(state.selected_value(), Some("builtin://dark"));
+        assert_eq!(
+            item.control.dropdown_selected_value(),
+            Some("builtin://dark")
+        );
     }
 
     #[test]
@@ -1705,8 +1703,8 @@ mod tests {
         assert!(!item.modified);
         assert_eq!(item.layer_source, ConfigLayer::System);
 
-        if let SettingControl::Toggle(state) = &item.control {
-            assert!(!state.checked); // Current value is false
+        if let SettingControl::Toggle { checked, .. } = &item.control {
+            assert!(!checked); // Current value is false
         } else {
             panic!("Expected toggle control");
         }
@@ -1768,10 +1766,13 @@ mod tests {
         // With new semantics, modified = false when layer_sources is empty
         assert!(!item.modified);
 
-        if let SettingControl::Number(state) = &item.control {
-            assert_eq!(state.value, 2);
-            assert_eq!(state.min, Some(1));
-            assert_eq!(state.max, Some(16));
+        if let SettingControl::Number {
+            value, min, max, ..
+        } = &item.control
+        {
+            assert_eq!(*value, 2.0);
+            assert_eq!(*min, Some(1.0));
+            assert_eq!(*max, Some(16.0));
         } else {
             panic!("Expected number control");
         }
@@ -1801,8 +1802,8 @@ mod tests {
         // With new semantics, modified = false when layer_sources is empty
         assert!(!item.modified);
 
-        if let SettingControl::Text(state) = &item.control {
-            assert_eq!(state.value(), "monokai");
+        if let SettingControl::Text { value, .. } = &item.control {
+            assert_eq!(value, "monokai");
         } else {
             panic!("Expected text control");
         }
@@ -1851,13 +1852,28 @@ mod tests {
 
     #[test]
     fn test_control_to_value() {
-        let toggle = SettingControl::Toggle(ToggleState::new(true, "Test"));
+        let toggle = SettingControl::Toggle {
+            label: "Test".into(),
+            checked: true,
+            inherited: false,
+        };
         assert_eq!(control_to_value(&toggle), serde_json::Value::Bool(true));
 
-        let number = SettingControl::Number(NumberInputState::new(42, "Test"));
+        let number = SettingControl::Number {
+            label: "Test".into(),
+            value: 42.0,
+            min: None,
+            max: None,
+            integer: true,
+            percent: false,
+        };
         assert_eq!(control_to_value(&number), serde_json::json!(42));
 
-        let text = SettingControl::Text(TextInputState::new("Test").with_value("hello"));
+        let text = SettingControl::Text {
+            label: "Test".into(),
+            value: "hello".into(),
+            placeholder: String::new(),
+        };
         assert_eq!(
             control_to_value(&text),
             serde_json::Value::String("hello".to_string())

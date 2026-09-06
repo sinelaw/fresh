@@ -33,6 +33,13 @@ pub(crate) enum Command {
     /// Move the window so that one row *inside* the keyed descendant is in
     /// it: `(key, rows from that band's top)`.
     RevealKeyAt(crate::key::Key, u32),
+    /// Move the window by this many rows (negative: up), clamped.
+    ScrollBy(i32),
+    /// Move the window by this many of its own heights (negative: up),
+    /// clamped — a page key, in whatever unit the window counts.
+    ScrollByPages(i32),
+    /// Move the window to the end of its content.
+    ScrollToEnd,
 }
 
 #[derive(Debug, Default)]
@@ -62,6 +69,23 @@ impl Anchor {
     /// Move the target's window to an absolute offset.
     pub fn scroll_to(&self, p: Point) {
         self.queue.borrow_mut().push(Command::ScrollTo(p));
+    }
+
+    /// Move the target's window by `rows` (negative: up), clamped to its
+    /// content. The arrow keys of a page that scrolls as a whole.
+    pub fn scroll_by(&self, rows: i32) {
+        self.queue.borrow_mut().push(Command::ScrollBy(rows));
+    }
+
+    /// Move the target's window by `pages` of its own height (negative:
+    /// up), clamped. The page keys of a page that scrolls as a whole.
+    pub fn scroll_by_pages(&self, pages: i32) {
+        self.queue.borrow_mut().push(Command::ScrollByPages(pages));
+    }
+
+    /// Move the target's window to the end of its content.
+    pub fn scroll_to_end(&self) {
+        self.queue.borrow_mut().push(Command::ScrollToEnd);
     }
 
     /// Move the target's window so that `index` is inside it, by the shortest

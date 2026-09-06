@@ -1361,7 +1361,7 @@ impl Editor {
     /// Finish interactive replace and show summary
     pub(super) fn finish_interactive_replace(&mut self, replacements_made: usize) {
         self.active_window_mut().interactive_replace_state = None;
-        self.active_window_mut().prompt = None; // Clear the query-replace prompt
+        self.drop_prompt(); // Clear the query-replace prompt
 
         // Clear search highlights
         let ns = self.active_window().search_namespace.clone();

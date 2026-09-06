@@ -469,7 +469,7 @@ impl super::Editor {
                 continue;
             };
             if let Some(st) = self.widget_registry.get_mut(&key) {
-                st.buffer_id = super::PanelSlot::Sidebar(i).buffer_id();
+                st.buffer_id = Some(super::PanelSlot::Sidebar(i).buffer_id());
             }
         }
     }

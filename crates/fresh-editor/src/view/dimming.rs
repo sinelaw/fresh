@@ -57,8 +57,9 @@ pub fn apply_dimming_excluding(frame: &mut Frame, area: Rect, exclude: Option<Re
 }
 
 /// Buffer-level dimming, split out from the `Frame` wrapper so it can be
-/// exercised directly by tests.
-fn dim_buffer(buf: &mut ratatui::buffer::Buffer, area: Rect, exclude: Option<Rect>) {
+/// exercised directly by tests — and so the shell's fold can apply it as a
+/// described layer's `Scrim::Dim`.
+pub(crate) fn dim_buffer(buf: &mut ratatui::buffer::Buffer, area: Rect, exclude: Option<Rect>) {
     for y in area.y..area.y.saturating_add(area.height) {
         for x in area.x..area.x.saturating_add(area.width) {
             // Skip cells inside the excluded area (if any)

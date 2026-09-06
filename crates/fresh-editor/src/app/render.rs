@@ -1234,11 +1234,6 @@ impl Editor {
             self.request_plugin_render();
         }
 
-        // Widget panels mounted into splits render through the ordinary
-        // buffer pipeline, which knows nothing about widget geometry —
-        // paint their overflowing lists' scrollbars on top.
-        self.render_split_widget_panel_scrollbars(frame);
-
         // Promote any deferred virtual-buffer animations whose Rect is now
         // known. Done here (after split_areas is recomputed, before
         // apply_all runs at the end of render) so the first frame of the
@@ -1267,7 +1262,6 @@ impl Editor {
         self.active_chrome_mut().suggestions_outer_area = None;
         self.active_chrome_mut().prompt_results_area = None;
         self.active_chrome_mut().prompt_preview_area = None;
-        self.active_window_mut().file_browser_layout = None;
 
         // Clone all immutable values before the mutable borrow
         let display_name = self
@@ -1330,11 +1324,9 @@ impl Editor {
         // dock's later pass would overpaint their left edge. See the bottom of
         // `render` and `render_panels_and_modals`.
 
-        // The menu no longer paints here — the bar row is a native region and
-        // its dropdowns are layers — but its walk still records theme-key
-        // provenance for the inspector, and refreshes the expanded-submenu
-        // cache the event-time layout rides on.
-        self.apply_menu_theme_runs();
+        // The menu does not paint here: the bar row is a native region and
+        // its dropdowns are layers, and the fold records their provenance
+        // for the inspector like every other item's.
 
         // Where a migrated surface asked for the terminal caret, if any. See
         // the commit at the end of this method.
@@ -1379,7 +1371,7 @@ impl Editor {
         // `render_panels_and_modals` once those cells exist. The modal itself
         // lays into the chrome column beside the dock, so nothing of it is at
         // risk from that later paint.
-        self.render_modal_overlays(frame, size);
+        self.render_modal_overlays();
 
         // The dock's own rows, for the same reason and by the same rule: it
         // is a legacy painter, and the band goes after every legacy painter.
@@ -2009,20 +2001,8 @@ impl Editor {
         // rows painted straight over it. The menu was mounted, laid out and
         // folded, and never reached the screen.
 
-        // The full-screen modals were painted here once, after the dock, so
-        // the dock could not overpaint a modal's left edge. They lay into the
-        // chrome column beside the dock now — the tree places them, and
-        // `within(chrome_key())` is where that is said — so there is no edge
-        // left to overpaint, and they paint before the overlay band instead
-        // (see `render`). What is owed here is the half of their dimming the
-        // dock's own cells did not exist for yet.
-        if self.settings_state.as_ref().is_some_and(|s| s.visible) && !self.suppress_chrome_cells {
-            if let Some(dock) = dock_area {
-                if self.dock.is_some() {
-                    crate::view::dimming::apply_dimming(frame, dock);
-                }
-            }
-        }
+        // The settings dialog dims the whole frame from its own layer
+        // (`Scrim::Dim`), the dock included; nothing is owed here.
 
         if self.floating_widget_panel.is_some() {
             // A `fullscreen` modal paints over the whole frame, covering the
@@ -2079,30 +2059,6 @@ impl Editor {
 
         // The workspace-trust prompt is a layer in the shell's tree; see
         // `Editor::trust_description` and `view::shell::trust`.
-    }
-
-    /// Which full-screen modal has the pointer, if any.
-    ///
-    /// **Rank order, and the first taker wins** — the rule the capture band
-    /// walked the overlay stack to apply, stated once here because only one
-    /// layer can be exclusive at a time. The predicates are the components'
-    /// own, which is what kept their capture gate and their layer gate from
-    /// drifting apart.
-    pub(crate) fn modal_slot(&self) -> Option<crate::view::shell::modal::Slot> {
-        use crate::view::shell::modal::Slot;
-        if self.settings_state.as_ref().is_some_and(|s| s.visible) {
-            return Some(Slot::Settings);
-        }
-        // The keybinding editor is not here either: box, chrome, table and
-        // dialogs are all descriptions, so every press inside it is answered
-        // or swallowed by a node, and there is nothing left to route.
-        // The calibration wizard is not here: it is a *described* modal now,
-        // and its own layer carries the exclusivity. A slot beside it would
-        // route a pointer to a surface that has never wanted one.
-        if self.floating_widget_panel.is_some() {
-            return Some(Slot::FloatingPanel);
-        }
-        None
     }
 
     /// The workspace-trust prompt, as the shell describes it.
@@ -2514,6 +2470,7 @@ impl Editor {
             .map(|(level, d)| {
                 let label_width = d.label_column();
                 let first_editable = d.first_editable_index;
+                let states = std::rc::Rc::new(d.controls.instance_states.clone());
                 let divider_at =
                     (first_editable > 0 && first_editable < d.items.len()).then_some(first_editable);
                 let items = d
@@ -2534,21 +2491,19 @@ impl Editor {
                                 &item.path,
                                 &item.control,
                                 label_width,
+                                d.composite_cursor_of(item),
                             ),
-                            focus_key: match item.control.is_editing() {
-                                true => item.path.clone(),
-                                false => String::new(),
-                            },
+                            // As on the page: a control is live when the
+                            // dialog's store names it, or one of its rows.
+                            focus_key: d.focus_key_of(item).unwrap_or("").to_string(),
+                            states: states.clone(),
                             focused,
                             hovered: !item.read_only && d.hover_item == Some(index),
                             modified: item.modified,
                             read_only: item.read_only,
                             // A composite control's cursor walks its own rows,
                             // and the `>` goes where the cursor is.
-                            cursor_row: match item.control.is_composite() {
-                                true => item.control.focused_sub_row(),
-                                false => 0,
-                            },
+                            cursor_row: d.cursor_row(index),
                             affordance: Self::entry_affordance(d, index, item, focused),
                         }
                     })
@@ -2621,6 +2576,9 @@ impl Editor {
         let page = s.pages.get(s.selected_category)?;
         let focused = s.focus_panel() == crate::view::settings::state::FocusPanel::Settings;
         let label_width = page_label_width(&page.items);
+        // The kinds' state, shared by every card of the page: the same map
+        // the kinds wrote, read by the description they are painted from.
+        let states = std::rc::Rc::new(s.controls.instance_states.clone());
         let cards =
             page.items
                 .iter()
@@ -2648,16 +2606,17 @@ impl Editor {
                             &item.path,
                             &item.control,
                             label_width,
+                            s.composite_cursor_of(item),
                         ),
-                        // A field paints its caret only while it is the focused
-                        // widget, and only editing means that — outside edit mode
-                        // ↑↓ walks the settings list and a caret would promise a
-                        // movement the arrows do not make.
-                        focus_key: match item.control.is_editing() {
-                            true => item.path.clone(),
-                            false => String::new(),
-                        },
-                        live: item.control.is_live(),
+                        // A control paints its caret, its draft or its list
+                        // only while it is the surface's focused widget, and
+                        // only being live means that — outside edit mode ↑↓
+                        // walks the settings list and a caret would promise a
+                        // movement the arrows do not make. A control is live
+                        // when the store's focus names it.
+                        focus_key: s.focus_key_of(item).unwrap_or("").to_string(),
+                        live: s.focus_key_of(item).is_some(),
+                        states: states.clone(),
                         hovered_popup_row: s.hovered_popup_row.clone(),
                         description: item.description.clone().filter(|d| !d.is_empty()),
                         layer: match item.layer_source {
@@ -2712,7 +2671,6 @@ impl Editor {
                 let cursor = s.search_cursor().min(query.len()) as i32;
                 let (sel_start, sel_end) = s
                     .search_input
-                    .editor
                     .selection_flat_range()
                     .map(|(a, b)| (a as i32, b as i32))
                     .unwrap_or((-1, -1));
@@ -4009,8 +3967,7 @@ impl Editor {
     ///
     /// `StatusBarRenderer::render_status_bar` placed every element, drew it,
     /// and recorded provenance in one walk. The tree places, the fold draws,
-    /// and this is the only part left — the same shape as
-    /// [`Self::apply_menu_theme_runs`].
+    /// and this is the only part left.
     ///
     /// It used to publish a `StatusBarChrome` capture beside the runs, so the
     /// web `Scene` could read the segments back. The `Scene` asks the tree
@@ -4429,11 +4386,11 @@ impl Editor {
         let (dock_area, chrome_area) = split;
         // The dialog's height, which the painter computed from the prompt
         // row's `y`: the space above it, less the menu bar's row, capped at
-        // 20. Its *placement* is the tree's — above the prompt row and as wide
-        // as it — so this is the one number left.
-        let browser = has_file_browser.then(|| crate::view::shell::file_browser::Browser {
-            height: chrome_area.height.saturating_sub(2).min(20),
-        });
+        // 20. Its placement is the tree's — above the prompt row and as wide
+        // as it — and so is its content now (`browser_description`).
+        let browser = has_file_browser
+            .then(|| self.browser_description(chrome_area.height.saturating_sub(2).min(20)))
+            .flatten();
         let menu_bar_visible = self.active_window().menu_bar_visible;
         // One walk for the whole menu: the bar's labels and, when one is open,
         // its dropdown chain. Skipped entirely when the bar is hidden.
@@ -4445,20 +4402,13 @@ impl Editor {
         // the bar is the chrome column's top row.
         let win_status_bar = self.active_window().status_bar_visible;
         let search_options = self.search_options_content();
-        let menu_layout = menu_bar_visible.then(|| ratatui::layout::Rect {
-            x: chrome_area.x,
-            y: chrome_area.y,
-            width: chrome_area.width,
-            height: 1,
-        });
-        // THE menu walk for this frame. Everything the menu needs comes out of
-        // it — the rectangles, the description the shell paints, and the
-        // theme-key provenance — because they are one derivation. It used to
-        // run twice per frame in release and three times in debug, from three
-        // different bar rectangles, reconciled only by a `debug_assert_eq!`
-        // that release compiles out.
-        let menu_layout = menu_layout.and_then(|bar| self.menu_layout_in(bar));
-        self.menu_layout_frame = menu_layout.clone();
+        // The menu, as content: its labels and the open chain. Where each
+        // label sits and how wide each box is are the tree's to decide, and
+        // the web reads them back off it (`menu_view`).
+        let (menu_bar_items, dropdowns) = match menu_bar_visible {
+            true => self.menu_description(),
+            false => Default::default(),
+        };
         // The sidebar's content. Its height is the chrome column minus the
         // fixed rows — the rule `Frame::fixed_rows` states, applied here
         // because the panel's viewport row count is model state that has to be
@@ -4486,7 +4436,6 @@ impl Editor {
         let card = self.overlay_card_description(chrome_area);
         let popups = self.popup_descriptions(chrome_area);
         let theme_info = self.theme_info_description();
-        let modal = self.modal_slot();
         // The grid's shape, for the tree to lay out. Cloned rather than
         // borrowed: a description is a value, and this one is a handful of
         // nodes.
@@ -4549,7 +4498,6 @@ impl Editor {
             theme_info,
             browser,
             trust,
-            modal,
             event_debug: self.event_debug_description(),
             settings: self.settings_chrome_description(),
             settings_dialog: self.settings_dialog_description(),
@@ -4584,14 +4532,8 @@ impl Editor {
             sidebar,
             menu: self.open_context_menu_for_shell(),
             menu_keys,
-            menu_bar_items: menu_layout
-                .as_ref()
-                .map(|l| l.shell_bar.clone())
-                .unwrap_or_default(),
-            // From the same walk that decides the dropdowns' geometry, so the
-            // description and the rectangles the not-yet-migrated hit-testing
-            // uses cannot disagree — they are one computation.
-            dropdowns: menu_layout.map(|l| l.shell_dropdowns).unwrap_or_default(),
+            menu_bar_items,
+            dropdowns,
             suggestions,
             popups,
             card,
@@ -4762,23 +4704,15 @@ impl Editor {
             return None;
         }
         let at = Self::centered_overlay_rect(chrome, 90, 90);
-        let inner_w = at.width.saturating_sub(2);
-        let toolbar_rows = match prompt.toolbar_widget.as_ref() {
-            Some(spec) => crate::widgets::render_spec_no_autofocus(
-                spec,
-                &std::collections::HashMap::new(),
-                prompt.toolbar_focus.as_deref().unwrap_or(""),
-                inner_w as u32,
-            )
-            .entries
-            .len() as u16,
-            // No widget toolbar: the title row takes one, or nothing does.
-            None => !prompt.title.is_empty() as u16,
-        };
+        let toolbar = self.prompt_toolbar_interior();
         Some(Card {
             at: fresh_ui::Rect::new(at.x as i32, at.y as i32, at.width, at.height),
-            toolbar_rows,
+            // No widget toolbar: the title row takes one, or nothing does.
+            title_row: toolbar.is_none() && !prompt.title.is_empty(),
+            toolbar,
             footer: !prompt.footer.is_empty(),
+            search: self.active_prompt_has_search_options(),
+            input_focused: !self.prompt_toolbar_holds_keyboard(),
         })
     }
 
@@ -4796,6 +4730,97 @@ impl Editor {
     /// file-browser prompts draw a different popup entirely. Both are the
     /// painter's still, and both return `None` here so the two never draw the
     /// same list.
+    /// The file-open dialog, as content.
+    ///
+    /// What `FileBrowserRenderer` read off `FileOpenState`, the keybinding
+    /// resolver and the hover target on its way to the cells — the same reads,
+    /// made once into a value the tree lays out and the web projects
+    /// (`file_browser_view`), so the two cannot disagree about a label.
+    pub(crate) fn browser_description(
+        &self,
+        height: u16,
+    ) -> Option<crate::view::shell::file_browser::Browser> {
+        use crate::app::file_open::{format_modified, format_size, FileOpenSection, Toggle};
+        use crate::input::keybindings::{Action, KeyContext};
+        use crate::view::shell::file_browser::{Browser, Entry, Listing, Shortcut, ToggleItem};
+        let state = self.active_window().file_open_state.as_ref()?;
+        let shortcut_of = |a: Action| -> Option<String> {
+            self.keybindings
+                .read()
+                .ok()
+                .and_then(|kb| kb.get_keybinding_for_action(&a, KeyContext::Prompt))
+        };
+        // The painter underlined the `E` of `Encoding` by splitting a
+        // hardcoded string. The label is localized; the mnemonic is wherever
+        // that character landed, or nowhere.
+        let detect = fresh_i18n::t!("file_browser.detect_encoding").to_string();
+        let toggles = vec![
+            ToggleItem {
+                id: Toggle::ShowHidden,
+                label: fresh_i18n::t!("file_browser.show_hidden").to_string(),
+                mnemonic: None,
+                shortcut: shortcut_of(Action::FileBrowserToggleHidden),
+                active: state.show_hidden,
+            },
+            ToggleItem {
+                id: Toggle::DetectEncoding,
+                mnemonic: detect.find('E'),
+                label: detect,
+                shortcut: shortcut_of(Action::FileBrowserToggleDetectEncoding),
+                active: state.detect_encoding,
+            },
+        ];
+        let listing = if state.loading {
+            Listing::Loading
+        } else if let Some(e) = &state.error {
+            Listing::Error(e.clone())
+        } else {
+            Listing::Entries(
+                state
+                    .entries
+                    .iter()
+                    .map(|e| {
+                        let meta = e.fs_entry.metadata.as_ref();
+                        Entry {
+                            name: e.fs_entry.name.clone(),
+                            is_dir: e.fs_entry.is_dir(),
+                            is_symlink: e.fs_entry.is_symlink(),
+                            size: (!e.fs_entry.is_dir())
+                                .then(|| meta.map(|m| format_size(m.size)))
+                                .flatten(),
+                            modified: meta.and_then(|m| m.modified).map(format_modified),
+                            matches: e.matches_filter,
+                        }
+                    })
+                    .collect(),
+            )
+        };
+        let files = state.active_section == FileOpenSection::Files;
+        let hover = match self.shell_hover {
+            Some(crate::app::types::HoverTarget::FileBrowser(part)) => Some(part),
+            _ => None,
+        };
+        Some(Browser {
+            height,
+            dir: state.current_dir.clone(),
+            toggles,
+            shortcuts: state
+                .shortcuts
+                .iter()
+                .map(|s| Shortcut {
+                    label: s.label.clone(),
+                    description: s.description.clone(),
+                })
+                .collect(),
+            selected_shortcut: (!files).then_some(state.selected_shortcut),
+            sort: state.sort_mode,
+            ascending: state.sort_ascending,
+            listing,
+            selected: files.then_some(state.selected_index).flatten(),
+            hover,
+        })
+    }
+
     fn suggestions_description(&self) -> Option<crate::view::shell::prompt::Suggestions> {
         use crate::view::shell::prompt::{SuggestionRow, Suggestions};
         let prompt = self.active_window().prompt.as_ref()?;
@@ -4803,7 +4828,7 @@ impl Editor {
             return None;
         }
         // The file-browser prompts draw a different popup entirely — a browser
-        // card, not a list — and it is still the painter's.
+        // card, not a list (`file_browser::layer`).
         if matches!(
             prompt.prompt_type,
             crate::view::prompt::PromptType::OpenFile
@@ -4999,55 +5024,24 @@ impl Editor {
         Some(self.shell_region_now(crate::view::shell::frame::HostRegion::StatusBar))
     }
 
-    /// The menu's layout THIS instant — bar label spans, open dropdown /
-    /// submenu boxes, and item rows — computed by the same label-width /
-    /// dropdown-placement walk the painter runs
-    /// ([`MenuRenderer::compute_layout`], asserted against the paint walk
-    /// in debug builds). This replaced the paint-recorded
-    /// `ChromeLayout.menu_layout` cache — geometry produced by layout, not
-    /// recorded by paint. Reads the expanded-menus cache refreshed by the
-    /// paint pass (the same content source the painter and `menu_view`
-    /// use). `None` when the menu bar is hidden.
-    pub(crate) fn menu_layout_now(&self) -> Option<crate::view::ui::menu::MenuLayout> {
-        // The frame's own walk, not a fresh one. What the web `Scene` projects
-        // must be what the TUI drew, and a second walk from a different bar
-        // rectangle is exactly how the two came to disagree. `build_scene`
-        // renders before it projects, so this is this frame's answer.
-        self.menu_layout_frame.clone()
-    }
-
-    /// The same walk, for a bar rect the caller already has.
-    ///
-    /// `shell_frame` needs it: it *builds* the frame's description, so it runs
-    /// before the frame is laid out and must not read the rectangles the last
-    /// one produced. Build is a function of state, and a build that consulted
-    /// layout would depend on the layout that depends on it — the loop the
-    /// library's own `Ui::rect` refuses at runtime.
-    ///
-    /// The bar's rectangle is not a layout result there anyway: it is the top
-    /// row of the chrome column, whose origin and width `compute_dock_split`
-    /// already decided from state alone.
-    pub(crate) fn menu_layout_in(
+    /// The menu's content this frame: the bar's labels and the open dropdown
+    /// chain, from the menu state, the keymap's accelerators and mnemonics,
+    /// and the shell's own hover. See `view::shell::menu::describe`.
+    pub(crate) fn menu_description(
         &self,
-        area: ratatui::layout::Rect,
-    ) -> Option<crate::view::ui::menu::MenuLayout> {
-        let frame = self.active_chrome().last_frame;
-        let screen = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
-        // The shell's own hover, not the legacy walk's: the menu's chrome
-        // boxes are deleted, so the walk has nothing to say about it and would
-        // only report `None`. See `Editor::shell_hover`.
-        let hover_target = self.shell_hover.clone();
+    ) -> (
+        crate::view::shell::menu::MenuBar,
+        Vec<crate::view::shell::menu::DropdownLevel>,
+    ) {
         let all_menus = self.all_menus_expanded();
         let keybindings = self.keybindings.read().unwrap();
-        Some(crate::view::ui::MenuRenderer::compute_layout(
-            screen,
-            area,
-            &all_menus,
-            &self.menu_state,
-            &keybindings,
-            hover_target.as_ref(),
-            self.config.editor.menu_bar_mnemonics,
-        ))
+        crate::view::shell::menu::describe(&crate::view::shell::menu::MenuModel {
+            menus: &all_menus,
+            state: &self.menu_state,
+            keybindings: &keybindings,
+            hover: self.shell_hover.as_ref(),
+            mnemonics: self.config.editor.menu_bar_mnemonics,
+        })
     }
 
     /// The status bar's layout THIS instant — area plus the content-derived
@@ -5056,48 +5050,18 @@ impl Editor {
     /// produced by layout, not recorded by paint: every cache this once had
     /// on the side — `clickable`, `plugin_token_areas`, and finally the whole
     /// `StatusBarChrome` capture — is retired. `None` when the bar is hidden.
-    /// Render the modal overlays that dim everything behind them: settings,
-    /// calibration wizard, keybinding editor, and event-debug dialog. Each is
-    /// drawn only for the TUI (`!suppress_chrome_cells`); the web projects
-    /// them natively.
-    ///
-    /// `area` is the whole frame — these are full-screen modals, so the dim
-    /// pass covers the dock column too and each dialog centres in the full
-    /// window. They are called from `render_panels_and_modals` (after the
-    /// dock paints) so the dock cannot overpaint them.
-    fn render_modal_overlays(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        // Check visibility first to avoid borrow conflict with dimming
-        // The web renders Settings natively from `settings_view`; paint cells
-        // only for the TUI.
-        let draw_settings = !self.suppress_chrome_cells;
-        let settings_visible = draw_settings
-            && self
-                .settings_state
-                .as_ref()
-                .map(|s| s.visible)
-                .unwrap_or(false);
-        if settings_visible {
-            // Dim everything behind the settings modal — the editor chrome
-            // *and* the dock. The dock is input-inaccessible while the modal
-            // is up (the Settings component's `capture_mouse` claims every
-            // click), so leaving it at full brightness read as if it were
-            // still live beside a dialog that had already swallowed its
-            // input.
-            crate::view::dimming::apply_dimming(frame, area);
-        }
-        if let Some(ref mut settings_state) = self.settings_state {
-            if !draw_settings {
-                // keyboard-driven native render; skip the cell layout pass but
-                // still sync per-control focus states — they're pure state the
-                // scene projection reads (map/list entry highlight), not
-                // something tied to cell geometry.
-                if settings_state.visible {
-                    settings_state.update_focus_states();
-                }
-            } else if settings_state.visible {
-                settings_state.update_focus_states();
-            }
-        }
+    /// What the full-screen modals still need from the painter's pass: the
+    /// page heights their keyboards move by, read off the boxes the tree
+    /// placed. Every one of them — settings, the calibration wizard, the
+    /// keybinding editor and the event-debug dialog — is drawn by the tree,
+    /// scrim included.
+    fn render_modal_overlays(&mut self) {
+        // The settings dialog is the tree's, box and contents alike
+        // (`view::shell::settings`): its ring, its caption, the divider
+        // between its columns and the dim over everything behind it are the
+        // layer's own. What is left here is the one thing the description
+        // cannot say for itself: how many rows a `PgUp` moves the category
+        // cursor by.
         // The page a `PgUp` moves the category cursor by: the tree's own
         // height, read from the box the tree placed. It was
         // `categories_scroll.set_viewport(area.height)`, filed by the painter
@@ -5109,34 +5073,6 @@ impl Editor {
         ) {
             s.categories_scroll.scroll.viewport = r.height;
         }
-        // **The box is the tree's.** `view::shell::settings` places it —
-        // ninety percent of the chrome area, capped at 160, centred beside the
-        // dock — and this reads the answer. The centring arithmetic here added
-        // `area.x` back by hand, and the comment beside it said why: without
-        // it the modal landed at the frame origin and the dock over-drew its
-        // left edge.
-        if draw_settings {
-            let modal_area = self.panel_rect(&crate::view::shell::settings::key());
-            // The body band right of the divider — the tree lays the three
-            // columns out, so the panel's rectangle is read rather than split
-            // for a second time. See `settings::panel_key`.
-            let panel_area = self.panel_rect(&crate::view::shell::settings::panel_key());
-            let open = self.settings_state.as_ref().is_some_and(|s| s.visible);
-            if open {
-                let theme = self.theme.read().unwrap().clone();
-                if let Some(ref settings_state) = self.settings_state {
-                    crate::view::settings::render_settings(
-                        frame,
-                        area,
-                        modal_area.unwrap_or(ratatui::layout::Rect::ZERO),
-                        panel_area,
-                        settings_state,
-                        &theme,
-                    );
-                }
-            }
-        }
-
         // The calibration wizard is the tree's — box, bands, key list and all.
         // It was `apply_dimming` over the frame and four `Paragraph`s into
         // three rectangles it split by hand; it is `Scrim::Dim` and a column
@@ -5154,8 +5090,8 @@ impl Editor {
             // **The box is the tree's.** `view::shell::keybinding` places it —
             // ninety percent of the chrome area, capped, floored, centred
             // beside the dock — and this reads the answer. The four lines of
-            // arithmetic that computed it here and then filed it in
-            // `editor.layout.modal_area` for a mouse handler to compare
+            // arithmetic that computed it here and then filed it in a
+            // `KeybindingEditorLayout` for a mouse handler to compare
             // against were the same rectangle stated twice.
             let modal_area = self.panel_rect(&crate::view::shell::keybinding::key());
             // The page a `PgUp` moves by. It was the table rectangle's height,
@@ -5184,17 +5120,6 @@ impl Editor {
     /// `shell_frame` did the walk at the top of this method and the runs came
     /// out of it. The expanded-submenu cache is refreshed before that walk, in
     /// `refresh_menu_content`.
-    fn apply_menu_theme_runs(&mut self) {
-        let Some(runs) = self
-            .menu_layout_frame
-            .as_ref()
-            .map(|l| l.theme_runs.clone())
-        else {
-            return;
-        };
-        self.active_chrome_mut().apply_theme_runs(&runs);
-    }
-
     /// Drain plugin commands enqueued before this frame's layout pass.
     ///
     /// Must run before `compute_dock_split` because commands such as
@@ -5560,10 +5485,22 @@ impl Editor {
                 return true;
             }
         }
-        if let Some(ref fb) = self.active_window().file_browser_layout {
-            if inside(fb.popup_area) {
-                return true;
-            }
+        // The file-open dialog, where the tree placed it.
+        let frame = self.active_chrome().last_frame;
+        let browser = self.shell_ui.as_ref().and_then(|ui| {
+            crate::view::shell::rect_of(
+                ui,
+                &crate::view::shell::file_browser::key(),
+                ratatui::layout::Rect {
+                    x: 0,
+                    y: 0,
+                    width: frame.width,
+                    height: frame.height,
+                },
+            )
+        });
+        if browser.is_some_and(inside) {
+            return true;
         }
         false
     }
@@ -5623,51 +5560,6 @@ impl Editor {
         // overlaps the dock column.
         if prompt.overlay {
             self.render_overlay_prompt(frame, chrome);
-            return;
-        }
-
-        if matches!(
-            prompt.prompt_type,
-            PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
-        ) {
-            let hover_target = self.hovered();
-            let theme = self.theme.read().unwrap().clone();
-            let keybindings = self.keybindings.read().unwrap();
-            let kb_clone = keybindings.clone();
-            drop(keybindings);
-            // Where the tree put it. The three lines this replaces derived
-            // the same rectangle from the prompt row's own — an `x` copied
-            // from it "so the picker never overlaps the dock column", a
-            // `width` taken from the chrome area beside it, and a `y` that
-            // subtracted the height back off. `Place::Above` with
-            // `stretch_to_anchor` is all three, said once, against the row
-            // itself.
-            let Some(popup_area) = self.shell_ui.as_ref().and_then(|ui| {
-                crate::view::shell::rect_of(
-                    ui,
-                    &crate::view::shell::file_browser::key(),
-                    frame.area(),
-                )
-            }) else {
-                return;
-            };
-            // Web renders the browser natively from `file_browser_view`; skip
-            // its cell drawing (layout, spans and the list viewport are still
-            // computed, and the projection reads them).
-            let fb_draw = !self.suppress_chrome_cells;
-            let __win = self.active_window_mut();
-            let Some(file_open_state) = &mut __win.file_open_state else {
-                return;
-            };
-            __win.file_browser_layout = crate::view::ui::FileBrowserRenderer::render(
-                frame,
-                popup_area,
-                file_open_state,
-                &theme,
-                &hover_target,
-                Some(&kb_clone),
-                fb_draw,
-            );
             return;
         }
 
@@ -6553,23 +6445,6 @@ impl Editor {
             return;
         }
 
-        // If the plugin supplied a widget toolbar, render it now (full inner
-        // width) so we know its height before laying out the header band. The
-        // toggles are real `Toggle` widgets — themed and clickable — rather
-        // than styled text. `render_spec` is stateless here (empty prior
-        // state / no focus key): a `Toggle`'s checked-ness lives in the spec,
-        // and click-to-toggle is routed by key (no registry needed).
-        let toolbar_focus_key = prompt.toolbar_focus.as_deref().unwrap_or("");
-        let toolbar_widget_out: Option<crate::widgets::RenderOutput> =
-            prompt.toolbar_widget.as_ref().map(|spec| {
-                crate::widgets::render_spec_no_autofocus(
-                    spec,
-                    &std::collections::HashMap::new(),
-                    toolbar_focus_key,
-                    inner.width as u32,
-                )
-            });
-
         // Layout: a full-width HEADER band (input + toolbar + separator)
         // spans the whole inner width at the top; the BODY below it splits
         // into results | preview; a full-width FOOTER (when the plugin set
@@ -6674,7 +6549,7 @@ impl Editor {
         // Cursor position on the input row — only when the input is focused.
         // When a toolbar control owns focus, the highlighted toggle is the
         // focus indicator and the input caret would be misleading.
-        let input_focused = prompt.toolbar_focus.is_none();
+        let input_focused = !self.prompt_toolbar_holds_keyboard();
         let cursor_x = (str_width(&prompt.message)
             + str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]))
             as u16;
@@ -6687,35 +6562,16 @@ impl Editor {
         // grep provider · …"). Sits between the input row and the
         // separator so the user sees feature-scoped controls right
         // under what they're typing — not on the frame border
-        // where shortcut hints get visually lost.
-        self.active_chrome_mut().prompt_toolbar_boxes = toolbar_widget_out
-            .as_ref()
-            .map(|out| out.boxes.clone())
-            .unwrap_or_default();
-        if let Some(out) = &toolbar_widget_out {
-            // Widget toolbar: paint each rendered row across the full
-            // width. Click routing needs no recorded rects — the box tree
-            // stored above carries the geometry (display columns, same
-            // metric the paint uses).
-            let band_y = inner.y + 1;
-            if draw {
-                for (i, entry) in out.entries.iter().enumerate() {
-                    let y = band_y + i as u16;
-                    if y >= inner.y + inner.height {
-                        break;
-                    }
-                    paint_text_property_entry(
-                        frame.buffer_mut(),
-                        entry,
-                        inner.x,
-                        y,
-                        inner.width,
-                        &theme,
-                        None,
-                    );
-                }
-            }
-        } else if draw && !prompt.title.is_empty() && inner.height >= 2 {
+        // where shortcut hints get visually lost. A plugin's *widget*
+        // toolbar is the tree's: described in the card's header band
+        // (`overlay_prompt::toolbar_band`) and painted with the card's
+        // layer, over this ground.
+        if toolbar_h > 0
+            && prompt.toolbar.is_none()
+            && draw
+            && !prompt.title.is_empty()
+            && inner.height >= 2
+        {
             let toolbar = Rect {
                 x: inner.x,
                 y: inner.y + 1,
@@ -7007,7 +6863,8 @@ impl Editor {
             // shell's tree and paints its own column, so there is nothing to
             // re-derive here. See `view::shell::file_explorer::grip_ink`.
             Some(HoverTarget::FileExplorerBorder) => {}
-            // Menu hover is handled by MenuRenderer
+            // The menu's hover is the tree's: its labels and rows report
+            // enter and leave, and the description reads the hover back.
             _ => {}
         }
     }
@@ -7432,169 +7289,6 @@ impl Editor {
         (Some(dock), chrome)
     }
 
-    /// Paint a scrollbar over each overflowing `List`/`Tree` of every
-    /// widget panel mounted into a visible editor split (Settings,
-    /// Search & Replace, the code-tour dock). Floating panels paint
-    /// theirs inside [`render_floating_widget_panel`]; split-mounted
-    /// panels go through the ordinary buffer pipeline, which knows
-    /// nothing about widget geometry, so without this pass their
-    /// overflowing lists show no scrollbar at all.
-    fn render_split_widget_panel_scrollbars(&mut self, frame: &mut Frame) {
-        use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
-
-        // Collect paint jobs first so the layout/registry borrows end
-        // before the frame is written. Each job also becomes a track the
-        // mouse hit-test can grab, so these bars drag like the floating
-        // panels' do instead of being decoration.
-        let mut jobs: Vec<(ratatui::layout::Rect, ScrollbarState)> = Vec::new();
-        let mut tracks: Vec<(crate::widgets::PanelKey, super::WidgetScrollbarTrack)> = Vec::new();
-        // Every visible pane, from the split model, at the rectangle the tree
-        // placed it — rather than the painter's list of what it just drew.
-        let panes: Vec<(crate::model::event::LeafId, BufferId, ratatui::layout::Rect)> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr.visible_leaves())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|(pane, buffer)| self.pane_content_rect(pane).map(|r| (pane, buffer, r)))
-            .collect();
-        let described = self.described_panes();
-        for (split_id, buffer_id, content_rect) in &panes {
-            // **A described panel draws its own bar.** Its lists are
-            // viewports, and `Node::scrollbar` puts the bar at the list's own
-            // right edge — so this pass, which reads the runtime's
-            // `LayoutBox` scroll payloads and paints a second one at the
-            // pane's edge, is the duplicate C.5 exists to remove. Standing
-            // down here is also what empties `split_widget_scrollbar_tracks`,
-            // and with it the last thing arming `PointerGrab::WidgetScrollbar`
-            // for anything but a `WindowEmbed` panel (E.3).
-            if described.contains(split_id) {
-                continue;
-            }
-            let panels = self.widget_registry.panels_for_buffer(*buffer_id);
-            if panels.is_empty() {
-                continue;
-            }
-            // The panel body is pinned to the top in practice, but honour
-            // a scrolled viewport all the same (mirrors the wheel-routing
-            // translation in `handle_split_widget_panel_wheel`).
-            let top_byte = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .and_then(|vs| vs.get(split_id))
-                .map(|vs| vs.viewport.top_byte())
-                .unwrap_or(0);
-            let (top_line, gutter) = self
-                .windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .and_then(|b| b.get(buffer_id))
-                .map(|s| {
-                    (
-                        s.buffer.get_line_number(top_byte),
-                        s.margins.left_total_width() as u16,
-                    )
-                })
-                .unwrap_or((0, 0));
-            for panel_key in panels {
-                let Some(panel) = self.widget_registry.get(&panel_key) else {
-                    continue;
-                };
-                for b in &panel.boxes {
-                    // Scroll payloads ride every scrollable box; only
-                    // overflowing ones earn a scrollbar.
-                    let Some(sc) = b.scroll else { continue };
-                    if sc.total <= sc.visible {
-                        continue;
-                    }
-                    let Some(rel_row) = (b.row as usize).checked_sub(top_line) else {
-                        continue;
-                    };
-                    let y = content_rect.y as usize + rel_row;
-                    let bottom = (content_rect.y + content_rect.height) as usize;
-                    if y >= bottom {
-                        continue;
-                    }
-                    let h = (b.height as usize).min(bottom - y);
-                    if h == 0 {
-                        continue;
-                    }
-                    // Scrollbar column = right edge of the list's region,
-                    // clamped inside the split.
-                    //
-                    // A list that starts at column 0 owns the panel's whole
-                    // width, so its bar belongs at the right-hand edge. Its
-                    // laid-out `width_cols` is deliberately a couple of
-                    // columns short (`widget_panel_width` reserves them for
-                    // exactly this bar), and drawing at that inboard edge
-                    // put the bar *inside* the rows — blanking a character
-                    // cell mid-text and leaving the reserved columns empty.
-                    //
-                    // Where "the edge" is depends on the split: with the
-                    // buffer scrollbar on, the split keeps a column of its
-                    // own just past the content rect, so paint into that one
-                    // and the two coincide. Two tracks side by side is what
-                    // the reserved columns looked like before.
-                    //
-                    // That column only exists when the split actually
-                    // draws a buffer scrollbar. A panel whose buffer is
-                    // non-scrollable (the self-managing widget panels:
-                    // Search & Replace, the review-diff sidebar) is laid
-                    // out to the full split width, so painting past the
-                    // content rect put the bar on the split divider — one
-                    // column outside the panel, where it was overwritten
-                    // and the list looked like it had no scrollbar at all.
-                    let region_right = content_rect
-                        .x
-                        .saturating_add(gutter)
-                        .saturating_add(b.col as u16)
-                        .saturating_add(b.width.saturating_sub(1) as u16);
-                    let panel_right = content_rect.x + content_rect.width.saturating_sub(1);
-                    let has_buffer_scrollbar_column = self.config.editor.show_vertical_scrollbar
-                        && !self.active_window().is_non_scrollable_buffer(*buffer_id);
-                    let sb_x = if b.col != 0 {
-                        region_right.min(panel_right)
-                    } else if has_buffer_scrollbar_column {
-                        content_rect.x + content_rect.width
-                    } else {
-                        panel_right
-                    };
-                    let rect = ratatui::layout::Rect {
-                        x: sb_x,
-                        y: y as u16,
-                        width: 1,
-                        height: h as u16,
-                    };
-                    jobs.push((rect, ScrollbarState::new(sc.total, sc.visible, sc.offset)));
-                    tracks.push((
-                        panel_key.clone(),
-                        super::WidgetScrollbarTrack {
-                            list_key: b.key.clone().unwrap_or_default(),
-                            rect,
-                            total: sc.total,
-                            visible: sc.visible,
-                            scroll: sc.offset,
-                        },
-                    ));
-                }
-            }
-        }
-        self.split_widget_scrollbar_tracks = tracks;
-        if jobs.is_empty() {
-            return;
-        }
-        let colors = {
-            let theme = self.theme.read().unwrap();
-            ScrollbarColors::from_theme(&theme)
-        };
-        for (rect, state) in jobs {
-            render_scrollbar(frame.buffer_mut(), rect, &state, &colors);
-        }
-    }
-
     pub(super) fn render_floating_widget_panel(
         &mut self,
         frame: &mut Frame,
@@ -7669,15 +7363,11 @@ impl Editor {
             },
         };
 
-        // **Geometry without cells, and the reason is no longer the web.** A
-        // frontend that suppresses chrome cells still needs this pass to run
-        // for `last_inner_rect`, which the wheel routing and the anchored
-        // popup's dismissal gate read. It used to be the web's plugin-panel
-        // projection that made the distinction worth having; that projection
-        // is deleted, and what remains is a headless frame computing the same
-        // rectangles without painting them. TUI passes draw=true so its
-        // rendering is unchanged.
+        // The web paints no chrome cells; nothing below is for it.
         let draw = !self.suppress_chrome_cells;
+        if !draw {
+            return;
+        }
         // Only the centered modal dims the background; the dock and the
         // anchored context-menu popup paint over the editor without it.
         //
@@ -7745,18 +7435,6 @@ impl Editor {
             }
         };
         if inner.width == 0 || inner.height == 0 {
-            if let Some(fwp) = self.panel_mut(slot) {
-                fwp.last_inner_rect = Some(inner);
-            }
-            return;
-        }
-
-        // Web path: record the rect for native rendering / click routing, then
-        // stop before painting any content cells.
-        if !draw {
-            if let Some(fwp) = self.panel_mut(slot) {
-                fwp.last_inner_rect = Some(inner);
-            }
             return;
         }
 
@@ -7765,10 +7443,6 @@ impl Editor {
         // dropdown's pop-over — and for a described panel the tree already
         // did, in the overlay band. Painting it twice would be the duplicate
         // this migration removes, arriving by the back door.
-        //
-        // The rectangle is still recorded: `last_inner_rect` is what the web
-        // projection and the widget-runtime hit helpers read, and it is
-        // layout's answer either way.
         if described {
             // **The caret's cell is layout's answer.** The runtime reported a
             // row and a byte and this turned it into a screen cell with
@@ -7789,10 +7463,6 @@ impl Editor {
                 )),
                 None => {}
             }
-            if let Some(fwp) = self.panel_mut(slot) {
-                fwp.last_inner_rect = Some(inner);
-            }
-            return;
         }
     }
 
@@ -7844,281 +7514,6 @@ impl Editor {
             style = style.add_modifier(m);
         }
         style
-    }
-}
-
-/// Paint a single rendered widget entry into the frame buffer at
-/// `(x, y)` over `width` cells. Resolves the entry's segments / inline
-/// overlays to styled spans using the panel's theme; trailing columns
-/// are filled with spaces in the panel's bg so the row reads as one
-/// solid line.
-pub(crate) fn paint_text_property_entry(
-    buf: &mut ratatui::buffer::Buffer,
-    entry: &fresh_core::text_property::TextPropertyEntry,
-    x: u16,
-    y: u16,
-    width: u16,
-    theme: &crate::view::theme::Theme,
-    // When `Some`, record per-cell theme-key provenance into the
-    // `cell_theme_map` (indexed by `screen_width`) under `region`, as each
-    // span is laid out. Used by the orchestrator dock so Ctrl+Right-Click
-    // resolves the actual key the plugin's text properties carry instead of
-    // an empty cell. `None` for the completion / prompt-toolbar callers,
-    // whose surfaces aren't theme-inspectable.
-    mut recorder: Option<(
-        &mut Vec<crate::app::types::CellThemeInfo>,
-        u16,
-        &'static str,
-    )>,
-) {
-    use fresh_core::api::OverlayColorSpec;
-    use ratatui::style::Style;
-    use ratatui::text::{Line, Span};
-    use ratatui::widgets::Paragraph;
-    use std::borrow::Cow;
-
-    let mut normalized = entry.clone();
-    normalized.normalize_widths();
-    let mut text = normalized.text.clone();
-    while text.ends_with('\n') {
-        text.pop();
-    }
-
-    // A ThemeKey overlay carries the key string we want to record; an Rgb
-    // overlay is an explicit colour with no key. Named colours (no `.`) are
-    // also keyless so "Open in Theme Editor" never targets a non-key.
-    let key_of = |spec: &OverlayColorSpec| -> Option<Cow<'static, str>> {
-        match spec {
-            OverlayColorSpec::ThemeKey(k) if k.contains('.') => Some(Cow::Owned(k.clone())),
-            _ => None,
-        }
-    };
-    // Row-level base keys: the panel surface keys unless the row's own
-    // style overrides fg/bg. Mirrors the `base_style` colour resolution
-    // below, but tracks the key instead of the resolved colour.
-    let (mut base_fg_key, mut base_bg_key) = (
-        Some(Cow::Borrowed("ui.suggestion_fg")),
-        Some(Cow::Borrowed("ui.suggestion_bg")),
-    );
-    if let Some(opts) = normalized.style.as_ref() {
-        if let Some(fg) = opts.fg.as_ref() {
-            base_fg_key = key_of(fg);
-        }
-        if let Some(bg) = opts.bg.as_ref() {
-            base_bg_key = key_of(bg);
-        }
-    }
-
-    let base_bg = theme.suggestion_bg;
-    let base_style = if let Some(opts) = normalized.style.as_ref() {
-        // Resolve the entry's row-level style, then fill in the
-        // suggestion_bg only when the style didn't supply one
-        // of its own. Without this guard, calling `.bg(base_bg)`
-        // unconditionally would wipe out a row-level
-        // `popup_selection_bg` (the highlight on the completion
-        // popup's selected candidate) — `Style::bg` is a
-        // replacement, not a merge.
-        let mut resolved = Editor::resolve_overlay_style(opts, theme);
-        // Fill in the suggestion surface's fg/bg when the style didn't
-        // supply its own — `suggestion_fg` is the foreground partner for
-        // `suggestion_bg`. Without an fg default, unstyled toolbar text
-        // (toggle labels, "save matches") fell through to the terminal's
-        // default foreground, which is unreadable on light themes.
-        if resolved.fg.is_none() {
-            resolved = resolved.fg(theme.suggestion_fg);
-        }
-        if resolved.bg.is_none() {
-            resolved.bg(base_bg)
-        } else {
-            resolved
-        }
-    } else {
-        Style::default().fg(theme.suggestion_fg).bg(base_bg)
-    };
-
-    // Split the line at inline-overlay byte boundaries so each
-    // resulting span carries one consistent style. The overlays are
-    // produced in declaration order by the widget renderer; later
-    // overlays override earlier ones for any cells they cover.
-    // Snap every boundary to a grapheme-cluster boundary. Overlay
-    // offsets can land mid-codepoint after a row is truncated with a
-    // multi-byte `…` (the overlay end isn't re-clamped to the new
-    // text), and slicing `text[a..b]` on such an index panics. Valid
-    // boundaries are kept as-is; an interior one floors to the previous
-    // grapheme boundary (worst case a span edge shifts by one cluster,
-    // invisible in practice).
-    let snap = |i: usize| {
-        let i = i.min(text.len());
-        if text.is_char_boundary(i) {
-            i
-        } else {
-            crate::primitives::grapheme::prev_grapheme_boundary(&text, i)
-        }
-    };
-    let boundaries: std::collections::BTreeSet<usize> = std::iter::once(0)
-        .chain(std::iter::once(text.len()))
-        .chain(
-            normalized
-                .inline_overlays
-                .iter()
-                .flat_map(|o| [snap(o.start), snap(o.end)]),
-        )
-        .collect();
-    let bounds: Vec<usize> = boundaries.into_iter().collect();
-
-    let mut spans: Vec<Span<'_>> = Vec::new();
-    // Screen column of the next span's first cell, advanced by each span's
-    // display width so per-cell recording lands on the right columns
-    // (wide glyphs included).
-    let mut col_cursor = x;
-    for win in bounds.windows(2) {
-        let (a, b) = (win[0], win[1]);
-        if a >= b {
-            continue;
-        }
-        let slice = text[a..b].to_string();
-        // Merge (don't replace) overlapping overlays so a later
-        // overlay can override individual properties (bg, fg,
-        // italic, …) without wiping the earlier overlay's other
-        // properties. The text-input renderer relies on this:
-        // the placeholder overlay sets fg + italic, then the
-        // focused overlay sets bg only — without per-property
-        // merge the focused-bg overlay would also clear the
-        // placeholder's italic-dim styling, making placeholder
-        // text indistinguishable from a typed value under focus.
-        let mut style = base_style;
-        // Track this span's effective theme keys alongside the colour,
-        // applying the same overlay precedence (last writer wins).
-        let mut fg_key = base_fg_key.clone();
-        let mut bg_key = base_bg_key.clone();
-        for o in &normalized.inline_overlays {
-            let os = o.start.min(text.len());
-            let oe = o.end.min(text.len());
-            if a >= os && b <= oe && oe > os {
-                let resolved = Editor::resolve_overlay_style(&o.style, theme);
-                if let Some(fg) = resolved.fg {
-                    style = style.fg(fg);
-                }
-                if let Some(bg) = resolved.bg {
-                    style = style.bg(bg);
-                }
-                if let Some(fg) = o.style.fg.as_ref() {
-                    fg_key = key_of(fg);
-                }
-                if let Some(bg) = o.style.bg.as_ref() {
-                    bg_key = key_of(bg);
-                }
-                // Ratatui `Style` carries add/sub modifier sets;
-                // OR the additions in so subsequent overlays can
-                // add italic / bold / etc. on top of the prior
-                // overlay's modifiers.
-                style = style.add_modifier(resolved.add_modifier);
-                style = style.remove_modifier(resolved.sub_modifier);
-            }
-        }
-        // Ensure a bg is set: ratatui will paint the slot with
-        // the terminal's default bg otherwise, which doesn't
-        // match the surrounding panel chrome.
-        if style.bg.is_none() {
-            style = style.bg(base_bg);
-        }
-        // Record this span's cells as they're laid out (same column walk
-        // the Paragraph will use), before moving the slice into the Span.
-        let span_w = crate::primitives::display_width::str_width(&slice) as u16;
-        if let Some((map, sw, region)) = recorder.as_mut() {
-            record_entry_span_cells(
-                map, *sw, region, y, col_cursor, span_w, x, width, &fg_key, &bg_key,
-            );
-        }
-        col_cursor = col_cursor.saturating_add(span_w);
-        spans.push(Span::styled(slice, style));
-    }
-    // Pad the row's trailing cells with the surface keys so right-clicking
-    // the blank tail of a dock row still resolves the panel surface rather
-    // than an empty cell.
-    if let Some((map, sw, region)) = recorder.as_mut() {
-        let row_end = x.saturating_add(width);
-        if col_cursor < row_end {
-            record_entry_span_cells(
-                map,
-                *sw,
-                region,
-                y,
-                col_cursor,
-                row_end - col_cursor,
-                x,
-                width,
-                &base_fg_key,
-                &base_bg_key,
-            );
-        }
-    }
-
-    // The row's trailing cells come from the Paragraph's own style, so
-    // that style is where `extend_to_line_end` has to land: an inline
-    // overlay carrying it is asking for a band across the whole row, not
-    // just the cells it covers. The widget renderer sets it on the hover
-    // band, and a row-wide band that stopped at the end of the text —
-    // while the row visibly ran on to the panel edge — is the tell that
-    // the flag was being dropped here. The buffer path honours it via
-    // the `extend_to_line_end` tail-fill; panels honour it here.
-    //
-    // Last writer wins, matching the per-span overlay precedence above.
-    // Note this is the *row's* line end: a container that pads its
-    // children (a `LabeledSection`) clears the flag when it wraps them,
-    // so a band can't flood past the section border.
-    let fill_style = normalized
-        .inline_overlays
-        .iter()
-        .filter(|o| o.style.extend_to_line_end)
-        .filter_map(|o| Editor::resolve_overlay_style(&o.style, theme).bg)
-        .next_back()
-        .map_or(base_style, |bg| base_style.bg(bg));
-
-    let line = Line::from(spans);
-    let rect = ratatui::layout::Rect {
-        x,
-        y,
-        width,
-        height: 1,
-    };
-    ratatui::widgets::Widget::render(Paragraph::new(line).style(fill_style), rect, buf);
-}
-
-/// Record `[start_col, start_col+span_w)` of screen row `row` into the
-/// per-cell theme map under `region`, clipped to the entry's
-/// `[clip_x, clip_x+clip_width)` band. Called as each span of a widget
-/// entry is laid out so the theme inspector resolves the same keys that
-/// were painted.
-#[allow(clippy::too_many_arguments)]
-fn record_entry_span_cells(
-    map: &mut [crate::app::types::CellThemeInfo],
-    sw: u16,
-    region: &'static str,
-    row: u16,
-    start_col: u16,
-    span_w: u16,
-    clip_x: u16,
-    clip_width: u16,
-    fg_key: &Option<std::borrow::Cow<'static, str>>,
-    bg_key: &Option<std::borrow::Cow<'static, str>>,
-) {
-    if sw == 0 || span_w == 0 {
-        return;
-    }
-    let row_end = clip_x.saturating_add(clip_width);
-    let end_col = start_col.saturating_add(span_w).min(row_end);
-    let sw_us = sw as usize;
-    for col in start_col..end_col {
-        let idx = row as usize * sw_us + col as usize;
-        if let Some(cell) = map.get_mut(idx) {
-            *cell = crate::app::types::CellThemeInfo {
-                fg_key: fg_key.clone(),
-                bg_key: bg_key.clone(),
-                region: std::borrow::Cow::Borrowed(region),
-                syntax_category: None,
-            };
-        }
     }
 }
 
@@ -8263,7 +7658,7 @@ impl Editor {
     /// adapter covers.
     ///
     /// The pane half of [`Self::panel_interior`], and the differences are the
-    /// four facts a mounted panel does not have. It reserves no focus-marker
+    /// facts a mounted panel does not have. It reserves no focus-marker
     /// gutter (`rerender_widget_panel` passes `focus_marker: false` for a
     /// panel with no slot). It carries no hover memo, because the runtime's
     /// `update_widget_hover` only ever probed the dock and the floating panel
@@ -8276,9 +7671,6 @@ impl Editor {
         buffer: fresh_core::BufferId,
     ) -> Option<crate::view::shell::panel::Interior> {
         use std::rc::Rc;
-        if !self.pane_panel_owns_its_scroll(buffer) {
-            return None;
-        }
         let key = self
             .widget_registry
             .panels_for_buffer(buffer)
@@ -8302,6 +7694,7 @@ impl Editor {
             // active one, which the pane knows and this builder does not:
             // `splits::panel_content` sets it. See `Ctx::keyboard`.
             keyboard: false,
+            page: self.page_anchors.get(&key).cloned(),
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -8318,6 +7711,7 @@ impl Editor {
                 .map(|mode| crate::view::shell::panel::Keymap {
                     mode: mode.to_string(),
                     resolver: self.keybindings.clone(),
+                    text_focused: self.panel_focused_widget_is_text(&key),
                 }),
             markdown: Some(self.markdown_ink()),
         })
@@ -8329,48 +7723,18 @@ impl Editor {
     /// Same shape and same reason as [`Self::panel_is_described`]: the
     /// interior clones the spec and the whole instance-state map, which is the
     /// right price where the description is built and the wrong one in a
-    /// paint loop.
+    /// paint loop. And the same answer: a pane's panel is described whenever
+    /// one is mounted. The class that rode the buffer's scroll — whose rows
+    /// were buffer lines and whose selection was the buffer's cursor — is
+    /// gone (design §3.5): its plugins select through the List's own `select`
+    /// in a `scrollable: false` pane, or scroll a host-owned page.
     pub(crate) fn pane_panel_is_described(&self, buffer: fresh_core::BufferId) -> bool {
-        if !self.pane_panel_owns_its_scroll(buffer) {
-            return false;
-        }
         self.widget_registry
             .panels_for_buffer(buffer)
             .into_iter()
             .next()
             .and_then(|key| self.widget_registry.get(&key))
             .is_some()
-    }
-
-    /// Whether a mounted panel's buffer is one the **panel** scrolls rather
-    /// than the pane.
-    ///
-    /// **This is C.5's real boundary, and the pre-existing code drew it
-    /// first.** `handle_editor_click` has two answers for a click in a mounted
-    /// panel: a *non-scrollable* buffer — "it owns its own scroll window, e.g.
-    /// Search & Replace" — takes the focus and stops, deliberately, because
-    /// "the buffer's cursor is hidden, but the viewport still follows it, so
-    /// the click scrolls the panel's own header and buttons out of view".
-    /// A *scrollable* one falls through to cursor placement, and that is a
-    /// contract plugins read: `git_log`'s commit list says "Selection is
-    /// cursor-driven … a row click places the buffer cursor, and
-    /// `cursor_moved` mirrors it into the selection."
-    ///
-    /// A described panel cannot honour that half. Its rows are laid out by the
-    /// tree, so the mirror's line *n* is no longer screen row *n* once a list
-    /// inside it scrolls, and the screen→line projection the caret needs
-    /// (`view_line_mappings`) is filled by the very text pass a described pane
-    /// does not run. And it does not need to: the panels that own their scroll
-    /// are the ones this was designed for, and they never had a caret to
-    /// place.
-    ///
-    /// So the flip takes the panels whose scroll is their own and leaves the
-    /// ones that ride the buffer's — not as a deferral of taste, but because
-    /// the second group's scroll and the second group's cursor are the same
-    /// mechanism, and replacing it is C.2's substitution rather than this
-    /// step's.
-    fn pane_panel_owns_its_scroll(&self, buffer: fresh_core::BufferId) -> bool {
-        self.active_window().is_non_scrollable_buffer(buffer)
     }
 
     /// The panel's interior as a description.
@@ -8411,6 +7775,7 @@ impl Editor {
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
             keyboard: panel.focused,
+            page: None,
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),
             hovered_popup_row: panel.hovered_popup_row.clone(),
@@ -8442,6 +7807,7 @@ impl Editor {
                     .map(|mode| crate::view::shell::panel::Keymap {
                         mode,
                         resolver: self.keybindings.clone(),
+                        text_focused: self.panel_focused_widget_is_text(&key),
                     }),
                 crate::app::PanelSlot::Sidebar(_) => None,
             },
@@ -8456,7 +7822,7 @@ impl Editor {
     /// surface want the same pair, and because getting it wrong is silent:
     /// `render_markdown_text_area` answers a missing context by rendering the
     /// markdown *source*, not by failing.
-    fn markdown_ink(&self) -> crate::view::shell::panel::MarkdownInk {
+    pub(crate) fn markdown_ink(&self) -> crate::view::shell::panel::MarkdownInk {
         crate::view::shell::panel::MarkdownInk {
             theme: self.theme.read().unwrap().clone().into(),
             grammars: self.grammar_registry.clone(),

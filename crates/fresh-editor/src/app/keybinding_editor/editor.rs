@@ -82,9 +82,6 @@ pub struct KeybindingEditor {
     /// Sections that are manually collapsed (by plugin name, None = builtin)
     pub collapsed_sections: HashSet<Option<String>>,
 
-    /// Layout info for mouse hit testing (updated during render)
-    pub layout: KeybindingEditorLayout,
-
     /// Mouse interaction state for the table scrollbar (press/drag/release).
     pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
 }
@@ -194,7 +191,6 @@ impl KeybindingEditor {
             mode_contexts,
             display_rows: Vec::new(),
             collapsed_sections,
-            layout: KeybindingEditorLayout::default(),
             scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse::default(),
         };
 

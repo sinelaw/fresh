@@ -1777,20 +1777,13 @@ async function openWelcome(force: boolean): Promise<void> {
       mode: "welcome",
       readOnly: true,
       showLineNumbers: false,
-      // A real cursor. It used to be hidden, and hiding it cost far
-      // more than it saved: `show_cursors: false` blocks the native
-      // movement actions, so this plugin had to reimplement scrolling —
-      // its own model of the top line, a reveal that compensated for
-      // the host's, page keys computed by hand, and a ceiling so
-      // holding Down past the end didn't buy dead Up presses. All of
-      // that is the host's job, and it does it correctly. The caret
-      // also answers a question the page was posing without meaning
-      // to: clicks still seated an invisible cursor, so clicking a word
-      // lit its occurrences and the reader could see no reason why.
-      showCursors: true,
+      // The page is a described panel that scrolls as one window the
+      // host owns (`page: true` below): the buffer under it never
+      // scrolls and shows no caret. Arrows, page keys, the wheel and
+      // `scrollToWidget` all move that window.
+      scrollable: false,
+      showCursors: false,
       editingDisabled: true,
-      // The caret's row means nothing on a page laid out by widgets, and a
-      // lit band across the centred wordmark reads as a selection.
       highlightCurrentLine: false,
       // Startup never takes the view. The page arrives as a tab, in one
       // step: opening and then switching back is two visible switches,
@@ -1805,27 +1798,10 @@ async function openWelcome(force: boolean): Promise<void> {
     // first tabbable widget on every repaint — so clearing focus did
     // not clear it, and leaving the finder parked focus on the startup
     // toggle, off screen, where the next Space switched the page off.
-    panel = new WidgetPanel(bufferId, undefined, {
-      autoFocusFirst: false,
-      // The caret and the focus ring are one thing on this page. It is a
-      // document with a real cursor in it, so two independent "where am
-      // I" markers is one too many: Tab used to move focus while the
-      // caret stayed three cards above, and an arrow key used to move
-      // the caret while Enter still fired whatever the last Tab had
-      // left focused — off screen, unasked for. The host maintains both
-      // directions now (`WidgetPanelOptions.focusFollowsCursor`), which
-      // is also what makes "nothing focused" the common case rather
-      // than a corner: most rows of this page are prose.
-      focusFollowsCursor: true,
-    });
-    // Re-assert the caret *after* the panel exists. `createVirtualBuffer`
-    // took `showCursors: true` and mounting a widget panel then cleared
-    // it — panel buffers default to no caret — so the page ran with
-    // movement actions enabled and nothing on screen to show where the
-    // cursor was. `Down` moved it and the reader saw nothing until the
-    // cursor reached the viewport edge and the page finally scrolled.
-    // This is the order `setBufferShowCursors`'s own docs prescribe.
-    editor.setBufferShowCursors(bufferId, true);
+    // A page: one host-owned window over the whole document rather than
+    // a list that windows itself. `scrollToWidget` and the movement keys
+    // are commands on that window.
+    panel = new WidgetPanel(bufferId, undefined, { autoFocusFirst: false, page: true });
     applyComposeWidth();
     probeThemes();
     probeWorkspaces();
@@ -2085,12 +2061,12 @@ function finderOwnsVerticalKeys(): boolean {
  *  mean something the host cannot know: with the finder focused they
  *  walk its *hits*, which are plugin state, not text in the field. */
 registerHandler("welcome_up", () => {
-  if (finderOwnsVerticalKeys() && moveFinder(-1)) return;
-  editor.executeAction("move_up");
+  if (finderFocused()) moveFinder(-1);
+  else dispatch(widgetKey("Up"));
 });
 registerHandler("welcome_down", () => {
-  if (finderOwnsVerticalKeys() && moveFinder(1)) return;
-  editor.executeAction("move_down");
+  if (finderFocused()) moveFinder(1);
+  else dispatch(widgetKey("Down"));
 });
 
 

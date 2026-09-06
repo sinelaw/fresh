@@ -77,14 +77,6 @@ impl Editor {
             return Some(result);
         }
 
-        // Universal Search overlay focus ring: Tab/Shift+Tab move focus
-        // between the query input and the scope toggles; Space/Enter
-        // activate the focused toggle. Intercepted before the prompt's own
-        // input handling so Tab doesn't fall through to other behaviour.
-        if let Some(result) = self.handle_overlay_toolbar_key(event) {
-            return Some(result);
-        }
-
         // A `prompt`-context binding outranks the prompt widget's own
         // hardcoded key handling. `Prompt`'s `InputHandler` owns a handful of
         // Ctrl keys outright (Ctrl+A select-all, Ctrl+Y redo-input, …) and runs

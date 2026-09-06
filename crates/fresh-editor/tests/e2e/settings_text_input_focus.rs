@@ -12,7 +12,7 @@
 //!    has actually entered edit mode by pressing Enter. There is thus no
 //!    visual indication that a second keypress is needed to start typing.
 //!
-//! The fix introduces an explicit `editing` flag on `TextInputState`:
+//! The fix makes a field paint its caret only while it is being edited:
 //! * the cursor is only drawn when `editing == true`;
 //! * in the selected-but-not-editing state the row's highlight background
 //!   provides the "you are here" cue, while the label/brackets retain

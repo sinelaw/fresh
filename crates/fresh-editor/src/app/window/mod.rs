@@ -1105,9 +1105,6 @@ pub struct Window {
     /// this window's prompt).
     pub file_open_state: Option<crate::app::file_open::FileOpenState>,
 
-    /// Cached layout for the file browser (mouse hit-testing).
-    pub file_browser_layout: Option<crate::view::ui::FileBrowserLayout>,
-
     /// Buffer groups (multiple buffers shown as one tab) in this window.
     pub buffer_groups: HashMap<crate::app::types::BufferGroupId, crate::app::types::BufferGroup>,
     /// Reverse index: buffer ID → group ID.
@@ -2482,7 +2479,6 @@ impl Window {
             theme_info_popup: None,
             event_debug: None,
             file_open_state: None,
-            file_browser_layout: None,
             buffer_groups: HashMap::new(),
             buffer_to_group: HashMap::new(),
             next_buffer_group_id: 0,

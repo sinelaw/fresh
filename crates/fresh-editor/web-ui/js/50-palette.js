@@ -50,16 +50,16 @@ function searchOptionsEl(p){
 }
 
 // ---- native file browser (OpenFile / SaveFileAs / SwitchProject) ---------
-// The editor owns the directory, the entry window, the selection, the sort and
-// the toggles; we render them natively from `palette.browser`
-// (`Editor::file_browser_view`) and forward every click back through
-// handle_mouse at the CELL SPAN the TUI laid that element out at — which the
-// editor's own file-browser hit-tests resolve. Nothing here re-derives a
-// position: the spans come from the renderer.
+// The editor owns the directory, the selection, the sort and the toggles; the
+// tree that lays the dialog out owns the entry window. We render them natively
+// from `palette.browser` (`Editor::file_browser_view`) and forward every click
+// back through handle_mouse at the CELL SPAN the tree laid that element out
+// at — where the element's own node answers it. Nothing here re-derives a
+// position: the spans are read off the tree by key.
 //
-// The row window is deliberately the editor's own (`scrollOffset` …
-// `+ visibleRows`): rendering more rows than the editor believes are visible
-// would desync every click from `click_to_index`.
+// The row window is deliberately the tree's (`scrollOffset` … `+ visibleRows`):
+// rendering more rows than the list has on screen would aim a click at a
+// cell no row occupies.
 function fbClick(col,row,dbl){
   return e=>{ e.preventDefault(); e.stopPropagation();
     sendClick({button:"left",col,row,count:dbl?e.detail:1}); };

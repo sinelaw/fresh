@@ -104,6 +104,13 @@ pub struct Panel {
 pub struct Keymap {
     pub mode: String,
     pub resolver: std::sync::Arc<std::sync::RwLock<crate::input::keybindings::KeybindingResolver>>,
+    /// The panel's focused widget is a field you type into. **A focused
+    /// text field takes a printable key ahead of the mode's bindings** —
+    /// the rule the router applied when the mode was consulted host-side,
+    /// kept here now that the keymap is consulted on the tree: a mode that
+    /// binds Space, `/` or a digit binds them for the controls, and a
+    /// field with the keyboard still types them.
+    pub text_focused: bool,
 }
 
 impl std::fmt::Debug for Keymap {
@@ -115,8 +122,15 @@ impl std::fmt::Debug for Keymap {
 }
 
 impl Keymap {
-    /// The action `mode` explicitly binds `k` to, if any.
+    /// The action `mode` explicitly binds `k` to, if any — and none for a
+    /// printable key while a text field has the keyboard (see
+    /// [`Keymap::text_focused`]).
     fn action(&self, k: fresh_ui::KeyPress) -> Option<crate::input::keybindings::Action> {
+        let printable = matches!(k.code, fresh_ui::KeyCode::Char(_))
+            && (k.mods == fresh_ui::Mods::NONE || k.mods == fresh_ui::Mods::SHIFT);
+        if self.text_focused && printable {
+            return None;
+        }
         let ev = super::input::crossterm_key_event(k)?;
         let ctx = crate::input::keybindings::KeyContext::Mode(self.mode.clone());
         self.resolver.read().ok()?.explicit_binding(&ev, &ctx)
@@ -131,6 +145,13 @@ pub struct Interior {
     pub focus_key: String,
     /// See [`super::widgets::Ctx::keyboard`].
     pub keyboard: bool,
+    /// The panel is a *page* (`WidgetPanelOptions::page`): its content is
+    /// described inside one host-owned viewport that scrolls as a whole,
+    /// and this is the host's handle on that window — `scrollToWidget` and
+    /// the page's arrow keys are commands on it, applied by the layout that
+    /// measured the page. `None` for every panel whose lists window
+    /// themselves.
+    pub page: Option<std::rc::Rc<fresh_ui::behavior::Anchor>>,
     pub hovered_key: Option<String>,
     pub hovered_item_key: String,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
@@ -183,36 +204,6 @@ impl MarkdownInk {
             theme: &self.theme,
             grammars: Some(&self.grammars),
         }
-    }
-}
-
-impl Interior {
-    /// Whether anything in this interior can take focus.
-    ///
-    /// **A scope with nothing in it is worse than no scope.** [`keys_layer`]
-    /// names the interior so traversal is confined to it; if the interior has
-    /// no focusable, `apply_autofocus` finds nowhere to put focus and drops it
-    /// — and with focus nowhere, the containment questions say no keyboard
-    /// layer is up and the panel's keys leak to the buffer behind it. So a
-    /// panel with nothing to focus keeps the sink instead, which is exactly
-    /// what it had before any of this.
-    ///
-    /// **It is derived here rather than carried.** This was a `bool` the host
-    /// filled from `WidgetPanelState::tabbable` — the immediate-mode
-    /// collector's ring, recorded at whatever render ran last. Two authorities
-    /// for one fact, and the stale one was the input: a spec that moved without
-    /// a re-render answered from the old ring, and the branch has already paid
-    /// once for the disagreement this shape produces (`c89d25f`). Asking
-    /// [`super::widgets::any_on_the_ring`] asks the *same predicate the tree
-    /// will apply to this same spec*, so the two cannot disagree at all.
-    ///
-    /// Only the two slots with a keyboard layer read it — [`Dock`] and
-    /// [`Floating`]. A pane-mounted panel has no layer and names no scope.
-    ///
-    /// [`Dock`]: super::widgets::Slot::Dock
-    /// [`Floating`]: super::widgets::Slot::Floating
-    pub fn has_focus_targets(&self) -> bool {
-        super::widgets::any_on_the_ring(&self.spec)
     }
 }
 
@@ -398,6 +389,9 @@ pub fn sink_key(slot: super::widgets::Slot) -> Key {
         super::widgets::Slot::Settings | super::widgets::Slot::SettingsEntry => {
             Key::Str("keys:settings".into())
         }
+        // The toolbar never raises a layer of its own: it sits in the
+        // prompt's, whose sink is the card's input row.
+        super::widgets::Slot::PromptToolbar => Key::Str("keys:prompt".into()),
     }
 }
 
@@ -413,6 +407,7 @@ pub fn interior_key(slot: super::widgets::Slot) -> Key {
         // (`splits::panel_content`), and the slot carries the pane's own
         // content key, so that key names the interior.
         super::widgets::Slot::Pane(leaf) => return super::splits::content_key(leaf),
+        super::widgets::Slot::PromptToolbar => 4,
         // Past the fixed slots, one per section.
         super::widgets::Slot::Sidebar(i) => 16 + i as u64,
     };
@@ -455,18 +450,43 @@ pub fn interior(
     rests_empty: bool,
     body: Node<UiMsg>,
 ) -> Node<UiMsg> {
+    let capture: Option<Capture> = keymap.map(|km| {
+        Rc::new(move |e: &fresh_ui::Event| {
+            let action = km.action(e.key?)?;
+            e.stop();
+            Some(UiMsg::Action(action))
+        }) as Capture
+    });
+    interior_capturing(slot, capture, rests_empty, body)
+}
+
+/// A key handler on an interior's capture leg: what the *surface* says a key
+/// means before the focused widget sees it. See [`interior_capturing`].
+pub type Capture = Rc<dyn Fn(&fresh_ui::Event) -> Option<UiMsg>>;
+
+/// [`interior`], with the surface's own capture-leg rule instead of a
+/// plugin mode's keymap.
+///
+/// A panel's keymap is one such rule — a key the mode binds is the mode's
+/// action ahead of any widget — and the overlay prompt's toolbar has another:
+/// a key that navigates or types is the *query input's*, and pressing it on a
+/// focused toggle hands the keyboard back to the input with the key
+/// (`overlay_prompt::toolbar`). Both are properties of the interior node,
+/// stated on the tree rather than in a host stage after the tree declined.
+pub fn interior_capturing(
+    slot: super::widgets::Slot,
+    capture: Option<Capture>,
+    rests_empty: bool,
+    body: Node<UiMsg>,
+) -> Node<UiMsg> {
     let (w, h) = (body.w, body.h);
     let n = fresh_ui::focusable(body)
         .w(w)
         .h(h)
         .key(interior_key(slot))
         .skip_traversal();
-    let n = match keymap {
-        Some(km) => n.on_key_capture(move |e: &fresh_ui::Event| {
-            let action = km.action(e.key?)?;
-            e.stop();
-            Some(UiMsg::Action(action))
-        }),
+    let n = match capture {
+        Some(c) => n.on_key_capture(move |e: &fresh_ui::Event| c(e)),
         None => n,
     };
     // **"Nothing focused" is a state the description says.** A panel whose
@@ -495,8 +515,26 @@ pub fn interior(
     })
 }
 
+/// The panel's layer, and its claim on the pointer.
+///
+/// **The pointer is the panel's while it is up, and the keyboard is its own
+/// layer's.** `Modality::Pointer` says the first: nothing behind the box is
+/// interactive to a press, a move or a wheel, which is what the full-frame
+/// modal slot under this layer used to say by claiming every event and
+/// handing it to a handler that swallowed it. The keys go to the widget
+/// runtime through the panel's own `Modality::Focus` layer
+/// (`keys_layer`), which is why this is not `Exclusive` — an exclusive
+/// layer owns the keyboard, containment made it the focus scope, and with
+/// nothing focusable inside it focus was dropped.
+///
+/// An anchored popup (a plugin's right-click menu) is dismissed by a press
+/// outside it, the way a menu is — `Dismiss::OUTSIDE_POINTER`, and the press
+/// is spent on the dismissal; a centred modal swallows the outside press
+/// instead, because it has explicit Cancel and Esc. That was the one arm of
+/// `handle_floating_modal_mouse` that did anything, against a rectangle the
+/// painter recorded (`last_inner_rect`); the layer knows its own box.
 pub fn layer_for(p: &Panel) -> Node<UiMsg> {
-    let l = layer();
+    let l = layer().modality(fresh_ui::Modality::Pointer);
     match &p.spot {
         Spot::Centered { width_pct, .. } => {
             let l = match p.fullscreen {
@@ -525,6 +563,8 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
             .anchor(Anchor::Point(*x, *y))
             .place(Place::Over)
             .fit(Fit::CLAMP)
+            .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER)
+            .on_dismiss(|_| UiMsg::Ui(UiFact::PanelClosed))
             .child(
                 frame_box(p)
                     .w(p.anchored_width(*content_cols))
@@ -540,49 +580,29 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
 ///
 /// **The box claims its own presses**, and it has to. Layers are hit-tested
 /// top down and the *first one with any path at the point wins* — a
-/// transparent node still produces a path — so a decorative layer over the
-/// modal's claim-everything surface does not fall through to it, it swallows
-/// the press and nothing handles it. Only a press *outside* this box reaches
-/// the layer below.
+/// transparent node still produces a path — so a press on the box's slack
+/// that fell through would reach the buffer behind. A described interior's
+/// widgets answer their own presses before this is reached; a painted one's
+/// never answered any (the modal slot's handler it was routed to had no
+/// arm for a press inside the box), so the press stops here either way.
 ///
-/// So the box says what a press on it means: the interior's, when the
-/// interior is a painter that hit-tests itself through `UiFact::ModalPointer`;
-/// nobody's, when the interior is described and its widgets have already
-/// declined it. Either way the press stops here rather than reaching the
-/// buffer behind.
+/// **Never the wheel.** Scrolling is framework-owned: the library runs its
+/// scroll chain for a notch *nothing claimed*, so a catch-all that stops the
+/// wheel stops every viewport inside this box from scrolling. The chain
+/// stops at the first out-of-flow node, and this box is inside a layer, so a
+/// notch that scrolls nothing here is still absorbed rather than reaching
+/// the buffer behind. `keybinding::swallow` had the same bug and the same
+/// fix.
 fn frame_box(p: &Panel) -> Node<UiMsg> {
     let ring = ring_theme(p);
     let framed = col().theme(ring).border().child(body(p));
-    let described = p.interior.is_some();
     let claim = move |e: &Event| {
         e.stop();
-        match described {
-            true => None,
-            false => Some(UiMsg::Ui(UiFact::ModalPointer(
-                super::modal::Slot::FloatingPanel,
-            ))),
-        }
+        None
     };
     let mut g = gesture(fresh_ui::stack().children([framed, border_strip(p)]));
     for kind in [GestureKind::Press, GestureKind::Release, GestureKind::Move] {
         g = g.on(kind, Rc::new(claim));
-    }
-    // **The wheel only when a painter is behind the seam.**
-    //
-    // Scrolling is framework-owned: the library runs its scroll chain for a
-    // notch *nothing claimed*, so a catch-all that stops the wheel stops
-    // every viewport inside this box from scrolling. That is fine while the
-    // interior is a painter — the claim carries the notch to it through
-    // `ModalPointer`, which is the whole seam — and wrong once the interior
-    // is described, where the claim produces no message and the notch simply
-    // disappears.
-    //
-    // Nothing is lost by letting it through: the chain stops at the first
-    // out-of-flow node, and this box is inside a layer, so a notch that
-    // scrolls nothing here is still absorbed rather than reaching the buffer
-    // behind. `keybinding::swallow` had the same bug and the same fix.
-    if !described {
-        g = g.on(GestureKind::Wheel, Rc::new(claim));
     }
     g
 }
@@ -662,11 +682,11 @@ fn close_button(p: &Panel) -> Node<UiMsg> {
 
 /// The content area.
 ///
-/// **Transparent when the interior is a painter**, because that painter
-/// hit-tests itself through `UiFact::ModalPointer` — the same seam the other
-/// modal interiors use. **Opaque when it is described**, because then the
-/// widgets answer their own presses and a press that reaches the area but no
-/// widget is the panel's to swallow, not the buffer's.
+/// **Transparent when the interior is a painter**, so the box behind it
+/// takes the press — the painter never answered one. **Opaque when it is
+/// described**, because then the widgets answer their own presses and a
+/// press that reaches the area but no widget is the panel's to swallow, not
+/// the buffer's.
 fn body(p: &Panel) -> Node<UiMsg> {
     let Some(i) = p.interior.clone() else {
         // **A host fills the box; it does not size it.** The box's height came
@@ -683,7 +703,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // an indefinite constraint, so the frame would collapse to its border.
     // Width still fills: the cross axis of the enclosing column, stretched.
     let area = row().w(Sizing::Flex(1)).key(body_key());
-    let (has_focus_targets, keymap) = (i.has_focus_targets(), i.keymap.clone());
+    let keymap = i.keymap.clone();
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
     // knows the content width until the box has been measured — and the
@@ -701,6 +721,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 states: &i.states,
                 focus_key: i.focus_key.clone(),
                 keyboard: i.keyboard,
+
                 hovered_key: i.hovered_key.clone(),
                 marker_gutter: i.marker_gutter,
                 hovered_item_key: i.hovered_item_key.clone(),
@@ -713,12 +734,12 @@ fn body(p: &Panel) -> Node<UiMsg> {
         )
     });
     // The scope its keyboard layer names, and the fallback for what its
-    // widgets decline — see `interior`, and `Interior::has_focus_targets` for
-    // why a panel with nothing to focus keeps the sink instead.
-    let inner = match has_focus_targets {
-        true => interior(super::widgets::Slot::Floating, keymap, rests_empty, inner),
-        false => inner,
-    };
+    // widgets decline — see `interior`. Every described interior is one,
+    // whether or not anything in it is a Tab stop: an interior with no
+    // stops holds focus itself (the tree rests focus on a scope's own
+    // element, and `rests_empty` marks it), so its keymap and its fallback
+    // answer for it exactly as they do for one full of controls.
+    let inner = interior(super::widgets::Slot::Floating, keymap, rests_empty, inner);
     area.child(inner)
 }
 
@@ -801,9 +822,6 @@ mod tests {
         ui.frame(
             frame_tree(Frame {
                 panel: p,
-                // The modal slot the panel's pointer routing rides, as `render`
-                // sets it whenever a panel is mounted.
-                modal: Some(super::super::modal::Slot::FloatingPanel),
                 ..Frame::default()
             }),
             Size::new(FRAME.width, FRAME.height),
@@ -948,6 +966,8 @@ mod tests {
             states: Default::default(),
             focus_key: "ok".into(),
             keyboard: true,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -968,7 +988,6 @@ mod tests {
                 frame_tree(Frame {
                     panel_keys: true,
                     panel: Some(p),
-                    modal: Some(super::super::modal::Slot::FloatingPanel),
                     ..Frame::default()
                 }),
                 Size::new(FRAME.width, FRAME.height),
@@ -984,6 +1003,7 @@ mod tests {
         let mut ui = framed(Some(Keymap {
             mode: "form".into(),
             resolver: resolver.clone(),
+            text_focused: false,
         }));
         let got = ui.dispatch(enter);
         assert!(got.claimed, "the keymap claims what it binds");
@@ -1001,6 +1021,49 @@ mod tests {
             facts(got),
             vec![UiFact::PanelKey(super::super::widgets::Slot::Floating)],
             "without a keymap the fallback names the panel"
+        );
+    }
+
+    /// **A focused text field takes a printable key ahead of the mode.**
+    /// The mode binds Space; while a field has the keyboard, Space is
+    /// typed into it (the fallback names the panel, and the router feeds
+    /// the field), and only a key that is not a character — Enter — is
+    /// still the mode's.
+    #[test]
+    fn a_focused_field_types_a_printable_key_the_mode_also_binds() {
+        use crate::input::keybindings::{Action, KeybindingResolver};
+        let mut config = crate::config::Config::default();
+        for (key, action) in [("space", "save"), ("enter", "save")] {
+            config.keybindings.push(crate::config::Keybinding {
+                key: key.to_string(),
+                modifiers: Vec::new(),
+                keys: Vec::new(),
+                action: action.to_string(),
+                args: std::collections::HashMap::new(),
+                when: Some("mode:form".to_string()),
+            });
+        }
+        let resolver =
+            std::sync::Arc::new(std::sync::RwLock::new(KeybindingResolver::new(&config)));
+        let km = Keymap {
+            mode: "form".into(),
+            resolver,
+            text_focused: true,
+        };
+        let space = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(' '), Mods::NONE);
+        assert_eq!(km.action(space), None, "Space is the field's");
+        let shifted = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char('A'), Mods::SHIFT);
+        assert_eq!(km.action(shifted), None, "a shifted letter is still typed");
+        let enter = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Enter, Mods::NONE);
+        assert_eq!(km.action(enter), Some(Action::Save), "Enter is the mode's");
+        let km = Keymap {
+            text_focused: false,
+            ..km
+        };
+        assert_eq!(
+            km.action(space),
+            Some(Action::Save),
+            "with no field focused the mode binds Space"
         );
     }
 
@@ -1039,12 +1102,9 @@ mod tests {
             MouseButton::Left,
             Mods::NONE,
         )));
-        assert_eq!(
-            got,
-            vec![UiFact::ModalPointer(
-                super::super::modal::Slot::FloatingPanel
-            )],
-            "the frame is decoration; only the button is not"
+        assert!(
+            got.is_empty(),
+            "the frame is decoration; only the button is not: {got:?}"
         );
     }
 
@@ -1057,20 +1117,47 @@ mod tests {
             content_rows: 8,
         })));
         let body = rect(&ui, &body_key()).expect("a content area");
-        let got = facts(ui.dispatch(Input::press(
+        let got = ui.dispatch(Input::press(
             Point::new(
                 body.x as i32 + body.width as i32 / 2,
                 body.y as i32 + body.height as i32 / 2,
             ),
             MouseButton::Left,
             Mods::NONE,
-        )));
-        assert_eq!(
-            got,
-            vec![UiFact::ModalPointer(
-                super::super::modal::Slot::FloatingPanel
-            )]
-        );
+        ));
+        assert!(got.claimed, "the box takes it");
+        assert!(facts(got).is_empty(), "and nothing behind it is asked");
+    }
+
+    /// **An anchored popup is dismissed by a press outside it**, and a
+    /// centred modal is not — the one arm of `handle_floating_modal_mouse`
+    /// that did anything, which compared the press against a rectangle the
+    /// painter had recorded. The layer knows its own box.
+    #[test]
+    fn a_press_outside_an_anchored_popup_dismisses_it_and_a_modal_swallows_it() {
+        let mut ui = laid_out(Some(panel(Spot::Anchored {
+            x: 10,
+            y: 5,
+            content_cols: 12,
+            content_rows: 4,
+        })));
+        let got = ui.dispatch(Input::press(
+            Point::new(60, 20),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert_eq!(facts(got), vec![UiFact::PanelClosed]);
+        let mut ui = laid_out(Some(panel(Spot::Centered {
+            width_pct: 60,
+            content_rows: 8,
+        })));
+        let got = ui.dispatch(Input::press(
+            Point::new(1, 1),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert!(got.claimed, "the modal owns the pointer");
+        assert!(facts(got).is_empty(), "and swallows a press beside it");
     }
 
     /// An anchored popup wears neither title nor button — the painter's rule,
@@ -1115,6 +1202,8 @@ mod tests {
             states: Default::default(),
             focus_key: String::new(),
             keyboard: true,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1165,6 +1254,8 @@ mod tests {
             states: Default::default(),
             focus_key: String::new(),
             keyboard: true,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1228,6 +1319,8 @@ mod tests {
             states: Default::default(),
             focus_key: String::new(),
             keyboard: true,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1264,8 +1357,7 @@ mod tests {
 
     /// A described panel's content area is **opaque**: the widgets answer
     /// their own presses, and one that reaches the area but no widget is the
-    /// panel's to swallow. An undescribed one is transparent, because the
-    /// painter behind it hit-tests itself through `ModalPointer`.
+    /// panel's to swallow.
     #[test]
     fn a_described_content_area_does_not_let_presses_through() {
         use fresh_core::api::WidgetSpec;
@@ -1281,6 +1373,8 @@ mod tests {
             states: Default::default(),
             focus_key: String::new(),
             keyboard: true,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1298,7 +1392,7 @@ mod tests {
             Mods::NONE,
         )));
         assert!(
-            !got.iter().any(|f| matches!(f, UiFact::ModalPointer(_))),
+            got.is_empty(),
             "the described area keeps the press, got {got:?}"
         );
     }

@@ -3218,7 +3218,7 @@ fn test_json_editor_delete_key_works() {
     // placeholder was cleared on edit start).
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("│BC") && !screen.contains("ABC"),
+        screen.contains("BC") && !screen.contains("ABC"),
         "Delete key should remove character at cursor. Expected 'BC', got:\n{}",
         screen
     );

@@ -17,9 +17,8 @@ enum ButtonAction {
 
 /// Control activation action in entry dialog
 enum ControlAction {
-    ToggleBool,
-    ToggleDropdown,
-    StartEditing,
+    /// A scalar: its kind acts (`EntryDialogState::activate_control`).
+    Activate,
     OpenNestedDialog,
 }
 
@@ -88,9 +87,9 @@ impl SettingsState {
     /// Handle input when entry dialog is open
     ///
     /// Uses the same input flow as the main settings UI:
-    /// 1. If in text editing mode -> handle text input
-    /// 2. If dropdown is open -> handle dropdown navigation
-    /// 3. Otherwise -> handle navigation and control activation
+    /// 1. A live scalar's keys are its kind's (`handle_entry_live_control_key`)
+    /// 2. A composite being edited answers its own keys
+    /// 3. Otherwise -> navigation and control activation
     fn handle_entry_dialog_input(
         &mut self,
         event: &KeyEvent,
@@ -104,316 +103,134 @@ impl SettingsState {
             return InputResult::Consumed;
         }
 
-        // Check if we're in a special editing mode
-        let (editing_text, dropdown_open) = if let Some(dialog) = self.entry_dialog() {
-            let dropdown_open = dialog
-                .current_item()
-                .map(|item| matches!(&item.control, SettingControl::Dropdown(s) if s.open))
-                .unwrap_or(false);
-            (dialog.editing_text, dropdown_open)
-        } else {
-            return InputResult::Consumed;
+        let editing = match self.entry_dialog() {
+            Some(dialog) => dialog.is_editing(),
+            None => return InputResult::Consumed,
         };
 
-        // Route to appropriate handler based on mode
-        if editing_text {
-            self.handle_entry_dialog_text_editing(event, ctx)
-        } else if dropdown_open {
-            self.handle_entry_dialog_dropdown(event)
+        // A map's or an object array's list is live while its field is
+        // selected, but the arrows on it are the dialog's navigation
+        // (`focus_next` steps its rows through the kind); only a field being
+        // *edited* takes every key.
+        if editing {
+            self.handle_entry_live_control_key(event, ctx)
         } else {
-            self.handle_entry_dialog_navigation(event, ctx)
+            self.handle_entry_dialog_navigation(event)
         }
     }
 
-    /// Handle text editing input in entry dialog (same pattern as handle_text_editing_input)
-    fn handle_entry_dialog_text_editing(
+    /// A key while one of the dialog's scalar fields is live — the page's
+    /// `handle_live_control_key`, with the dialog's form conventions: Enter
+    /// on a field commits it and moves to the next, Tab commits it, Escape
+    /// reverts it.
+    fn handle_entry_live_control_key(
         &mut self,
         event: &KeyEvent,
         ctx: &mut InputContext,
     ) -> InputResult {
-        // Check if we're editing JSON
-        let is_editing_json = self
-            .entry_dialog()
-            .map(|d| d.is_editing_json())
-            .unwrap_or(false);
-
+        use crate::widgets::kinds::KeyDisposition;
+        if event.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(event.code, KeyCode::Char('v') | KeyCode::Char('V'))
+        {
+            ctx.defer(DeferredAction::PasteToSettings);
+            return InputResult::Consumed;
+        }
         let Some(dialog) = self.entry_dialog_mut() else {
             return InputResult::Consumed;
         };
-
-        // A plain single-line Text field routes every caret-motion and
-        // text-mutation key through the one shared text-key engine
-        // (`primitives::text_key::apply_text_key`) — the same table the main
-        // Settings body and the plugin widget runtime feed, so forward-Delete,
-        // word motion, word deletion, and shift-selection can no longer be
-        // present on one surface and missing on another. Chrome keys
-        // (Enter/Tab/Esc, Up/Down field-nav, Ctrl+A/C/V) come back unhandled
-        // and fall through to the match below, as do the composite and
-        // non-Text controls (TextList/Number/JSON), which keep their own arms.
-        if dialog.apply_plain_text_key(event) {
+        let is_number = matches!(
+            dialog.current_item().map(|i| &i.control),
+            Some(SettingControl::Number { .. })
+        );
+        // Delete in a text list item's field removes the item — the row's
+        // key, ahead of the field's forward-delete.
+        if event.code == KeyCode::Delete {
+            if let Some(Some(i)) = dialog.live_list_row() {
+                dialog.remove_list_row(i);
+                return InputResult::Consumed;
+            }
+        }
+        let Some(outcome) = dialog.live_dispatch(event) else {
+            return InputResult::Consumed;
+        };
+        if let Some(text) = outcome.fx.clipboard_copy {
+            ctx.defer(DeferredAction::CopyToClipboard(text));
+        }
+        if outcome.disposition == KeyDisposition::Consumed {
+            // A number's Enter committed its draft (the kind's own
+            // convention); the form's is to move on to the next field.
+            if is_number && event.code == KeyCode::Enter && dialog.live_control().is_none() {
+                dialog.focus_next_field();
+            }
+            // A dual list's Enter asks for the next field, form-like; the
+            // dialog obliges, and the field is no longer live.
+            if let Some(delta) = outcome.fx.focus_advance {
+                dialog.stop_editing();
+                match delta < 0 {
+                    true => dialog.focus_prev_field(),
+                    false => dialog.focus_next_field(),
+                }
+            }
             return InputResult::Consumed;
         }
-
-        match event.code {
-            KeyCode::Esc => {
-                // Escape cancels the in-progress field edit and restores the
-                // pre-edit value — the platform convention (Enter/Tab commit,
-                // Esc reverts). JSON validity doesn't matter here: we're
-                // throwing the edit away regardless.
-                dialog.revert_editing();
-            }
-            KeyCode::Enter => {
-                if is_editing_json {
-                    // Insert newline in JSON editor
-                    dialog.insert_newline();
-                } else {
-                    // For a TextList, Enter commits the current row and
-                    // opens a fresh add-new slot so the user can keep
-                    // adding items. For a plain Text/Number field, Enter
-                    // commits the value and advances focus to the next
-                    // field — matching the form's footer hint and every
-                    // other form. Previously Enter was a silent no-op on
-                    // text fields, trapping the user in edit mode so the
-                    // following Tab/Esc/arrows appeared dead (issue #2143).
-                    let is_text_list = matches!(
-                        dialog.current_item().map(|i| &i.control),
-                        Some(SettingControl::TextList(_))
-                    );
-                    if is_text_list {
-                        if let Some(item) = dialog.current_item_mut() {
-                            if let SettingControl::TextList(state) = &mut item.control {
-                                state.add_item();
-                            }
-                        }
-                    } else {
-                        dialog.stop_editing();
-                        dialog.focus_next_field();
-                    }
-                }
-            }
-            KeyCode::Char(c) => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    match c {
-                        'a' | 'A' => {
-                            // Select all
-                            dialog.select_all();
-                        }
-                        'c' | 'C' => {
-                            // Copy selected text to clipboard
-                            if let Some(text) = dialog.selected_text() {
-                                ctx.defer(DeferredAction::CopyToClipboard(text));
-                            }
-                        }
-                        'v' | 'V' => {
-                            // Paste
-                            ctx.defer(DeferredAction::PasteToSettings);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    dialog.insert_char(c);
-                }
-            }
-            KeyCode::Backspace => {
-                dialog.backspace();
-            }
-            KeyCode::Delete => {
-                // A plain Text field never reaches here — the shared text-key
-                // engine above consumed its Delete. What is left is a
-                // composite TextList, which has no caret of its own while a
-                // row is focused and so drops the focused row (matching the
-                // navigation-mode handler and the standalone control), or one
-                // of the remaining caret controls (JSON, Number), which
-                // forward-delete at the caret. The previous JSON-only guard
-                // sent scalar Text fields down the list-removal path, a no-op
-                // that left their Delete key dead even though Backspace
-                // worked (issue #2875).
-                let is_text_list = matches!(
-                    dialog.current_item().map(|i| &i.control),
-                    Some(SettingControl::TextList(_))
-                );
-                if is_text_list {
-                    dialog.delete_list_item();
-                } else {
-                    dialog.delete();
-                }
-            }
-            KeyCode::Home => {
-                dialog.cursor_home();
-            }
-            KeyCode::End => {
-                dialog.cursor_end();
-            }
-            KeyCode::Left => {
-                // Shift extends the selection — for the JSON editor and
-                // for plain Text fields alike (both ride `TextEdit`; the
-                // dialog method no-ops for other controls).
-                if event.modifiers.contains(KeyModifiers::SHIFT) {
-                    dialog.cursor_left_selecting();
-                } else {
-                    dialog.cursor_left();
-                }
-            }
-            KeyCode::Right => {
-                if event.modifiers.contains(KeyModifiers::SHIFT) {
-                    dialog.cursor_right_selecting();
-                } else {
-                    dialog.cursor_right();
-                }
-            }
-            KeyCode::Up => {
-                if is_editing_json {
-                    // Move cursor up in JSON editor
-                    if event.modifiers.contains(KeyModifiers::SHIFT) {
-                        dialog.cursor_up_selecting();
-                    } else {
-                        dialog.cursor_up();
-                    }
-                } else {
-                    // For a TextList: commit any pending new-item text,
-                    // then try to move focus within the list. If focus
-                    // was already on the trailing [+] Add new sentinel
-                    // (and no pending text), escape out of text-edit
-                    // mode and let the dialog navigate to the previous
-                    // field instead of trapping the user on the slot.
-                    let escape = if let Some(item) = dialog.current_item_mut() {
-                        if let SettingControl::TextList(state) = &mut item.control {
-                            let was_on_addnew = state.focused_item.is_none();
-                            let had_pending = !state.new_item_text.is_empty();
-                            state.add_item();
-                            if was_on_addnew && !had_pending {
-                                true
-                            } else {
-                                state.focus_prev();
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-                    if escape {
-                        dialog.stop_editing();
-                        dialog.focus_prev_field();
-                    }
-                }
-            }
-            KeyCode::Down => {
-                if is_editing_json {
-                    // Move cursor down in JSON editor
-                    if event.modifiers.contains(KeyModifiers::SHIFT) {
-                        dialog.cursor_down_selecting();
-                    } else {
-                        dialog.cursor_down();
-                    }
-                } else {
-                    // See KeyCode::Up above for the escape semantics —
-                    // the trailing [+] Add new slot of a TextList must
-                    // not trap the user.
-                    let escape = if let Some(item) = dialog.current_item_mut() {
-                        if let SettingControl::TextList(state) = &mut item.control {
-                            let was_on_addnew = state.focused_item.is_none();
-                            let had_pending = !state.new_item_text.is_empty();
-                            state.add_item();
-                            if was_on_addnew && !had_pending {
-                                true
-                            } else {
-                                state.focus_next();
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-                    if escape {
-                        dialog.stop_editing();
-                        dialog.focus_next_field();
-                    }
-                }
-            }
-            KeyCode::Tab => {
-                if is_editing_json {
-                    // Tab exits JSON editor if JSON is valid, otherwise ignored
-                    let is_valid = dialog
-                        .current_item()
-                        .map(|item| {
-                            if let SettingControl::Json(state) = &item.control {
-                                state.is_valid()
-                            } else {
-                                true
-                            }
-                        })
-                        .unwrap_or(true);
-
-                    if is_valid {
-                        // Commit changes and stop editing
-                        if let Some(item) = dialog.current_item_mut() {
-                            if let SettingControl::Json(state) = &mut item.control {
-                                state.commit();
-                            }
-                        }
-                        dialog.stop_editing();
-                    }
-                    // If not valid, Tab is ignored (user must fix or press Esc)
-                } else {
-                    // Tab on a TextList: commit any pending text, then
-                    // exit text-edit mode AND advance the dialog to the
-                    // next field so Tab doesn't strand the user on the
-                    // trailing add-new slot (UX review F19).
-                    let escape_forward = if let Some(item) = dialog.current_item_mut() {
-                        if let SettingControl::TextList(state) = &mut item.control {
-                            state.add_item();
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
+        if dialog.is_editing_text_field() {
+            match event.code {
+                KeyCode::Enter => {
                     dialog.stop_editing();
-                    if escape_forward {
-                        dialog.focus_next_field();
+                    dialog.focus_next_field();
+                }
+                KeyCode::Tab | KeyCode::BackTab => dialog.stop_editing(),
+                KeyCode::Esc => dialog.revert_editing(),
+                _ => {}
+            }
+        } else if dialog.is_editing_json() {
+            // Enter is the editor's (a newline). Tab leaves it once the
+            // text parses — until then it stays, the legend saying why —
+            // and Escape puts the text back.
+            match event.code {
+                KeyCode::Tab | KeyCode::BackTab if dialog.json_field_valid() => {
+                    dialog.stop_editing()
+                }
+                KeyCode::Esc => dialog.revert_editing(),
+                _ => {}
+            }
+        } else if let Some(row) = dialog.live_list_row() {
+            // A text list's field. Up and Down walk the rows — Down past the
+            // add row leaves for the next field, Up on an empty list's add
+            // row for the previous one, and the first item is where Up
+            // stops; Enter makes the add row's draft an item; Tab commits
+            // the draft and moves on; Escape puts the list back; Delete
+            // removes the item the field is in.
+            match event.code {
+                KeyCode::Up | KeyCode::Down => {
+                    let up = event.code == KeyCode::Up;
+                    let moved = dialog.list_row_step(if up { -1 } else { 1 });
+                    if !moved && (!up || row.is_none()) {
+                        dialog.stop_editing();
+                        match up {
+                            true => dialog.focus_prev_field(),
+                            false => dialog.focus_next_field(),
+                        }
                     }
                 }
+                KeyCode::Enter => dialog.list_row_enter(),
+                KeyCode::Tab | KeyCode::BackTab => {
+                    dialog.stop_editing();
+                    dialog.focus_next_field();
+                }
+                KeyCode::Esc => dialog.revert_editing(),
+                _ => {}
             }
-            _ => {}
-        }
-        InputResult::Consumed
-    }
-
-    /// Handle dropdown navigation in entry dialog (same pattern as handle_dropdown_input)
-    fn handle_entry_dialog_dropdown(&mut self, event: &KeyEvent) -> InputResult {
-        let Some(dialog) = self.entry_dialog_mut() else {
-            return InputResult::Consumed;
-        };
-
-        match event.code {
-            KeyCode::Up => {
-                dialog.dropdown_prev();
-            }
-            KeyCode::Down => {
-                dialog.dropdown_next();
-            }
-            KeyCode::Enter => {
-                dialog.dropdown_confirm();
-            }
-            KeyCode::Esc => {
-                dialog.dropdown_confirm(); // Close dropdown
-            }
-            _ => {}
+        } else if matches!(event.code, KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab) {
+            // A dual list hands the keyboard back; its value is already the
+            // field's.
+            dialog.stop_editing();
         }
         InputResult::Consumed
     }
 
     /// Handle navigation and activation in entry dialog (same pattern as handle_settings_input)
-    fn handle_entry_dialog_navigation(
-        &mut self,
-        event: &KeyEvent,
-        ctx: &mut InputContext,
-    ) -> InputResult {
+    fn handle_entry_dialog_navigation(&mut self, event: &KeyEvent) -> InputResult {
         match event.code {
             KeyCode::Esc => {
                 // Esc on a dialog with uncommitted edits prompts for
@@ -448,34 +265,6 @@ impl SettingsState {
                 // Shift+Tab cycles in reverse
                 if let Some(dialog) = self.entry_dialog_mut() {
                     dialog.focus_prev();
-                }
-            }
-            KeyCode::Delete => {
-                // Del on a focused TextList item removes the row.
-                // Without this, the only way to drop an entry was to
-                // mouse-click `[x]` — which (a) wasn't wired and (b)
-                // isn't obvious from the keyboard.
-                let removed = self
-                    .entry_dialog_mut()
-                    .map(|dialog| {
-                        if dialog.focus_on_buttons {
-                            return false;
-                        }
-                        if let Some(item) = dialog.current_item_mut() {
-                            if let SettingControl::TextList(state) = &mut item.control {
-                                if let Some(idx) = state.focused_item {
-                                    state.remove_item(idx);
-                                    dialog.user_edited = true;
-                                    return true;
-                                }
-                            }
-                        }
-                        false
-                    })
-                    .unwrap_or(false);
-                if !removed {
-                    // Fall through to nothing — no other Del semantic
-                    // in the dialog navigation mode for now.
                 }
             }
             KeyCode::Left => {
@@ -531,14 +320,14 @@ impl SettingsState {
                         .entry_dialog()
                         .and_then(|dialog| {
                             dialog.current_item().map(|item| match &item.control {
-                                SettingControl::Toggle(_) => Some(ControlAction::ToggleBool),
-                                SettingControl::Dropdown(_) => Some(ControlAction::ToggleDropdown),
-                                SettingControl::Text(_)
-                                | SettingControl::TextList(_)
-                                | SettingControl::DualList(_)
-                                | SettingControl::Number(_)
-                                | SettingControl::Json(_) => Some(ControlAction::StartEditing),
-                                SettingControl::Map(_) | SettingControl::ObjectArray(_) => {
+                                SettingControl::Toggle { .. }
+                                | SettingControl::Dropdown { .. }
+                                | SettingControl::Text { .. }
+                                | SettingControl::Number { .. }
+                                | SettingControl::DualList { .. }
+                                | SettingControl::Json { .. }
+                                | SettingControl::TextList { .. } => Some(ControlAction::Activate),
+                                SettingControl::Map { .. } | SettingControl::ObjectArray { .. } => {
                                     Some(ControlAction::OpenNestedDialog)
                                 }
                                 _ => None,
@@ -548,19 +337,9 @@ impl SettingsState {
 
                     if let Some(action) = control_action {
                         match action {
-                            ControlAction::ToggleBool => {
+                            ControlAction::Activate => {
                                 if let Some(dialog) = self.entry_dialog_mut() {
-                                    dialog.toggle_bool();
-                                }
-                            }
-                            ControlAction::ToggleDropdown => {
-                                if let Some(dialog) = self.entry_dialog_mut() {
-                                    dialog.toggle_dropdown();
-                                }
-                            }
-                            ControlAction::StartEditing => {
-                                if let Some(dialog) = self.entry_dialog_mut() {
-                                    dialog.start_editing();
+                                    dialog.activate_control();
                                 }
                             }
                             ControlAction::OpenNestedDialog => {
@@ -577,58 +356,47 @@ impl SettingsState {
                 }
 
                 // Space toggles booleans, activates dropdowns (but doesn't submit form)
-                let control_action = self.entry_dialog().and_then(|dialog| {
-                    if dialog.focus_on_buttons {
-                        return None; // Space on buttons does nothing (Enter activates)
-                    }
-                    dialog.current_item().and_then(|item| match &item.control {
-                        SettingControl::Toggle(_) => Some(ControlAction::ToggleBool),
-                        SettingControl::Dropdown(_) => Some(ControlAction::ToggleDropdown),
-                        _ => None,
-                    })
+                let activates = self.entry_dialog().is_some_and(|dialog| {
+                    !dialog.focus_on_buttons // Space on buttons does nothing (Enter activates)
+                        && matches!(
+                            dialog.current_item().map(|i| &i.control),
+                            Some(SettingControl::Toggle { .. } | SettingControl::Dropdown { .. })
+                        )
                 });
-
-                if let Some(action) = control_action {
-                    match action {
-                        ControlAction::ToggleBool => {
-                            if let Some(dialog) = self.entry_dialog_mut() {
-                                dialog.toggle_bool();
-                            }
-                        }
-                        ControlAction::ToggleDropdown => {
-                            if let Some(dialog) = self.entry_dialog_mut() {
-                                dialog.toggle_dropdown();
-                            }
-                        }
-                        _ => {}
+                if activates {
+                    if let Some(dialog) = self.entry_dialog_mut() {
+                        dialog.activate_control();
                     }
                 }
             }
             KeyCode::Char(c) => {
                 // Auto-enter edit mode when typing on a text or number field
-                let can_auto_edit = self
+                let scalar = self
                     .entry_dialog()
                     .and_then(|dialog| {
                         if dialog.focus_on_buttons {
                             return None;
                         }
                         dialog.current_item().map(|item| match &item.control {
-                            SettingControl::Text(_) | SettingControl::TextList(_) => true,
-                            SettingControl::Number(_) => c.is_ascii_digit() || c == '-' || c == '.',
+                            SettingControl::Text { .. }
+                            | SettingControl::Json { .. }
+                            | SettingControl::TextList { .. } => true,
+                            SettingControl::Number { .. } => {
+                                c.is_ascii_digit() || c == '-' || c == '.'
+                            }
                             _ => false,
                         })
                     })
                     .unwrap_or(false);
 
-                if can_auto_edit {
+                if scalar {
+                    // The field becomes live and the character is its kind's:
+                    // a text field types it at the end, a number opens its
+                    // draft with it, a text list's add row opens with it.
                     if let Some(dialog) = self.entry_dialog_mut() {
-                        dialog.start_editing();
+                        dialog.type_into_control(&c.to_string());
                     }
-                    // Now forward the character to the text editing handler
-                    return self.handle_entry_dialog_text_editing(
-                        &KeyEvent::new(KeyCode::Char(c), event.modifiers),
-                        ctx,
-                    );
+                    return InputResult::Consumed;
                 }
             }
             _ => {}
@@ -959,19 +727,13 @@ impl SettingsState {
 
     /// Handle input when Settings panel is focused
     fn handle_settings_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
-        // If editing text, handle text input
-        if self.editing_text {
-            return self.handle_text_editing_input(event, ctx);
-        }
-
-        // If editing number input, handle number input
-        if self.is_number_editing() {
-            return self.handle_number_editing_input(event, ctx);
-        }
-
-        // If dropdown is open, handle dropdown navigation
-        if self.is_dropdown_open() {
-            return self.handle_dropdown_input(event, ctx);
+        // A live control's keys are its kind's; what the kind declines is
+        // the surface's edit convention, and what a list at the end of its
+        // rows declines is the page's. See `handle_live_control_key`.
+        if self.live_control().is_some() {
+            if let Some(result) = self.handle_live_control_key(event, ctx) {
+                return result;
+            }
         }
 
         match event.code {
@@ -993,15 +755,18 @@ impl SettingsState {
                 self.handle_control_activate(ctx);
                 InputResult::Consumed
             }
-            // Type-to-edit: digit / '-' / '.' on a focused number control
-            // enters edit mode with the typed char replacing the value.
+            // Type-to-edit: a digit, `-` or `.` on a number card opens its
+            // draft with the typed character replacing the value — the
+            // kind's own answer to text typed at a displayed cell, once the
+            // card's control is live.
             KeyCode::Char(c)
                 if self.is_number_control() && (c.is_ascii_digit() || c == '-' || c == '.') =>
             {
-                self.start_number_editing();
-                self.number_insert(c);
-                self.on_value_changed();
-                InputResult::Consumed
+                if let Some(path) = self.current_item().map(|i| i.path.clone()) {
+                    self.controls.focus_key = path;
+                }
+                self.handle_live_control_key(event, ctx)
+                    .unwrap_or(InputResult::Consumed)
             }
             KeyCode::PageDown => {
                 self.select_next_page();
@@ -1096,434 +861,110 @@ impl SettingsState {
         }
     }
 
-    /// Handle input when editing text in a control
-    fn handle_text_editing_input(
+    /// A key while the selected card's control is live.
+    ///
+    /// The kind answers first — caret and selection keys, a draft's digits,
+    /// a list's arrows, the clipboard chords it owns — and reports what the
+    /// model should learn. What it declines is the surface's: paste, which
+    /// reads a clipboard the kind cannot see, and the text field's edit
+    /// convention, where Enter and Tab record the value and Escape puts the
+    /// old one back. A number's and a dropdown's conventions are the kind's
+    /// own (`Number::on_key`, `Dropdown::on_key`), so nothing is left here
+    /// for them; the control stops being live when its kind lets go.
+    ///
+    /// `None` is the page's key: what a map's or an object array's list
+    /// declines (Left, Tab, Escape, the search and help keys), and an arrow
+    /// or a page key at the end of its rows, which moves on to the next
+    /// card.
+    fn handle_live_control_key(
         &mut self,
         event: &KeyEvent,
         ctx: &mut InputContext,
-    ) -> InputResult {
-        let is_json = self.is_editing_json();
-
-        if is_json {
-            return self.handle_json_editing_input(event, ctx);
+    ) -> Option<InputResult> {
+        use crate::widgets::kinds::KeyDisposition;
+        if event.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(event.code, KeyCode::Char('v') | KeyCode::Char('V'))
+        {
+            ctx.defer(DeferredAction::PasteToSettings);
+            return Some(InputResult::Consumed);
         }
-
-        // DualList has its own keyboard handling (no text input)
-        if self.is_editing_dual_list() {
-            return self.handle_dual_list_editing_input(event);
+        let has_rows = self
+            .current_item()
+            .is_some_and(|i| i.control.has_list_rows());
+        // Delete in a text list item's field removes the item — the row's
+        // key, ahead of the field's forward-delete; the `[x]` beside the
+        // row is the same act by mouse.
+        if event.code == KeyCode::Delete {
+            if let Some(Some(i)) = self.live_list_row() {
+                self.remove_list_row(i);
+                return Some(InputResult::Consumed);
+            }
         }
-
-        // A plain single-line Text field routes every caret-motion and
-        // text-mutation key through the one shared text-key engine
-        // (`primitives::text_key::apply_text_key`) — the same table the
-        // plugin widget runtime uses, so Home/End, forward-Delete, word
-        // motion, and shift-selection can never drift between the two
-        // surfaces again. Chrome keys (Enter/Tab/Esc, Up/Down field-nav,
-        // Ctrl+A/C/V) come back unhandled and fall through to the match
-        // below; composite controls (TextList/Map) keep their own per-row
-        // handling there.
-        if self.is_editing_plain_text() && self.apply_plain_text_key(event) {
-            return InputResult::Consumed;
+        let Some(outcome) = self.live_dispatch(event) else {
+            return Some(InputResult::Consumed);
+        };
+        if let Some(text) = outcome.fx.clipboard_copy {
+            ctx.defer(DeferredAction::CopyToClipboard(text));
         }
-
-        match event.code {
-            KeyCode::Esc => {
-                // A plain Text field: Esc cancels the in-progress edit and
-                // restores the pre-edit value (platform convention: Enter/Tab
-                // commit, Esc reverts). Previously Esc called stop_editing(),
-                // which *accepted* the edit, so there was no way to back out.
-                if self.is_editing_plain_text() {
-                    self.revert_editing();
-                    return InputResult::Consumed;
-                }
-                // Other editable controls (TextList/Map) keep their prior
-                // dismiss semantics; the JSON-validity gate only matters here.
-                if !self.can_exit_text_editing() {
-                    return InputResult::Consumed;
-                }
-                self.stop_editing();
-                InputResult::Consumed
+        if outcome.disposition == KeyDisposition::Consumed {
+            let moved = outcome.fx.events.iter().any(|(e, _)| e == "select");
+            let stepping = matches!(
+                event.code,
+                KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+            );
+            if has_rows && stepping && !moved {
+                return None;
             }
-            KeyCode::Enter => {
-                // A plain Text field: Enter accepts the typed value and exits
-                // edit mode (platform convention, matching the footer's "Enter"
-                // hint). Previously Enter ran text_add_item — a no-op for Text —
-                // so the user was trapped in edit mode with the following
-                // Tab/Esc/arrows appearing dead. TextList/Map keep Enter = add
-                // a row and stay in edit mode so the user can keep adding.
-                if self.is_editing_plain_text() {
-                    if self.can_exit_text_editing() {
-                        self.commit_text_edit();
-                        self.stop_editing();
-                    }
-                    // Invalid text stays in edit mode until fixed or Esc.
-                } else {
-                    self.text_add_item();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Char(c) => {
-                // Selection / clipboard chords on a plain Text field —
-                // the same TextEdit-backed behavior as the JSON editor
-                // and the entry dialog.
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    match c {
-                        'a' | 'A' => {
-                            self.text_select_all();
-                            return InputResult::Consumed;
-                        }
-                        'c' | 'C' => {
-                            if let Some(text) = self.text_selected_text() {
-                                ctx.defer(DeferredAction::CopyToClipboard(text));
-                            }
-                            return InputResult::Consumed;
-                        }
-                        'v' | 'V' => {
-                            ctx.defer(DeferredAction::PasteToSettings);
-                            return InputResult::Consumed;
-                        }
-                        _ => {}
-                    }
-                }
-                self.text_insert(c);
-                InputResult::Consumed
-            }
-            KeyCode::Backspace => {
-                self.text_backspace();
-                InputResult::Consumed
-            }
-            // The arms below only run for composite controls (TextList/Map):
-            // a plain Text field consumed its motion/mutation keys through
-            // `apply_plain_text_key` above.
-            KeyCode::Delete => {
-                // TextList/Map: Delete removes the focused row.
-                self.text_remove_focused();
-                InputResult::Consumed
-            }
-            KeyCode::Left => {
-                self.text_move_left();
-                InputResult::Consumed
-            }
-            KeyCode::Right => {
-                self.text_move_right();
-                InputResult::Consumed
-            }
-            KeyCode::Home => {
-                self.text_move_home();
-                InputResult::Consumed
-            }
-            KeyCode::End => {
-                self.text_move_end();
-                InputResult::Consumed
-            }
-            KeyCode::Up => {
-                self.text_focus_prev();
-                InputResult::Consumed
-            }
-            KeyCode::Down => {
-                self.text_focus_next();
-                InputResult::Consumed
-            }
-            KeyCode::Tab => {
-                // Tab commits the typed value (like Enter) before exiting text
-                // editing mode and advancing focus to the next panel. Without
-                // the commit, a value typed and then dismissed with Tab was
-                // dropped on Save even though the row showed as modified
-                // (issue #2515).
-                self.commit_text_edit();
-                self.stop_editing();
-                InputResult::Consumed
-            }
-            _ => InputResult::Consumed, // Consume all during text edit
+            return Some(InputResult::Consumed);
         }
-    }
-
-    /// Handle input when editing a DualList control
-    fn handle_dual_list_editing_input(&mut self, event: &KeyEvent) -> InputResult {
-        use crate::view::controls::DualListColumn;
-        let shift = event.modifiers.contains(KeyModifiers::SHIFT);
-        match event.code {
-            KeyCode::Esc => {
-                self.stop_editing();
-            }
-            // Tab/BackTab propagate to the settings panel (exit editing)
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.stop_editing();
-                // Return Ignored so the settings panel handles Tab/BackTab
-                return InputResult::Ignored;
-            }
-            KeyCode::Up if shift => {
-                self.with_current_dual_list_mut(|dl| dl.move_up());
-                self.on_value_changed();
-            }
-            KeyCode::Down if shift => {
-                self.with_current_dual_list_mut(|dl| dl.move_down());
-                self.on_value_changed();
-            }
-            KeyCode::Up => {
-                self.with_current_dual_list_mut(|dl| dl.cursor_up());
-            }
-            KeyCode::Down => {
-                self.with_current_dual_list_mut(|dl| dl.cursor_down());
-            }
-            KeyCode::Right if shift => {
-                // Shift+Right: add selected available item to included, follow it
-                let changed = self
-                    .with_current_dual_list_mut(|dl| {
-                        if dl.active_column == DualListColumn::Available {
-                            dl.add_selected();
-                            // Move focus to the Included column, cursor on the newly added item (last)
-                            dl.active_column = DualListColumn::Included;
-                            dl.included_cursor = dl.included.len().saturating_sub(1);
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
-                if changed {
-                    self.on_value_changed();
-                    self.refresh_dual_list_sibling();
-                }
-            }
-            KeyCode::Left if shift => {
-                // Shift+Left: remove selected included item back to available, follow it
-                let changed = self
-                    .with_current_dual_list_mut(|dl| {
-                        if dl.active_column == DualListColumn::Included {
-                            let value = dl.included.get(dl.included_cursor).cloned();
-                            dl.remove_selected();
-                            // Move focus to Available column, find the removed item
-                            dl.active_column = DualListColumn::Available;
-                            if let Some(val) = value {
-                                let avail = dl.available_items();
-                                if let Some(pos) = avail.iter().position(|(v, _)| *v == val) {
-                                    dl.available_cursor = pos;
-                                }
-                            }
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
-                if changed {
-                    self.on_value_changed();
-                    self.refresh_dual_list_sibling();
-                }
-            }
-            KeyCode::Right => {
-                // Plain Right: switch to Included column
-                self.with_current_dual_list_mut(|dl| {
-                    dl.active_column = DualListColumn::Included;
-                });
-            }
-            KeyCode::Left => {
-                // Plain Left: switch to Available column
-                self.with_current_dual_list_mut(|dl| {
-                    dl.active_column = DualListColumn::Available;
-                });
-            }
-            KeyCode::Enter => {
-                // Enter adds/removes based on active column
-                let changed = self
-                    .with_current_dual_list_mut(|dl| match dl.active_column {
-                        DualListColumn::Available => dl.add_selected(),
-                        DualListColumn::Included => dl.remove_selected(),
-                    })
-                    .is_some();
-                if changed {
-                    self.on_value_changed();
-                    self.refresh_dual_list_sibling();
-                }
-            }
-            _ => {}
+        if has_rows {
+            return None;
         }
-        InputResult::Consumed
-    }
-
-    /// Handle input when editing a JSON control (multiline editor)
-    fn handle_json_editing_input(
-        &mut self,
-        event: &KeyEvent,
-        ctx: &mut InputContext,
-    ) -> InputResult {
-        match event.code {
-            KeyCode::Esc | KeyCode::Tab => {
-                // Accept if valid JSON, revert if invalid, then stop editing
+        if self.is_editing_text_control() {
+            match event.code {
+                KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab => {
+                    self.commit_text_edit();
+                }
+                KeyCode::Esc => self.revert_text_edit(),
+                _ => {}
+            }
+        } else if self.is_editing_json() {
+            // Enter is the editor's (a newline); Tab and Escape leave it,
+            // keeping a text that parses and putting back one that does
+            // not.
+            if matches!(event.code, KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc) {
                 self.json_exit_editing();
             }
-            KeyCode::Enter => {
-                self.json_insert_newline();
-            }
-            KeyCode::Char(c) => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    match c {
-                        'a' | 'A' => self.json_select_all(),
-                        'c' | 'C' => {
-                            if let Some(text) = self.json_selected_text() {
-                                ctx.defer(DeferredAction::CopyToClipboard(text));
-                            }
-                        }
-                        'v' | 'V' => {
-                            ctx.defer(DeferredAction::PasteToSettings);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    self.text_insert(c);
+        } else if self.is_editing_dual_list() {
+            // Escape hands the keyboard back to the page; Tab does the
+            // same and then moves on, as it does from any card.
+            match event.code {
+                KeyCode::Esc => self.leave_live_control(),
+                KeyCode::Tab | KeyCode::BackTab => {
+                    self.leave_live_control();
+                    return Some(InputResult::Ignored);
                 }
+                _ => {}
             }
-            KeyCode::Backspace => {
-                self.text_backspace();
-            }
-            KeyCode::Delete => {
-                self.json_delete();
-            }
-            KeyCode::Left => {
-                if event.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.json_cursor_left_selecting();
-                } else {
-                    self.text_move_left();
+        } else if self.live_list_row().is_some() {
+            // A text list's field. Up and Down walk the rows (and stay at
+            // either end); Enter makes the add row's draft an item; Tab
+            // commits the draft and leaves; Escape drops it and leaves;
+            // Delete removes the item the field is in.
+            match event.code {
+                KeyCode::Up => {
+                    self.list_row_step(-1);
                 }
-            }
-            KeyCode::Right => {
-                if event.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.json_cursor_right_selecting();
-                } else {
-                    self.text_move_right();
+                KeyCode::Down => {
+                    self.list_row_step(1);
                 }
+                KeyCode::Enter => self.list_row_enter(),
+                KeyCode::Tab | KeyCode::BackTab => self.leave_list_row(true),
+                KeyCode::Esc => self.leave_list_row(false),
+                _ => {}
             }
-            KeyCode::Up => {
-                if event.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.json_cursor_up_selecting();
-                } else {
-                    self.json_cursor_up();
-                }
-            }
-            KeyCode::Down => {
-                if event.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.json_cursor_down_selecting();
-                } else {
-                    self.json_cursor_down();
-                }
-            }
-            _ => {}
         }
-        InputResult::Consumed
-    }
-
-    /// Handle input when editing a number input control
-    fn handle_number_editing_input(
-        &mut self,
-        event: &KeyEvent,
-        _ctx: &mut InputContext,
-    ) -> InputResult {
-        let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = event.modifiers.contains(KeyModifiers::SHIFT);
-
-        match event.code {
-            KeyCode::Esc => {
-                self.number_cancel();
-            }
-            KeyCode::Enter => {
-                self.number_confirm();
-            }
-            KeyCode::Tab | KeyCode::BackTab => {
-                // Tab commits the pending edit and exits editing mode. We
-                // don't move panel focus here so the user can continue to
-                // tweak the same setting with Left/Right after Tab — matching
-                // the muscle memory of "Tab to leave the input box."
-                self.number_confirm();
-            }
-            KeyCode::Char('a') if ctrl => {
-                self.number_select_all();
-            }
-            KeyCode::Char(c) => {
-                self.number_insert(c);
-            }
-            KeyCode::Backspace if ctrl => {
-                self.number_delete_word_backward();
-            }
-            KeyCode::Backspace => {
-                self.number_backspace();
-            }
-            KeyCode::Delete if ctrl => {
-                self.number_delete_word_forward();
-            }
-            KeyCode::Delete => {
-                self.number_delete();
-            }
-            KeyCode::Left if ctrl && shift => {
-                self.number_move_word_left_selecting();
-            }
-            KeyCode::Left if ctrl => {
-                self.number_move_word_left();
-            }
-            KeyCode::Left if shift => {
-                self.number_move_left_selecting();
-            }
-            KeyCode::Left => {
-                self.number_move_left();
-            }
-            KeyCode::Right if ctrl && shift => {
-                self.number_move_word_right_selecting();
-            }
-            KeyCode::Right if ctrl => {
-                self.number_move_word_right();
-            }
-            KeyCode::Right if shift => {
-                self.number_move_right_selecting();
-            }
-            KeyCode::Right => {
-                self.number_move_right();
-            }
-            KeyCode::Home if shift => {
-                self.number_move_home_selecting();
-            }
-            KeyCode::Home => {
-                self.number_move_home();
-            }
-            KeyCode::End if shift => {
-                self.number_move_end_selecting();
-            }
-            KeyCode::End => {
-                self.number_move_end();
-            }
-            _ => {}
-        }
-        InputResult::Consumed // Consume all during number edit
-    }
-
-    /// Handle input when dropdown is open
-    fn handle_dropdown_input(&mut self, event: &KeyEvent, _ctx: &mut InputContext) -> InputResult {
-        match event.code {
-            KeyCode::Up => {
-                self.dropdown_prev();
-                InputResult::Consumed
-            }
-            KeyCode::Down => {
-                self.dropdown_next();
-                InputResult::Consumed
-            }
-            KeyCode::Home => {
-                self.dropdown_home();
-                InputResult::Consumed
-            }
-            KeyCode::End => {
-                self.dropdown_end();
-                InputResult::Consumed
-            }
-            KeyCode::Enter => {
-                self.dropdown_confirm();
-                InputResult::Consumed
-            }
-            KeyCode::Esc => {
-                self.dropdown_cancel();
-                InputResult::Consumed
-            }
-            _ => InputResult::Consumed, // Consume all while dropdown is open
-        }
+        Some(InputResult::Consumed)
     }
 
     /// Request to reset all changes (shows confirm dialog if there are changes)
@@ -1544,66 +985,10 @@ impl SettingsState {
         }
     }
 
-    /// Handle control activation (Enter/Space on a setting)
+    /// Handle control activation (Enter/Space on a setting): the control's
+    /// kind acts (`activate_control`), whatever it is.
     fn handle_control_activate(&mut self, _ctx: &mut InputContext) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::Toggle(ref mut state) => {
-                    state.checked = !state.checked;
-                    self.on_value_changed();
-                }
-                SettingControl::Dropdown(_) => {
-                    self.dropdown_toggle();
-                }
-                SettingControl::Number(_) => {
-                    self.start_number_editing();
-                }
-                SettingControl::Text(_) => {
-                    self.start_editing();
-                }
-                SettingControl::TextList(_) | SettingControl::DualList(_) => {
-                    self.start_editing();
-                }
-                SettingControl::Map(ref mut state) => {
-                    if state.focused_entry.is_none() {
-                        // On add-new row: open dialog with empty key
-                        if state.value_schema.is_some() {
-                            self.open_add_entry_dialog();
-                        }
-                    } else if state.value_schema.is_some() {
-                        // Has schema: open entry dialog
-                        self.open_entry_dialog();
-                    } else {
-                        // Toggle expanded
-                        if let Some(idx) = state.focused_entry {
-                            if state.expanded.contains(&idx) {
-                                state.expanded.retain(|&i| i != idx);
-                            } else {
-                                state.expanded.push(idx);
-                            }
-                        }
-                    }
-                    self.on_value_changed();
-                }
-                SettingControl::Json(_) => {
-                    self.start_editing();
-                }
-                SettingControl::ObjectArray(ref state) => {
-                    if state.focused_index.is_none() {
-                        // On add-new row: open dialog with empty item
-                        if state.item_schema.is_some() {
-                            self.open_add_array_item_dialog();
-                        }
-                    } else if state.item_schema.is_some() {
-                        // Has schema: open edit dialog
-                        self.open_edit_array_item_dialog();
-                    }
-                }
-                SettingControl::Complex { .. } => {
-                    // Not editable via simple controls
-                }
-            }
-        }
+        self.activate_control();
     }
 }
 
@@ -1619,7 +1004,7 @@ mod tests {
     /// The value shown in the currently-focused plain `Text` control.
     fn text_value(state: &SettingsState) -> String {
         match state.current_item().map(|i| &i.control) {
-            Some(SettingControl::Text(s)) => s.value(),
+            Some(SettingControl::Text { value, .. }) => value.clone(),
             _ => panic!("current item is not a Text control"),
         }
     }
@@ -1630,16 +1015,86 @@ mod tests {
     fn select_first_text_control(state: &mut SettingsState) -> bool {
         for pi in 0..state.pages.len() {
             for ii in 0..state.pages[pi].items.len() {
-                if let SettingControl::Text(s) = &state.pages[pi].items[ii].control {
-                    if s.is_enabled() {
-                        state.selected_category = pi;
-                        state.selected_item = ii;
-                        return true;
-                    }
+                if matches!(
+                    state.pages[pi].items[ii].control,
+                    SettingControl::Text { .. }
+                ) {
+                    state.selected_category = pi;
+                    state.selected_item = ii;
+                    return true;
                 }
             }
         }
         false
+    }
+
+    /// A map's rows are walked by the arrows once its card is selected —
+    /// the list is live, its cursor the kind's — and at the last row Down
+    /// moves on to the next card.
+    #[test]
+    fn a_map_s_rows_are_walked_by_the_arrows_and_left_at_the_end() {
+        let schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(schema, &config).unwrap();
+        state.visible = true;
+        let (page, idx) = state
+            .pages
+            .iter()
+            .enumerate()
+            .find_map(|(p, page)| {
+                page.items
+                    .iter()
+                    .position(|i| i.path == "/lsp")
+                    .map(|i| (p, i))
+            })
+            .expect("the LSP map");
+        state.selected_category = page;
+        state.focus_on(FocusTarget::Card(idx));
+        assert!(matches!(
+            state.current_item().map(|i| &i.control),
+            Some(SettingControl::Map { .. })
+        ));
+        assert_eq!(state.composite_cursor(), Some(0), "entered from above");
+        assert!(state.live_control().is_some(), "the list has the keyboard");
+
+        let mut ctx = InputContext::new();
+        state.handle_key_event(&key(KeyCode::Down), &mut ctx);
+        assert_eq!(state.composite_cursor(), Some(1), "Down walks the rows");
+        state.handle_key_event(&key(KeyCode::Up), &mut ctx);
+        assert_eq!(state.composite_cursor(), Some(0));
+
+        // At the last row Down leaves the card.
+        let last = state.current_item().unwrap().control.list_row_count() - 1;
+        for _ in 0..last {
+            state.handle_key_event(&key(KeyCode::Down), &mut ctx);
+        }
+        assert_eq!(state.composite_cursor(), Some(last), "on the add row");
+        state.handle_key_event(&key(KeyCode::Down), &mut ctx);
+        assert_eq!(state.selected_item, idx + 1, "Down at the add row moves on");
+    }
+
+    /// The search jump lands on the LSP map with its list live, and the
+    /// arrows walk its rows from there.
+    #[test]
+    fn a_search_jump_to_a_map_lands_with_its_list_live() {
+        let schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(schema, &config).unwrap();
+        state.visible = true;
+        let mut ctx = InputContext::new();
+        state.handle_key_event(&key(KeyCode::Char('/')), &mut ctx);
+        for c in "lsp".chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
+        }
+        state.handle_key_event(&key(KeyCode::Enter), &mut ctx);
+        assert_eq!(
+            state.current_item().map(|i| i.path.as_str()),
+            Some("/lsp"),
+            "the jump lands on the LSP map"
+        );
+        assert_eq!(state.composite_cursor(), Some(0));
+        state.handle_key_event(&key(KeyCode::Down), &mut ctx);
+        assert_eq!(state.composite_cursor(), Some(1), "Down walks the rows");
     }
 
     #[test]
@@ -1909,20 +1364,19 @@ mod tests {
             .and_then(|page| {
                 page.items
                     .iter()
-                    .position(|item| matches!(item.control, SettingControl::Number(_)))
+                    .position(|item| matches!(item.control, SettingControl::Number { .. }))
             })
             .expect("expected at least one Number control on the default page");
         state.selected_item = number_idx;
 
         // Enter number editing mode and type a digit so we have a pending edit
-        state.start_number_editing();
+        state.activate_control();
         assert!(
             state.is_number_editing(),
             "precondition: should be in number-editing mode"
         );
-        state.number_insert('7');
-
         let mut ctx = InputContext::new();
+        state.handle_key_event(&key(KeyCode::Char('7')), &mut ctx);
 
         // Tab should exit editing mode (currently fails: Tab is unhandled)
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
@@ -2059,7 +1513,7 @@ mod tests {
             .expect("field present in dialog");
         dialog.selected_item = idx;
         dialog.start_editing();
-        assert!(dialog.editing_text, "precondition: editing {label}");
+        assert!(dialog.is_editing(), "precondition: editing {label}");
         state
     }
 
@@ -2070,26 +1524,30 @@ mod tests {
             .and_then(|d| d.current_item())
             .map(|i| &i.control)
         {
-            Some(SettingControl::Text(s)) => s.value(),
+            Some(SettingControl::Text { value, .. }) => value.clone(),
             _ => panic!("current dialog item is not a Text control"),
         }
     }
 
-    /// The text sitting in the entry dialog's focused `Number` control edit
-    /// buffer — the digits the user sees while the field is being typed into.
+    /// The text sitting in the entry dialog's focused `Number` control's
+    /// draft — the digits the user sees while the field is being typed into.
     fn dialog_number_edit_buffer(state: &SettingsState) -> String {
-        match state
-            .entry_dialog()
-            .and_then(|d| d.current_item())
-            .map(|i| &i.control)
-        {
-            Some(SettingControl::Number(s)) => s
-                .editor
-                .as_ref()
-                .expect("number control should be in edit mode")
-                .value(),
-            _ => panic!("current dialog item is not a Number control"),
-        }
+        let dialog = state.entry_dialog().expect("dialog present");
+        let item = dialog.current_item().expect("a field is selected");
+        assert!(
+            matches!(item.control, SettingControl::Number { .. }),
+            "current dialog item is not a Number control"
+        );
+        crate::widgets::kinds::number::resolve(
+            0.0,
+            None,
+            None,
+            Some(&item.path),
+            &dialog.controls.instance_states,
+        )
+        .draft
+        .expect("number control should be in edit mode")
+        .text
     }
 
     /// The issue's own case: a dialog holding one editable `Command` string.

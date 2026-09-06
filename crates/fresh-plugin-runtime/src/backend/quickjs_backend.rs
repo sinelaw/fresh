@@ -5105,7 +5105,10 @@ impl JsEditorApi {
         };
         Ok(self
             .command_sender
-            .send(PluginCommand::SetPromptToolbar { spec })
+            .send(PluginCommand::SetPromptToolbar {
+                plugin: self.plugin_name.clone(),
+                spec,
+            })
             .is_ok())
     }
 
@@ -6557,6 +6560,7 @@ impl JsEditorApi {
                 highlight_current_line: opts.highlight_current_line,
                 initial_cursor_line: opts.initial_cursor_line,
                 indentation_guide: opts.indentation_guide,
+                scrollable: opts.scrollable,
                 request_id: Some(id),
             });
         Ok(id)

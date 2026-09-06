@@ -12,18 +12,17 @@
 //! `OUTSIDE_POINTER` dismissal is what the full-frame
 //! `chrome:menu_close_guard` box used to be.
 //!
-//! **Placement has not migrated**, and the reason is upstream of placement:
-//! this chain has no content model in the tree to place. `DropdownLevel`
-//! carries `x`, `y` and `width` — a rect on a description type, which the
-//! design doc names as its own stop sign — plus strings already fitted to a
-//! width nothing measured. `Place::RightOf` places against a *measured* box,
-//! so it is not merely unused here, it is not yet expressible.
-//!
-//! An earlier version of this note claimed `Anchor::Node` could not express
-//! the one-row rise a submenu's border needs. It can: anchor to the row
-//! *above*. That is not the blocker; the content model is. See §6.2 of the
-//! migration doc for the order the pieces have to move in, and for the
-//! measured divergence between this walk's flip rule and `Fit::FLIP`.
+//! **Placement is the tree's.** A level carries no rectangle: it says what it
+//! hangs off — the bar label that opened it, or the parent row of the level
+//! above — and the rows it holds, as content. The box is as wide as its
+//! widest row (`Sizing::Auto`), the top level hangs `Place::Below` its label,
+//! a submenu `Place::RightOf` its parent row with the one-row rise its border
+//! needs said as an anchor offset, and `Fit` keeps every level on screen —
+//! clamped for the top level, flipped to the left for a submenu that would
+//! run off the right edge. [`describe`] derives the content from the menu
+//! state; the walk that decided all of this by hand
+//! (`MenuRenderer::compute_layout`) is deleted, and the web reads the same
+//! rectangles the tree produced (design §3.4).
 
 use std::rc::Rc;
 
@@ -87,7 +86,7 @@ fn build_menu_bar(bar: &MenuBar) -> Node<UiMsg> {
                 .map(|(t, theme)| Run::themed(t.clone(), theme))
                 .collect();
             let index = it.index;
-            gesture(text_runs(runs))
+            gesture(text_runs(runs).key(menu_label_key(index)))
                 // Stops, because the row behind it closes the menu: a press
                 // bubbles to every handler on its path, so a label that only
                 // *answered* would be followed by the ground's close and the
@@ -165,22 +164,60 @@ pub fn dropdown_item_key(depth: usize, index: usize) -> fresh_ui::Key {
 
 /// One row of one dropdown: what it says, and the name of how it looks.
 ///
-/// Both halves come from the renderer's own derivation
-/// (`MenuRenderer::dropdown_item_text` and `MenuRowStyle`), so a row here says
-/// character-for-character what the old painter wrote.
+/// The style half is [`MenuRowStyle`](crate::view::ui::MenuRowStyle)'s name;
+/// the content half is what the row reads, with no width fitted into it — the
+/// box is as wide as its widest row, and a row's slack is laid out, not
+/// written as spaces.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DropdownRow {
-    pub text: String,
+    pub body: RowBody,
     pub theme: String,
 }
 
-/// One level of an open dropdown chain: the bordered box and its rows.
+/// What a dropdown row reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowBody {
+    /// `text` at the left edge, `trail` at the right (an accelerator, the
+    /// submenu arrow), and the box's slack between them. An action's `text`
+    /// carries its checkbox glyph; a label's has no trail.
+    Item { text: String, trail: String },
+    /// A rule across the box.
+    Separator,
+}
+
+impl DropdownRow {
+    /// A plain row with no trail, in the ordinary dropdown ink.
+    pub fn plain(text: impl Into<String>) -> DropdownRow {
+        DropdownRow {
+            body: RowBody::Item {
+                text: text.into(),
+                trail: String::new(),
+            },
+            theme: crate::view::ui::MenuRowStyle::Normal.shell_theme(),
+        }
+    }
+}
+
+/// One level of an open dropdown chain: what it hangs off, and its rows.
+///
+/// **No rectangle.** `from` is the index of the bar label this level opened
+/// from (depth 0) or of the parent row in the level above (deeper), and the
+/// tree places the box against that node: below the label, right of the row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DropdownLevel {
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
+    pub from: usize,
     pub rows: Vec<DropdownRow>,
+}
+
+/// A bar label's identity: what a top-level dropdown anchors to, and what the
+/// web reads a label's rectangle by.
+pub fn menu_label_key(index: usize) -> fresh_ui::Key {
+    fresh_ui::Key::Pair("menu_label".into(), index as u64)
+}
+
+/// A dropdown box's identity, by depth: the layer that is the box.
+pub fn dropdown_key(depth: usize) -> fresh_ui::Key {
+    fresh_ui::Key::Pair("menu_dropdown".into(), depth as u64)
 }
 
 /// A key the open menu answers, and what it means.
@@ -278,51 +315,47 @@ fn dropdown(
         .iter()
         .enumerate()
         .map(|(index, r)| {
-            gesture(
-                text(r.text.clone())
-                    .theme(r.theme.clone())
-                    .h(Sizing::Cells(1)),
-            )
-            // Keyed for the same reason the dropdown box itself is: the chain
-            // rebuilds whenever the highlight moves or a submenu opens, and an
-            // unkeyed row's identity is its position in a list that changes.
-            .key(dropdown_item_key(depth, index))
-            // Stops, for the same reason the bar's labels do: the box
-            // behind the rows closes the menu, and a row that only
-            // answered would be followed by that close — which would shut
-            // the menu on the way into a submenu.
-            //
-            // Left only: without the guard a *middle* press activates the
-            // item — something no menu has ever done, here or before the
-            // migration.
-            //
-            // **Press, not `Click`,** like the bar's labels and every other
-            // migrated surface: `handle_menu_dropdown_click` ran from the
-            // `Down(Left)` arm. A terminal sends press *and* release so the
-            // two look alike there, but the web frontend synthesises the
-            // press alone at the row's cell, and a `Click` handler never
-            // fires for it.
-            .on(
-                GestureKind::Press,
-                Rc::new(move |e: &Event| {
-                    if e.button != fresh_ui::MouseButton::Left {
-                        return None;
-                    }
-                    e.stop();
-                    Some(UiMsg::Ui(UiFact::MenuItemClick { depth, index }))
-                }),
-            )
-            // The hover machine decides what a row under the pointer
-            // means — highlight, open a submenu, close the deeper ones.
-            .on_leave(hover(None))
-            .on_enter(hover(Some(if depth == 0 {
-                // The bar index the reaction fills in for itself; it knows
-                // which menu is open.
-                HoverTarget::MenuDropdownItem(0, index)
-            } else {
-                HoverTarget::SubmenuItem(depth, index)
-            })))
-            .into()
+            gesture(row_node(r))
+                // Keyed for the same reason the dropdown box itself is: the chain
+                // rebuilds whenever the highlight moves or a submenu opens, and an
+                // unkeyed row's identity is its position in a list that changes.
+                .key(dropdown_item_key(depth, index))
+                // Stops, for the same reason the bar's labels do: the box
+                // behind the rows closes the menu, and a row that only
+                // answered would be followed by that close — which would shut
+                // the menu on the way into a submenu.
+                //
+                // Left only: without the guard a *middle* press activates the
+                // item — something no menu has ever done, here or before the
+                // migration.
+                //
+                // **Press, not `Click`,** like the bar's labels and every other
+                // migrated surface: `handle_menu_dropdown_click` ran from the
+                // `Down(Left)` arm. A terminal sends press *and* release so the
+                // two look alike there, but the web frontend synthesises the
+                // press alone at the row's cell, and a `Click` handler never
+                // fires for it.
+                .on(
+                    GestureKind::Press,
+                    Rc::new(move |e: &Event| {
+                        if e.button != fresh_ui::MouseButton::Left {
+                            return None;
+                        }
+                        e.stop();
+                        Some(UiMsg::Ui(UiFact::MenuItemClick { depth, index }))
+                    }),
+                )
+                // The hover machine decides what a row under the pointer
+                // means — highlight, open a submenu, close the deeper ones.
+                .on_leave(hover(None))
+                .on_enter(hover(Some(if depth == 0 {
+                    // The bar index the reaction fills in for itself; it knows
+                    // which menu is open.
+                    HoverTarget::MenuDropdownItem(0, index)
+                } else {
+                    HoverTarget::SubmenuItem(depth, index)
+                })))
+                .into()
         })
         .collect();
 
@@ -335,7 +368,15 @@ fn dropdown(
                 "ui.menu_border_fg",
                 "ui.menu_dropdown_bg",
             ))
-            .w(Sizing::Cells(level.width))
+            // As wide as the widest row, as tall as the rows — and no taller
+            // than the room it is placed in: a menu longer than the screen
+            // shows what fits, which is what the old walk's `items_to_show`
+            // did. The width is measured from the rows' own text, because a
+            // row's slack is a flex spacer and a stack hands flex the whole
+            // loose room when measured intrinsically (`Sizing::Auto` here
+            // would make every dropdown as wide as the frame).
+            .w(Sizing::Cells(content_width(&level.rows).saturating_add(2)))
+            .clip(true)
             .children(rows);
         // The level this one opened, inside it. A layer is out of flow, so it
         // takes none of this box's space — it is here for ancestry, which is
@@ -377,13 +418,33 @@ fn dropdown(
         content
     };
 
+    // Where the box may go: the frame below the bar. The top level cannot be
+    // pushed up over the bar by the clamp, and a box is measured against that
+    // room, so a long menu is clipped to it rather than spilling off the
+    // bottom.
     let mut l = layer()
-        .key(fresh_ui::Key::Pair("menu_dropdown".into(), depth as u64))
-        // The rectangle the old placement walk chose, not a fresh one: the
-        // cells and the anchor must keep agreeing while placement is still
-        // computed outside the tree.
-        .anchor(Anchor::Point(level.x, level.y))
+        .key(dropdown_key(depth))
+        .within(super::frame::below_bar_key())
         .child(content);
+    l = match depth {
+        // Under the label that opened it, pulled back inside the frame at
+        // the right edge — `fit_dropdown_area`'s clamp.
+        0 => l
+            .anchor(Anchor::Node(menu_label_key(level.from)))
+            .place(fresh_ui::Place::Below)
+            .fit(fresh_ui::Fit::CLAMP),
+        // Right of the parent row, its top border one row above that row so
+        // its first item aligns with it — the rise `render_dropdown_chain`
+        // computed as `dropdown_rect.y + submenu_idx`. Its left border lands
+        // on the parent's right border column, because the row ends one
+        // column inside it. Off the right edge it flips to the left, where
+        // its right border shares the parent's left one for the same reason.
+        d => l
+            .anchor(Anchor::Node(dropdown_item_key(d - 1, level.from)))
+            .place(fresh_ui::Place::RightOf)
+            .offset(0, -1)
+            .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP)),
+    };
     if depth == 0 {
         // **The close guard, replaced by a property.** A click anywhere else
         // closes the menu and is spent doing so.
@@ -423,6 +484,231 @@ fn dropdown(
     l
 }
 
+/// The cells a level's widest row needs: its text, and its trail with the
+/// two-cell gap `row_node` puts before one.
+fn content_width(rows: &[DropdownRow]) -> u16 {
+    use crate::primitives::display_width::str_width;
+    rows.iter()
+        .map(|r| match &r.body {
+            RowBody::Item { text, trail } => {
+                let trail = match trail.is_empty() {
+                    true => 0,
+                    false => str_width(trail) + 2,
+                };
+                (str_width(text) + trail) as u16
+            }
+            RowBody::Separator => 1,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// A dropdown row as a node: one cell high, the row's own ink across its
+/// whole width, and its content laid out inside it.
+///
+/// An item is its text at the left and its trail at the right with the box's
+/// slack between them, so an accelerator sits against the border whatever
+/// the widest row is — which the old walk got by padding every string to a
+/// width it had computed first. A separator is a rule across the box, read
+/// off the width layout settled rather than repeated to a count.
+fn row_node(r: &DropdownRow) -> Node<UiMsg> {
+    let n = match &r.body {
+        RowBody::Item { text: lead, trail } => {
+            let mut children: Vec<Node<UiMsg>> = vec![text(lead.clone()).h(Sizing::Cells(1))];
+            if !trail.is_empty() {
+                children.push(fresh_ui::widgets::spacer(1).h(Sizing::Cells(1)));
+                children.push(text(format!("  {trail}")).h(Sizing::Cells(1)));
+            }
+            row().children(children)
+        }
+        RowBody::Separator => row().children([
+            text(" ").h(Sizing::Cells(1)),
+            fresh_ui::layout_reader(|info: fresh_ui::LayoutInfo| {
+                text("\u{2500}".repeat(info.constraints.max_w as usize)).h(Sizing::Cells(1))
+            })
+            .w(Sizing::Flex(1)),
+        ]),
+    };
+    n.h(Sizing::Cells(1)).theme(r.theme.clone())
+}
+
+/// What the menu shows, derived from its state.
+pub struct MenuModel<'a> {
+    /// Every menu, config and plugin, already expanded.
+    pub menus: &'a [crate::config::Menu],
+    pub state: &'a crate::view::ui::MenuState,
+    pub keybindings: &'a crate::input::keybindings::KeybindingResolver,
+    pub hover: Option<&'a HoverTarget>,
+    pub mnemonics: bool,
+}
+
+/// The bar's labels and the open chain, as content.
+///
+/// **The walk `MenuRenderer::compute_layout` did, minus every rectangle.**
+/// Which menus are visible, which label is active or hovered and where its
+/// mnemonic is cut, which rows each open level holds and how each is styled —
+/// all of that is the menu state's to say. Where a label sits and how wide a
+/// box is are the tree's, and are read back off it (`scene::menu_view`).
+pub fn describe(m: &MenuModel<'_>) -> (MenuBar, Vec<DropdownLevel>) {
+    use crate::config::MenuItem;
+    use crate::view::ui::menu::{
+        is_checkbox_checked, is_menu_item_enabled, BarLabelStyle, MenuRowStyle,
+    };
+    let visible: Vec<bool> = m
+        .menus
+        .iter()
+        .map(|menu| match &menu.when {
+            Some(condition) => m.state.context.get(condition),
+            None => true,
+        })
+        .collect();
+
+    let mut bar = MenuBar::default();
+    for (idx, menu) in m.menus.iter().enumerate() {
+        if !visible[idx] {
+            continue;
+        }
+        let is_active = m.state.active_menu == Some(idx);
+        let is_hovered = matches!(m.hover, Some(HoverTarget::MenuBarItem(i)) if *i == idx);
+        let style = BarLabelStyle::of(is_active, is_hovered);
+        let mnemonic = match m.mnemonics {
+            true => m.keybindings.find_menu_mnemonic(&menu.label),
+            false => None,
+        };
+        // `" Label "` plus the separating space, cut at the mnemonic so that
+        // one character can be underlined *inside* the label.
+        let plain = style.shell_theme(false);
+        let under = style.shell_theme(true);
+        let mut runs: Vec<(String, String)> = vec![(" ".to_string(), plain.clone())];
+        match mnemonic {
+            Some(mn) => {
+                let mut found = false;
+                for c in menu.label.chars() {
+                    let hit = !found && c.to_ascii_lowercase() == mn;
+                    found |= hit;
+                    let theme = if hit { &under } else { &plain };
+                    match runs.last_mut() {
+                        // Neighbouring characters in the same theme are one
+                        // run: the cut exists for the mnemonic, not per
+                        // character.
+                        Some((t, th)) if th == theme => t.push(c),
+                        _ => runs.push((c.to_string(), theme.clone())),
+                    }
+                }
+            }
+            None => runs.push((menu.label.clone(), plain.clone())),
+        }
+        runs.push((" ".to_string(), plain));
+        // The gap to the next label wears the bar's ground, not this
+        // label's.
+        runs.push((
+            " ".to_string(),
+            crate::app::shell_host::shell_theme::pair("ui.menu_fg", "ui.menu_bg"),
+        ));
+        bar.items.push(BarItem { runs, index: idx });
+    }
+
+    let mut levels = Vec::new();
+    let Some(active) = m.state.active_menu else {
+        return (bar, levels);
+    };
+    let Some(menu) = m.menus.get(active) else {
+        return (bar, levels);
+    };
+    let mut items: &[MenuItem] = &menu.items;
+    let mut from = active;
+    for depth in 0..=m.state.submenu_path.len() {
+        let is_deepest = depth == m.state.submenu_path.len();
+        let highlighted = match is_deepest {
+            true => m.state.highlighted_item,
+            false => Some(m.state.submenu_path[depth]),
+        };
+        let rows = items
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let has_open_submenu =
+                    depth < m.state.submenu_path.len() && m.state.submenu_path[depth] == idx;
+                let is_hovered = match depth {
+                    0 => matches!(
+                        m.hover,
+                        Some(HoverTarget::MenuDropdownItem(mi, ii)) if *mi == active && *ii == idx
+                    ),
+                    _ => matches!(
+                        m.hover,
+                        Some(HoverTarget::SubmenuItem(d, ii)) if *d == depth && *ii == idx
+                    ),
+                };
+                let enabled = is_menu_item_enabled(item, &m.state.context);
+                let style = MenuRowStyle::of(
+                    item,
+                    enabled,
+                    highlighted == Some(idx),
+                    is_hovered,
+                    has_open_submenu,
+                );
+                let body = match item {
+                    MenuItem::Action {
+                        label,
+                        action,
+                        checkbox,
+                        ..
+                    } => {
+                        let accel = m
+                            .keybindings
+                            .find_keybinding_for_action(
+                                action,
+                                crate::input::keybindings::KeyContext::Normal,
+                            )
+                            .unwrap_or_default();
+                        let icon = match checkbox {
+                            Some(_) if is_checkbox_checked(checkbox, &m.state.context) => {
+                                "\u{2611} "
+                            }
+                            Some(_) => "\u{2610} ",
+                            None => "",
+                        };
+                        RowBody::Item {
+                            text: format!(" {icon}{label}"),
+                            trail: accel,
+                        }
+                    }
+                    MenuItem::Separator { .. } => RowBody::Separator,
+                    MenuItem::Submenu { label, .. } | MenuItem::DynamicSubmenu { label, .. } => {
+                        RowBody::Item {
+                            text: format!(" {label}"),
+                            trail: ">  ".to_string(),
+                        }
+                    }
+                    MenuItem::Label { info } => RowBody::Item {
+                        text: format!(" {info}"),
+                        trail: String::new(),
+                    },
+                };
+                DropdownRow {
+                    body,
+                    theme: style.shell_theme(),
+                }
+            })
+            .collect();
+        levels.push(DropdownLevel { from, rows });
+        if is_deepest {
+            break;
+        }
+        let idx = m.state.submenu_path[depth];
+        match items.get(idx) {
+            Some(MenuItem::Submenu { items: sub, .. }) => {
+                items = sub;
+                from = idx;
+            }
+            // A dynamic submenu is expanded before it is entered
+            // (`refresh_menu_content`); an unexpanded one has no level.
+            _ => break,
+        }
+    }
+    (bar, levels)
+}
+
 /// The names a bar label carries, spelled once for the test fixtures below.
 /// They are ordinary theme keys — the point of the grammar is that a test can
 /// write them out and mean exactly what the editor means.
@@ -456,18 +742,29 @@ mod tests {
     }
 
     fn row_of(text: &str) -> DropdownRow {
-        DropdownRow {
-            text: text.to_string(),
-            theme: crate::app::shell_host::shell_theme::pair(
-                "ui.menu_dropdown_fg",
-                "ui.menu_dropdown_bg",
-            ),
+        DropdownRow::plain(text)
+    }
+
+    /// A bar with one `File` label, which is what a top-level dropdown
+    /// hangs off: `" File "` starts at cell 0, so the box does too.
+    fn a_bar() -> MenuBar {
+        MenuBar {
+            items: vec![BarItem {
+                runs: vec![
+                    (" ".into(), ITEM.to_string()),
+                    ("File".into(), ITEM.to_string()),
+                    (" ".into(), ITEM.to_string()),
+                    (" ".into(), BAR.to_string()),
+                ],
+                index: 0,
+            }],
         }
     }
 
     fn render(levels: Vec<DropdownLevel>, w: u16, h: u16) -> Buffer {
         let mut ui: Ui<UiMsg> = Ui::new();
         let frame = Frame {
+            menu_bar_items: a_bar(),
             dropdowns: levels,
             ..Frame::default()
         };
@@ -493,11 +790,10 @@ mod tests {
         use fresh_ui::{Input, Mods, MouseButton, Point};
         let mut ui: Ui<UiMsg> = Ui::new();
         let frame = Frame {
+            menu_bar_items: a_bar(),
             dropdowns: vec![DropdownLevel {
-                x: 1,
-                y: 1,
-                width: 12,
-                rows: vec![row_of(" New      "), row_of(" Open     ")],
+                from: 0,
+                rows: vec![row_of(" New"), row_of(" Open")],
             }],
             ..Frame::default()
         };
@@ -523,26 +819,58 @@ mod tests {
             .collect()
     }
 
-    /// A level lands on the cells its rectangle names, with the plain border
-    /// glyphs the ratatui `Block` drew and its rows already padded to the
-    /// box's content width — which is what `dropdown_item_text` produced for
-    /// the painter this replaces.
+    /// **A level hangs under the label that opened it, as wide as its widest
+    /// row.** The box's left edge is the label's, its top row is the one
+    /// under the bar, and its content width is the longest row's — the
+    /// placement and the width the old walk computed by hand, read off the
+    /// tree.
     #[test]
-    fn a_level_paints_its_box_where_it_was_placed() {
+    fn a_level_paints_its_box_under_its_label_as_wide_as_its_rows() {
         let buf = render(
             vec![DropdownLevel {
-                x: 1,
-                y: 1,
-                width: 12,
-                rows: vec![row_of(" New      "), row_of(" Open     ")],
+                from: 0,
+                rows: vec![row_of(" New"), row_of(" Open")],
             }],
             20,
             8,
         );
-        assert_eq!(line(&buf, 1), " ┌──────────┐       ", "top border");
-        assert_eq!(line(&buf, 2), " │ New      │       ", "first row");
-        assert_eq!(line(&buf, 3), " │ Open     │       ", "second row");
-        assert_eq!(line(&buf, 4), " └──────────┘       ", "bottom border");
+        assert_eq!(line(&buf, 1), "┌─────┐             ", "top border");
+        assert_eq!(line(&buf, 2), "│ New │             ", "first row");
+        assert_eq!(line(&buf, 3), "│ Open│             ", "second row");
+        assert_eq!(line(&buf, 4), "└─────┘             ", "bottom border");
+    }
+
+    /// **An accelerator sits against the right border, whatever the widest
+    /// row is.** A row is its text, the box's slack, and its trail — so the
+    /// trail of a short row lands where the longest row ends, which the old
+    /// walk got by padding every string to a width it had computed first.
+    #[test]
+    fn a_rows_trail_sits_at_the_right_edge_of_the_box() {
+        let item = |text: &str, trail: &str| DropdownRow {
+            body: RowBody::Item {
+                text: text.into(),
+                trail: trail.into(),
+            },
+            theme: crate::view::ui::MenuRowStyle::Normal.shell_theme(),
+        };
+        let buf = render(
+            vec![DropdownLevel {
+                from: 0,
+                rows: vec![
+                    item(" New", "C-n"),
+                    item(" Reload with Encoding...", ""),
+                    DropdownRow {
+                        body: RowBody::Separator,
+                        theme: crate::view::ui::MenuRowStyle::Separator.shell_theme(),
+                    },
+                ],
+            }],
+            40,
+            8,
+        );
+        assert_eq!(line(&buf, 2), "│ New                 C-n│              ");
+        assert_eq!(line(&buf, 3), "│ Reload with Encoding...│              ");
+        assert_eq!(line(&buf, 4), "│ ───────────────────────│              ");
     }
 
     /// The bar row: `" Label "` per menu with a space between, on the bar's
@@ -647,40 +975,34 @@ mod tests {
         let spec = ui
             .frame(
                 frame_tree(Frame {
+                    menu_bar_items: a_bar(),
                     dropdowns: vec![DropdownLevel {
-                        x: 0,
-                        y: 0,
-                        width: 10,
-                        rows: vec![DropdownRow {
-                            text: " New    ".into(),
-                            theme: crate::app::shell_host::shell_theme::pair(
-                                "ui.menu_dropdown_fg",
-                                "ui.menu_dropdown_bg",
-                            ),
-                        }],
+                        from: 0,
+                        rows: vec![row_of(" New")],
                     }],
                     ..Frame::default()
                 }),
-                Size::new(20, 4),
+                Size::new(20, 5),
             )
             .clone();
 
         // A legacy painter got here first and left bold cells behind.
-        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 4));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 5));
         for x in 0..20u16 {
-            for y in 0..4u16 {
+            for y in 0..5u16 {
                 buf[(x, y)].set_style(Style::default().add_modifier(Modifier::BOLD));
             }
         }
         fold_native(&spec, &mut buf, &test_palette::palette, Band::Overlay);
 
+        // The bar is row 0, the box's top border row 1, its first row 2.
         assert_eq!(
-            buf[(2, 1)].style(),
+            buf[(2, 2)].style(),
             test_palette::painted(&crate::view::ui::MenuRowStyle::Normal.shell_theme()),
             "the row says what its cells look like outright"
         );
         assert!(
-            !buf[(2, 1)].style().add_modifier.contains(Modifier::BOLD),
+            !buf[(2, 2)].style().add_modifier.contains(Modifier::BOLD),
             "the bold underneath is gone, not inherited"
         );
     }
@@ -763,34 +1085,93 @@ mod tests {
         );
     }
 
-    /// **Declaration order is paint order.** A submenu opens to the right of
-    /// the level it came from and overlaps its edge by one column; the deeper
-    /// box must win those cells. The old renderer got this from painting the
-    /// chain in order, and so does this — no rank states it.
+    /// **A submenu opens right of its parent row, one row up, and paints
+    /// over the level it came from.** Its left border lands on the parent's
+    /// right border column (the row ends one cell inside it), its top border
+    /// sits one row above the parent row so its first item aligns with it,
+    /// and — declaration order being paint order — the deeper box wins the
+    /// shared column.
     #[test]
     fn a_submenu_paints_over_the_level_it_opened_from() {
+        let more = DropdownRow {
+            body: RowBody::Item {
+                text: " More".into(),
+                trail: ">".into(),
+            },
+            theme: crate::view::ui::MenuRowStyle::Highlighted.shell_theme(),
+        };
         let buf = render(
             vec![
                 DropdownLevel {
-                    x: 0,
-                    y: 0,
-                    width: 10,
-                    rows: vec![row_of(" File   "), row_of(" More  >")],
+                    from: 0,
+                    rows: vec![row_of(" File"), more],
                 },
                 DropdownLevel {
-                    x: 9,
-                    y: 1,
-                    width: 10,
-                    rows: vec![row_of(" Deep   ")],
+                    from: 1,
+                    rows: vec![row_of(" Deep")],
                 },
             ],
             22,
             8,
         );
-        // Column 9 is the parent's right border on row 1, and the submenu's
-        // left border lands on it.
-        assert_eq!(line(&buf, 1), "│ File   ┌────────┐   ");
-        assert_eq!(line(&buf, 2), "│ More  >│ Deep   │   ");
+        assert_eq!(line(&buf, 1), "┌────────┐            ");
+        assert_eq!(line(&buf, 2), "│ File   ┌─────┐      ");
+        assert_eq!(line(&buf, 3), "│ More  >│ Deep│      ");
+        assert_eq!(line(&buf, 4), "└────────└─────┘      ");
+    }
+
+    /// **A submenu that would run off the right edge opens to the left.**
+    /// Its right border then shares the parent's left border column, the
+    /// mirror of the ordinary case.
+    #[test]
+    fn a_submenu_flips_left_at_the_right_edge() {
+        let more = DropdownRow {
+            body: RowBody::Item {
+                text: " More".into(),
+                trail: ">".into(),
+            },
+            theme: crate::view::ui::MenuRowStyle::Highlighted.shell_theme(),
+        };
+        // Two labels; the menu opens from `Edit`, whose label starts at cell
+        // 7, so its box is ten wide at cells 7..17. A seven-wide submenu
+        // right of the `More` row would end at cell 23 in a frame of 20.
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let frame = Frame {
+            menu_bar_items: MenuBar {
+                items: [("File", 0), ("Edit", 1)]
+                    .into_iter()
+                    .map(|(label, index)| BarItem {
+                        runs: vec![
+                            (" ".into(), ITEM.to_string()),
+                            (label.into(), ITEM.to_string()),
+                            (" ".into(), ITEM.to_string()),
+                            (" ".into(), BAR.to_string()),
+                        ],
+                        index,
+                    })
+                    .collect(),
+            },
+            dropdowns: vec![
+                DropdownLevel {
+                    from: 1,
+                    rows: vec![row_of(" File"), more],
+                },
+                DropdownLevel {
+                    from: 1,
+                    rows: vec![row_of(" Deep")],
+                },
+            ],
+            ..Frame::default()
+        };
+        let spec = ui.frame(frame_tree(frame), Size::new(20, 8)).clone();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 8));
+        fold_native(&spec, &mut buf, &plain, Band::Background);
+        fold_native(&spec, &mut buf, &plain, Band::Overlay);
+        // Left of the `More` row, one row up: the submenu's right border on
+        // the parent's left border column, cell 7, and its top border on the
+        // parent's first row.
+        assert_eq!(line(&buf, 2), " ┌─────┐ File   │   ");
+        assert_eq!(line(&buf, 3), " │ Deep│ More  >│   ");
     }
 
     /// An overlay is out of flow: opening a menu does not move the frame
@@ -802,11 +1183,10 @@ mod tests {
         let without = region_rects(Frame::default(), size);
         let with = region_rects(
             Frame {
+                menu_bar_items: a_bar(),
                 dropdowns: vec![DropdownLevel {
-                    x: 2,
-                    y: 1,
-                    width: 10,
-                    rows: vec![row_of(" New     ")],
+                    from: 0,
+                    rows: vec![row_of(" New")],
                 }],
                 ..Frame::default()
             },
@@ -846,28 +1226,12 @@ mod input_tests {
                 menu_bar_items: MenuBar {
                     items: vec![bar_item("File", 0), bar_item("Edit", 1)],
                 },
+                // Under `File`: a box seven cells wide, rows at y=2 and y=3.
                 dropdowns: active
                     .map(|_| {
                         vec![DropdownLevel {
-                            x: 0,
-                            y: 1,
-                            width: 12,
-                            rows: vec![
-                                DropdownRow {
-                                    text: " New      ".into(),
-                                    theme: crate::app::shell_host::shell_theme::pair(
-                                        "ui.menu_dropdown_fg",
-                                        "ui.menu_dropdown_bg",
-                                    ),
-                                },
-                                DropdownRow {
-                                    text: " Open     ".into(),
-                                    theme: crate::app::shell_host::shell_theme::pair(
-                                        "ui.menu_dropdown_fg",
-                                        "ui.menu_dropdown_bg",
-                                    ),
-                                },
-                            ],
+                            from: 0,
+                            rows: vec![DropdownRow::plain(" New"), DropdownRow::plain(" Open")],
                         }]
                     })
                     .unwrap_or_default(),
@@ -1029,19 +1393,18 @@ mod input_tests {
         );
     }
 
-    /// **The toggle is one gesture, and one dispatch.** Pressing the open
-    /// menu's own label produces the dismissal *and* the toggle together, so
-    /// the applier can still see which menu was open before either ran. Split
-    /// across press and release it could not: the menu is shut by then, and
-    /// the frame in between has rebuilt the tree.
+    /// **The toggle is one gesture, and one fact.** The dropdown hangs off
+    /// its label by `Anchor::Node`, and the library does not count a press on
+    /// a layer's anchor as outside it — pressing the button that opened a
+    /// menu is "close it", on every platform — so no dismissal fires and the
+    /// label's own press is the whole of what arrives. The applier closes on
+    /// it because the menu was open when the press came in
+    /// (`menu_open_before`).
     #[test]
-    fn pressing_the_open_menus_label_reports_dismissal_and_toggle_together() {
+    fn pressing_the_open_menus_label_reports_the_toggle_alone() {
         let mut ui = open_menu(Some(0));
         let got = facts(press(&mut ui, 1, 0).msgs);
-        assert_eq!(
-            got,
-            vec![UiFact::CloseMenu, UiFact::MenuBarPress { index: 0 }]
-        );
+        assert_eq!(got, vec![UiFact::MenuBarPress { index: 0 }]);
     }
 
     /// **The close guard, replaced by a property, without breaking the switch.**
@@ -1219,28 +1582,40 @@ mod submenu_regression {
 
     /// A two-level chain: File's dropdown at (0,1), its submenu to the right.
     fn open_chain() -> Ui<UiMsg> {
-        let row = |t: &str| DropdownRow {
-            text: t.to_string(),
-            theme: crate::app::shell_host::shell_theme::pair(
-                "ui.menu_dropdown_fg",
-                "ui.menu_dropdown_bg",
-            ),
+        let row = DropdownRow::plain;
+        let more = DropdownRow {
+            body: RowBody::Item {
+                text: " More".into(),
+                trail: ">".into(),
+            },
+            theme: crate::view::ui::MenuRowStyle::Highlighted.shell_theme(),
         };
+        // `File`'s box: ten cells wide under cell 0, rows at y=2 (` New`)
+        // and y=3 (` More  >`). The submenu: right of the `More` row, so
+        // its left border is at x=9, its top border at y=2 and ` Deep` at
+        // y=3, x=10.
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
             frame_tree(Frame {
+                menu_bar_items: MenuBar {
+                    items: vec![BarItem {
+                        runs: vec![
+                            (" ".into(), ITEM.to_string()),
+                            ("File".into(), ITEM.to_string()),
+                            (" ".into(), ITEM.to_string()),
+                            (" ".into(), BAR.to_string()),
+                        ],
+                        index: 0,
+                    }],
+                },
                 dropdowns: vec![
                     DropdownLevel {
-                        x: 0,
-                        y: 1,
-                        width: 12,
-                        rows: vec![row(" New      "), row(" More    >")],
+                        from: 0,
+                        rows: vec![row(" New"), more],
                     },
                     DropdownLevel {
-                        x: 11,
-                        y: 2,
-                        width: 12,
-                        rows: vec![row(" Deep     ")],
+                        from: 1,
+                        rows: vec![row(" Deep")],
                     },
                 ],
                 ..Frame::default()
@@ -1327,16 +1702,8 @@ mod intent_tests {
 
     fn level() -> DropdownLevel {
         DropdownLevel {
-            x: 0,
-            y: 1,
-            width: 12,
-            rows: vec![DropdownRow {
-                text: "New".into(),
-                theme: crate::app::shell_host::shell_theme::pair(
-                    "ui.menu_dropdown_fg",
-                    "ui.menu_dropdown_bg",
-                ),
-            }],
+            from: 0,
+            rows: vec![DropdownRow::plain("New")],
         }
     }
 

@@ -1354,3 +1354,93 @@ fn test_live_grep_overlay_is_mouse_modal() {
         "overlay should still be open after the clicks"
     );
 }
+
+/// **The overlay toolbar is on the prompt's ring.** Tab moves the keyboard
+/// from the query input onto the first scope toggle, Space flips it, and a
+/// navigation key hands the keyboard back to the input along with itself —
+/// the ring `handle_overlay_toolbar_key` used to walk by hand, now the tree's
+/// one ring confined to the card (`prompt::keys_layer`, `overlay_prompt`).
+///
+/// Observed on the `Files` toggle's rendered background: it gains the focus
+/// highlight when tabbed to, and reverts once Down moves the keyboard back
+/// to the input.
+#[test]
+fn test_live_grep_toolbar_is_on_the_prompts_ring() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+    let file = project_root.join("buf.txt");
+    fs::write(&file, "hello world\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // The plugin sets the toolbar after the prompt opens; wait for the
+    // described band to show its first row.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .unwrap();
+
+    // The `Files` toggle is the first control on the ring. Sample its label
+    // cell: the focus highlight covers the whole control.
+    let (col, row) = harness
+        .find_text_on_screen("Files")
+        .expect("the Files toggle is in the toolbar");
+    let files_bg = move |h: &EditorTestHarness| h.get_cell_style(col, row).and_then(|s| s.bg);
+    let unfocused = files_bg(&harness);
+    assert!(
+        harness.screen_to_string().contains("[v] Files"),
+        "files scope starts enabled; screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Tab: input → first toggle.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| files_bg(h) != unfocused)
+        .expect("Tab focuses the Files toggle");
+
+    // Space on the focused toggle flips it; the plugin re-emits the toolbar
+    // with the new state, and the control keeps the keyboard.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[ ] Files"))
+        .expect("Space unchecks the toggle");
+    assert!(
+        files_bg(&harness) != unfocused,
+        "the toggle keeps the keyboard after Space"
+    );
+
+    // Down is the results' key: the keyboard goes back to the input with it,
+    // and the toggle's highlight goes.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| files_bg(h) == unfocused)
+        .expect("Down hands the keyboard back to the input");
+
+    // And typing edits the query.
+    harness.type_text("hel").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live grep: hel"))
+        .expect("typing after Down edits the query");
+}

@@ -121,6 +121,12 @@ pub fn embed_host_id(window_id: u32) -> HostId {
 }
 
 /// The `HostId` one band of the overlay prompt's card carries.
+/// The chrome column below the menu bar: the body, the status bar, the search
+/// options and the prompt line. Where a menu dropdown may be placed.
+pub fn below_bar_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("chrome_below_bar".into())
+}
+
 pub fn card_host_id(region: super::overlay_prompt::CardRegion) -> HostId {
     HostId(CARD_TAG | region.id())
 }
@@ -244,17 +250,17 @@ pub struct Frame {
     /// `render_top_global_popup` already run in.
     pub popups: Vec<super::popup::Placed>,
     /// The floating-overlay prompt's card, or `None` when no overlay prompt is
-    /// open. Its bands are still `Host` leaves — the input line, the plugin's
-    /// toolbar, the preview pane and the plugin's footer are all painters — so
-    /// what the tree owns here is the arithmetic that placed them, which is
-    /// what two copies of it disagreed about.
+    /// open. Its input line, preview pane and footer are still `Host` leaves
+    /// the painter fills; the plugin's toolbar is described in its header
+    /// band, and the card is the prompt's keyboard scope (`prompt::keys_layer`).
     pub card: Option<super::overlay_prompt::Card>,
     /// The theme inspector's popup, when Ctrl+Right-Click has opened one. Over
     /// everything: it inspects the cell under *any* chrome, so it has to be
     /// visible over that chrome too.
     pub theme_info: Option<super::theme_info::ThemeInfo>,
-    /// The file-open dialog, when one is open. Its interior is still a
-    /// painter's; what the tree owns is where it goes and what it absorbs.
+    /// The file-open dialog, when one is open: its directory, toggles,
+    /// shortcuts, sort and entries. The tree lays out all of it; the list's
+    /// window is the viewport's and the web reads the rectangles back by key.
     pub browser: Option<super::file_browser::Browser>,
     /// The workspace-trust prompt. A blocking modal: it dims the whole frame
     /// and nothing outside it is interactive.
@@ -263,9 +269,6 @@ pub struct Frame {
     /// leaf still; what the tree carries is the panes' geometry and the
     /// dividers, which answer their own presses.
     pub splits: Option<super::splits::Splits>,
-    /// The full-screen modal that has the pointer, if any. At most one: the
-    /// capture band this replaces stopped at the first taker in rank order.
-    pub modal: Option<super::modal::Slot>,
     /// Whether the settings dialog is open. As `keybinding`: the tree carries
     /// the box its twenty-odd recorded rectangles are measured from, and
     /// nothing else of it yet.
@@ -356,7 +359,6 @@ impl Default for Frame {
             theme_info: None,
             browser: None,
             trust: None,
-            modal: None,
             settings: None,
             settings_dialog: None,
             settings_entry: Vec::new(),
@@ -504,25 +506,31 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
             super::menu::menu_bar(&f.menu_bar_items),
         )
         .h(cells(f.menu_bar)),
-        body,
-        // Native: the tree measures the bar from its own elements. The row
-        // keeps its region key, so every caller that asks for
-        // `HostRegion::StatusBar`'s rectangle still gets one.
-        match &f.status_bar_items {
-            Some(bar) => named(HostRegion::StatusBar, super::status_bar::status_bar(bar))
-                .h(cells(f.status_bar)),
-            None => region(HostRegion::StatusBar).h(cells(f.status_bar)),
-        },
-        // Native: the tree measures this row from its own text. See
-        // `shell::search_options`.
-        named(
-            HostRegion::SearchOptions,
-            super::search_options::search_options(
-                f.search_options.as_ref().unwrap_or(&Default::default()),
-            ),
-        )
-        .h(cells(f.search_options.is_some())),
-        region(HostRegion::PromptLine).h(cells(f.prompt_line)),
+        // **Everything under the bar, as one region**: the room a menu
+        // dropdown may occupy (`menu::dropdown` names it as `within`), so a
+        // long menu is measured against it and clamped inside it rather
+        // than pushed up over the bar.
+        col().flex(1).key(below_bar_key()).children([
+            body,
+            // Native: the tree measures the bar from its own elements. The row
+            // keeps its region key, so every caller that asks for
+            // `HostRegion::StatusBar`'s rectangle still gets one.
+            match &f.status_bar_items {
+                Some(bar) => named(HostRegion::StatusBar, super::status_bar::status_bar(bar))
+                    .h(cells(f.status_bar)),
+                None => region(HostRegion::StatusBar).h(cells(f.status_bar)),
+            },
+            // Native: the tree measures this row from its own text. See
+            // `shell::search_options`.
+            named(
+                HostRegion::SearchOptions,
+                super::search_options::search_options(
+                    f.search_options.as_ref().unwrap_or(&Default::default()),
+                ),
+            )
+            .h(cells(f.search_options.is_some())),
+            region(HostRegion::PromptLine).h(cells(f.prompt_line)),
+        ]),
     ]);
     // Overlays, in paint order — which is declaration order, and is decided
     // here and nowhere else. Menu-bar dropdowns first, then a context menu
@@ -547,14 +555,12 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // is not the problem it would be for the dock's *content*: a keyboard
     // seam has nothing to lose when a workspace switch rebuilds it, and it
     // re-autofocuses on the next frame.
-    // **The scope, when there is one.** A described interior with something in
-    // it to focus is where this layer confines traversal; anything else keeps
-    // the layer's own sink, which is what every panel had before. See
-    // `panel::keys_layer`.
-    let scope_of = |i: Option<&super::panel::Interior>, slot| {
-        i.filter(|i| i.has_focus_targets())
-            .map(|_| super::panel::interior_key(slot))
-    };
+    // **The scope, when there is one.** A described interior is where this
+    // layer confines traversal — with or without Tab stops inside it, since
+    // an interior with none holds focus itself; a panel the adapter could
+    // not describe keeps the layer's own sink. See `panel::keys_layer`.
+    let scope_of =
+        |i: Option<&super::panel::Interior>, slot| i.map(|_| super::panel::interior_key(slot));
     // **The active pane's panel, first: the floor under every other keyboard
     // layer.** It is the base's own keyboard said as a layer — the ring
     // inside a mounted panel is confined to it the way the dock's is, and a
@@ -642,8 +648,10 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // itself, and `topmost_modal` picks the one declared last, so the ordering
     // *is* the precedence. It paints nothing — the prompt's row, card and
     // suggestion list are described above and elsewhere.
+    // With a card up, the layer confines the ring to the card: the query
+    // input's focus holder and the plugin's toolbar controls are both in it.
     let chrome = match f.prompt_keys {
-        true => chrome.child(super::prompt::keys_layer(f.search_prompt)),
+        true => chrome.child(super::prompt::keys_layer(f.search_prompt, f.card.is_some())),
         false => chrome,
     };
     let chrome = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
@@ -711,15 +719,8 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         Some(t) => frame.child(super::theme_info::layer(t)),
         None => frame,
     };
-    // A full-screen modal, over everything but the trust prompt — which
-    // outranks every one of them and is the security gate that must.
-    let frame = match f.modal {
-        Some(slot) => frame.child(super::modal::layer(slot)),
-        None => frame,
-    };
-    // The settings dialog's box. Like the keybinding editor's below it, this
-    // contributes a rectangle and nothing else — `PointerMode::Ignore`, so the
-    // modal slot behind it is still the one asked.
+    // The settings dialog: exclusive, dimming, and drawn by the tree from the
+    // ring in.
     let frame = match &f.settings {
         Some(c) => frame.child(super::settings::layer(Some(c))),
         None => frame,
@@ -739,10 +740,7 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         Some(d) => frame.child(super::settings::dialog_layer(d)),
         None => frame,
     };
-    // The keybinding editor's box, over the modal slot that routes its
-    // pointer — the same order and for the same reason as the floating panel
-    // below: the box is asked first, and the slot behind it catches whatever
-    // the box does not answer.
+    // The keybinding editor's box.
     let frame = match &f.keybinding {
         Some(c) => frame.child(super::keybinding::layer(c, f.keybinding_table.as_ref())),
         None => frame,
@@ -760,19 +758,13 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         Some(d) => frame.child(super::event_debug::sized(d)),
         None => frame,
     };
-    // The calibration wizard, over the modal slot it shares a rank with. It
-    // brings its own exclusivity and its own scrim, so the slot beneath it
-    // contributes nothing but the routing the applier no longer needs.
+    // The calibration wizard, with its own exclusivity and its own scrim.
     let frame = match &f.calibration {
         Some(c) => frame.child(super::calibration::sized(c)),
         None => frame,
     };
-    // The floating plugin panel's frame, over the modal slot that routes its
-    // pointer. **After it, deliberately**: layers are offered the pointer in
-    // reverse declaration order, so the `[×]` here is asked before the modal's
-    // claim-everything surface, and every other node of the frame is
-    // transparent and falls through to it. That is what lets one button
-    // migrate without the interior having to.
+    // The floating plugin panel's frame, which claims its own pointer
+    // (`panel::layer_for`).
     let frame = match &f.panel {
         Some(p) => frame.child(super::panel::layer_for(p)),
         None => frame,
@@ -1073,21 +1065,20 @@ mod tests {
         );
     }
 
-    /// **The exclusive slot must not steal the keyboard from the layer that
-    /// wants it.** `modal::layer(FloatingPanel)` claims the pointer for the
-    /// panel; saying `Exclusive` there made it the focus scope, and with
-    /// nothing focusable inside it focus was dropped and the panel's own
-    /// keyboard layer stopped being found. `Modality::Pointer` is the claim
-    /// it actually makes, and this is the frame that proves it.
+    /// **A pointer claim must not steal the keyboard from the layer that
+    /// wants it.** The floating panel's pointer is its own layer's
+    /// (`panel::layer_for`, `Modality::Pointer`); an exclusive claim there
+    /// made it the focus scope, and with nothing focusable inside it focus
+    /// was dropped and the panel's own keyboard layer stopped being found.
+    /// This is the frame that proves the keys still land.
     #[test]
-    fn the_panels_pointer_slot_leaves_its_keyboard_layer_alone() {
+    fn the_panels_pointer_claim_leaves_its_keyboard_layer_alone() {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
             frame_tree(Frame {
                 dock: Some(30),
                 dock_keys: true,
                 panel_keys: true,
-                modal: Some(crate::view::shell::modal::Slot::FloatingPanel),
                 menu_bar: false,
                 status_bar: false,
                 ..Frame::default()
@@ -1170,6 +1161,8 @@ mod tests {
             states: Default::default(),
             focus_key: "create".into(),
             keyboard: true,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1283,6 +1276,10 @@ pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::Ke
                     || *k == super::panel::interior_key(super::widgets::Slot::SettingsEntry)
                 {
                     Some(C::Settings)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::PromptToolbar) {
+                    // A focused toolbar control is still the prompt's
+                    // keyboard: the toolbar sits on the prompt's ring.
+                    Some(C::Prompt)
                 } else {
                     // A sidebar section's interior.
                     Some(C::Dock)

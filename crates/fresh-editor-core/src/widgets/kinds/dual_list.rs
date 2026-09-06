@@ -34,8 +34,11 @@ impl WidgetImpl for DualList {
     /// state mutation, so it lives here: arrows drive the active
     /// column's cursor, Left/Right switch columns, Space moves the
     /// focused item across, PageUp/PageDown reorder within Included.
-    /// Enter commits form-like — the kind requests a focus advance
-    /// rather than reaching into panel policy.
+    /// The Shift chords are the same moves with the cursor following
+    /// the item: Shift+Right/Left carry it across and land on it in its
+    /// new column, Shift+Up/Down reorder it. Enter commits form-like —
+    /// the kind requests a focus advance rather than reaching into
+    /// panel policy.
     fn on_key(
         &self,
         spec: &WidgetSpec,
@@ -48,11 +51,13 @@ impl WidgetImpl for DualList {
         let op = match key {
             "Up" => DualOp::CursorMove(-1),
             "Down" => DualOp::CursorMove(1),
-            "PageUp" => DualOp::Reorder(-1),
-            "PageDown" => DualOp::Reorder(1),
+            "PageUp" | "S-Up" => DualOp::Reorder(-1),
+            "PageDown" | "S-Down" => DualOp::Reorder(1),
             "Left" => DualOp::SwitchColumn(false),
             "Right" => DualOp::SwitchColumn(true),
             "Space" => DualOp::MoveAcross,
+            "S-Right" => DualOp::Carry(true),
+            "S-Left" => DualOp::Carry(false),
             "Enter" => {
                 fx.focus_advance = Some(1);
                 return super::KeyDisposition::Consumed;
@@ -132,9 +137,12 @@ impl WidgetImpl for DualList {
     }
 }
 
-/// A `DualList` interaction, resolved from a keystroke by
-/// [`DualList::on_key`].
-enum DualOp {
+/// A `DualList` interaction: what a keystroke resolves to in
+/// [`DualList::on_key`], and what a host that drives the control from
+/// its own gestures — a settings page's Enter, a web button — hands to
+/// [`apply_op`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DualOp {
     /// Make the Included column active (`true`) or Available (`false`).
     SwitchColumn(bool),
     /// Move the active column's cursor by `delta`.
@@ -142,6 +150,11 @@ enum DualOp {
     /// Move the focused item across columns (add if Available is
     /// active, remove if Included is active).
     MoveAcross,
+    /// Carry the focused item into Included (`true`) or back to
+    /// Available (`false`) and follow it: the target column becomes
+    /// active with its cursor on the item. A no-op when the item is
+    /// already on that side.
+    Carry(bool),
     /// Reorder the focused Included item by `delta` (no-op unless the
     /// Included column is active).
     Reorder(i32),
@@ -149,7 +162,10 @@ enum DualOp {
 
 /// Click on a cell: make the clicked column active and move its
 /// cursor to the clicked row, re-deriving the live column contents
-/// from the spec so cursor clamping matches what's on screen.
+/// from the spec so cursor clamping matches what's on screen. A control
+/// with no state yet starts from the spec's included set, as `apply_op`
+/// does — the columns the press was aimed at are the ones the spec
+/// drew.
 fn pointer_focus_cell(
     spec: &WidgetSpec,
     widget_key: &str,
@@ -158,7 +174,10 @@ fn pointer_focus_cell(
     index: usize,
 ) {
     let WidgetSpec::DualList {
-        options, excluded, ..
+        options,
+        excluded,
+        included: spec_included,
+        ..
     } = spec
     else {
         return;
@@ -174,7 +193,7 @@ fn pointer_focus_cell(
             *available_cursor as usize,
             *included_cursor as usize,
         ),
-        _ => (Vec::new(), 0, 0),
+        _ => (spec_included.clone(), 0, 0),
     };
     included = dual_sanitize_included(options, &included);
     let available = dual_available_values(options, &included, excluded);
@@ -209,9 +228,9 @@ fn step_cursor(cursor: usize, delta: i32, len: usize) -> usize {
 /// Apply one op against the host-owned instance state: load (or seed
 /// from the spec), mutate, store back, and queue `change` with the
 /// new included set when it actually changed. The single mutation
-/// path for the DualList's keyboard model — the click path only syncs
-/// cursors (`handle_widget_dual_click`) and never changes the set.
-fn apply_op(
+/// path for the DualList's model — the click path only syncs cursors
+/// (`pointer_focus_cell`) and never changes the set.
+pub fn apply_op(
     spec: &WidgetSpec,
     widget_key: &str,
     panel: &mut crate::widgets::WidgetPanelState,
@@ -275,6 +294,22 @@ fn apply_op(
                     available = dual_available_values(options, &included, excluded);
                     avail_cur = clamp(avail_cur, available.len());
                 }
+            }
+        }
+        DualOp::Carry(to_included) => {
+            if to_included && !active_included {
+                if avail_cur < available.len() {
+                    let value = available[avail_cur].clone();
+                    included.push(value);
+                    active_included = true;
+                    incl_cur = included.len() - 1;
+                }
+            } else if !to_included && active_included && incl_cur < included.len() {
+                let value = included.remove(incl_cur);
+                available = dual_available_values(options, &included, excluded);
+                active_included = false;
+                avail_cur = available.iter().position(|v| *v == value).unwrap_or(0);
+                incl_cur = clamp(incl_cur, included.len());
             }
         }
         DualOp::Reorder(delta) => {
@@ -815,5 +850,74 @@ mod tests {
             empty.entry.text.trim_end_matches('\n').chars().count(),
             filled.entry.text.trim_end_matches('\n').chars().count()
         );
+    }
+
+    fn spec(values: &[&str], included: &[&str]) -> WidgetSpec {
+        WidgetSpec::DualList {
+            options: opts(values),
+            included: included.iter().map(|s| s.to_string()).collect(),
+            excluded: Vec::new(),
+            label: String::new(),
+            focused: false,
+            active_included: false,
+            available_cursor: 0,
+            included_cursor: 0,
+            hint: String::new(),
+            visible_rows: 0,
+            key: Some("k".into()),
+        }
+    }
+
+    fn state(panel: &crate::widgets::WidgetPanelState) -> (Vec<String>, bool, u32, u32) {
+        match panel.instance_states.get("k") {
+            Some(WidgetInstanceState::DualList {
+                included,
+                active_included,
+                available_cursor,
+                included_cursor,
+            }) => (
+                included.clone(),
+                *active_included,
+                *available_cursor,
+                *included_cursor,
+            ),
+            other => panic!("no dual list state: {other:?}"),
+        }
+    }
+
+    /// A first press on a cell of a control with no state yet keeps the
+    /// spec's included set: the press aims at the columns the spec drew.
+    #[test]
+    fn a_first_press_keeps_the_spec_s_included_set() {
+        let spec = spec(&["a", "b", "c"], &["b"]);
+        let mut panel = crate::widgets::WidgetPanelState::surface(spec.clone());
+        pointer_focus_cell(&spec, "k", &mut panel, false, 1);
+        assert_eq!(state(&panel), (vec!["b".to_string()], false, 1, 0));
+    }
+
+    /// Shift+Right carries the item under the cursor into Included and the
+    /// cursor follows it there; Shift+Left carries it back and lands on it
+    /// where it reappears in Available. Each carry is one `change`.
+    #[test]
+    fn carrying_an_item_follows_it_across() {
+        let spec = spec(&["a", "b", "c"], &[]);
+        let mut panel = crate::widgets::WidgetPanelState::surface(spec.clone());
+        let mut fx = super::super::KeyFx::default();
+        apply_op(&spec, "k", &mut panel, DualOp::CursorMove(1), &mut fx);
+        apply_op(&spec, "k", &mut panel, DualOp::Carry(true), &mut fx);
+        // The Available cursor stays parked at its row, now on `c`.
+        assert_eq!(state(&panel), (vec!["b".to_string()], true, 1, 0));
+        assert_eq!(fx.events.len(), 1);
+        assert_eq!(fx.events[0].1["included"], serde_json::json!(["b"]));
+
+        // Already on that side: nothing moves and nothing is reported.
+        apply_op(&spec, "k", &mut panel, DualOp::Carry(true), &mut fx);
+        assert_eq!(fx.events.len(), 1);
+
+        apply_op(&spec, "k", &mut panel, DualOp::Carry(false), &mut fx);
+        // `b` is back between `a` and `c`, and the cursor sits on it.
+        assert_eq!(state(&panel), (vec![], false, 1, 0));
+        assert_eq!(fx.events.len(), 2);
+        assert_eq!(fx.events[1].1["included"], serde_json::json!([]));
     }
 }

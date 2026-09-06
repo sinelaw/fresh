@@ -146,22 +146,34 @@ function itemRow(item, rect, hi, comp, depth){
 // longest label+accelerator would overflow the panel (or, with the ellipsis
 // guard, truncate). Measuring the natural width here keeps the accelerators in
 // one right-aligned column without hard-coding any width or touching the core.
-// Placement (top/left, and the click cell) is unchanged, so hit-testing — which
-// forwards the item's logical cell, not a pixel — is unaffected.
+// A panel that grows carries every deeper panel that sat flush at its old right
+// edge (and their rows) along by the same amount, so the edge-to-edge seam
+// `dropdownPanels` established survives; a submenu that flipped LEFT of its
+// parent grows leftwards instead, for the same reason. Only pixels move: the
+// click cell each row forwards is the editor's logical cell, not a position.
 function fitMenuWidths(host){
-  host.querySelectorAll(".dropdown").forEach(panel=>{
+  const panels=[...host.querySelectorAll(".dropdown")];   // DOM order = depth order
+  const rowsOf=(panel)=>{
     const pr=panel.getBoundingClientRect();
-    const rows=[...host.querySelectorAll(".mitem,.msep,.mlabel")].filter(m=>{
+    return [...host.querySelectorAll(".mitem,.msep,.mlabel")].filter(m=>{
       const r=m.getBoundingClientRect();
       return r.left>=pr.left-2 && r.left<pr.right && r.top>=pr.top-2 && r.bottom<=pr.bottom+2;
     });
+  };
+  const shift=(panel, dx)=>{
+    const els=[panel, ...rowsOf(panel)];   // membership before anything moves
+    for(const el of els) el.style.left=(parseFloat(el.style.left)+dx)+"px";
+  };
+  panels.forEach((panel, i)=>{
+    const before=panel.getBoundingClientRect();
+    const rows=rowsOf(panel);
     const items=rows.filter(m=>m.classList.contains("mitem"));
     if(!items.length) return;
     // Rows are inset within the panel (the cell box reserves a border column);
     // widen the ROWS to their content but grow the PANEL by that same inset on
     // each side, so a widened row never spills past the panel's edge (which
     // made the selection bar overhang the right border).
-    const inset=Math.max(0, Math.round(items[0].getBoundingClientRect().left - pr.left));
+    const inset=Math.max(0, Math.round(items[0].getBoundingClientRect().left - before.left));
     let content=0;
     for(const m of items){
       const w0=m.style.width;
@@ -169,9 +181,16 @@ function fitMenuWidths(host){
       content=Math.max(content, Math.ceil(m.getBoundingClientRect().width));
       m.style.width=w0;
     }
-    if(content+inset*2<=Math.ceil(pr.width)) return;   // the cell box already fits
+    if(content+inset*2<=Math.ceil(before.width)) return;   // the cell box already fits
     panel.style.width=(content+inset*2)+"px";
     for(const m of rows) m.style.width=content+"px";
+    const grow=panel.getBoundingClientRect().right-before.right;
+    if(grow<=0) return;
+    // Flipped left: this panel's right edge met a shallower panel's left edge.
+    const flippedLeft=panels.slice(0,i).some(p=>Math.abs(p.getBoundingClientRect().left-before.right)<0.5);
+    if(flippedLeft){ shift(panel,-grow); return; }
+    for(const later of panels.slice(i+1))
+      if(later.getBoundingClientRect().left>=before.right-0.5) shift(later,grow);
   });
 }
 

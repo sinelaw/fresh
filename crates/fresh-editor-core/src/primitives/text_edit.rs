@@ -556,10 +556,14 @@ impl TextEdit {
 
     pub fn insert_char(&mut self, c: char) {
         self.push_undo_checkpoint();
-        // Delete selection first if any
+        // Delete selection first if any. An insertion ends the selection
+        // either way: a collapsed anchor (a `select_all` on an empty value)
+        // would otherwise wake up as a selection of the character just
+        // typed, and the next one would replace it.
         if self.has_selection() {
             self.delete_selection();
         }
+        self.selection_anchor = None;
 
         if c == '\n' && self.multiline {
             // Split line at cursor

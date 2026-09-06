@@ -284,6 +284,22 @@ pub trait WidgetImpl: Sync {
         KeyDisposition::Pass
     }
 
+    /// Printable text typed at the focused widget — a character, an IME
+    /// commit, a paste. The field's own vocabulary: `Text` inserts it,
+    /// `Number` reads the digits of it and begins or extends its draft,
+    /// and every other kind passes, so the surface beneath sees the
+    /// character it always did.
+    fn on_text(
+        &self,
+        _spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        _text: &str,
+        _fx: &mut KeyFx,
+    ) -> KeyDisposition {
+        KeyDisposition::Pass
+    }
+
     /// A pointer hit resolved to this widget (the hit's OWNER — for
     /// a List row that is the List, not the row). This is what
     /// dissolved `deliver_widget_hit`'s string-kind ladder: the state

@@ -562,7 +562,10 @@ function settingControlEl(c, idx, live){
   if(k==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx); }
   else if(k==="number"){
     const mk=(t,cls,hit)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;if(live&&hit)b.onmousedown=setHit(hit,idx);return b;};
-    el.appendChild(mk("−","set-step","controlDecrement")); const v=document.createElement("span"); v.className="set-num-v"; v.textContent=c.value; el.appendChild(v); el.appendChild(mk("+","set-step","controlIncrement"));
+    // The value as the JSON carries it, shown the way the TUI's cell shows it:
+    // a percent ×100, an integer whole.
+    const disp=c.percent?Math.round(c.value*100)+"%":c.integer?String(Math.round(c.value)):String(+(+c.value).toFixed(3));
+    el.appendChild(mk("−","set-step","controlDecrement")); const v=document.createElement("span"); v.className="set-num-v"; v.textContent=disp; el.appendChild(v); el.appendChild(mk("+","set-step","controlIncrement"));
   }
   else if(k==="dropdown"){ const p=document.createElement("span"); p.className="set-pill"; p.textContent=(c.options[c.selected]||"—")+" ▾"; if(live) p.onmousedown=setHit("controlDropdown",idx); el.appendChild(p);
     if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===c.selected?" sel":""));r.textContent=o;if(live)r.onmousedown=setHit("controlDropdownOption",idx,i);d.appendChild(r);});

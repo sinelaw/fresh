@@ -242,8 +242,15 @@ pub fn fold_band(
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything
             // behind this is receding" — so this one *is* a patch over what is
-            // already there, and takes the palette's style unreset.
-            Draw::Scrim(Scrim::Dim) => restyle(buf, frame, palette.style(&item.theme), frame),
+            // already there. **The same patch the painters made**:
+            // `apply_dimming` darkened every colour behind a modal by two
+            // thirds and marked a `Reset` cell `DIM`, and a described modal's
+            // scrim must read the same way, or the frame behind a settings
+            // dialog and the frame behind a keybinding dialog would dim
+            // differently. Restyling with the palette's *ground* was what
+            // this did before, which repainted every cell behind the layer in
+            // the editor's plain colours rather than receding them.
+            Draw::Scrim(Scrim::Dim) => crate::view::dimming::dim_buffer(buf, frame, None),
             Draw::Lines(lines) => {
                 // Clipped to the item's own rect as well as its inherited one:
                 // an item declares how much room it has. Layout hands a
@@ -466,17 +473,6 @@ fn fill(buf: &mut Buffer, r: Rect, ch: char, style: Style, clip: Rect) {
     for y in r.y..r.y.saturating_add(r.height) {
         for x in r.x..r.x.saturating_add(r.width) {
             put(buf, x, y, ch, style, clip);
-        }
-    }
-}
-
-/// Restyle without touching glyphs — what a dimming scrim does.
-fn restyle(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
-    for y in r.y..r.y.saturating_add(r.height) {
-        for x in r.x..r.x.saturating_add(r.width) {
-            if contains(clip, x, y) && contains(buf.area, x, y) {
-                buf[(x, y)].set_style(style);
-            }
         }
     }
 }
@@ -857,13 +853,8 @@ mod band_tests {
 
     fn a_dropdown() -> DropdownLevel {
         DropdownLevel {
-            x: 0,
-            y: 1,
-            width: 10,
-            rows: vec![DropdownRow {
-                text: " New    ".into(),
-                theme: crate::view::ui::MenuRowStyle::Normal.shell_theme(),
-            }],
+            from: 0,
+            rows: vec![DropdownRow::plain(" New")],
         }
     }
 
@@ -947,26 +938,28 @@ mod band_tests {
     /// truncation used to hide.
     #[test]
     fn a_run_longer_than_its_item_is_clipped_to_it() {
-        use crate::view::shell::menu::{DropdownLevel, DropdownRow};
+        use crate::view::shell::menu::{BarItem, DropdownLevel, DropdownRow, MenuBar};
+        // A frame eight cells wide: the box is as wide as its row wants, and
+        // the room it is placed in cuts it to six cells of content.
         let spec = spec_of(
             Frame {
-                dropdowns: vec![DropdownLevel {
-                    x: 0,
-                    y: 0,
-                    // Inner width 6, but the row claims ten cells of text.
-                    width: 8,
-                    rows: vec![DropdownRow {
-                        text: "0123456789".into(),
-                        theme: crate::view::ui::MenuRowStyle::Normal.shell_theme(),
+                menu_bar_items: MenuBar {
+                    items: vec![BarItem {
+                        runs: vec![(" F ".into(), "ui.menu_fg/ui.menu_bg".into())],
+                        index: 0,
                     }],
+                },
+                dropdowns: vec![DropdownLevel {
+                    from: 0,
+                    rows: vec![DropdownRow::plain("0123456789")],
                 }],
                 ..Frame::default()
             },
-            20,
+            8,
             6,
         );
-        let rows = painted(&spec, Band::Overlay, 20, 6);
-        let painted_box: String = rows[1].chars().take(8).collect();
+        let rows = painted(&spec, Band::Overlay, 8, 6);
+        let painted_box: String = rows[2].chars().take(8).collect();
         assert_eq!(
             painted_box, "\u{2502}012345\u{2502}",
             "the border survives the row: {rows:?}"

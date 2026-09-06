@@ -294,7 +294,7 @@ impl Editor {
     fn file_open_select_folder(&mut self, path: std::path::PathBuf) {
         // Close the file browser
         self.active_window_mut().file_open_state = None;
-        self.active_window_mut().prompt = None;
+        self.drop_prompt();
 
         // Change the working directory
         self.change_working_dir(path);
@@ -325,7 +325,7 @@ impl Editor {
             return false;
         };
         self.active_window_mut().file_open_state = None;
-        self.active_window_mut().prompt = None;
+        self.drop_prompt();
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
         let json = serde_json::to_string(&path.display().to_string())
             .unwrap_or_else(|_| "null".to_string());
@@ -355,7 +355,7 @@ impl Editor {
 
         // Close the file browser
         self.active_window_mut().file_open_state = None;
-        self.active_window_mut().prompt = None;
+        self.drop_prompt();
 
         if !detect_encoding {
             // Start encoding selection prompt, then open with selected encoding
@@ -488,7 +488,7 @@ impl Editor {
         // never resolves with a file that does not exist.
         // Close the file browser
         self.active_window_mut().file_open_state = None;
-        self.active_window_mut().prompt = None;
+        self.drop_prompt();
 
         // Reset key context to Normal so editor gets focus
         // This is important when the file explorer was focused before opening the file browser
@@ -508,7 +508,7 @@ impl Editor {
     fn file_open_save_file(&mut self, path: std::path::PathBuf) {
         // Close the file browser
         self.active_window_mut().file_open_state = None;
-        self.active_window_mut().prompt = None;
+        self.drop_prompt();
 
         self.save_file_as_with_checks(path);
     }
@@ -657,255 +657,71 @@ impl Editor {
         }
     }
 
-    /// Handle mouse wheel scroll in file browser
-    /// Returns true if the scroll was handled
-    pub fn handle_file_open_scroll(&mut self, delta: i32) -> bool {
-        if !self.is_file_open_active() {
-            return false;
-        }
-
-        let visible_rows = self
-            .active_window_mut()
-            .file_browser_layout
+    /// A navigation shortcut was pressed: the keyboard's section follows the
+    /// press, and the browser goes where the shortcut points.
+    pub fn file_open_press_shortcut(&mut self, index: usize) {
+        let target = self
+            .active_window()
+            .file_open_state
             .as_ref()
-            .map(|l| l.visible_rows)
-            .unwrap_or(10);
-
+            .and_then(|s| s.shortcuts.get(index))
+            .map(|sc| sc.path.clone());
+        let Some(path) = target else {
+            return;
+        };
         if let Some(state) = &mut self.active_window_mut().file_open_state {
-            let total_entries = state.entries.len();
-            if total_entries <= visible_rows {
-                // No scrolling needed if all entries fit
-                return true;
-            }
-
-            let max_scroll = total_entries.saturating_sub(visible_rows);
-
-            if delta < 0 {
-                // Scroll up
-                let scroll_amount = (-delta) as usize;
-                state.scroll_offset = state.scroll_offset.saturating_sub(scroll_amount);
-            } else {
-                // Scroll down
-                let scroll_amount = delta as usize;
-                state.scroll_offset = (state.scroll_offset + scroll_amount).min(max_scroll);
-            }
-            return true;
+            state.active_section = FileOpenSection::Navigation;
+            state.selected_shortcut = index;
         }
-
-        false
+        self.file_open_navigate_to(path);
     }
 
-    /// Handle mouse click in file browser
-    pub fn handle_file_open_click(&mut self, x: u16, y: u16) -> bool {
-        if !self.is_file_open_active() {
-            return false;
-        }
-
-        let layout = match &self.active_window_mut().file_browser_layout {
-            Some(l) => l.clone(),
-            None => return false,
+    /// An entry row was clicked: it is the selection, and its name is the
+    /// prompt's text.
+    pub fn file_open_select_entry(&mut self, index: usize) {
+        let name = self
+            .active_window()
+            .file_open_state
+            .as_ref()
+            .and_then(|s| s.entries.get(index))
+            .map(|e| e.fs_entry.name.clone());
+        let Some(name) = name else {
+            return;
         };
-
-        // Check if click is in the file list
-        if layout.is_in_list(x, y) {
-            let scroll_offset = self
-                .active_window_mut()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.scroll_offset)
-                .unwrap_or(0);
-
-            if let Some(index) = layout.click_to_index(y, scroll_offset) {
-                // Get the entry name before mutating state
-                let entry_name = self
-                    .active_window_mut()
-                    .file_open_state
-                    .as_ref()
-                    .and_then(|s| s.entries.get(index))
-                    .map(|e| e.fs_entry.name.clone());
-
-                if let Some(state) = &mut self.active_window_mut().file_open_state {
-                    state.active_section = FileOpenSection::Files;
-                    if index < state.entries.len() {
-                        state.selected_index = Some(index);
-                    }
-                }
-
-                // Update prompt text to show the selected entry name
-                if let Some(name) = entry_name {
-                    if let Some(prompt) = &mut self.active_window_mut().prompt {
-                        prompt.set_input_plain(name);
-                    }
-                }
-            }
-            return true;
+        if let Some(state) = &mut self.active_window_mut().file_open_state {
+            state.active_section = FileOpenSection::Files;
+            state.selected_index = Some(index);
         }
-
-        // Check if click is on "Show Hidden" checkbox
-        if layout.is_on_show_hidden_checkbox(x, y) {
-            self.file_open_toggle_hidden();
-            return true;
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.set_input_plain(name);
         }
-
-        // Check if click is on "Detect Encoding" checkbox
-        if layout.is_on_detect_encoding_checkbox(x, y) {
-            self.file_open_toggle_detect_encoding();
-            return true;
-        }
-
-        // Check if click is in navigation area
-        if layout.is_in_nav(x, y) {
-            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y) {
-                // Get the path from the shortcut and navigate there
-                let target_path = self
-                    .active_window_mut()
-                    .file_open_state
-                    .as_ref()
-                    .and_then(|s| s.shortcuts.get(shortcut_idx))
-                    .map(|sc| sc.path.clone());
-
-                if let Some(path) = target_path {
-                    if let Some(state) = &mut self.active_window_mut().file_open_state {
-                        state.active_section = FileOpenSection::Navigation;
-                        state.selected_shortcut = shortcut_idx;
-                    }
-                    self.file_open_navigate_to(path);
-                }
-            } else {
-                // Clicked in nav area but not on a shortcut
-                if let Some(state) = &mut self.active_window_mut().file_open_state {
-                    state.active_section = FileOpenSection::Navigation;
-                }
-            }
-            return true;
-        }
-
-        // Check if click is in header (sorting)
-        if layout.is_in_header(x, y) {
-            if let Some(mode) = layout.header_column_at(x) {
-                self.file_open_toggle_sort(mode);
-            }
-            return true;
-        }
-
-        // Check if click is in scrollbar
-        if layout.is_in_scrollbar(x, y) {
-            // Calculate scroll offset based on click position
-            let rel_y = y.saturating_sub(layout.scrollbar_area.y) as usize;
-            let track_height = layout.scrollbar_area.height as usize;
-
-            if let Some(state) = &mut self.active_window_mut().file_open_state {
-                let total_items = state.entries.len();
-                let visible_items = layout.visible_rows;
-
-                if total_items > visible_items && track_height > 0 {
-                    let max_scroll = total_items.saturating_sub(visible_items);
-                    let click_ratio = rel_y as f64 / track_height as f64;
-                    let new_offset = (click_ratio * max_scroll as f64) as usize;
-                    state.scroll_offset = new_offset.min(max_scroll);
-                }
-            }
-            return true;
-        }
-
-        false
     }
 
-    /// Handle double-click in file browser
-    pub fn handle_file_open_double_click(&mut self, x: u16, y: u16) -> bool {
+    /// An entry row was double-clicked: open it.
+    ///
+    /// In Switch Project (folder-only) mode, double-clicking a directory entry
+    /// navigates INTO it like a file manager would, rather than immediately
+    /// selecting it as the new project root. Selecting a project root remains
+    /// available via Enter (or by typing a path) so keyboard users keep
+    /// one-keypress confirmation.
+    pub fn file_open_activate_entry(&mut self, index: usize) {
         if !self.is_file_open_active() {
-            return false;
+            return;
         }
-
-        let layout = match &self.active_window_mut().file_browser_layout {
-            Some(l) => l.clone(),
-            None => return false,
-        };
-
-        // Double-click in file list opens/navigates
-        if layout.is_in_list(x, y) {
-            // In Switch Project (folder-only) mode, double-clicking a directory
-            // entry should navigate INTO it like a file manager would, rather
-            // than immediately selecting it as the new project root. Selecting
-            // a project root remains available via Enter (or by typing a path)
-            // so keyboard users keep one-keypress confirmation.
-            if self.is_folder_open_mode() {
-                let selected_dir = self.active_window().file_open_state.as_ref().and_then(|s| {
-                    s.selected_index
-                        .and_then(|idx| s.entries.get(idx))
-                        .filter(|e| e.fs_entry.is_dir())
-                        .map(|e| e.fs_entry.path.clone())
-                });
-                if let Some(path) = selected_dir {
-                    self.file_open_navigate_to(path);
-                    return true;
-                }
-            }
-            self.file_open_confirm();
-            return true;
-        }
-
-        false
-    }
-
-    /// Compute hover target for file browser
-    pub fn compute_file_browser_hover(&self, x: u16, y: u16) -> Option<super::types::HoverTarget> {
-        use super::types::HoverTarget;
-
-        let layout = self.active_window().file_browser_layout.as_ref()?;
-
-        // Check "Show Hidden" checkbox first (priority over navigation shortcuts)
-        if layout.is_on_show_hidden_checkbox(x, y) {
-            return Some(HoverTarget::FileBrowserShowHiddenCheckbox);
-        }
-
-        // Check "Detect Encoding" checkbox
-        if layout.is_on_detect_encoding_checkbox(x, y) {
-            return Some(HoverTarget::FileBrowserDetectEncodingCheckbox);
-        }
-
-        // Check navigation shortcuts
-        if layout.is_in_nav(x, y) {
-            if let Some(idx) = layout.nav_shortcut_at(x, y) {
-                return Some(HoverTarget::FileBrowserNavShortcut(idx));
-            }
-        }
-
-        // Check column headers
-        if layout.is_in_header(x, y) {
-            if let Some(mode) = layout.header_column_at(x) {
-                return Some(HoverTarget::FileBrowserHeader(mode));
-            }
-        }
-
-        // Check file list entries
-        if layout.is_in_list(x, y) {
-            let scroll_offset = self
+        self.file_open_select_entry(index);
+        if self.is_folder_open_mode() {
+            let dir = self
                 .active_window()
                 .file_open_state
                 .as_ref()
-                .map(|s| s.scroll_offset)
-                .unwrap_or(0);
-
-            if let Some(idx) = layout.click_to_index(y, scroll_offset) {
-                let total_entries = self
-                    .active_window()
-                    .file_open_state
-                    .as_ref()
-                    .map(|s| s.entries.len())
-                    .unwrap_or(0);
-
-                if idx < total_entries {
-                    return Some(HoverTarget::FileBrowserEntry(idx));
-                }
+                .and_then(|s| s.entries.get(index))
+                .filter(|e| e.fs_entry.is_dir())
+                .map(|e| e.fs_entry.path.clone());
+            if let Some(path) = dir {
+                self.file_open_navigate_to(path);
+                return;
             }
         }
-
-        // Check scrollbar
-        if layout.is_in_scrollbar(x, y) {
-            return Some(HoverTarget::FileBrowserScrollbar);
-        }
-
-        None
+        self.file_open_confirm();
     }
 }

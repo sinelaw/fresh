@@ -1106,9 +1106,6 @@ pub struct Editor {
     /// File open dialog state (when PromptType::OpenFile is active)
     // `file_open_state` moved onto `Window`.
 
-    /// Cached layout for file browser (for mouse hit testing)
-    // `file_browser_layout` moved onto `Window`.
-
     /// Recovery service for auto-recovery-save and crash recovery.
     /// `Arc<Mutex>` because it is shared into every `Window` via
     /// `WindowResources` so per-window restore / auto-save can reach it
@@ -1141,17 +1138,9 @@ pub struct Editor {
     /// together — in paint order, which is what the inspector wants. Frame
     /// -scoped: taken and refilled every frame, never read between them.
     pub(crate) fold_provenance: Vec<crate::app::types::ThemeRun>,
-    /// THE menu walk for the frame being rendered: rectangles, the shell's
-    /// description, and the theme-key provenance, all from one pass.
-    ///
-    /// Set by `shell_frame` at the top of `render` and read by everything else
-    /// that needs the menu's geometry — the theme inspector, the web `Scene`.
-    /// It replaced three invocations from three different bar rectangles,
-    /// reconciled only by a `debug_assert_eq!` that release builds compile out.
-    pub(crate) menu_layout_frame: Option<crate::view::ui::menu::MenuLayout>,
     /// The status bar's elements for the frame being rendered.
     ///
-    /// Kept for the same reason as `menu_layout_frame`: reading a rectangle
+    /// Kept because reading a rectangle
     /// back out of the tree needs to know *which* element each key belongs to,
     /// and that is the description. Set by `shell_frame`; read by the popup
     /// anchors, the click rail and the web projection — all of which used to
@@ -1218,13 +1207,11 @@ pub struct Editor {
 
     /// The mouse event currently being routed, and whether it was a double.
     ///
-    /// Set immediately before the tree is offered the pointer, and read only
-    /// by `UiFact::ModalPointer`. A full-screen modal's interior is a painter
-    /// that hit-tests its own recorded rectangles and distinguishes a drag
-    /// from a move — which a tree `Event` deliberately cannot, since the
-    /// library routes drags by pointer capture instead. So the tree decides
-    /// *which surface* the event belongs to and the event itself stays here:
-    /// it is routed, not transported. Retires with those interiors.
+    /// Set immediately before the tree is offered the pointer. Its last
+    /// reader is the legacy split walk (`chrome::splits`), which distinguishes
+    /// a drag from a move — which a tree `Event` deliberately cannot, since
+    /// the library routes drags by pointer capture instead. Retires with the
+    /// pane as a host leaf (S7).
     pub(crate) shell_pointer_event: Option<(crossterm::event::MouseEvent, bool)>,
     /// The key the tree is being offered, for the same reason and on the same
     /// terms.
@@ -1237,10 +1224,14 @@ pub struct Editor {
     /// those interiors.
     pub(crate) shell_key_event: Option<crossterm::event::KeyEvent>,
 
-    /// **The half of a key's claim the tree cannot make.**
-    ///
-    /// A `Modality::Focus` layer confines the keyboard without swallowing it,
-    /// so what its interior declined is still the host's to resolve. But the
+    /// The viewport a *page* panel scrolls in, per buffer-mounted panel that
+    /// declared `WidgetPanelOptions::page`. The tree owns the window; this
+    /// is the host's handle on it — `scrollToWidget` and the page's arrow
+    /// keys are commands on it, applied by the layout that measured the
+    /// page (`fresh_ui::behavior::Anchor`).
+    pub(crate) page_anchors:
+        HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::Anchor>>,
+
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,
@@ -1485,18 +1476,6 @@ pub struct Editor {
     /// cleared on button-up. `anchor_flat` is the press position as a
     /// flat byte offset into the widget's shadow TextEdit value.
     pub(crate) widget_text_drag: Option<WidgetTextDrag>,
-    /// Screen-space scrollbar tracks painted over buffer-mounted widget
-    /// panels at the last draw, one per overflowing List/Tree, tagged
-    /// with the panel that owns it. Floating panels keep the same thing
-    /// on the panel struct; split-mounted ones have no such struct, so
-    /// the editor holds theirs. Refreshed on every draw — the mouse
-    /// hit-test reads it to start or continue a drag.
-    pub(crate) split_widget_scrollbar_tracks: Vec<(crate::widgets::PanelKey, WidgetScrollbarTrack)>,
-    /// Press/drag/release state for those tracks (the canonical
-    /// `ScrollbarMouse`, as the floating panels use).
-    pub(crate) split_widget_scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
-    /// Panel and list key of the split-mounted scrollbar being dragged.
-    pub(crate) split_widget_scrollbar_drag: Option<(crate::widgets::PanelKey, String)>,
     /// Row budget each buffer-mounted widget panel was last rendered
     /// against, so a panel whose split has since changed size can be
     /// re-rendered once — and only once — against the new one. Comparing
@@ -1535,6 +1514,12 @@ pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 pub(crate) const SIDEBAR_PANEL_BUFFER_BASE: BufferId = BufferId(usize::MAX - 2);
 /// How many sidebar sections the sentinel range spans.
 pub(crate) const SIDEBAR_PANEL_BUFFER_SPAN: usize = 256;
+/// The buffer id the overlay prompt's toolbar panel is registered against.
+/// No buffer has it: the toolbar is described in the prompt card's header
+/// band and never had a text projection to write anywhere. Below the sidebar
+/// sections' span, so `slot_for_panel_buffer` answers `None` for it.
+pub(crate) const PROMPT_TOOLBAR_BUFFER_ID: BufferId =
+    BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - SIDEBAR_PANEL_BUFFER_SPAN - 1);
 
 /// Selects which of the two coexisting widget-panel slots an operation
 /// targets: the centered modal overlay (`Floating`, the picker /
@@ -1652,13 +1637,6 @@ pub(crate) struct FloatingWidgetState {
     // `entries` stays because it is still read as *text*, and one measurement
     // of it survives: an anchored popup's width (`view::shell::panel::
     // Panel::anchored_width`).
-    /// Inner rect (frame interior) of the last draw.
-    ///
-    /// Written by layout — `render_floating_widget_panel` reads the body
-    /// node's rectangle — and read by the wheel routing and the anchored
-    /// popup's dismissal gate. The web's plugin-panel projection was the third
-    /// reader and is deleted.
-    pub last_inner_rect: Option<ratatui::layout::Rect>,
     /// Whether the pointer is over the dock's column.
     ///
     /// **The tree says so** (`UiFact::DockHover`), because the column is a
@@ -1753,17 +1731,6 @@ pub(crate) struct FloatingWidgetState {
 /// selection move before it fades back to hover-only (see
 /// `FloatingWidgetState::scrollbar_flash_until`).
 pub(crate) const DOCK_SCROLLBAR_FLASH: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// A list scrollbar's screen rect + scroll state, captured at draw
-/// time so mouse press/drag can hit-test and drive `ScrollbarMouse`.
-#[derive(Debug, Clone)]
-pub(crate) struct WidgetScrollbarTrack {
-    pub list_key: String,
-    pub rect: ratatui::layout::Rect,
-    pub total: usize,
-    pub visible: usize,
-    pub scroll: usize,
-}
 
 /// A file that should be opened after the TUI starts
 #[derive(Debug, Clone)]
@@ -2290,7 +2257,6 @@ mod tests {
             focused,
             mode: None,
             entries: Vec::new(),
-            last_inner_rect: None,
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,

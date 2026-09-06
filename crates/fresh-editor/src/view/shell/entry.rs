@@ -73,6 +73,9 @@ pub struct Item {
     pub spec: fresh_core::api::WidgetSpec,
     /// The widget key the runtime treats as focused, or empty.
     pub focus_key: String,
+    /// The dialog's widget instance state, by key — what the kinds wrote,
+    /// read by the description the control is painted from.
+    pub states: std::rc::Rc<std::collections::HashMap<String, crate::widgets::WidgetInstanceState>>,
     pub focused: bool,
     pub hovered: bool,
     pub modified: bool,
@@ -355,13 +358,20 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
             text(value.clone()).theme(pair("editor.line_number_fg", band)),
         ]);
     }
-    let spec = it.spec.clone();
+    let mut spec = it.spec.clone();
+    // As on the page: the hint under a dual list's columns is the
+    // dialog's word, from whether the field is selected or live.
+    if let fresh_core::api::WidgetSpec::DualList { hint, .. } = &mut spec {
+        *hint =
+            crate::view::settings::widget_map::dual_list_hint(!it.focus_key.is_empty(), it.focused);
+    }
     let focus_key = it.focus_key.clone();
+    let states = it.states.clone();
     let surface = Ink::keys("ui.popup_text_fg", band.to_string());
     layout_reader(move |info: LayoutInfo| {
         let cx = super::widgets::Ctx {
             slot: super::widgets::Slot::SettingsEntry,
-            states: super::widgets::no_state(),
+            states: &states,
             focus_key: focus_key.clone(),
             keyboard: true,
             hovered_key: None,
@@ -482,7 +492,6 @@ fn buttons(bs: &[Button]) -> Node<UiMsg> {
 mod tests {
     use super::*;
     use crate::view::shell::frame::{frame_tree, Frame};
-    use crate::view::shell::modal::Slot;
     use fresh_ui::{Size, Ui};
 
     fn field(index: usize, name: &str) -> Item {
@@ -495,6 +504,7 @@ mod tests {
                 key: None,
             },
             focus_key: String::new(),
+            states: Default::default(),
             focused: index == 0,
             hovered: false,
             modified: false,
@@ -541,17 +551,16 @@ mod tests {
         ui.frame(
             frame_tree(Frame {
                 settings: Some(crate::view::shell::settings::Chrome {
+                    page: None,
                     title: " Settings ".into(),
                     search: crate::view::shell::settings::Search::Hint(Vec::new()),
                     footer: None,
                     categories: None,
                     strip: None,
                     results: None,
-                    page: None,
                     items: None,
                 }),
                 settings_entry: vec![d],
-                modal: Some(Slot::Settings),
                 menu_bar: false,
                 status_bar: false,
                 ..Frame::default()

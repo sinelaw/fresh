@@ -318,16 +318,12 @@ fn panel_body(i: usize, p: &super::panel::Interior) -> Node<UiMsg> {
         )
         .w(Sizing::Cells(inner_w))
     });
-    if p.has_focus_targets() {
-        super::panel::interior(
-            super::widgets::Slot::Sidebar(i),
-            p.keymap.clone(),
-            p.keyboard && p.focus_key.is_empty(),
-            node,
-        )
-    } else {
-        node
-    }
+    super::panel::interior(
+        super::widgets::Slot::Sidebar(i),
+        p.keymap.clone(),
+        p.keyboard && p.focus_key.is_empty(),
+        node,
+    )
 }
 
 /// Blur a focused plugin section when a press lands outside the column.
@@ -888,6 +884,8 @@ mod tests {
             // The host's focus fact for the section: an unfocused one
             // holds no keyboard and marks nothing.
             keyboard: focused,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),

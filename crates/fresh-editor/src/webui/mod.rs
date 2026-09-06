@@ -1116,6 +1116,7 @@ fn apply_settings(editor: &mut Editor, v: &Value) {
         "controlMapRow" => Some(H::ControlMapRow(a, bb)),
         "controlMapAddNew" => Some(H::ControlMapAddNew(a)),
         "controlTextListRow" => Some(H::ControlTextListRow(a, bb)),
+        "controlTextListRemove" => Some(H::ControlTextListRemove(a, bb)),
         "controlDualListAvailable" => Some(H::ControlDualListAvailable(a, bb)),
         "controlDualListIncluded" => Some(H::ControlDualListIncluded(a, bb)),
         "controlDualListAdd" => Some(H::ControlDualListAdd(a)),
@@ -1894,8 +1895,8 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // The menu bar spans the FULL width at row 0 — exactly as the TUI draws it,
     // *above* any left dock (the dock/file-explorer carve the rows below). Using
     // `content.x` here would shift the whole menu right when a left dock opens.
-    // Per-menu title x still comes from the editor's MenuLayout cell positions
-    // (so titles + their dropdowns align); only the container is full-width.
+    // Per-menu title x still comes from the tree's label rectangles (so
+    // titles + their dropdowns align); only the container is full-width.
     let menubar_rect = (content.y > 0).then(|| Rect::new(0, 0, w, content.y));
 
     // **The rectangles are the tree's here too.** The web is a consumer of
