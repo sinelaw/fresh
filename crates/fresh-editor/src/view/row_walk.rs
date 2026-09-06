@@ -9,73 +9,146 @@
 //!
 //! Two decisions hold the rest of the module together. Row boundaries come from
 //! feeding [`build_base_tokens`] — the renderer's own stream, read from the same
-//! byte — to [`WrapMachine`], so the walk agrees with the screen by
-//! construction; a parallel wrap implementation is the drift this replaces. And
-//! backward walks re-derive the grid from a bounded back-off rather than from
-//! the line start, trading sub-row exactness for a cost that does not grow with
-//! depth (see [`row_start_before`]).
+//! byte, with the same collapsed-fold ranges — to [`WrapMachine`], so the walk
+//! agrees with the screen by construction; a parallel wrap implementation is the
+//! drift this replaces. And backward walks re-derive the grid from a bounded
+//! back-off rather than from the line start, trading sub-row exactness for a
+//! cost that does not grow with depth (see [`row_start_before`]).
+//!
+//! Every entry point therefore takes the `folds` the frame is drawing, in the
+//! shape `build_base_tokens` wants: pass what `fold_skip_set` produced, not a
+//! subset and not `&[]`. A walk given no folds counts rows inside collapsed
+//! regions that the screen does not draw, which lands the viewport top inside a
+//! fold.
+//!
+//! What the walk still cannot see is the plugin transform between the token
+//! build and the wrap — soft breaks, conceals and virtual lines. Those inject
+//! rows with no source byte of their own, so a walk cannot place them. The
+//! row-counted path models them as a count (`count_visual_rows_for_line`'s
+//! `extra_virtual_rows`); doing the same here would mean reproducing the
+//! transform, and gating the anchored path on them instead would put the
+//! viewport and the renderer in different coordinates, which is worse. They are
+//! rare on the buffers this module serves — soft breaks are Compose-mode only —
+//! and [`Viewport::top_visual_row_source_byte`] already declines to answer where
+//! they intersect its span.
 
 use crate::model::buffer::Buffer;
 use crate::view::ui::split_rendering::base_tokens::build_base_tokens;
 use crate::view::wrap_machine::{RowCarry, WrapMachine, WrapRule};
+use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 
-/// Bytes read per row asked for, before slack.
+/// Characters allowed per column of a requested row, before slack.
 ///
-/// A row holds at most `available_width` characters and a character is at most
-/// four bytes, so this cannot cut a row short. Over-reading a little is far
-/// cheaper than a second pass.
-const BYTES_PER_ROW_ESTIMATE: usize = 4;
+/// `build_base_tokens` takes a *character* budget, and a row is bounded in
+/// *columns*, so this is the assumed ratio between them — a first guess, not a
+/// bound. Zero-width characters have no ratio: a base with four combining marks
+/// is five characters in one column. A walk that comes up short for that reason
+/// is retried on a larger budget rather than reported as the end of the buffer,
+/// which is what [`row_starts_from`] loops for.
+const CHARS_PER_COLUMN_ESTIMATE: usize = 4;
 
 /// Slack bytes added to every read, so a walk for a single row on a narrow pane
 /// still has a row's worth of text to wrap.
 const READ_SLACK_BYTES: usize = 1024;
+
+/// How far back a line start is looked for before giving up.
+///
+/// `Buffer::line_iterator` finds one by scanning backwards to the previous
+/// newline with no bound at all, which on the files this module exists for is a
+/// scan of the whole file per call — the very cost the module removes. Past
+/// this, a row is treated as a continuation with no hanging indent: a line this
+/// long has its indent clamped away by `MIN_CONTINUATION_CONTENT_WIDTH` on any
+/// ordinary pane, and paying a megabyte-scale scan a keystroke to discover
+/// otherwise is not a trade worth making.
+const LINE_START_SEARCH_BYTES: usize = 64 * 1024;
+
+/// Start of the line containing `byte`, if one is within
+/// [`LINE_START_SEARCH_BYTES`].
+///
+/// `Some(0)` when the search reaches the start of the buffer, so "no newline
+/// anywhere above" is distinguished from "gave up looking".
+fn bounded_line_start(buffer: &mut Buffer, byte: usize) -> Option<usize> {
+    const CHUNK: usize = 4096;
+    let mut end = byte.min(buffer.len());
+    if end == 0 {
+        // The start of the buffer is a line start; there is nothing to search.
+        return Some(0);
+    }
+    let floor = end.saturating_sub(LINE_START_SEARCH_BYTES);
+    while end > floor {
+        let start = end.saturating_sub(CHUNK).max(floor);
+        let chunk = buffer.slice_bytes(start..end);
+        if let Some(i) = chunk.iter().rposition(|b| *b == b'\n') {
+            return Some(start + i + 1);
+        }
+        if start == 0 {
+            return Some(0);
+        }
+        end = start;
+    }
+    None
+}
 
 /// The carry a row starting at `byte` resumes with.
 ///
 /// A row boundary holds only continuation state and the hanging indent:
 /// `chars_in_row` is zero there by definition, and an ANSI escape cannot
 /// straddle one.
+///
+/// The indent comes from [`WrapMachine`] itself rather than being measured
+/// here. It is a row-*width* input — `feed_word_text` sizes a row as
+/// `available_width - line_indent` — so a second implementation of
+/// `measure_indent` would have to reproduce its tab-stop arithmetic and its
+/// `MIN_CONTINUATION_CONTENT_WIDTH` clamp exactly or rows walked mid-line would
+/// come out a different width from rows walked from the line's start. Feeding
+/// the machine the line's opening text and taking its carry cannot drift.
 pub fn carry_at(buffer: &mut Buffer, byte: usize, rule: WrapRule) -> RowCarry {
-    let line_start = buffer.line_iterator(byte, 80).current_position();
+    let Some(line_start) = bounded_line_start(buffer, byte) else {
+        // Too far into one line to find its start cheaply: a continuation row
+        // with no measurable indent.
+        return RowCarry {
+            on_continuation: true,
+            ..RowCarry::default()
+        };
+    };
     if byte <= line_start {
         return RowCarry::default();
     }
-    let hanging = matches!(
-        rule,
-        WrapRule::Word {
-            hanging_indent: true,
-            ..
-        }
-    );
     RowCarry {
-        line_indent: if hanging {
-            leading_indent_width(buffer, line_start)
-        } else {
-            0
-        },
+        line_indent: measured_line_indent(buffer, line_start, rule),
         on_continuation: true,
         ansi_in_escape: false,
         chars_in_row: 0,
     }
 }
 
-/// Width of the hanging indent a continuation row resumes at. Read bounded:
-/// whitespace past this is content, not indentation.
-fn leading_indent_width(buffer: &mut Buffer, line_start: usize) -> usize {
+/// The `line_indent` [`WrapMachine`] arrives at for the line opening at
+/// `line_start`, obtained by running it over that opening.
+///
+/// Read bounded: whitespace past this is content, not indentation, and the
+/// machine stops measuring at the first non-space anyway.
+fn measured_line_indent(buffer: &mut Buffer, line_start: usize, rule: WrapRule) -> usize {
     const MAX_INDENT_BYTES: usize = 256;
+    if !matches!(
+        rule,
+        WrapRule::Word {
+            hanging_indent: true,
+            ..
+        }
+    ) {
+        return 0;
+    }
     let end = line_start
         .saturating_add(MAX_INDENT_BYTES)
         .min(buffer.len());
-    let bytes = buffer.slice_bytes(line_start..end);
-    let mut width = 0usize;
-    for byte in bytes {
-        match byte {
-            b' ' => width += 1,
-            b'\t' => width += 4,
-            _ => break,
-        }
-    }
-    width
+    let opening = String::from_utf8_lossy(&buffer.slice_bytes(line_start..end)).into_owned();
+    let mut machine = WrapMachine::resume(rule, RowCarry::default());
+    machine.feed(ViewTokenWire {
+        source_offset: Some(line_start),
+        kind: ViewTokenWireKind::Text(opening),
+        style: None,
+    });
+    machine.carry().line_indent
 }
 
 /// Byte at which each of the next rows starts, beginning with `from` itself.
@@ -87,16 +160,53 @@ pub fn row_starts_from(
     from: usize,
     rule: WrapRule,
     max_rows: usize,
+    folds: &[std::ops::Range<usize>],
 ) -> Vec<usize> {
     if max_rows == 0 || from >= buffer.len() {
         return vec![from];
     }
-    let carry = carry_at(buffer, from, rule);
     let width = rule.available_width().max(1);
-    let budget = max_rows
+    let mut budget = max_rows
         .saturating_mul(width)
-        .saturating_mul(BYTES_PER_ROW_ESTIMATE)
+        .saturating_mul(CHARS_PER_COLUMN_ESTIMATE)
         .saturating_add(READ_SLACK_BYTES);
+
+    // Bounded: each attempt quadruples, so this covers 256x the estimate, which
+    // is far past any real characters-per-column ratio. Without the cap a walk
+    // that cannot advance for some *other* reason keeps growing the budget until
+    // it reads the whole file — work proportional to the file, on every
+    // keystroke, which is the cost this module exists to remove.
+    const MAX_BUDGET_ATTEMPTS: usize = 4;
+
+    let mut starts = walk_rows(buffer, from, rule, max_rows, budget, folds);
+    for _ in 0..MAX_BUDGET_ATTEMPTS {
+        // Short of the rows asked for, with buffer left beyond what the budget
+        // could have read: the shortfall is the budget, not the buffer. Telling
+        // the two apart matters — a caller reads a short walk as "the file ends
+        // here" and stops scrolling.
+        let budget_bound = starts.len() < max_rows && from.saturating_add(budget) < buffer.len();
+        if !budget_bound {
+            break;
+        }
+        let Some(larger) = budget.checked_mul(4) else {
+            break;
+        };
+        budget = larger;
+        starts = walk_rows(buffer, from, rule, max_rows, budget, folds);
+    }
+    starts
+}
+
+/// One pass of [`row_starts_from`], reading at most `budget` bytes.
+fn walk_rows(
+    buffer: &mut Buffer,
+    from: usize,
+    rule: WrapRule,
+    max_rows: usize,
+    budget: usize,
+    folds: &[std::ops::Range<usize>],
+) -> Vec<usize> {
+    let carry = carry_at(buffer, from, rule);
     let is_binary = buffer.is_binary();
     let line_ending = buffer.line_ending();
     let estimated = buffer.estimated_line_length().max(1);
@@ -107,7 +217,7 @@ pub fn row_starts_from(
         max_rows.saturating_add(4),
         is_binary,
         line_ending,
-        &[],
+        folds,
         Some(budget),
         // Read from `from` itself rather than its line start: that walk back is
         // the cost this module removes.
@@ -133,8 +243,14 @@ pub fn row_starts_from(
 }
 
 /// The row start `rows` rows after `from`, or the last row of the buffer.
-pub fn row_start_after(buffer: &mut Buffer, from: usize, rule: WrapRule, rows: usize) -> usize {
-    let starts = row_starts_from(buffer, from, rule, rows.saturating_add(1));
+pub fn row_start_after(
+    buffer: &mut Buffer,
+    from: usize,
+    rule: WrapRule,
+    rows: usize,
+    folds: &[std::ops::Range<usize>],
+) -> usize {
+    let starts = row_starts_from(buffer, from, rule, rows.saturating_add(1), folds);
     starts.last().copied().unwrap_or(from)
 }
 
@@ -148,11 +264,12 @@ pub fn rows_between(
     target: usize,
     rule: WrapRule,
     max_rows: usize,
+    folds: &[std::ops::Range<usize>],
 ) -> Option<usize> {
     if target < from {
         return None;
     }
-    let starts = row_starts_from(buffer, from, rule, max_rows.saturating_add(1));
+    let starts = row_starts_from(buffer, from, rule, max_rows.saturating_add(1), folds);
     let mut found = None;
     for (row, start) in starts.iter().enumerate() {
         if *start <= target {
@@ -171,23 +288,24 @@ pub fn rows_between(
 }
 
 /// Whether this buffer's visual rows are addressed by byte — true exactly when
-/// no wrap index can cover it, so `ViewAnchor::byte` is the first visible row's
-/// own start rather than a line start.
+/// no wrap index can exist, so `ViewAnchor::byte` is the first visible row's own
+/// start rather than a line start.
 ///
-/// Must agree with the indexability test in `reconcile::place_pane`, or a
-/// viewport would be placed in one coordinate and rendered in the other. Keyed
-/// on the buffer, not on a frame, so the coordinate cannot change between a
-/// scroll and the render of it.
+/// This is the negation of `reconcile::place_pane`'s `indexable`, deliberately
+/// stated in the same one term: a large file has no line data, so nothing can
+/// build or cache an index for it, and `place_pane` can never take its
+/// `has_index` path. Anything else keeps the row-numbered path, *including* a
+/// buffer past the wrap scrollbar's ceilings — `place_pane` still treats one as
+/// indexable when an index is already cached for the geometry, and `WrapIndices`
+/// only evicts by LRU, so a buffer that crosses a ceiling keeps its index and
+/// keeps being placed by row. Widening this to the ceilings would put those
+/// buffers in two coordinates at once: written mid-line here, read back through
+/// `line_first_row` there.
+///
+/// Keyed on the buffer, not on a frame, so the coordinate cannot change between
+/// a scroll and the render of it.
 pub fn addresses_rows_by_byte(buffer: &Buffer, line_wrap_enabled: bool) -> bool {
-    use crate::view::ui::split_rendering::scrollbar::{
-        MAX_WRAP_SCROLLBAR_BYTES, MAX_WRAP_SCROLLBAR_LINES,
-    };
-    line_wrap_enabled
-        && (buffer.is_large_file()
-            || buffer.len() > MAX_WRAP_SCROLLBAR_BYTES
-            || buffer
-                .line_count()
-                .is_none_or(|lines| lines > MAX_WRAP_SCROLLBAR_LINES))
+    line_wrap_enabled && buffer.is_large_file()
 }
 
 /// A row start `rows_back` rows above `byte`.
@@ -205,6 +323,7 @@ pub fn row_start_before(
     byte: usize,
     rows_back: usize,
     rule: WrapRule,
+    folds: &[std::ops::Range<usize>],
 ) -> usize {
     if byte == 0 {
         return byte;
@@ -219,7 +338,7 @@ pub fn row_start_before(
 
     for _ in 0..MAX_BACKOFF_ATTEMPTS {
         let from = walk_start_before(buffer, byte, reach);
-        let starts = row_starts_up_to(buffer, from, byte, rule);
+        let starts = row_starts_up_to(buffer, from, byte, rule, folds);
         if let Some(index) = starts.len().checked_sub(rows_back + 1) {
             return starts[index];
         }
@@ -243,11 +362,9 @@ const MAX_BACKOFF_ATTEMPTS: usize = 4;
 /// mid-line and takes the shift documented on [`row_start_before`].
 fn walk_start_before(buffer: &mut Buffer, byte: usize, reach: usize) -> usize {
     let back = byte.saturating_sub(reach);
-    let enclosing_line = buffer.line_iterator(back, 80).current_position();
-    if back.saturating_sub(enclosing_line) <= reach {
-        enclosing_line
-    } else {
-        back
+    match bounded_line_start(buffer, back) {
+        Some(line_start) if back.saturating_sub(line_start) <= reach => line_start,
+        _ => back,
     }
 }
 
@@ -255,12 +372,18 @@ fn walk_start_before(buffer: &mut Buffer, byte: usize, reach: usize) -> usize {
 ///
 /// Chunked so a window of many short rows is covered without asking for them
 /// all up front.
-fn row_starts_up_to(buffer: &mut Buffer, from: usize, to: usize, rule: WrapRule) -> Vec<usize> {
+fn row_starts_up_to(
+    buffer: &mut Buffer,
+    from: usize,
+    to: usize,
+    rule: WrapRule,
+    folds: &[std::ops::Range<usize>],
+) -> Vec<usize> {
     const CHUNK_ROWS: usize = 64;
     let mut collected: Vec<usize> = Vec::new();
     let mut at = from;
     loop {
-        let chunk = row_starts_from(buffer, at, rule, CHUNK_ROWS);
+        let chunk = row_starts_from(buffer, at, rule, CHUNK_ROWS, folds);
         let mut advanced = false;
         for start in &chunk {
             if *start > to {
@@ -281,6 +404,9 @@ fn row_starts_up_to(buffer: &mut Buffer, from: usize, to: usize, rule: WrapRule)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Most tests here are about the walk itself, with nothing folded away.
+    const NO_FOLDS: &[std::ops::Range<usize>] = &[];
 
     fn word_rule(width: usize) -> WrapRule {
         WrapRule::Word {
@@ -310,7 +436,7 @@ mod tests {
         let mut buffer = Buffer::from_str_test(&json_line(8_000));
         let rule = word_rule(97);
 
-        let whole = row_starts_from(&mut buffer, 0, rule, 400);
+        let whole = row_starts_from(&mut buffer, 0, rule, 400, NO_FOLDS);
         assert!(
             whole.len() > 100,
             "expected a line of many rows, got {}",
@@ -318,7 +444,7 @@ mod tests {
         );
 
         for start_row in [1usize, 7, 42, 99, whole.len() - 12] {
-            let resumed = row_starts_from(&mut buffer, whole[start_row], rule, 10);
+            let resumed = row_starts_from(&mut buffer, whole[start_row], rule, 10, NO_FOLDS);
             let expected = &whole[start_row..(start_row + 10).min(whole.len())];
             assert_eq!(
                 resumed, expected,
@@ -328,24 +454,145 @@ mod tests {
         }
     }
 
-    /// Walking costs the rows asked for, not the distance from the line start.
+    /// A walk deep inside a line returns the same rows the full run has there,
+    /// and all of the rows it was asked for.
+    ///
+    /// This does *not* assert the cost property the module is for — an
+    /// in-memory test buffer has nothing to read lazily, so there is no work to
+    /// observe. `large_file_open_bounded`'s `Buffer::resident_bytes` assertions
+    /// are what hold that; this holds the answer being right at depth, which is
+    /// what a bounded walk has to get right to be worth anything.
     #[test]
-    fn a_walk_reads_the_rows_asked_for_wherever_it_starts() {
+    fn a_deep_walk_agrees_with_the_full_run() {
         let mut buffer = Buffer::from_str_test(&json_line(60_000));
         let rule = word_rule(97);
-        let whole = row_starts_from(&mut buffer, 0, rule, 4000);
-        let deep = *whole.last().unwrap();
+        let whole = row_starts_from(&mut buffer, 0, rule, 4000, NO_FOLDS);
+        let deep_row = whole.len() - 20;
+        let deep = whole[deep_row];
         assert!(
             deep > 300_000,
             "the sample row should be far past MAX_LINE_BYTES, got {deep}"
         );
 
-        let near_top = row_starts_from(&mut buffer, whole[2], rule, 8);
-        let far_down = row_starts_from(&mut buffer, deep, rule, 8);
-        assert_eq!(near_top.len(), 8);
+        let near_top = row_starts_from(&mut buffer, whole[2], rule, 8, NO_FOLDS);
+        assert_eq!(near_top, &whole[2..10], "a walk near the top diverged");
+
+        let far_down = row_starts_from(&mut buffer, deep, rule, 8, NO_FOLDS);
+        assert_eq!(
+            far_down,
+            &whole[deep_row..deep_row + 8],
+            "a walk 300 KB into the line diverged from the run"
+        );
+    }
+
+    /// The retry recovers rows a first budget could not reach.
+    ///
+    /// The budget assumes [`CHARS_PER_COLUMN_ESTIMATE`] characters per column,
+    /// which zero-width marks break: a base plus five combining marks is six
+    /// characters in one column. A walk short for that reason must retry, not
+    /// report the end of the buffer — otherwise a page-down over such text
+    /// silently moves a fraction of a page.
+    #[test]
+    fn a_walk_over_zero_width_text_still_returns_the_rows_asked_for() {
+        // Six characters, one column: well past the four the budget assumes.
+        let dense = "a\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}".repeat(20_000);
+        let mut buffer = Buffer::from_str_test(&dense);
+        let rule = word_rule(73);
+
+        let starts = row_starts_from(&mut buffer, 0, rule, 40, NO_FOLDS);
+        assert_eq!(
+            starts.len(),
+            40,
+            "a budget-bound walk was reported as the end of the buffer"
+        );
+        for pair in starts.windows(2) {
+            assert!(pair[1] > pair[0], "row starts must ascend, got {pair:?}");
+        }
+    }
+
+    /// The line-start lookup gives up rather than scanning to byte 0.
+    ///
+    /// `carry_at` and `walk_start_before` both need the enclosing line's start.
+    /// `Buffer::line_iterator` finds one by scanning back to the previous
+    /// newline with no bound, so on a file that is one line it scans from the
+    /// walk's position to byte 0 — per call, on every scroll. That is the cost
+    /// this module exists to remove, so the bound is asserted directly rather
+    /// than inferred from a clock.
+    #[test]
+    fn the_line_start_lookup_is_bounded() {
+        let mut buffer = Buffer::from_str_test(&json_line(400_000));
         assert!(
-            !far_down.is_empty() && far_down[0] == deep,
-            "a walk starts on the row it was given"
+            buffer.len() > 2_000_000,
+            "expected a multi-megabyte line, got {}",
+            buffer.len()
+        );
+
+        // Byte 0 is a line start, not a failed search — getting this wrong makes
+        // the first row of every buffer resume as a continuation row.
+        assert_eq!(bounded_line_start(&mut buffer, 0), Some(0));
+
+        // Within reach of the line's start: found exactly.
+        assert_eq!(bounded_line_start(&mut buffer, 4_096), Some(0));
+
+        // Megabytes in, with no newline anywhere above: give up instead of
+        // walking back to 0.
+        assert_eq!(bounded_line_start(&mut buffer, 2_000_000), None);
+
+        // And a real line start just inside the window is still found.
+        let mut lines =
+            Buffer::from_str_test(&format!("{}\n{}", "x".repeat(1_000), json_line(200_000)));
+        assert_eq!(bounded_line_start(&mut lines, 1_500), Some(1_001));
+    }
+
+    /// A row deep inside one enormous line is a continuation row, even where
+    /// the lookup above gave up.
+    #[test]
+    fn a_deep_row_is_still_a_continuation_row() {
+        let mut buffer = Buffer::from_str_test(&json_line(400_000));
+        let carry = carry_at(&mut buffer, 2_000_000, word_rule(97));
+        assert!(
+            carry.on_continuation,
+            "a row megabytes into a line must resume as a continuation"
+        );
+        assert_eq!(carry.chars_in_row, 0);
+    }
+
+    /// A walk steps over a collapsed fold, because the frame does.
+    ///
+    /// Given no folds the walk counts rows inside the collapsed region, so a
+    /// scroll of N rows lands the viewport top *inside* a fold — a top the
+    /// renderer never draws. Given the frame's folds, the same walk reaches the
+    /// far side.
+    #[test]
+    fn a_walk_steps_over_a_collapsed_fold() {
+        let mut content = String::from("header\n");
+        let fold_start = content.len();
+        for i in 0..500 {
+            content.push_str(&format!("hidden body line {i}\n"));
+        }
+        let fold_end = content.len();
+        for i in 0..50 {
+            content.push_str(&format!("after {i}\n"));
+        }
+        let mut buffer = Buffer::from_str_test(&content);
+        let rule = word_rule(97);
+        let folds = [fold_start..fold_end];
+
+        // Three rows down from the top, with the body collapsed, is past it.
+        let folded = row_start_after(&mut buffer, 0, rule, 3, &folds);
+        assert!(
+            folded >= fold_end,
+            "a walk of 3 rows over a collapsed 500-line fold landed at byte \
+             {folded}, inside the fold ({fold_start}..{fold_end}) — the frame \
+             draws no such row"
+        );
+
+        // The control: without the folds it walks into the hidden body, which
+        // is exactly the bug this argument prevents.
+        let unfolded = row_start_after(&mut buffer, 0, rule, 3, NO_FOLDS);
+        assert!(
+            unfolded < fold_end,
+            "expected the unfolded walk to stay inside the body, got {unfolded}"
         );
     }
 
@@ -355,7 +602,7 @@ mod tests {
     fn a_walk_crosses_the_read_piece_boundary() {
         let mut buffer = Buffer::from_str_test(&json_line(30_000));
         let rule = word_rule(97);
-        let whole = row_starts_from(&mut buffer, 0, rule, 3000);
+        let whole = row_starts_from(&mut buffer, 0, rule, 3000, NO_FOLDS);
         assert!(
             whole
                 .iter()
@@ -372,28 +619,28 @@ mod tests {
     fn rows_between_answers_within_its_bound_and_declines_past_it() {
         let mut buffer = Buffer::from_str_test(&json_line(8_000));
         let rule = word_rule(97);
-        let whole = row_starts_from(&mut buffer, 0, rule, 400);
+        let whole = row_starts_from(&mut buffer, 0, rule, 400, NO_FOLDS);
 
         assert_eq!(
-            rows_between(&mut buffer, whole[3], whole[3], rule, 10),
+            rows_between(&mut buffer, whole[3], whole[3], rule, 10, NO_FOLDS),
             Some(0)
         );
         assert_eq!(
-            rows_between(&mut buffer, whole[3], whole[9], rule, 10),
+            rows_between(&mut buffer, whole[3], whole[9], rule, 10, NO_FOLDS),
             Some(6)
         );
         // A byte inside a row belongs to that row.
         assert_eq!(
-            rows_between(&mut buffer, whole[3], whole[9] + 1, rule, 10),
+            rows_between(&mut buffer, whole[3], whole[9] + 1, rule, 10, NO_FOLDS),
             Some(6)
         );
         // Above the walk's start, and beyond its reach: no bounded answer.
         assert_eq!(
-            rows_between(&mut buffer, whole[9], whole[3], rule, 10),
+            rows_between(&mut buffer, whole[9], whole[3], rule, 10, NO_FOLDS),
             None
         );
         assert_eq!(
-            rows_between(&mut buffer, whole[3], whole[80], rule, 10),
+            rows_between(&mut buffer, whole[3], whole[80], rule, 10, NO_FOLDS),
             None
         );
     }

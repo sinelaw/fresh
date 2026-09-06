@@ -383,26 +383,6 @@ fn layout_for_plain_text_under(
     lines
 }
 
-/// Given a logical line's layout and a character position within the
-/// LOGICAL line (not the ViewLine), return `(segment_idx,
-/// col_in_segment)` — the index of the `ViewLine` the character falls
-/// into, and the visual column within that `ViewLine`.
-///
-/// Replaces `primitives::line_wrapping::char_position_to_segment` for
-/// callers that have a cached `Vec<ViewLine>`.
-///
-/// The trick: continuation `ViewLine`s can carry hanging-indent
-/// characters at their start whose `source_offset` is `None` (they
-/// don't correspond to any source byte).  Those chars must NOT count
-/// toward the source-character position we're walking past.  So we
-/// sum *source* characters per row (char_source_bytes entries that
-/// are `Some(_)`) to find the row containing `char_pos_in_line`, and
-/// within that row we locate the specific char whose source_offset
-/// matches.
-///
-/// If `layout` is empty, returns `(0, 0)`.  If the position is past
-/// the end of the last row, returns the last row with the last
-/// visual column of that row.
 /// The visual row of `byte_in_line` within a laid-out logical line, and the
 /// visual column it sits at.
 ///
@@ -413,6 +393,11 @@ fn layout_for_plain_text_under(
 /// whitespace — deep in one enormous line the drift is the difference between
 /// the viewport agreeing with what was drawn and not (issue #1806). Rows carry
 /// real byte offsets, so ask them.
+///
+/// If `layout` is empty, returns `(0, 0)`. A byte past the end of the last row
+/// returns that row and the visual column of its last *source* character —
+/// which is not the same as [`char_position_in_layout`]'s last visual column
+/// when the row ends in injected content or a wide glyph.
 pub fn byte_position_in_layout(layout: &[ViewLine], byte_in_line: usize) -> (usize, usize) {
     if layout.is_empty() {
         return (0, 0);
@@ -439,6 +424,26 @@ pub fn byte_position_in_layout(layout: &[ViewLine], byte_in_line: usize) -> (usi
     (row_idx, col)
 }
 
+/// Given a logical line's layout and a character position within the
+/// LOGICAL line (not the ViewLine), return `(segment_idx,
+/// col_in_segment)` — the index of the `ViewLine` the character falls
+/// into, and the visual column within that `ViewLine`.
+///
+/// Replaces `primitives::line_wrapping::char_position_to_segment` for
+/// callers that have a cached `Vec<ViewLine>`.
+///
+/// The trick: continuation `ViewLine`s can carry hanging-indent
+/// characters at their start whose `source_offset` is `None` (they
+/// don't correspond to any source byte).  Those chars must NOT count
+/// toward the source-character position we're walking past.  So we
+/// sum *source* characters per row (char_source_bytes entries that
+/// are `Some(_)`) to find the row containing `char_pos_in_line`, and
+/// within that row we locate the specific char whose source_offset
+/// matches.
+///
+/// If `layout` is empty, returns `(0, 0)`.  If the position is past
+/// the end of the last row, returns the last row with the last
+/// visual column of that row.
 pub fn char_position_in_layout(layout: &[ViewLine], char_pos_in_line: usize) -> (usize, usize) {
     if layout.is_empty() {
         return (0, 0);

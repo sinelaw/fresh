@@ -157,10 +157,19 @@ impl crate::app::window::Window {
                 .with_buffer_and_split(buffer_id, split_id, |state, vs| {
                     let soft_breaks = state.collect_soft_break_positions();
                     let virtual_lines = state.collect_virtual_line_positions();
+                    // The rows this walks are the rows the frame drew, so it
+                    // has to skip the same collapsed folds the frame did.
+                    let hidden_ranges: Vec<(usize, usize)> = vs
+                        .folds
+                        .resolved_ranges(&state.buffer, &state.marker_list)
+                        .into_iter()
+                        .map(|r| (r.start_byte, r.end_byte))
+                        .collect();
                     vs.viewport.top_visual_row_source_byte(
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
                     )
                 })?
         };

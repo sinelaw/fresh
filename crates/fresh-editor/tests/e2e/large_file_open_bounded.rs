@@ -453,3 +453,60 @@ fn arrow_down_never_revisits_a_row_across_the_read_boundary() {
          got {previous} — the walk is too slow to have tested the boundary at all"
     );
 }
+
+/// Paging to the end of a byte-addressed buffer must leave the screen full.
+///
+/// The row-numbered path gets this from `set_top_byte_with_limit` /
+/// `apply_visual_scroll_limit`, which clamp a line start plus a row offset and
+/// so cannot clamp an anchored top. Without an equivalent, the anchored branch
+/// walks the top on past the last full screen until the buffer's final row is
+/// the *first* drawn row and the rest of the pane is empty.
+///
+/// Asserts on rendered output (CONTRIBUTING §2): the file is one line of
+/// ascending markers, so a full screen is one that still shows many of them.
+#[test]
+fn paging_to_the_end_leaves_a_full_screen() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    const W: u16 = 120;
+    const H: u16 = 30;
+
+    // ~80 KB on one line: several screenfuls, comfortably past the threshold
+    // below so this is the lazy, byte-addressed path.
+    let mut content = String::new();
+    for i in 0..10_000u32 {
+        content.push_str(&format!("M{i:06} "));
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("markers.txt");
+    std::fs::File::create(&path)
+        .unwrap()
+        .write_all(content.as_bytes())
+        .unwrap();
+
+    let mut harness = EditorTestHarness::with_config(W, H, wrapping_config(1024)).unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    // Far more pages than the file has, so the top is pinned at whatever the
+    // end-of-buffer clamp allows.
+    for _ in 0..200 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let marker_rows = screen
+        .lines()
+        .filter(|line| line.contains("M00") || line.contains("M0"))
+        .count();
+    assert!(
+        marker_rows > H as usize / 2,
+        "after paging past the end only {marker_rows} of {H} rows still show \
+         content; the top walked past the last full screen instead of \
+         clamping:\n{screen}"
+    );
+}
