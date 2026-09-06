@@ -665,23 +665,30 @@ pub struct InlineHint {
 /// pure. `theme` is `Some` on the draw path (so hint colours resolve) and `None`
 /// wherever the output is measured but never drawn.
 ///
-/// `is_compose` gates markdown_compose's code-block side rails the same way
-/// [`inject_virtual_lines`] gates its frame lines: the rails are emitted
-/// whenever any split composes the buffer, and a Source-mode split must render
-/// the code literally rather than boxed. Every other inline hint (LSP inlay
-/// hints, git blame, …) is mode-independent.
+/// `include_compose_only` is `false` only on the *draw* path of a Source-mode
+/// split, where markdown_compose's code-block side rails must be dropped the
+/// same way [`inject_virtual_lines`] drops its frame lines: the rails are
+/// emitted whenever any split composes the buffer, and a source pane has to
+/// show the code literally.
+///
+/// Every *measuring* caller passes `true`, rails included, because the row
+/// counts they feed are not per split. Scroll math asks for its index under a
+/// fixed `CacheViewMode::Source` label that says nothing about any split's
+/// actual mode (`scrollbar_math::scroll_geometry`), so gating on it there takes
+/// compose's own decorations out of the row count of a *composing* buffer and
+/// the scrollbar stops short of the end of the document.
 pub fn resolve_inline_hints(
     state: &EditorState,
     theme: Option<&Theme>,
     start: usize,
     end: usize,
-    is_compose: bool,
+    include_compose_only: bool,
 ) -> Vec<InlineHint> {
     state
         .virtual_texts
         .query_inline_in_range(&state.marker_list, start, end)
         .into_iter()
-        .filter(|(_, vtext)| is_compose || !is_compose_only_virtual_text(vtext))
+        .filter(|(_, vtext)| include_compose_only || !is_compose_only_virtual_text(vtext))
         .map(|(anchor, vtext)| InlineHint {
             anchor,
             text: vtext.text.clone(),

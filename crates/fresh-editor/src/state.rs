@@ -701,11 +701,11 @@ impl EditorState {
     /// cursor-dependent activation is the renderer's business, and letting it
     /// reach the index would mean scroll position changed when a cursor moved.
     ///
-    /// `view_mode` decides the decorations that are mode-specific:
-    /// markdown_compose's `md-syntax` conceals, its frame lines and its code
-    /// rails are emitted whenever any split composes the buffer, so a
-    /// Source-mode split must ignore them — the same gate `build_view_data`
-    /// applies (see [`crate::view::compose_only`]).
+    /// `view_mode` decides the one namespace that is mode-specific:
+    /// markdown_compose's `md-syntax` conceals are emitted whenever any split
+    /// composes the buffer, so a Source-mode split must ignore them — the same
+    /// gate `build_view_data` applies. Compose's frame lines and code rails are
+    /// deliberately *not* gated here; see the comment on `virtual_lines`.
     /// Collapsed byte ranges for `folds`, sorted — the form the index and the
     /// renderer both want. Folds live on the split, so they arrive as an
     /// argument rather than off `self`.
@@ -758,13 +758,19 @@ impl EditorState {
             Vec::new()
         } else {
             crate::view::ui::split_rendering::transforms::resolve_inline_hints(
-                self, None, 0, end, is_compose,
+                self, None, 0, end, true,
             )
         };
 
-        // Compose's own frame lines are dropped for a Source-mode split by
-        // `inject_virtual_lines`; the index has to drop the same ones or it
-        // counts rows the renderer never draws, and scrolling clamps early.
+        // Every virtual line the buffer has, compose's frame included — and the
+        // same for the rails above. The renderer drops the compose-only ones
+        // when the split it is drawing is in source mode, but this index is not
+        // per split: scroll math asks for it under a fixed
+        // `CacheViewMode::Source` label that says nothing about any split's
+        // mode (`scrollbar_math::scroll_geometry`). Dropping them on that label
+        // took the table borders and list spacers out of the row count of a
+        // *composing* buffer, and the wheel and the scrollbar stopped short of
+        // the end of the document.
         let virtual_lines = if self.virtual_texts.is_empty() {
             Vec::new()
         } else {
@@ -772,9 +778,6 @@ impl EditorState {
                 .virtual_texts
                 .query_lines_in_range(&self.marker_list, 0, end)
                 .into_iter()
-                .filter(|(_, vt)| {
-                    is_compose || !crate::view::compose_only::is_compose_only_virtual_text(vt)
-                })
                 .map(|(pos, _)| pos)
                 .collect();
             v.sort_unstable();

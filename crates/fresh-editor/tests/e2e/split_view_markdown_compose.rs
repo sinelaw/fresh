@@ -7,7 +7,7 @@
 /// 1. Compose mode only applies to the right panel (conceals, soft breaks)
 /// 2. Line numbers visible in source panel, hidden in compose panel
 /// 3. Scroll synchronization between panels
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -504,6 +504,64 @@ fn test_split_view_scroll_sync() {
     }
 }
 
+/// The rows of `pane`, clipped to its own columns — so an assertion about one
+/// pane cannot be satisfied (or broken) by what its neighbour drew.
+#[cfg(feature = "plugins")]
+fn pane_rows(harness: &EditorTestHarness, pane: fresh::model::event::LeafId) -> Vec<String> {
+    let rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the pane out");
+    harness
+        .screen_to_string()
+        .lines()
+        .skip(rect.y as usize)
+        .take(rect.height as usize)
+        .map(|line| {
+            line.chars()
+                .skip(rect.x as usize)
+                .take(rect.width as usize)
+                .collect()
+        })
+        .collect()
+}
+
+/// A project with the `markdown_compose` plugin and one markdown file, opened.
+///
+/// `full_grammar` is what the code-frame assertions need: compose frames a
+/// fenced block from the region classification the *Markdown grammar* makes, so
+/// with the default empty registry there is no classification and — correctly —
+/// no frame to assert about (see `markdown_compose_code_frame`).
+#[cfg(feature = "plugins")]
+fn compose_split_harness(
+    md: &str,
+    full_grammar: bool,
+) -> (EditorTestHarness, tempfile::TempDir) {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("doc.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    let mut options = HarnessOptions::new()
+        .with_working_dir(project_root.clone())
+        .without_empty_plugins_dir();
+    if full_grammar {
+        options = options.with_full_grammar_registry();
+    }
+    let mut harness = EditorTestHarness::create(160, 40, options).unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    (harness, temp_dir)
+}
+
 /// Regression: a fenced code block must render as plain numbered lines in a
 /// Source-mode split, even while a sibling split composes the same buffer.
 ///
@@ -517,13 +575,12 @@ fn test_split_view_scroll_sync() {
 /// code blocks are missing the line number in the gutter and they have | |
 /// borders inserted for them".
 ///
-/// Asserted on rendered output only: in the source split, each code line sits
-/// on a row that also carries its line number, and carries no rail.
+/// Asserted on rendered output only, and only on the source split's own
+/// columns: its code line keeps its gutter number, and nothing past the gutter
+/// is a rail.
 #[cfg(feature = "plugins")]
 #[test]
 fn test_code_block_renders_plain_in_source_split_while_sibling_composes() {
-    init_tracing_from_env();
-
     let md = "\
 # Title
 
@@ -537,69 +594,46 @@ fn main() {
 
 Text after the code.
 ";
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project");
-    std::fs::create_dir(&project_root).unwrap();
-    let plugins_dir = project_root.join("plugins");
-    std::fs::create_dir(&plugins_dir).unwrap();
-    copy_plugin(&plugins_dir, "markdown_compose");
-    copy_plugin_lib(&plugins_dir);
-    let md_path = project_root.join("code.md");
-    std::fs::write(&md_path, md).unwrap();
-
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(160, 40, Default::default(), project_root)
-            .unwrap();
-    harness.open_file(&md_path).unwrap();
-    harness.render().unwrap();
+    let (mut harness, _tmp) = compose_split_harness(md, true);
 
     // Split first, then compose the LEFT split — so the right one, which stays
     // in source, is the split the assertions look at.
     run_palette_command(&mut harness, "Split Vertical");
     harness.wait_for_async_quiescence(6).unwrap();
-    // `Split Vertical` focuses the new right pane; move back to the left one.
-    harness
-        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
-        .unwrap();
+    let source_pane = harness.editor().get_active_split();
+
+    run_palette_command(&mut harness, "Previous Split");
     harness.render().unwrap();
     run_palette_command(&mut harness, "Toggle Compose");
     harness
         .wait_until_stable(|h| h.screen_to_string().contains('┌'))
         .unwrap();
 
-    let screen = harness.screen_to_string();
     // The composing split proves the frame is being emitted at all — without
     // this the test would pass on a buffer that simply has no decorations.
+    let screen = harness.screen_to_string();
     assert!(
         screen.contains('┌'),
-        "the composing split should frame the code block.\nScreen:\n{}",
-        screen,
+        "the composing split should frame the code block.\nScreen:\n{screen}",
     );
 
-    // Everything right of the pane separator belongs to the source split. The
-    // separator is the first `│` on a row — in the source half a rail would be
-    // the *second*, which is precisely what must not be there.
-    for line in screen.lines() {
-        let Some(sep) = line.find('│') else { continue };
-        let right: String = line[sep + '│'.len_utf8()..].to_string();
-        if !right.contains("println!") {
-            continue;
-        }
-        assert!(
-            !right.contains('│'),
-            "the source split drew compose's code rails around the raw code.\n\
-             Source half: {right:?}\nScreen:\n{screen}",
-        );
-        // The gutter entry for this line survived, so the row was not folded
-        // by rail width. Line 7 of the document is the `println!` line.
-        assert!(
-            right.contains(" 7 "),
-            "the source split's code line lost its gutter line number.\n\
-             Source half: {right:?}\nScreen:\n{screen}",
-        );
-        return;
-    }
-    panic!("the source split never showed the code block.\nScreen:\n{screen}");
+    let row = pane_rows(&harness, source_pane)
+        .into_iter()
+        .find(|r| r.contains("println!"))
+        .unwrap_or_else(|| panic!("the source split never showed the code.\nScreen:\n{screen}"));
+    let (gutter, text) = row
+        .split_once('│')
+        .unwrap_or_else(|| panic!("the source split drew no gutter: {row:?}.\nScreen:\n{screen}"));
+    assert!(
+        gutter.contains('7'),
+        "the source split's code line lost its gutter line number: {row:?}.\n\
+         Screen:\n{screen}",
+    );
+    assert!(
+        !text.contains('│'),
+        "the source split drew compose's code rails around the raw code: \
+         {row:?}.\nScreen:\n{screen}",
+    );
 }
 
 /// Regression: composing one split must not turn line wrap on in a sibling
@@ -614,71 +648,46 @@ Text after the code.
 #[cfg(feature = "plugins")]
 #[test]
 fn test_composing_one_split_leaves_a_sibling_splits_line_wrap_alone() {
-    init_tracing_from_env();
-
-    // One line far wider than either pane, so wrap on / off is visible.
+    // One line far wider than either pane, so wrap on / off is visible as a
+    // different number of rows carrying its text.
     let long = "word ".repeat(60);
-    let md = format!("# Title\n\n{long}\n");
-
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project");
-    std::fs::create_dir(&project_root).unwrap();
-    let plugins_dir = project_root.join("plugins");
-    std::fs::create_dir(&plugins_dir).unwrap();
-    copy_plugin(&plugins_dir, "markdown_compose");
-    copy_plugin_lib(&plugins_dir);
-    let md_path = project_root.join("wrap.md");
-    std::fs::write(&md_path, &md).unwrap();
-
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(160, 40, Default::default(), project_root)
-            .unwrap();
-    harness.open_file(&md_path).unwrap();
-    harness.render().unwrap();
+    let (mut harness, _tmp) = compose_split_harness(&format!("# Title\n\n{long}\n"), false);
 
     run_palette_command(&mut harness, "Split Vertical");
     harness.wait_for_async_quiescence(6).unwrap();
+    let source_pane = harness.editor().get_active_split();
 
-    // The new right split is active: turn its wrap off, and record how much of
-    // the long line it draws as a result.
+    // The new right split is active: turn its wrap off, and record how many
+    // rows of it the long line occupies as a result.
     run_palette_command(&mut harness, "Toggle Line Wrap (Current");
     harness.render().unwrap();
-    let unwrapped_rows = harness
-        .screen_to_string()
-        .lines()
-        .filter(|l| {
-            l.find('│')
-                .is_some_and(|sep| l[sep + '│'.len_utf8()..].contains("word"))
-        })
+    let rows_with_wrap_off = pane_rows(&harness, source_pane)
+        .iter()
+        .filter(|r| r.contains("word"))
         .count();
+    assert_eq!(
+        rows_with_wrap_off, 1,
+        "wrap should be off in the source split to begin with"
+    );
 
     // Compose the LEFT split, then come back. Both moves fire
     // `buffer_activated`, which is where the wrap request lives.
-    harness
-        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
-        .unwrap();
+    run_palette_command(&mut harness, "Previous Split");
     harness.render().unwrap();
     run_palette_command(&mut harness, "Toggle Compose");
-    harness
-        .wait_until_stable(|h| h.screen_to_string().contains("Compose"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Char(']'), KeyModifiers::ALT)
-        .unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
+    run_palette_command(&mut harness, "Next Split");
     harness.wait_for_async_quiescence(6).unwrap();
 
-    let screen = harness.screen_to_string();
-    let rows_now = screen
-        .lines()
-        .filter(|l| {
-            l.find('│')
-                .is_some_and(|sep| l[sep + '│'.len_utf8()..].contains("word"))
-        })
+    let rows_now = pane_rows(&harness, source_pane)
+        .iter()
+        .filter(|r| r.contains("word"))
         .count();
     assert_eq!(
-        rows_now, unwrapped_rows,
+        rows_now, rows_with_wrap_off,
         "composing the sibling split turned line wrap back on in the source \
          split: its long line now occupies {rows_now} rows instead of \
-         {unwrapped_rows}.\nScreen:\n{screen}",
+         {rows_with_wrap_off}.\nScreen:\n{}",
+        harness.screen_to_string(),
     );
 }

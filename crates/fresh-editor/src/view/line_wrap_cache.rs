@@ -571,8 +571,11 @@ pub fn compute_line_layout(
     // feeds scroll-math / coordinate queries (never drawn), so only cell
     // width matters, not colour.
     if !state.virtual_texts.is_empty() {
+        // Rails included whatever `is_compose` says: this output feeds scroll
+        // math and coordinate queries, which ask under the same fixed
+        // `CacheViewMode::Source` label rather than a split's real mode.
         let hints = crate::view::ui::split_rendering::transforms::resolve_inline_hints(
-            state, None, line_start, line_end, is_compose,
+            state, None, line_start, line_end, true,
         );
         tokens = splice_inline_virtual_text(tokens, &hints);
     }
