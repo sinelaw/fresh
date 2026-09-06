@@ -189,7 +189,15 @@
   body.theme-word:not(.mobile) .msep,
   body.theme-word:not(.mobile) .mlabel{
     transform:translateY(calc(var(--wd-band-y) - var(--bezel-top)))}
-  body.theme-word:not(.mobile) .menubar{box-shadow:none}
+  /* The band draws the rules above and below, so the bar drops its own rather
+     than doubling the lower one. The dock clip stays: the lift is vertical
+     only, so the bar still spans the full grid width from APPX while
+     layoutShell shifts #device right by the dock's width — without the clip its
+     leftmost --clip-left px reach out past the bezel and over the dock. A
+     clip-path applies after the transform, against the element's own border
+     box, so the two do not interfere. */
+  body.theme-word:not(.mobile) .menubar{box-shadow:none;
+    clip-path:inset(0 0 0 var(--clip-left,0px))}
   body.theme-word .menu{color:#000}
   body.theme-word .menu:hover,body.theme-word .menu.open{background:#000080;color:#fff}
   /* Tabs: raised plates, the active one pressed into the frame. */
