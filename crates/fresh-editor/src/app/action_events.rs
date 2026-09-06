@@ -599,20 +599,14 @@ impl crate::app::window::Window {
             //
             // Past a line ending that step is the whole story. On a wrapped
             // continuation row it is not: `line_end_byte` is the last byte the
-            // row *drew*, not one past it, so leaving it be lands the cursor on
-            // the end of the row it is already on. From there every further
-            // Down resolves to that same row and returns the same byte, and the
-            // cursor never advances — `Down` simply stops, a few rows short of
-            // the bottom of the screen, and the viewport never scrolls because
-            // the cursor it follows never leaves. That is what pinned `Down` on
-            // a file that is one enormous wrapped line (issue #1806): the row
-            // pass keeps a margin of built rows below the cursor and so never
-            // reaches this fallback, but a lazily-loaded buffer has no wrap
-            // index, and its cursor walks off the last row it does have.
+            // row *drew*, not one past it, so the cursor lands back on the row
+            // it started from and every later Down resolves to it again — which
+            // is what pinned `Down` on a one-line file (issue #1806). The row
+            // pass keeps a margin of built rows and never reaches this
+            // fallback; a lazily-loaded buffer has no such index.
             //
-            // The row below starts one character further on, whether the wrap
-            // split a run (the row's last byte is content) or broke on the
-            // space it consumed (the row's last byte is that space).
+            // The next row starts one character on, whether the wrap split a
+            // run or broke on a space it consumed.
             let stepped = step_past_line_break(buffer, cur_row_line_end, buffer_len);
             let target_pos = if stepped != cur_row_line_end {
                 stepped

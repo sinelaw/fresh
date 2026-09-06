@@ -319,27 +319,21 @@ impl<'a> LineIterator<'a> {
 
     /// [`next_logical_line`](Self::next_logical_line) with a read budget.
     ///
-    /// Returns `(line_start, text, complete)`. `complete` is true when
-    /// `text` runs to the line's real terminator or to EOF — then this
-    /// behaved exactly like `next_logical_line`. It is false when the
-    /// logical line continues past `max_bytes`: the iterator is left
-    /// **parked mid-line**, so `current_position()` is *not* a line start
-    /// and the only meaningful way forward is
-    /// [`finish_logical_line`](Self::finish_logical_line), which resumes
-    /// joining the same line.
+    /// Returns `(line_start, text, complete)`. `complete` false means the line
+    /// runs past `max_bytes` and the iterator is left **parked mid-line**, so
+    /// `current_position()` is not a line start and the only way forward is
+    /// [`finish_logical_line`](Self::finish_logical_line).
     ///
-    /// The point is that a caller which only has to answer a bounded
-    /// question about a line — "does this fill the viewport?" — can stop
-    /// reading once it can answer it, instead of materializing a 53 MB
-    /// single-line file to lay out thirty rows (issue #1806).
+    /// Lets a caller with a bounded question — "does this line fill the
+    /// viewport?" — stop reading once it can answer, instead of materializing a
+    /// 53 MB single-line file to lay out thirty rows (issue #1806).
     pub fn next_logical_line_budgeted(
         &mut self,
         max_bytes: usize,
     ) -> Option<(usize, String, bool)> {
-        // The budget has to bind `next_line`'s own per-piece cap too, or a
-        // budget under `MAX_LINE_BYTES` would still read a 100 KB piece before
-        // the join loop below ever looked at it. Tightening only — restored on
-        // the way out so `finish_logical_line` reads at full width again.
+        // Must bind `next_line`'s per-piece cap too, or a budget under
+        // `MAX_LINE_BYTES` would still read a full piece before the join loop
+        // saw it. Tightening only, and restored on the way out.
         let saved_max = self.max_line_bytes;
         self.max_line_bytes = saved_max.min(max_bytes.max(1));
 

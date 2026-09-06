@@ -10,9 +10,8 @@
 //!   byte-identical multi-line control.
 //!
 //! Both are pinned on **bytes resident after the open** rather than on the
-//! clock. That is the property in both bugs — work proportional to the file —
-//! and unlike a wall-clock or RSS bound it means the same thing on a loaded CI
-//! runner as on an idle laptop. Timings are printed as diagnostics only.
+//! clock: that is the property in both bugs, and unlike a wall-clock or RSS
+//! bound it means the same on a loaded CI runner as on an idle laptop.
 
 use crate::common::harness::EditorTestHarness;
 use fresh::config::Config;
@@ -34,9 +33,9 @@ fn resident_bytes(harness: &EditorTestHarness) -> usize {
     harness.editor().active_state().buffer.resident_bytes()
 }
 
-/// `[0,1,2,...]` on a single line, plus the byte-identical control with every
-/// comma turned into a newline. Same bytes, same length, different shape —
-/// which is exactly what makes the comparison below meaningful.
+/// `[0,1,2,...]` on one line, plus the byte-identical control with every comma
+/// turned into a newline. Same bytes, different shape — which is what makes the
+/// comparison meaningful.
 fn single_line_and_control(values: usize) -> (String, String) {
     let mut single = String::from("[");
     for i in 0..values {
@@ -53,11 +52,9 @@ fn single_line_and_control(values: usize) -> (String, String) {
 /// Issue #1806. Opening a file that is one enormous line pulls in about as
 /// little of it as opening its byte-identical multi-line twin does.
 ///
-/// Before the per-line row-count cap, deciding where the viewport could sit
-/// wrapped the whole logical line — which meant reading all of it, chunk by
-/// chunk, into memory. The multi-line control is the same bytes in a shape
-/// that never triggered that, so the two resident figures being alike is the
-/// statement that the single-line shape no longer costs extra.
+/// Placing the viewport used to wrap the whole logical line, reading all of it
+/// in. The control is the same bytes in a shape that never did, so the two
+/// resident figures being alike is the statement that shape costs nothing.
 #[test]
 fn single_line_open_reads_no_more_than_multi_line() {
     // ~19 MB each. Large enough that reading the whole line is unmistakable
@@ -98,9 +95,8 @@ fn single_line_open_reads_no_more_than_multi_line() {
          (file is {file_bytes} bytes)"
     );
 
-    // Ten times the control, and still an order of magnitude under the file:
-    // loose enough to absorb the odd extra chunk the renderer touches, tight
-    // enough that reading the line to wrap it cannot pass.
+    // Loose enough for the odd extra chunk the renderer touches, tight enough
+    // that reading the line to wrap it cannot pass.
     let budget = (control_resident * 10).max(1024 * 1024);
     assert!(
         single_resident < budget,
@@ -157,8 +153,8 @@ fn large_binary_open_does_not_read_the_file() {
         None,
         "no line index is built over the file at open"
     );
-    // The first render legitimately pulls the chunks it draws; everything
-    // beyond that would be the file being read for its own sake.
+    // The first render legitimately pulls the chunks it draws; more than that
+    // would be the file being read for its own sake.
     assert!(
         resident < 4 * 1024 * 1024,
         "opening a {FILE_MB} MB binary left {resident} bytes resident — it is being read whole"
@@ -196,21 +192,15 @@ fn large_binary_content_still_renders() {
     );
 }
 
-/// Issue #1806, the other half of it: a file that is one enormous line has to
-/// *scroll*. The bug was not that the arrow key was slow, it was that it did
-/// nothing — the view stayed pinned to the first screenful of the file and no
-/// number of presses moved it, so everything past the first screen was
-/// unreachable by keyboard.
+/// Issue #1806, the other half: `Down` on a file that is one enormous line did
+/// nothing at all — the view stayed on the first screenful however long the key
+/// was held, so the rest of the file was unreachable by keyboard.
 ///
-/// A lazily-loaded buffer is the case that broke: it has no wrap index, so the
-/// byte-oriented pass is the only thing placing the viewport, and three things
-/// in it each stopped the walk (the row fallback landing on the row it started
-/// from, cursor-follow only ever landing on a line start, and the visibility
-/// check measuring from the line start rather than from the visible top).
+/// A lazily-loaded buffer is the case that broke: no wrap index, so the
+/// byte-oriented pass alone places the viewport.
 ///
-/// Asserts on rendered output only (CONTRIBUTING §2): the file is one line of
-/// ascending markers, so the topmost marker on screen says where the viewport
-/// is.
+/// Asserts on rendered output (CONTRIBUTING §2): the file is one line of
+/// ascending markers, so the topmost marker says where the viewport is.
 #[test]
 fn arrow_down_scrolls_a_lazily_loaded_single_line_file() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -243,9 +233,8 @@ fn arrow_down_scrolls_a_lazily_loaded_single_line_file() {
     let (top_before, bottom_before) =
         marker_range(&first_screen).expect("the first screenful should show markers");
 
-    // Well past the height of the screen: enough that the new top is below
-    // where the bottom of the first screenful was, so "it scrolled" cannot be
-    // satisfied by a single row of drift.
+    // Enough that the new top is below the first screenful's bottom, so a
+    // single row of drift cannot pass for scrolling.
     for _ in 0..100 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
@@ -282,20 +271,18 @@ fn marker_range(screen: &str) -> Option<(u32, u32)> {
 }
 
 /// Issue #1806, deeper in: walking down one enormous line has to keep working
-/// past the point where the renderer starts forcing row breaks.
+/// tens of thousands of characters into it.
 ///
-/// `build_base_tokens` breaks a row every `MAX_SAFE_LINE_WIDTH` (10,000)
-/// characters inside a logical line, and the viewport's own layout did not
-/// model those breaks — so the two drifted a row per 10,000 characters. Once
-/// the drift passed the scroll margin the viewport was content with a cursor
-/// on a row that was never drawn, nothing scrolled, and the next press had no
-/// row to move from: `Down` stopped dead four breaks into the line, about
-/// 40,000 characters in, and nothing below that was reachable by arrow key.
+/// The original wedge: `build_base_tokens` forced a row break every
+/// `MAX_SAFE_LINE_WIDTH` characters counted from wherever its read began, while
+/// the viewport wrapped the same text as one run, so the two drifted a row per
+/// 10,000 characters and `Down` died about 40,000 in. That break is gone —
+/// `WrapRule::Chop` owns the bound — and this holds the behaviour it cost.
 ///
-/// A wide terminal keeps the press count (and so the test) small: the wedge is
-/// at a character count, not a row count.
+/// A wide terminal keeps the press count small: the old wedge was at a
+/// character count, not a row count.
 #[test]
-fn arrow_down_crosses_the_renderers_forced_break() {
+fn arrow_down_walks_deep_into_one_enormous_line() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
     const WIDE: u16 = 1000;
@@ -340,14 +327,12 @@ fn arrow_down_crosses_the_renderers_forced_break() {
 /// behind at the 100,000-byte read boundary while the view scrolled on past
 /// it.
 ///
-/// `LineIterator` hands a long line back in `MAX_LINE_BYTES` pieces, and the
-/// lookup that lands the cursor on the new top row read one piece and clamped
-/// the row index to it. Every further page moved the view and pinned the
-/// cursor to that piece's last row — and a cursor off the drawn window is one
-/// that cannot then be moved at all.
+/// The lookup landing the cursor on the new top row read one `MAX_LINE_BYTES`
+/// piece and clamped the row index into it, pinning the cursor at that piece's
+/// last row — and a cursor off the drawn window cannot be moved at all.
 ///
-/// The status bar reports the cursor's byte offset in large-file mode, so this
-/// asserts on rendered output (CONTRIBUTING §2) like the rest of the file.
+/// Asserts on rendered output (CONTRIBUTING §2): the status bar reports the
+/// cursor's byte offset in large-file mode.
 #[test]
 fn paging_down_one_long_line_carries_the_cursor_past_the_read_boundary() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -399,4 +384,72 @@ fn status_bar_byte(screen: &str) -> Option<usize> {
         .next()?
         .parse()
         .ok()
+}
+
+/// Issue #1806, reported against this branch: holding `Down` eventually stopped
+/// advancing and cycled between a few positions around byte 99,999 — one short
+/// of the `MAX_LINE_BYTES` boundary the reader splits the line on.
+///
+/// Sized to just cross that boundary; a wide terminal reaches it in fewer
+/// presses. Every press must advance the cursor: a walk down a line visits each
+/// row once, so revisiting one is the cycle.
+#[test]
+fn arrow_down_never_revisits_a_row_across_the_read_boundary() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    const WIDE: u16 = 1000;
+    const SHORT: u16 = 12;
+    /// `LineIterator` splits an over-long line here.
+    const READ_PIECE_BYTES: usize = 100_000;
+
+    // `[0,1,2,...,39999]` — `big50.json`'s shape, ~229 KB on one line: several
+    // read pieces, and comfortably more rows than the walk below asks for, so
+    // the end of the file is never what stops it.
+    let mut content = String::from("[");
+    for i in 0..40_000u32 {
+        if i > 0 {
+            content.push(',');
+        }
+        content.push_str(&i.to_string());
+    }
+    content.push(']');
+    assert!(
+        content.len() > READ_PIECE_BYTES + 1000,
+        "must cross the boundary"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.json");
+    std::fs::File::create(&path)
+        .unwrap()
+        .write_all(content.as_bytes())
+        .unwrap();
+
+    let mut harness = EditorTestHarness::with_config(WIDE, SHORT, wrapping_config(1024)).unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    let mut seen: Vec<usize> = Vec::new();
+    let mut previous = 0usize;
+    for press in 1..=140 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        let at = status_bar_byte(&screen).expect("the status bar reports the cursor's byte");
+        assert!(
+            at > previous,
+            "press {press} moved the cursor from byte {previous} to {at} — it is not \
+             advancing. The last presses went {:?}, and the read-piece boundary is at \
+             {READ_PIECE_BYTES}:\n{screen}",
+            &seen[seen.len().saturating_sub(6)..]
+        );
+        previous = at;
+        seen.push(at);
+    }
+
+    assert!(
+        previous > READ_PIECE_BYTES,
+        "140 presses should have carried the cursor past byte {READ_PIECE_BYTES}, \
+         got {previous} — the walk is too slow to have tested the boundary at all"
+    );
 }

@@ -474,12 +474,9 @@ mod large_file_support {
         );
     }
 
-    /// Issue #3142: a large *binary* file is opened lazily, exactly like large
-    /// text. It used to be read whole into a `Vec<u8>` and line-indexed, which
-    /// froze the editor thread for the length of the read plus the scan and
-    /// cost ~1.2x the file size in resident memory — a 2 GB zip meant an
-    /// 18-second freeze and an OOM risk. Nothing about a binary buffer needs
-    /// that: it opens read-only and the viewport pulls chunks on demand.
+    /// Issue #3142: a large *binary* file opens lazily, like large text. Read
+    /// whole it cost ~1.2x its size resident and froze the editor thread for
+    /// the read plus the line scan — an 18-second freeze on a 2 GB zip.
     #[test]
     fn test_load_large_binary_file_is_lazy() {
         let temp_dir = TempDir::new().unwrap();
@@ -530,8 +527,8 @@ mod large_file_support {
         );
     }
 
-    /// A *small* binary file keeps the eager path: it is cheap to read, and
-    /// the line index it gets is what puts real line numbers in the gutter.
+    /// A *small* binary file keeps the eager path: cheap to read, and the line
+    /// index it gets is what puts real line numbers in the gutter.
     #[test]
     fn test_small_binary_file_still_loads_eagerly() {
         let temp_dir = TempDir::new().unwrap();

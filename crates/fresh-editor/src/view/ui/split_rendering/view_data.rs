@@ -123,9 +123,16 @@ fn base_char_budget(
     rows_before_window: usize,
     start_byte: usize,
 ) -> Option<usize> {
-    if !line_wrap_enabled {
-        return None;
-    }
+    // Wrap off still wraps, at the `MAX_SAFE_LINE_WIDTH` safety chop, so it has
+    // a real budget: rows × that width. It used to be `None` because the read
+    // was bounded instead by a `Break` the token build injected at the same
+    // interval — removed, since it placed row boundaries relative to wherever
+    // the read started, so no two reads of a line agreed on them.
+    let effective_width = if line_wrap_enabled {
+        effective_width
+    } else {
+        MAX_SAFE_LINE_WIDTH
+    };
 
     // Rows the build must cover: the window, plus whatever precedes it. With an
     // anchor that prefix is the walk-back to a resumable row — usually zero.

@@ -406,25 +406,19 @@ fn layout_for_plain_text_under(
 /// The visual row of `byte_in_line` within a laid-out logical line, and the
 /// visual column it sits at.
 ///
-/// The byte-oriented counterpart of [`char_position_in_layout`]. That one walks
-/// *drawn* source characters, and a wrap that breaks on a space consumes it —
-/// the space is drawn by no row, so the running count falls one behind the
-/// source for every wrapped row. Its callers hand it a byte offset from the
-/// line start, which is a character index only for single-byte text that never
-/// wraps on whitespace; for anything else the two diverge, by one row per
-/// hundred-odd wrapped rows, and deep inside one enormous line that is the
-/// difference between the viewport agreeing with what was drawn and not
-/// (issue #1806). Rows carry real byte offsets, so ask them instead.
-///
-/// A byte inside a run the wrap consumed belongs to the row that consumed it,
-/// which is the row the renderer's own `contains_byte` gives it.
+/// The byte-oriented counterpart of [`char_position_in_layout`], which walks
+/// *drawn* characters: a wrap breaking on a space consumes it, so that count
+/// falls one behind the source per wrapped row. Callers pass a byte offset,
+/// which is a character index only for single-byte text that never wraps on
+/// whitespace — deep in one enormous line the drift is the difference between
+/// the viewport agreeing with what was drawn and not (issue #1806). Rows carry
+/// real byte offsets, so ask them.
 pub fn byte_position_in_layout(layout: &[ViewLine], byte_in_line: usize) -> (usize, usize) {
     if layout.is_empty() {
         return (0, 0);
     }
-    // Rows ascend, so the row is the last one that starts at or before the
-    // byte. Rows drawing no source of their own (a wrap's own padding) carry
-    // no opinion and leave the answer with the row above.
+    // Rows ascend, so it is the last one starting at or before the byte. A row
+    // drawing no source of its own leaves the answer with the row above.
     let mut row_idx = 0;
     for (i, row) in layout.iter().enumerate() {
         match row.char_source_bytes.iter().find_map(|b| *b) {
