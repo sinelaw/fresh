@@ -2367,12 +2367,20 @@ impl Viewport {
         let margin = self.scroll_offset.min((height.saturating_sub(1)) / 2);
         let rule = self.wrap_rule(buffer);
         let folds = Self::fold_skip(hidden_ranges);
-        let top = self.top_byte();
 
-        // An anchored viewport has no second coordinate to reconcile. Reset
-        // before deciding: every branch below writes the top through
-        // `set_anchored_top`, which sets it again, and a viewport arriving here
-        // with a stale offset would otherwise read as that many rows lower.
+        // A viewport can arrive here still holding the row-counted pair — a line
+        // start plus rows into it — from before this buffer was byte-addressed.
+        // Convert rather than discard: the visible top is that many rows below
+        // `top_byte`, so walk to it and make it the anchor. Zeroing the offset
+        // and keeping the line start would drop those rows off the screen
+        // without moving anything the reader asked to move.
+        let carried_rows = self.top_view_line_offset();
+        let top = if carried_rows > 0 {
+            row_walk::row_start_after(buffer, self.top_byte(), rule, carried_rows, &folds)
+        } else {
+            self.top_byte()
+        };
+        self.set_top_byte(top);
         self.set_top_view_line_offset(0);
 
         if cursor.position < top {

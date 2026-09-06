@@ -47,10 +47,6 @@ use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 /// which is what [`row_starts_from`] loops for.
 const CHARS_PER_COLUMN_ESTIMATE: usize = 4;
 
-/// Slack bytes added to every read, so a walk for a single row on a narrow pane
-/// still has a row's worth of text to wrap.
-const READ_SLACK_BYTES: usize = 1024;
-
 /// How far back a line start is looked for before giving up.
 ///
 /// `Buffer::line_iterator` finds one by scanning backwards to the previous
@@ -103,23 +99,45 @@ fn bounded_line_start(buffer: &mut Buffer, byte: usize) -> Option<usize> {
 /// come out a different width from rows walked from the line's start. Feeding
 /// the machine the line's opening text and taking its carry cannot drift.
 pub fn carry_at(buffer: &mut Buffer, byte: usize, rule: WrapRule) -> RowCarry {
-    let Some(line_start) = bounded_line_start(buffer, byte) else {
-        // Too far into one line to find its start cheaply: a continuation row
-        // with no measurable indent.
-        return RowCarry {
-            on_continuation: true,
-            ..RowCarry::default()
-        };
-    };
-    if byte <= line_start {
+    // Whether this row continues a line is settled by the byte before it, so it
+    // costs one byte and is never in doubt. Deriving it from a *search* for the
+    // line start instead made a search that gave up indistinguishable from a
+    // real continuation — and byte 0, where there is nothing to search, came
+    // back as one.
+    if byte == 0 || !continues_a_line(buffer, byte) {
         return RowCarry::default();
     }
+    // The indent is a refinement on top, and the only part that needs the line's
+    // start — so it is also the only part allowed to give up: an unknown indent
+    // draws a continuation row flush, which is cosmetic, where an unknown
+    // continuation flag would be structural.
+    //
+    // Ask the rule before searching. A rule with no hanging indent has no use
+    // for the answer, and the search is the expensive half of this function.
+    let hanging = matches!(
+        rule,
+        WrapRule::Word {
+            hanging_indent: true,
+            ..
+        }
+    );
     RowCarry {
-        line_indent: measured_line_indent(buffer, line_start, rule),
+        line_indent: if hanging {
+            bounded_line_start(buffer, byte).map_or(0, |line_start| {
+                measured_line_indent(buffer, line_start, rule)
+            })
+        } else {
+            0
+        },
         on_continuation: true,
         ansi_in_escape: false,
         chars_in_row: 0,
     }
+}
+
+/// Whether `byte` sits inside a logical line rather than at its start.
+fn continues_a_line(buffer: &mut Buffer, byte: usize) -> bool {
+    buffer.slice_bytes(byte.saturating_sub(1)..byte).first() != Some(&b'\n')
 }
 
 /// The `line_indent` [`WrapMachine`] arrives at for the line opening at
@@ -128,7 +146,6 @@ pub fn carry_at(buffer: &mut Buffer, byte: usize, rule: WrapRule) -> RowCarry {
 /// Read bounded: whitespace past this is content, not indentation, and the
 /// machine stops measuring at the first non-space anyway.
 fn measured_line_indent(buffer: &mut Buffer, line_start: usize, rule: WrapRule) -> usize {
-    const MAX_INDENT_BYTES: usize = 256;
     if !matches!(
         rule,
         WrapRule::Word {
@@ -138,8 +155,11 @@ fn measured_line_indent(buffer: &mut Buffer, line_start: usize, rule: WrapRule) 
     ) {
         return 0;
     }
+    // Indentation is spaces and tabs, one byte each and at least one column
+    // each, so a row's width of bytes settles it: anything longer is an indent
+    // the machine clamps to zero for leaving no room to continue in.
     let end = line_start
-        .saturating_add(MAX_INDENT_BYTES)
+        .saturating_add(rule.available_width().saturating_add(1))
         .min(buffer.len());
     let opening = String::from_utf8_lossy(&buffer.slice_bytes(line_start..end)).into_owned();
     let mut machine = WrapMachine::resume(rule, RowCarry::default());
@@ -168,31 +188,30 @@ pub fn row_starts_from(
     let width = rule.available_width().max(1);
     let mut budget = max_rows
         .saturating_mul(width)
-        .saturating_mul(CHARS_PER_COLUMN_ESTIMATE)
-        .saturating_add(READ_SLACK_BYTES);
+        .saturating_mul(CHARS_PER_COLUMN_ESTIMATE);
 
-    // Bounded: each attempt quadruples, so this covers 256x the estimate, which
-    // is far past any real characters-per-column ratio. Without the cap a walk
-    // that cannot advance for some *other* reason keeps growing the budget until
-    // it reads the whole file — work proportional to the file, on every
-    // keystroke, which is the cost this module exists to remove.
-    const MAX_BUDGET_ATTEMPTS: usize = 4;
-
+    // Grow the budget while growing it still buys rows. A walk short of the rows
+    // asked for, with buffer left beyond what the budget could have read, was cut
+    // by the budget rather than by the buffer — and a caller reads a short walk
+    // as "the file ends here" and stops scrolling, so the two have to be told
+    // apart.
+    //
+    // No attempt limit is needed: a round must strictly add rows to continue and
+    // rows are capped at `max_rows`, so it ends in at most that many rounds, and
+    // in practice the first. A round that buys nothing means something other than
+    // the budget is stopping the walk — where a fixed count would keep going,
+    // quadrupling toward the size of the file.
     let mut starts = walk_rows(buffer, from, rule, max_rows, budget, folds);
-    for _ in 0..MAX_BUDGET_ATTEMPTS {
-        // Short of the rows asked for, with buffer left beyond what the budget
-        // could have read: the shortfall is the budget, not the buffer. Telling
-        // the two apart matters — a caller reads a short walk as "the file ends
-        // here" and stops scrolling.
-        let budget_bound = starts.len() < max_rows && from.saturating_add(budget) < buffer.len();
-        if !budget_bound {
-            break;
-        }
+    while starts.len() < max_rows && from.saturating_add(budget) < buffer.len() {
         let Some(larger) = budget.checked_mul(4) else {
             break;
         };
+        let grown = walk_rows(buffer, from, rule, max_rows, larger, folds);
+        if grown.len() <= starts.len() {
+            break;
+        }
         budget = larger;
-        starts = walk_rows(buffer, from, rule, max_rows, budget, folds);
+        starts = grown;
     }
     starts
 }
@@ -331,29 +350,30 @@ pub fn row_start_before(
     let width = rule.available_width().max(1);
     // A row holds at most `width` characters but can hold as little as one, so
     // this is a guess that grows until the window holds the rows asked for.
-    let mut reach = rows_back
-        .saturating_add(2)
-        .saturating_mul(width)
-        .saturating_add(READ_SLACK_BYTES);
+    let mut reach = rows_back.saturating_add(2).saturating_mul(width);
 
-    for _ in 0..MAX_BACKOFF_ATTEMPTS {
+    // Reach further while reaching further still finds more rows. Bounded without
+    // a count: the reach quadruples, so it arrives at the start of the buffer in
+    // a logarithmic number of rounds, and a round that finds no more rows than
+    // the last ends it.
+    let mut best_rows = 0usize;
+    loop {
         let from = walk_start_before(buffer, byte, reach);
         let starts = row_starts_up_to(buffer, from, byte, rule, folds);
         if let Some(index) = starts.len().checked_sub(rows_back + 1) {
             return starts[index];
         }
-        if from == 0 || from >= byte {
-            // Nothing further back to reach for.
+        if from == 0 || from >= byte || starts.len() <= best_rows {
+            // The start of the buffer, or a reach that bought nothing.
             return starts.first().copied().unwrap_or(from);
         }
-        reach = reach.saturating_mul(4);
+        best_rows = starts.len();
+        let Some(further) = reach.checked_mul(4) else {
+            return starts.first().copied().unwrap_or(from);
+        };
+        reach = further;
     }
-    walk_start_before(buffer, byte, reach)
 }
-
-/// Each attempt quadruples the window, so this covers four orders of magnitude
-/// of rows-per-byte before settling for what it found.
-const MAX_BACKOFF_ATTEMPTS: usize = 4;
 
 /// Where a backward walk should begin to reach `reach` bytes above `byte`.
 ///
@@ -544,16 +564,34 @@ mod tests {
         assert_eq!(bounded_line_start(&mut lines, 1_500), Some(1_001));
     }
 
-    /// A row deep inside one enormous line is a continuation row, even where
-    /// the lookup above gave up.
+    /// Whether a row continues a line is decided by the byte before it, so it is
+    /// exact everywhere — including where the line-start lookup gives up, and at
+    /// byte 0 where there is nothing to look for.
+    ///
+    /// Deriving it from the lookup instead made a search that gave up
+    /// indistinguishable from a real continuation, and byte 0 came back as one:
+    /// the first row of every buffer drawn as a continuation, which is a blank
+    /// gutter and no fold marker.
     #[test]
-    fn a_deep_row_is_still_a_continuation_row() {
-        let mut buffer = Buffer::from_str_test(&json_line(400_000));
-        let carry = carry_at(&mut buffer, 2_000_000, word_rule(97));
-        assert!(
-            carry.on_continuation,
-            "a row megabytes into a line must resume as a continuation"
-        );
+    fn continuation_is_decided_by_the_preceding_byte() {
+        let rule = word_rule(97);
+
+        // Byte 0: the start of the buffer starts a line.
+        let mut lines = Buffer::from_str_test("alpha\nbeta\ngamma");
+        assert!(!carry_at(&mut lines, 0, rule).on_continuation);
+
+        // Just past a newline: also a line start.
+        assert!(!carry_at(&mut lines, 6, rule).on_continuation);
+
+        // Inside a line: a continuation.
+        assert!(carry_at(&mut lines, 8, rule).on_continuation);
+
+        // Megabytes into one line, where the line-start lookup gives up: still
+        // exactly a continuation, because the byte before it says so.
+        let mut huge = Buffer::from_str_test(&json_line(400_000));
+        assert_eq!(bounded_line_start(&mut huge, 2_000_000), None);
+        let carry = carry_at(&mut huge, 2_000_000, rule);
+        assert!(carry.on_continuation);
         assert_eq!(carry.chars_in_row, 0);
     }
 
@@ -594,6 +632,24 @@ mod tests {
             unfolded < fold_end,
             "expected the unfolded walk to stay inside the body, got {unfolded}"
         );
+    }
+
+    /// A row-counted top converts to the byte of the row it names.
+    ///
+    /// A viewport can reach the anchored path still holding a line start plus a
+    /// count of rows into that line. Zeroing the count and keeping the line
+    /// start would scroll the view back up by that many rows without the reader
+    /// asking; walking the count forward is the same position in the other
+    /// coordinate.
+    #[test]
+    fn a_row_count_into_a_line_converts_to_that_row_s_byte() {
+        let mut buffer = Buffer::from_str_test(&json_line(8_000));
+        let rule = word_rule(97);
+        let rows = row_starts_from(&mut buffer, 0, rule, 40, NO_FOLDS);
+
+        // "line start, 7 rows down" names the same row as its byte does.
+        assert_eq!(row_start_after(&mut buffer, 0, rule, 7, NO_FOLDS), rows[7]);
+        assert_eq!(row_start_after(&mut buffer, 0, rule, 0, NO_FOLDS), rows[0]);
     }
 
     /// The read boundary is not a row boundary — what the old row counting
