@@ -92,6 +92,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         if ts.underline {
             s = s.add_modifier(Modifier::UNDERLINED);
         }
+        if ts.dim {
+            s = s.add_modifier(Modifier::DIM);
+        }
         region = "Plugin Token";
         s
     } else if ctx.ansi_style.fg.is_some()

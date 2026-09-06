@@ -12,8 +12,9 @@
 
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
-    CodeActionOrCommand, CompletionItem, Diagnostic, FoldingRange, InlayHint, Location,
-    SemanticTokensFullDeltaResult, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
+    CodeActionOrCommand, CompletionItem, Diagnostic, FoldingRange, InlayHint, InlineCompletionItem,
+    Location, SemanticTokensFullDeltaResult, SemanticTokensRangeResult, SemanticTokensResult,
+    SignatureHelp,
 };
 use serde_json::Value;
 use std::sync::mpsc;
@@ -168,6 +169,12 @@ pub enum AsyncMessage {
     LspCompletion {
         request_id: u64,
         items: Vec<CompletionItem>,
+    },
+
+    /// LSP inline completion response (textDocument/inlineCompletion)
+    LspInlineCompletion {
+        request_id: u64,
+        items: Vec<InlineCompletionItem>,
     },
 
     /// LSP go-to-definition response

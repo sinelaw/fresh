@@ -116,6 +116,7 @@
         "completion_popup_auto_show": false,
         "quick_suggestions": true,
         "quick_suggestions_delay_ms": 150,
+        "enable_ghost_text": true,
         "suggest_on_trigger_characters": true,
         "enable_inlay_hints": true,
         "enable_semantic_tokens_full": false,
@@ -782,7 +783,7 @@
           "x-section": "Completion"
         },
         "quick_suggestions": {
-          "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nOnly takes effect when completion_popup_auto_show is true.\nDefault: true",
+          "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions or inline ghost text are requested\nautomatically while typing, not just on trigger characters (like `.` or `::`).\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Completion"
@@ -793,6 +794,12 @@
           "format": "uint64",
           "minimum": 0,
           "default": 150,
+          "x-section": "Completion"
+        },
+        "enable_ghost_text": {
+          "description": "Show LSP inline completion ghost text from textDocument/inlineCompletion.\nThis renders a dimmed Copilot-style suggestion directly in the buffer,\nindependently of the completion popup.\nDefault: true",
+          "type": "boolean",
+          "default": true,
           "x-section": "Completion"
         },
         "suggest_on_trigger_characters": {

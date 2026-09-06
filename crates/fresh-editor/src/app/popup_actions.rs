@@ -368,6 +368,9 @@ impl Editor {
     pub fn handle_popup_cancel(&mut self) {
         use crate::view::popup::PopupResolver;
 
+        self.active_window_mut().cancel_pending_lsp_requests();
+        self.clear_ghost_text();
+
         let resolver = if self.global_popups.is_visible() {
             self.global_popups.top().map(|p| p.resolver.clone())
         } else {

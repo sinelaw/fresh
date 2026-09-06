@@ -210,6 +210,7 @@ pub struct PartialEditorConfig {
     pub completion_popup_auto_show: Option<bool>,
     pub quick_suggestions: Option<bool>,
     pub quick_suggestions_delay_ms: Option<u64>,
+    pub enable_ghost_text: Option<bool>,
     pub suggest_on_trigger_characters: Option<bool>,
     pub show_menu_bar: Option<bool>,
     pub screensaver_enabled: Option<bool>,
@@ -332,6 +333,7 @@ impl Merge for PartialEditorConfig {
         self.quick_suggestions.merge_from(&other.quick_suggestions);
         self.quick_suggestions_delay_ms
             .merge_from(&other.quick_suggestions_delay_ms);
+        self.enable_ghost_text.merge_from(&other.enable_ghost_text);
         self.suggest_on_trigger_characters
             .merge_from(&other.suggest_on_trigger_characters);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
@@ -706,6 +708,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             completion_popup_auto_show: Some(cfg.completion_popup_auto_show),
             quick_suggestions: Some(cfg.quick_suggestions),
             quick_suggestions_delay_ms: Some(cfg.quick_suggestions_delay_ms),
+            enable_ghost_text: Some(cfg.enable_ghost_text),
             suggest_on_trigger_characters: Some(cfg.suggest_on_trigger_characters),
             show_menu_bar: Some(cfg.show_menu_bar),
             screensaver_enabled: Some(cfg.screensaver_enabled),
@@ -876,6 +879,7 @@ impl PartialEditorConfig {
             quick_suggestions_delay_ms: self
                 .quick_suggestions_delay_ms
                 .unwrap_or(defaults.quick_suggestions_delay_ms),
+            enable_ghost_text: self.enable_ghost_text.unwrap_or(defaults.enable_ghost_text),
             suggest_on_trigger_characters: self
                 .suggest_on_trigger_characters
                 .unwrap_or(defaults.suggest_on_trigger_characters),

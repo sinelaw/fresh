@@ -855,6 +855,9 @@ impl Editor {
             }
             Action::LspCompletion => {
                 self.request_completion();
+                if let Err(err) = self.request_inline_completion_invoked() {
+                    tracing::debug!("Failed to request inline completion: {err}");
+                }
             }
             Action::DabbrevExpand => {
                 if self.refuse_if_editing_disabled() {
@@ -1845,6 +1848,11 @@ impl Editor {
                 self.handle_popup_focus();
             }
             Action::CompletionAccept => {
+                if self.accept_ghost_text() {
+                    return Ok(());
+                }
+                self.active_window_mut().cancel_pending_lsp_requests();
+                self.clear_ghost_text();
                 use super::popup_actions::PopupConfirmResult;
                 if let PopupConfirmResult::EarlyReturn = self.handle_popup_confirm() {
                     return Ok(());
@@ -1852,6 +1860,14 @@ impl Editor {
             }
             Action::CompletionDismiss => {
                 self.handle_popup_cancel();
+            }
+            Action::InsertTab => {
+                if self.accept_ghost_text() {
+                    return Ok(());
+                }
+                self.active_window_mut().cancel_pending_lsp_requests();
+                self.clear_ghost_text();
+                self.apply_action_as_events(action)?;
             }
             Action::InsertChar(c) => {
                 if self.is_prompting() {

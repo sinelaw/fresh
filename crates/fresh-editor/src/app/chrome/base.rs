@@ -157,6 +157,7 @@ impl Editor {
                 // after the user has moved on.
                 if router::cancels_pending_lsp(&action) {
                     self.active_window_mut().cancel_pending_lsp_requests();
+                    self.clear_ghost_text();
                 }
                 // Keys the file browser ignores (its Alt+letter toggles) resolve
                 // here in the Prompt context; the resulting prompt/file-browser

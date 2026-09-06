@@ -198,6 +198,7 @@ pub struct ServerCapabilitySummary {
     pub completion: bool,
     pub completion_resolve: bool,
     pub completion_trigger_characters: Vec<String>,
+    pub inline_completion: bool,
     pub definition: bool,
     pub implementation: bool,
     pub references: bool,
@@ -268,6 +269,7 @@ impl ServerCapabilitySummary {
                     self.completion_resolve = false;
                 }
             }
+            "textDocument/inlineCompletion" => self.inline_completion = register,
             "textDocument/definition" => self.definition = register,
             "textDocument/implementation" => self.implementation = register,
             "textDocument/references" => self.references = register,
@@ -700,6 +702,42 @@ impl LspManager {
                     .completion_trigger_characters
                     .contains(&ch_str)
         })
+    }
+
+    /// Check if any eligible completion server supports inline completion.
+    pub fn inline_completion_supported(&self, language: &str) -> bool {
+        self.inline_completion_support(language) == Some(true)
+    }
+
+    /// Get inline completion support if capability data is known for this language.
+    pub fn inline_completion_support(&self, language: &str) -> Option<bool> {
+        let mut saw_initialized_completion_server = false;
+        for sh in self.get_handles(language) {
+            if !sh.feature_filter.allows(LspFeature::Completion) || !sh.capabilities.initialized {
+                continue;
+            }
+            saw_initialized_completion_server = true;
+            if sh.capabilities.inline_completion {
+                return Some(true);
+            }
+        }
+
+        saw_initialized_completion_server.then_some(false)
+    }
+
+    /// Get the first mutable handle for a language that supports inline completion.
+    pub fn handle_for_inline_completion_mut(
+        &mut self,
+        language: &str,
+    ) -> Option<&mut ServerHandle> {
+        self.handles
+            .iter_mut()
+            .filter(|sh| sh.handle.scope().accepts(language))
+            .find(|sh| {
+                sh.feature_filter.allows(LspFeature::Completion)
+                    && sh.capabilities.initialized
+                    && sh.capabilities.inline_completion
+            })
     }
 
     /// Try to spawn an LSP server, checking auto_start configuration

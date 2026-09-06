@@ -21,6 +21,7 @@ use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::view::prompt::{Prompt, PromptType};
 
 use crate::services::lsp::async_handler::LspHandle;
+use crate::services::lsp::manager::detect_language;
 use crate::types::LspFeature;
 
 use super::{Editor, SemanticTokenRangeRequest};
@@ -99,8 +100,168 @@ fn lsp_range_overlaps(
 
 const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
 const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
+const GHOST_TEXT_ID: &str = "ghost-text";
 
 impl Editor {
+    /// Clear any active ghost text (inline completion) from the buffer.
+    pub(crate) fn clear_ghost_text(&mut self) {
+        let buffer_id = {
+            let window = self.active_window_mut();
+            window.ghost_text_completion = None;
+            window.ghost_text_buffer_id.take()
+        };
+
+        if let Some(buffer_id) = buffer_id {
+            let active_window = self.active_window;
+            if let Some(state) = self
+                .windows
+                .get_mut(&active_window)
+                .and_then(|window| window.buffers.get_mut(&buffer_id))
+            {
+                state
+                    .virtual_texts
+                    .remove_by_id(&mut state.marker_list, GHOST_TEXT_ID);
+            }
+        }
+    }
+
+    /// Accept the active inline-completion ghost text, if it still matches
+    /// the active buffer and cursor.
+    pub(crate) fn accept_ghost_text(&mut self) -> bool {
+        let Some(completion) = self.active_window().ghost_text_completion.clone() else {
+            return false;
+        };
+
+        let buffer_id = self.active_buffer();
+        let cursor_count = self.active_cursors().count();
+        let cursor = self.active_cursors().primary();
+        if buffer_id != completion.buffer_id
+            || cursor_count != 1
+            || !cursor.collapsed()
+            || cursor.position != completion.cursor_position
+        {
+            self.clear_ghost_text();
+            return false;
+        }
+
+        let cursor_id = self.active_cursors().primary_id();
+        let event = Event::Insert {
+            position: completion.cursor_position,
+            text: completion.suffix,
+            cursor_id,
+        };
+
+        self.active_window_mut().cancel_pending_lsp_requests();
+        self.clear_ghost_text();
+        if self.active_state().popups.top().is_some_and(|popup| {
+            matches!(
+                popup.resolver,
+                crate::view::popup::PopupResolver::Completion
+            )
+        }) {
+            self.hide_popup();
+            self.active_window_mut().completion_items = None;
+        }
+        self.active_event_log_mut().append(event.clone());
+        self.apply_event_to_active_buffer(&event);
+        true
+    }
+
+    /// Request inline completion (ghost text) with an automatic trigger.
+    pub(crate) fn request_inline_completion_automatic(&mut self) -> AnyhowResult<()> {
+        self.request_inline_completion_with_trigger(
+            lsp_types::InlineCompletionTriggerKind::Automatic,
+        )
+    }
+
+    /// Request inline completion (ghost text) explicitly invoked by the user.
+    pub(crate) fn request_inline_completion_invoked(&mut self) -> AnyhowResult<()> {
+        self.request_inline_completion_with_trigger(lsp_types::InlineCompletionTriggerKind::Invoked)
+    }
+
+    fn request_inline_completion_with_trigger(
+        &mut self,
+        trigger_kind: lsp_types::InlineCompletionTriggerKind,
+    ) -> AnyhowResult<()> {
+        if !self.config.editor.enable_ghost_text {
+            self.clear_ghost_text();
+            return Ok(());
+        }
+
+        self.clear_ghost_text();
+
+        let (buffer_id, line, character, language) = {
+            let state = self.active_state();
+            let cursor_count = self.active_cursors().count();
+            let cursor = self.active_cursors().primary();
+            if cursor_count != 1 || !cursor.collapsed() {
+                self.clear_ghost_text();
+                return Ok(());
+            }
+
+            let path = match state.buffer.file_path() {
+                Some(path) => path,
+                None => return Ok(()),
+            };
+
+            let language = match detect_language(path, &self.config.languages) {
+                Some(language) => language,
+                None => return Ok(()),
+            };
+
+            let cursor_pos = cursor.position;
+            let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+            (self.active_buffer(), line, character, language)
+        };
+
+        let inline_supported = self
+            .lsp()
+            .and_then(|lsp| lsp.inline_completion_support(&language));
+
+        if inline_supported == Some(false) {
+            self.clear_ghost_text();
+            return Ok(());
+        }
+
+        if let Some(pending_id) = self
+            .active_window_mut()
+            .pending_inline_completion_request
+            .take()
+        {
+            self.active_window_mut().send_lsp_cancel_request(pending_id);
+        }
+
+        let request_id = self.active_window_mut().next_lsp_request_id;
+        let sent = self
+            .with_lsp_for_buffer_inline_completion(buffer_id, |handle, uri, _language| {
+                let result = handle.inline_completion(
+                    request_id,
+                    uri.as_uri().clone(),
+                    line as u32,
+                    character as u32,
+                    trigger_kind,
+                    None,
+                );
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested inline completion at {}:{}:{}",
+                        uri.as_str(),
+                        line,
+                        character
+                    );
+                }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.active_window_mut().next_lsp_request_id += 1;
+            self.active_window_mut().pending_inline_completion_request = Some(request_id);
+        }
+
+        Ok(())
+    }
+
     /// Handle LSP completion response.
     /// Supports merging from multiple servers: first response creates the menu,
     /// subsequent responses extend it.
@@ -223,6 +384,158 @@ impl Editor {
         );
 
         Ok(())
+    }
+
+    /// Handle LSP inline completion response (textDocument/inlineCompletion).
+    pub(crate) fn handle_inline_completion_response(
+        &mut self,
+        request_id: u64,
+        items: Vec<lsp_types::InlineCompletionItem>,
+    ) {
+        use crate::primitives::snippet::expand_snippet;
+        use crate::primitives::word_navigation::find_completion_word_start;
+        use crate::view::virtual_text::VirtualTextPosition;
+        use ratatui::style::{Modifier, Style};
+
+        if self.active_window().pending_inline_completion_request != Some(request_id) {
+            tracing::debug!(
+                "Ignoring inline completion response for outdated request {}",
+                request_id
+            );
+            return;
+        }
+
+        self.active_window_mut().pending_inline_completion_request = None;
+
+        if !self.config.editor.enable_ghost_text {
+            self.clear_ghost_text();
+            return;
+        }
+
+        let (buffer_id, cursor_pos, cursor_count, cursor_collapsed, buffer_len, suggestion_item) = {
+            let state = self.active_state();
+            let cursor_count = self.active_cursors().count();
+            let cursor = self.active_cursors().primary();
+            (
+                self.active_buffer(),
+                cursor.position,
+                cursor_count,
+                cursor.collapsed(),
+                state.buffer.len(),
+                items.into_iter().next(),
+            )
+        };
+
+        if cursor_count != 1 || !cursor_collapsed {
+            self.clear_ghost_text();
+            return;
+        }
+
+        let Some(item) = suggestion_item else {
+            self.clear_ghost_text();
+            return;
+        };
+
+        let lsp_types::InlineCompletionItem {
+            insert_text,
+            insert_text_format,
+            range,
+            ..
+        } = item;
+
+        let mut suggestion = insert_text;
+        if insert_text_format == Some(lsp_types::InsertTextFormat::SNIPPET) {
+            suggestion = expand_snippet(&suggestion).text;
+        }
+
+        let suggestion = suggestion.lines().next().unwrap_or("").to_string();
+        if suggestion.is_empty() {
+            self.clear_ghost_text();
+            return;
+        }
+
+        let prefix = {
+            let state = self.active_state_mut();
+            if let Some(range) = range {
+                let start = state.buffer.line_col_to_position(
+                    range.start.line as usize,
+                    range.start.character as usize,
+                );
+                let end = state
+                    .buffer
+                    .line_col_to_position(range.end.line as usize, range.end.character as usize);
+                if cursor_pos >= start && cursor_pos <= end && start < cursor_pos {
+                    state.get_text_range(start, cursor_pos)
+                } else {
+                    let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+                    if word_start < cursor_pos {
+                        state.get_text_range(word_start, cursor_pos)
+                    } else {
+                        String::new()
+                    }
+                }
+            } else {
+                let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+                if word_start < cursor_pos {
+                    state.get_text_range(word_start, cursor_pos)
+                } else {
+                    String::new()
+                }
+            }
+        };
+
+        let prefix_lower = prefix.to_lowercase();
+        let suggestion_lower = suggestion.to_lowercase();
+        let prefix_char_count = prefix.chars().count();
+
+        let suffix = if prefix.is_empty() {
+            suggestion
+        } else if suggestion.starts_with(&prefix) || suggestion_lower.starts_with(&prefix_lower) {
+            let byte_idx = suggestion
+                .char_indices()
+                .nth(prefix_char_count)
+                .map(|(idx, _)| idx)
+                .unwrap_or(suggestion.len());
+            suggestion[byte_idx..].to_string()
+        } else {
+            String::new()
+        };
+
+        if suffix.is_empty() || buffer_len == 0 {
+            self.clear_ghost_text();
+            return;
+        }
+
+        let (anchor_pos, position) = if cursor_pos >= buffer_len {
+            (buffer_len.saturating_sub(1), VirtualTextPosition::AfterChar)
+        } else {
+            (cursor_pos, VirtualTextPosition::BeforeChar)
+        };
+
+        let style = Style::default()
+            .fg(self.theme.read().unwrap().line_number_fg)
+            .add_modifier(Modifier::DIM);
+
+        self.clear_ghost_text();
+        if let Some(state) = self.active_window_mut().buffers.get_mut(&buffer_id) {
+            state.virtual_texts.add_with_id_and_padding(
+                &mut state.marker_list,
+                anchor_pos,
+                suffix.clone(),
+                style,
+                position,
+                100,
+                GHOST_TEXT_ID.to_string(),
+                false,
+            );
+            self.active_window_mut().ghost_text_buffer_id = Some(buffer_id);
+            self.active_window_mut().ghost_text_completion =
+                Some(crate::app::window::InlineCompletionGhostText {
+                    buffer_id,
+                    cursor_position: cursor_pos,
+                    suffix,
+                });
+        }
     }
 
     /// Handle LSP go-to-definition response
@@ -443,6 +756,48 @@ impl Editor {
         // Dispatch to the first handle that allows this feature
         let lsp = self.lsp_mut()?;
         let sh = lsp.handle_for_feature_mut(&language, feature)?;
+        Some(f(&sh.handle, &uri, &language))
+    }
+
+    /// Dispatch an inline-completion request to the first completion server
+    /// that explicitly advertised `textDocument/inlineCompletion`.
+    pub(crate) fn with_lsp_for_buffer_inline_completion<F, R>(
+        &mut self,
+        buffer_id: BufferId,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&LspHandle, &crate::app::types::LspUri, &str) -> R,
+    {
+        use crate::services::lsp::manager::LspSpawnResult;
+
+        let (uri, language, file_path) = {
+            let metadata = self.active_window().buffer_metadata.get(&buffer_id)?;
+            if !metadata.lsp_enabled {
+                return None;
+            }
+            let uri = metadata.file_uri()?.clone();
+            let file_path = metadata.file_path().cloned();
+            let language = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)?
+                .language
+                .clone();
+            (uri, language, file_path)
+        };
+
+        let lsp = self.lsp_mut()?;
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
+            return None;
+        }
+
+        self.ensure_did_open_all(buffer_id, &uri, &language)?;
+
+        let lsp = self.lsp_mut()?;
+        let sh = lsp.handle_for_inline_completion_mut(&language)?;
         Some(f(&sh.handle, &uri, &language))
     }
 
@@ -760,15 +1115,17 @@ impl Editor {
     /// Check if the inserted character should trigger completion
     /// and if so, request completion automatically (possibly after a delay).
     ///
-    /// Only triggers when `completion_popup_auto_show` is enabled. Then:
+    /// Triggers when either automatic popup completions or ghost text are
+    /// enabled. Then:
     /// 1. Trigger characters (like `.`, `::`, etc.): immediate if suggest_on_trigger_characters is enabled
     /// 2. Word characters: delayed by quick_suggestions_delay_ms if quick_suggestions is enabled
     ///
     /// This provides VS Code-like behavior where suggestions appear while typing,
     /// with debouncing to avoid spamming the LSP server.
     pub(crate) fn maybe_trigger_completion(&mut self, c: char) {
-        // Auto-show must be enabled for any automatic triggering
-        if !self.config.editor.completion_popup_auto_show {
+        let auto_show_popup = self.config.editor.completion_popup_auto_show;
+        let auto_show_ghost_text = self.config.editor.enable_ghost_text;
+        if !auto_show_popup && !auto_show_ghost_text {
             return;
         }
 
@@ -796,7 +1153,14 @@ impl Editor {
             );
             // Cancel any pending scheduled trigger
             self.active_window_mut().scheduled_completion_trigger = None;
-            self.request_completion();
+            if auto_show_popup {
+                self.request_completion();
+            }
+            if auto_show_ghost_text {
+                if let Err(err) = self.request_inline_completion_automatic() {
+                    tracing::debug!("Failed to request inline completion: {err}");
+                }
+            }
             return;
         }
 
@@ -1431,8 +1795,11 @@ impl Editor {
         use crate::view::virtual_text::VirtualTextPosition;
         use ratatui::style::{Color, Style};
 
-        // Clear existing inlay hints
-        state.virtual_texts.clear(&mut state.marker_list);
+        // Clear existing inlay hints, preserving unrelated virtual text such as ghost text.
+        const INLAY_HINT_PREFIX: &str = "lsp-inlay:";
+        state
+            .virtual_texts
+            .remove_by_prefix(&mut state.marker_list, INLAY_HINT_PREFIX);
 
         if hints.is_empty() {
             return;
@@ -1446,7 +1813,7 @@ impl Editor {
         let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
         let hint_fg_theme_key = Some("editor.line_number_fg".to_string());
 
-        for hint in hints {
+        for (idx, hint) in hints.iter().enumerate() {
             // Convert LSP position to byte offset
             let byte_offset = state.buffer.lsp_position_to_byte(
                 hint.position.line as usize,
@@ -1516,7 +1883,12 @@ impl Editor {
                 VirtualTextPosition::BeforeChar => crate::view::virtual_text::MarkerGravity::Left,
                 _ => crate::view::virtual_text::MarkerGravity::Right,
             };
-            state.virtual_texts.add_with_theme_keys(
+            let string_id = format!(
+                "{}{}:{}:{}",
+                INLAY_HINT_PREFIX, hint.position.line, hint.position.character, idx
+            );
+
+            state.virtual_texts.add_with_id_and_theme_keys(
                 &mut state.marker_list,
                 byte_offset,
                 display_text,
@@ -1525,6 +1897,7 @@ impl Editor {
                 None,
                 position,
                 0, // Default priority
+                string_id,
                 gravity,
             );
         }

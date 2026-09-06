@@ -1033,27 +1033,31 @@ fn test_settings_search_result_click_navigates() {
     // Open settings
     harness.open_settings().unwrap();
 
-    // Search for "tab" which should match "Tab Size" in Editor category
+    // Search for "scroll offset" which should match an Editor setting visible
+    // in the current viewport after navigation.
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    for c in "tab".chars() {
+    for c in "scroll offset".chars() {
         harness
             .send_key(KeyCode::Char(c), KeyModifiers::NONE)
             .unwrap();
     }
     harness.render().unwrap();
 
-    // Should show search results with "Tab Size"
-    harness.assert_screen_contains("Tab Size");
+    // Should show search results with "Scroll Offset"
+    harness.assert_screen_contains("Scroll Offset");
 
-    // Find the position of "Tab Size" on screen
+    // Find the position of "Scroll Offset" on screen
     let screen = harness.screen_to_string();
     let result_pos = screen
         .lines()
         .enumerate()
-        .find_map(|(row, line)| line.find("Tab Size").map(|col| (col as u16, row as u16)))
-        .expect("Should find Tab Size in search results");
+        .find_map(|(row, line)| {
+            line.find("Scroll Offset")
+                .map(|col| (col as u16, row as u16))
+        })
+        .expect("Should find Scroll Offset in search results");
 
     // Click on the search result
     harness.mouse_click(result_pos.0 + 2, result_pos.1).unwrap();
@@ -1067,10 +1071,10 @@ fn test_settings_search_result_click_navigates() {
     );
 
     // The setting should be visible in the settings panel (not search results)
-    // We should see "Tab Size" as the selected setting with its control
-    harness.assert_screen_contains("Tab Size");
+    // We should see "Scroll Offset" as the selected setting with its control
+    harness.assert_screen_contains("Scroll Offset");
 
-    // We should be in the Editor category now (Tab Size is an Editor setting)
+    // We should be in the Editor category now (Scroll Offset is an Editor setting)
     harness.assert_screen_contains("Editor");
 
     // Close settings
@@ -1447,7 +1451,7 @@ fn test_settings_from_terminal_mode_captures_input() {
     // Editor category has settings organized by sections - Completion section comes first
     // If Down key worked in Settings, we should now be viewing Editor settings
     // Check for a setting in the visible Completion section
-    harness.assert_screen_contains("Quick Suggestions");
+    harness.assert_screen_contains("Enable Ghost Text");
 
     // Clean up - close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -2302,18 +2306,18 @@ fn test_settings_loads_saved_values_on_reopen() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
     harness.render().unwrap();
 
-    // Verify initial tab_size is 4 (default)
-    let initial_value = harness.config().editor.tab_size;
-    assert_eq!(initial_value, 4, "Initial tab_size should be 4");
+    // Verify initial scroll_offset is 3 (default)
+    let initial_value = harness.config().editor.scroll_offset;
+    assert_eq!(initial_value, 3, "Initial scroll_offset should be 3");
 
     // Open settings
     harness.open_settings().unwrap();
 
-    // Search for "tab size" to find the setting
+    // Search for "scroll offset" to find the setting
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    for c in "tab size".chars() {
+    for c in "scroll offset".chars() {
         harness
             .send_key(KeyCode::Char(c), KeyModifiers::NONE)
             .unwrap();
@@ -2326,8 +2330,9 @@ fn test_settings_loads_saved_values_on_reopen() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should show the default value of 4
-    harness.assert_screen_contains("4");
+    // Should show the default value of 3
+    harness.assert_screen_contains("Scroll Offset");
+    harness.assert_screen_contains("3");
 
     // Type '5' to replace the value (direct typing auto-enters edit mode
     // with select-all, so the typed digit replaces the value). Tab commits.
@@ -2359,8 +2364,8 @@ fn test_settings_loads_saved_values_on_reopen() {
     );
 
     // Verify the config was updated
-    let saved_value = harness.config().editor.tab_size;
-    assert_eq!(saved_value, 5, "tab_size should be 5 after saving");
+    let saved_value = harness.config().editor.scroll_offset;
+    assert_eq!(saved_value, 5, "scroll_offset should be 5 after saving");
 
     // CRITICAL TEST: Reopen settings and verify the saved value is displayed
     harness.open_settings().unwrap();
@@ -2369,7 +2374,7 @@ fn test_settings_loads_saved_values_on_reopen() {
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    for c in "tab size".chars() {
+    for c in "scroll offset".chars() {
         harness
             .send_key(KeyCode::Char(c), KeyModifiers::NONE)
             .unwrap();
@@ -2383,6 +2388,7 @@ fn test_settings_loads_saved_values_on_reopen() {
     harness.render().unwrap();
 
     // Verify the saved value is displayed (not the default)
+    harness.assert_screen_contains("Scroll Offset");
     harness.assert_screen_contains("5");
 
     // Close settings

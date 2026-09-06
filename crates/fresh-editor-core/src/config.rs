@@ -1601,9 +1601,8 @@ pub struct EditorConfig {
     pub completion_popup_auto_show: bool,
 
     /// Enable quick suggestions (VS Code-like behavior).
-    /// When enabled, completion suggestions appear automatically while typing,
-    /// not just on trigger characters (like `.` or `::`).
-    /// Only takes effect when completion_popup_auto_show is true.
+    /// When enabled, completion suggestions or inline ghost text are requested
+    /// automatically while typing, not just on trigger characters (like `.` or `::`).
     /// Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Completion"))]
@@ -1617,6 +1616,14 @@ pub struct EditorConfig {
     #[serde(default = "default_quick_suggestions_delay")]
     #[schemars(extend("x-section" = "Completion"))]
     pub quick_suggestions_delay_ms: u64,
+
+    /// Show LSP inline completion ghost text from textDocument/inlineCompletion.
+    /// This renders a dimmed Copilot-style suggestion directly in the buffer,
+    /// independently of the completion popup.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub enable_ghost_text: bool,
 
     /// Whether trigger characters (like `.`, `::`, `->`) immediately show completions.
     /// When true, typing a trigger character bypasses quick_suggestions_delay_ms.
@@ -2065,6 +2072,7 @@ impl Default for EditorConfig {
             completion_popup_auto_show: false,
             quick_suggestions: true,
             quick_suggestions_delay_ms: default_quick_suggestions_delay(),
+            enable_ghost_text: true,
             suggest_on_trigger_characters: true,
             show_menu_bar: true,
             screensaver_enabled: false,
