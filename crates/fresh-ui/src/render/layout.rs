@@ -769,6 +769,9 @@ impl<M: 'static> Ui<M> {
                 };
                 let next = match cmd {
                     Command::ScrollTo(p) => p,
+                    Command::ScrollBy(dy) => Point::new(scroll.x, scroll.y + dy),
+                    Command::ScrollByPages(n) => Point::new(scroll.x, scroll.y + n * rows.max(1)),
+                    Command::ScrollToEnd => Point::new(scroll.x, max.y),
                     Command::Reveal(i) => {
                         let i = i as i32;
                         // The shortest move that puts the index inside the

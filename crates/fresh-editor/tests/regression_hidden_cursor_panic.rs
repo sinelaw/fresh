@@ -35,6 +35,7 @@ fn reproduce_cursor_panic() {
         highlight_current_line: None,
         initial_cursor_line: None,
         indentation_guide: None,
+        scrollable: None,
         request_id: None,
     };
 

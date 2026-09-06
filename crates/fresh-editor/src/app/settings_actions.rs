@@ -452,7 +452,6 @@ impl Editor {
 
     /// Activate/toggle the currently selected setting
     pub fn settings_activate_current(&mut self) {
-        use crate::view::settings::items::SettingControl;
         use crate::view::settings::FocusPanel;
 
         // Check if we're in the Footer panel - handle button activation
@@ -509,101 +508,19 @@ impl Editor {
             return;
         }
 
-        // Get the current item's control type to determine action
-        let control_type = {
-            if let Some(ref state) = self.settings_state {
-                state.current_item().map(|item| match &item.control {
-                    SettingControl::Toggle(_) => "toggle",
-                    SettingControl::Number(_) => "number",
-                    SettingControl::Dropdown(_) => "dropdown",
-                    SettingControl::Text(_) => "text",
-                    SettingControl::TextList(_) => "textlist",
-                    SettingControl::DualList(_) => "duallist",
-                    SettingControl::Map(_) => "map",
-                    SettingControl::ObjectArray(_) => "objectarray",
-                    SettingControl::Json(_) => "json",
-                    SettingControl::Complex { .. } => "complex",
-                })
-            } else {
-                None
-            }
-        };
-
-        // Perform the action based on control type
-        match control_type {
-            Some("toggle") => {
-                if let Some(ref mut state) = self.settings_state {
-                    if let Some(item) = state.current_item_mut() {
-                        if let SettingControl::Toggle(ref mut toggle_state) = item.control {
-                            toggle_state.checked = !toggle_state.checked;
-                        }
-                    }
-                    state.on_value_changed();
-                }
-            }
-            Some("dropdown") => {
-                // Toggle dropdown open/closed, or confirm selection if open
-                if let Some(ref mut state) = self.settings_state {
-                    if state.is_dropdown_open() {
-                        state.dropdown_confirm();
-                    } else {
-                        state.dropdown_toggle();
-                    }
-                }
-            }
-            Some("textlist") => {
-                // Enter text editing mode for TextList controls
-                if let Some(ref mut state) = self.settings_state {
-                    state.start_editing();
-                }
-            }
-            Some("map") => {
-                // For Map controls: check if map has a value schema (supports entry dialogs)
-                if let Some(ref mut state) = self.settings_state {
-                    if let Some(item) = state.current_item_mut() {
-                        if let SettingControl::Map(ref mut map_state) = item.control {
-                            if map_state.focused_entry.is_none() {
-                                // On add-new row: open dialog with empty key
-                                if map_state.value_schema.is_some() {
-                                    state.open_add_entry_dialog();
-                                }
-                            } else if map_state.value_schema.is_some() {
-                                // Map has schema: open entry dialog
-                                state.open_entry_dialog();
-                            } else {
-                                // For other maps: toggle expanded
-                                if let Some(idx) = map_state.focused_entry {
-                                    if map_state.expanded.contains(&idx) {
-                                        map_state.expanded.retain(|&i| i != idx);
-                                    } else {
-                                        map_state.expanded.push(idx);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    state.on_value_changed();
-                }
-            }
-            Some("text") => {
-                // For Text controls: enter text editing mode
-                if let Some(ref mut state) = self.settings_state {
-                    state.start_editing();
-                }
-            }
-            Some("number") => {
-                // For Number controls: enter number editing mode
-                if let Some(ref mut state) = self.settings_state {
-                    state.start_number_editing();
-                }
-            }
-            _ => {}
+        // The control's kind acts: a toggle flips, a number opens its
+        // draft, a dropdown its list (or, open, commits and closes it), a
+        // text field or a JSON editor its editor, a dual list takes the
+        // keyboard (or, live, moves the item under its cursor across), a
+        // map's or an object array's list opens its cursor's row, a text
+        // list opens its add row (or makes its draft an item).
+        if let Some(ref mut state) = self.settings_state {
+            state.activate_current();
         }
     }
 
     /// Increment the current setting value (for Number and Dropdown controls)
     pub fn settings_increment_current(&mut self) {
-        use crate::view::settings::items::SettingControl;
         use crate::view::settings::FocusPanel;
 
         // Check if we're in the Footer panel - navigate buttons instead
@@ -626,35 +543,15 @@ impl Editor {
             return;
         }
 
-        let control_type = {
-            if let Some(ref state) = self.settings_state {
-                state.current_item().map(|item| match &item.control {
-                    SettingControl::Number(_) => "number",
-                    SettingControl::Dropdown(_) => "dropdown",
-                    _ => "other",
-                })
-            } else {
-                None
-            }
-        };
-
         // Number inc/dec removed — direct typing only. Action still
         // exists for Dropdown cycling.
-        if let Some("dropdown") = control_type {
-            if let Some(ref mut state) = self.settings_state {
-                if let Some(item) = state.current_item_mut() {
-                    if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
-                        dropdown_state.select_next();
-                    }
-                }
-                state.on_value_changed();
-            }
+        if let Some(ref mut state) = self.settings_state {
+            state.cycle_dropdown(1);
         }
     }
 
     /// Decrement the current setting value (for Number and Dropdown controls)
     pub fn settings_decrement_current(&mut self) {
-        use crate::view::settings::items::SettingControl;
         use crate::view::settings::FocusPanel;
 
         // Check if we're in the Footer panel - navigate buttons instead
@@ -681,29 +578,10 @@ impl Editor {
             return;
         }
 
-        let control_type = {
-            if let Some(ref state) = self.settings_state {
-                state.current_item().map(|item| match &item.control {
-                    SettingControl::Number(_) => "number",
-                    SettingControl::Dropdown(_) => "dropdown",
-                    _ => "other",
-                })
-            } else {
-                None
-            }
-        };
-
         // Number inc/dec removed — direct typing only. Action still
         // exists for Dropdown cycling.
-        if let Some("dropdown") = control_type {
-            if let Some(ref mut state) = self.settings_state {
-                if let Some(item) = state.current_item_mut() {
-                    if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
-                        dropdown_state.select_prev();
-                    }
-                }
-                state.on_value_changed();
-            }
+        if let Some(ref mut state) = self.settings_state {
+            state.cycle_dropdown(-1);
         }
     }
 

@@ -31,8 +31,8 @@ impl Editor {
         self.all_menus_expanded()
     }
 
-    /// The exact menu list the TUI `MenuRenderer` renders: the configured menus
-    /// (`self.menus`, dynamic submenus expanded — reusing the renderer's
+    /// The exact menu list the shell describes: the configured menus
+    /// (`self.menus`, dynamic submenus expanded — reusing the
     /// `expanded_menus_cache` when populated) followed by the plugin-contributed
     /// menus (also expanded). This is the single expansion path shared by the
     /// TUI renderer and the web `menu_view()` projection, so the two frontends

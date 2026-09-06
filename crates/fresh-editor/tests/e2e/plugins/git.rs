@@ -1619,12 +1619,12 @@ fn test_git_log_mouse_click_updates_selection_for_keyboard_nav() {
     );
 }
 
-/// Regression: in the cursor-driven commit list the selected/highlighted
-/// commit must be the one the cursor is actually on. A 1-based (`cursor_moved`
-/// line) vs 0-based (commit index) mix-up put the selection one row below the
-/// cursor — the status bar showed `Ln 4` (cursor on the 4th row) yet
-/// `Commit 5/8` (the 5th commit). The invariant: cursor on line K ⟺ commit K
-/// selected. Both values are rendered on the status bar, so we assert on them.
+/// Regression: the selected commit is the row the List's selection is on.
+/// When the list rode the buffer's cursor, a 1-based line vs 0-based index
+/// mix-up put the selection one row below the cursor (`Ln 4` beside
+/// `Commit 5/8`). The List's own selection is the one fact now, and its
+/// `select` event's row is the commit the plugin reports; this pins that the
+/// K-th row is the K-th commit.
 #[test]
 fn test_git_log_cursor_line_matches_selected_commit() {
     init_tracing_from_env();
@@ -1655,12 +1655,14 @@ fn test_git_log_cursor_line_matches_selected_commit() {
     for _ in 0..3 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
+    // Three steps down the List land on the fourth commit, and the plugin
+    // reports the selection as it lands (the `select` event's row).
 
     // Wait for the cursor to settle on line 4 (the status bar's `Ln`
     // segment) — this happens regardless of the bug, so the assertion
     // below fails fast rather than hanging when the selection is wrong.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 4"))
+        .wait_until(|h| h.screen_to_string().contains("Commit 4/8"))
         .unwrap();
 
     // The selection (plugin's `Commit X/Y` status) must match the cursor's
@@ -1668,8 +1670,7 @@ fn test_git_log_cursor_line_matches_selected_commit() {
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("Commit 4/8"),
-        "selected commit must match the cursor's line (Ln 4 ⟹ Commit 4/8), \
-         not be off by one:\n{screen}"
+        "three Downs from HEAD select the fourth commit, not one off:\n{screen}"
     );
 }
 

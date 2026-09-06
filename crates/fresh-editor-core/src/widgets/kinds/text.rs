@@ -88,7 +88,7 @@ impl WidgetImpl for Text {
             "Up" | "Down" | "PageUp" | "PageDown" if *rows <= 1 => Pass,
             "Up" | "Down" | "Left" | "Right" | "Backspace" | "Delete" | "Home" | "End" | "S-Up"
             | "S-Down" | "S-Left" | "S-Right" | "S-Home" | "S-End" | "C-Left" | "C-Right"
-            | "C-S-Left" | "C-S-Right" => {
+            | "C-S-Left" | "C-S-Right" | "C-Backspace" | "C-Delete" => {
                 text_key(spec, widget_key, panel, key, fx);
                 Consumed
             }
@@ -169,6 +169,23 @@ impl WidgetImpl for Text {
             }
             _ => Pass,
         }
+    }
+
+    /// Typed text lands in the field at the caret, replacing any
+    /// selection; a read-only or markdown field takes none and passes.
+    fn on_text(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        text: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        if text.is_empty() || mode(spec).1 {
+            return super::KeyDisposition::Pass;
+        }
+        insert_str_edit(spec, widget_key, panel, text, fx);
+        super::KeyDisposition::Consumed
     }
 
     /// Pointer model: a click in the field's editable area moves the
@@ -1523,7 +1540,7 @@ pub fn text_key(
 /// fields can share the editor's text-key table rather than their
 /// own dispatch. Only the named keys the router forwards to text
 /// fields are recognized; `"Enter"` is handled by the caller.
-fn key_name_to_event(name: &str) -> Option<crossterm::event::KeyEvent> {
+pub(super) fn key_name_to_event(name: &str) -> Option<crossterm::event::KeyEvent> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     // Peel `C-` / `S-` / `A-` prefixes (in any order) so shift-selection
     // and word-motion chords reach the shared text-key table — a

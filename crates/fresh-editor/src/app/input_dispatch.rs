@@ -414,225 +414,189 @@ impl Editor {
         }
     }
 
-    /// The active overlay toolbar's focus ring, derived from its
-    /// layout-box tree exactly the way panel rings are: document order
-    /// of focusable boxes. Any focusable kind the plugin puts in the
-    /// toolbar joins the ring — nothing here knows which kinds those
-    /// are. Empty when there's no toolbar.
-    fn overlay_toolbar_keys(&self) -> Vec<String> {
-        crate::widgets::layout_box::focus_ring(&self.active_chrome().prompt_toolbar_boxes)
-    }
-
-    /// Advance (or retreat) the overlay focus ring: input → toggle0 → … →
-    /// toggleN → input. No-op (returns false) unless an overlay prompt with a
-    /// toolbar is active.
-    fn cycle_overlay_focus(&mut self, forward: bool) -> bool {
-        if !self.overlay_prompt_active() {
-            return false;
-        }
-        let has_toolbar = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| p.toolbar_widget.is_some());
-        if !has_toolbar {
-            return false;
-        }
-        let keys = self.overlay_toolbar_keys();
-        if keys.is_empty() {
-            return false;
-        }
-        let cur = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .and_then(|p| p.toolbar_focus.clone());
-        // Ring includes the input as the `None` slot.
-        let next: Option<String> = match cur {
-            None => Some(if forward {
-                keys[0].clone()
-            } else {
-                keys[keys.len() - 1].clone()
-            }),
-            Some(k) => match keys.iter().position(|x| x == &k) {
-                Some(i) if forward => keys.get(i + 1).cloned(), // None past the end → input
-                Some(i) => {
-                    if i == 0 {
-                        None
-                    } else {
-                        keys.get(i - 1).cloned()
-                    }
-                }
-                None => None, // stale key → input
-            },
-        };
-        if let Some(p) = self.active_window_mut().prompt.as_mut() {
-            p.toolbar_focus = next;
-        }
-        true
-    }
-
-    /// Fire the focused toolbar control's toggle. The host owns the checked
-    /// state, so this flips it and emits a `widget_event` (see
-    /// `toggle_overlay_toolbar_widget`); the plugin reacts.
-    fn activate_focused_overlay_toggle(&mut self) {
-        let key = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .and_then(|p| p.toolbar_focus.clone());
-        if let Some(key) = key {
-            self.toggle_overlay_toolbar_widget(&key);
-        }
-    }
-
     /// Activate the overlay toolbar control with `key` and emit the
-    /// resulting `widget_event`s so the plugin can react. Shared by mouse
-    /// clicks, Space/Enter on the focused control, and the
-    /// `toggleOverlayToolbarWidget` plugin API — one host path for every
-    /// way a control can be triggered.
+    /// resulting `widget_event`s so the plugin can react. Shared by the
+    /// `toggleOverlayToolbarWidget` plugin API (a plugin's own Alt+… shortcut)
+    /// and the web's toolbar clicks — one host path for a control triggered
+    /// by name. A press on the control and Space or Enter on it when focused
+    /// are the tree's, and reach the same kind through the toolbar panel
+    /// (`Slot::PromptToolbar`) like any other panel's.
     ///
     /// Dispatch is generic: the control's kind answers the activation
-    /// through the same `on_key` machinery registry panels use, queueing
-    /// its events on `KeyFx` (a `Toggle` queues `toggle` with the flipped
-    /// value, a `Button` queues `activate` — no per-kind match here, and a
-    /// future focusable kind participates for free). Toolbar policy is
-    /// what stays host-side: the toolbar spec is host-held, so a queued
-    /// `toggle` is applied back to it (the host owns the checked state),
-    /// and events broadcast with `panel_id: 0` — the toolbar isn't a
-    /// registry panel, so there's no owner to target. (Kinds with
-    /// per-instance state — open dropdowns, text editors — need the real
-    /// registry mount, a recorded later arc; the ephemeral panel here
-    /// carries no instance state across events.)
+    /// through the same `on_key` machinery every panel uses, queueing its
+    /// events on `KeyFx` (a `Toggle` queues `toggle` with the flipped value,
+    /// a `Button` queues `activate` — no per-kind match here). The toolbar is
+    /// the plugin's panel `PROMPT_TOOLBAR_PANEL_ID`, so the events reach it
+    /// tagged `panel_id: 0`, and the checked state the events carry is what
+    /// the plugin re-emits its spec with.
     pub(crate) fn toggle_overlay_toolbar_widget(&mut self, key: &str) {
         if key.is_empty() {
             return;
         }
-        let Some(spec_node) = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .and_then(|p| p.toolbar_widget.as_ref())
-            .and_then(|s| crate::widgets::find_widget_by_key(s, key))
+        let Some(panel_key) = self.prompt_toolbar_key() else {
+            return;
+        };
+        let Some(widget) = self
+            .widget_registry
+            .get(&panel_key)
+            .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, key))
             .cloned()
         else {
             return;
         };
         let mut fx = crate::widgets::kinds::KeyFx::default();
-        let mut scratch = crate::widgets::WidgetPanelState {
-            buffer_id: crate::model::event::BufferId(0),
-            spec: spec_node.clone(),
-            hits: Vec::new(),
-            instance_states: std::collections::HashMap::new(),
-            focus_key: key.to_string(),
-            painted: std::collections::HashMap::new(),
-            boxes: Vec::new(),
-            auto_focus_first: true,
-            focus_follows_cursor: false,
-            hovered_widget_key: String::new(),
-            hovered_item_key: String::new(),
+        let Some(panel) = self.widget_registry.get_mut(&panel_key) else {
+            return;
         };
         // Every trigger converges on the kind's activation key; Toggle and
-        // Button treat Space and Enter identically.
-        let _ = crate::widgets::kinds::behavior(&spec_node).on_key(
-            &spec_node,
+        // Button treat Space and Enter identically. A Toggle has no window;
+        // the kinds reached here never read it.
+        let _ = crate::widgets::kinds::behavior(&widget).on_key(
+            &widget,
             key,
-            &mut scratch,
-            // A Toggle has no window; the one kind reached here never
-            // reads it.
+            panel,
             crate::widgets::kinds::Viewport::default(),
             "Space",
             &mut fx,
         );
+        self.rerender_widget_panel(&panel_key);
         for (event_type, payload) in fx.events {
-            if event_type == "toggle" {
-                if let Some(nv) = payload.get("checked").and_then(|v| v.as_bool()) {
-                    if let Some(spec) = self
-                        .active_window_mut()
-                        .prompt
-                        .as_mut()
-                        .and_then(|p| p.toolbar_widget.as_mut())
-                    {
-                        crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
-                    }
-                }
-            }
-            #[cfg(feature = "plugins")]
-            {
-                let pm = self.plugin_manager.read().unwrap();
-                if pm.has_hook_handlers("widget_event") {
-                    pm.run_hook(
-                        "widget_event",
-                        crate::services::plugins::hooks::HookArgs::WidgetEvent {
-                            panel_id: 0,
-                            widget_key: key.to_string(),
-                            event_type,
-                            payload,
-                        },
-                    );
-                }
-            }
-            #[cfg(not(feature = "plugins"))]
-            {
-                let _ = (event_type, payload);
-            }
+            self.fire_widget_event(&panel_key, key.to_string(), event_type, payload);
         }
     }
 
-    /// Handle a key for the overlay's toolbar focus ring. Returns
-    /// `Some(Consumed)` when it owns the key, `None` to let normal prompt
-    /// handling proceed (also resets focus to the input when the user starts
-    /// typing, so typing always edits the query).
-    pub(super) fn handle_overlay_toolbar_key(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        use crossterm::event::{KeyCode, KeyModifiers};
-        if !self.overlay_prompt_active() {
-            return None;
+    /// The registry key of the open overlay prompt's toolbar panel, when the
+    /// plugin set one.
+    pub(crate) fn prompt_toolbar_key(&self) -> Option<crate::widgets::PanelKey> {
+        self.active_window().prompt.as_ref()?.toolbar.clone()
+    }
+
+    /// Whether a toolbar control has the keyboard rather than the query
+    /// input: the toolbar panel's focus fact names one.
+    pub(crate) fn prompt_toolbar_holds_keyboard(&self) -> bool {
+        self.prompt_toolbar_key()
+            .and_then(|k| self.widget_registry.focus_key(&k))
+            .is_some_and(|f| !f.is_empty())
+    }
+
+    /// The query input has the keyboard back: clear the toolbar panel's focus
+    /// fact. The description then marks the input's focus holder instead of
+    /// the control, and the tree follows the mark.
+    pub(crate) fn release_prompt_toolbar_focus(&mut self) {
+        let Some(key) = self.prompt_toolbar_key() else {
+            return;
+        };
+        if !self.prompt_toolbar_holds_keyboard() {
+            return;
         }
-        let has_toolbar = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| p.toolbar_widget.is_some());
-        if !has_toolbar {
-            return None;
-        }
-        let focused = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| p.toolbar_focus.is_some());
-        let shift = event.modifiers.contains(KeyModifiers::SHIFT);
-        match event.code {
-            KeyCode::BackTab => {
-                self.cycle_overlay_focus(false);
-                Some(InputResult::Consumed)
-            }
-            KeyCode::Tab => {
-                self.cycle_overlay_focus(!shift);
-                Some(InputResult::Consumed)
-            }
-            KeyCode::Char(' ') | KeyCode::Enter if focused => {
-                self.activate_focused_overlay_toggle();
-                Some(InputResult::Consumed)
-            }
-            // Navigating the result list (or typing) returns focus to the
-            // query input, then falls through so the navigation / character
-            // insertion happens — and Enter afterwards opens the highlighted
-            // result rather than re-activating a control.
-            KeyCode::Up
-            | KeyCode::Down
-            | KeyCode::PageUp
-            | KeyCode::PageDown
-            | KeyCode::Char(_)
-                if focused =>
+        self.widget_registry.decide_focus(&key, String::new());
+        self.shell_description_stale = true;
+    }
+
+    /// Mount or replace the toolbar panel under `key` with `spec`.
+    ///
+    /// A re-emitted spec keeps the panel's state and focus, clamped onto the
+    /// widgets the new spec still has — the same carry every described
+    /// panel's update does (`resolve_described_panel`). The toolbar never
+    /// had a text projection: it is described in the card's header band, so
+    /// nothing is rendered into a buffer here.
+    pub(crate) fn mount_prompt_toolbar(
+        &mut self,
+        key: &crate::widgets::PanelKey,
+        spec: fresh_core::api::WidgetSpec,
+    ) {
+        self.shell_description_stale = true;
+        let mounted = self.widget_registry.get(key).is_some();
+        if mounted {
+            let states = self
+                .widget_registry
+                .instance_states(key)
+                .cloned()
+                .unwrap_or_default();
+            let focus = self
+                .widget_registry
+                .focus_key(key)
+                .map(str::to_string)
+                .unwrap_or_default();
+            if self
+                .widget_registry
+                .update(
+                    key,
+                    spec,
+                    states,
+                    focus,
+                    std::collections::HashMap::new(),
+                    Vec::new(),
+                )
+                .is_err()
             {
-                if let Some(p) = self.active_window_mut().prompt.as_mut() {
-                    p.toolbar_focus = None;
-                }
-                None
+                tracing::warn!("prompt toolbar {key} vanished between the lookup and the update");
             }
-            _ => None,
+        } else {
+            self.widget_registry.mount(
+                key.clone(),
+                crate::app::PROMPT_TOOLBAR_BUFFER_ID,
+                spec,
+                std::collections::HashMap::new(),
+                String::new(),
+                std::collections::HashMap::new(),
+                Vec::new(),
+                // The query input holds the keyboard until a control is
+                // given it.
+                false,
+                false,
+            );
         }
+        self.rerender_widget_panel(key);
+    }
+
+    /// Take the active window's prompt down, and its toolbar panel with it.
+    ///
+    /// The one way a prompt closes: the toolbar's registry entry lives
+    /// exactly as long as the prompt that shows it.
+    pub(crate) fn drop_prompt(&mut self) -> Option<crate::view::prompt::Prompt> {
+        let prompt = self.active_window_mut().prompt.take()?;
+        if let Some(key) = &prompt.toolbar {
+            let _ = self.widget_registry.unmount(key);
+            self.shell_description_stale = true;
+        }
+        Some(prompt)
+    }
+
+    /// The toolbar panel's interior for the card's header band, when the open
+    /// overlay prompt has one. Built the way `panel_interior` builds the
+    /// dock's, minus the slot-bound facts a toolbar does not have: it holds
+    /// the keyboard whenever the prompt is up, reserves no marker gutter and
+    /// carries no row budget.
+    pub(crate) fn prompt_toolbar_interior(&self) -> Option<crate::view::shell::panel::Interior> {
+        use std::rc::Rc;
+        let key = self.prompt_toolbar_key()?;
+        let spec = self.widget_registry.get(&key)?.spec.clone();
+        let (hovered, hovered_item) = self.widget_registry.hover_keys(&key);
+        Some(crate::view::shell::panel::Interior {
+            spec: Rc::new(spec),
+            states: Rc::new(
+                self.widget_registry
+                    .instance_states(&key)
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            focus_key: self
+                .widget_registry
+                .focus_key(&key)
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            keyboard: true,
+            page: None,
+            hovered_key: Some(hovered).filter(|k| !k.is_empty()),
+            hovered_item_key: hovered_item,
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+            keymap: None,
+            markdown: Some(self.markdown_ink()),
+        })
     }
 }
 

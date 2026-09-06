@@ -1331,21 +1331,29 @@ impl Editor {
             ("number", "number_value") => SettingsHit::ControlNumberValue(idx),
             ("dropdown", "dropdown_select") => SettingsHit::ControlDropdownOption(idx, row()),
             ("dropdown", _) => SettingsHit::ControlDropdown(idx),
-            ("text", _) => SettingsHit::ControlText(idx),
-            // Which list a row belongs to decides what selecting it means: a
-            // `TextList` edits the item in place, a `Map` or an
-            // `ObjectArray` opens the entry dialog, and the trailing
-            // sentinel adds a new one. `usize::MAX` is the add row's index in
-            // `ControlTextListRow`, which is what `data_idx.unwrap_or(…)`
-            // meant when the painter recovered it from a rectangle.
-            ("list", _) => match (&page.items[idx].control, part) {
-                (SettingControl::TextList(_), "add") => {
-                    SettingsHit::ControlTextListRow(idx, usize::MAX)
-                }
-                (SettingControl::TextList(_), _) => SettingsHit::ControlTextListRow(idx, row()),
-                (_, "add") => SettingsHit::ControlMapAddNew(idx),
-                _ => SettingsHit::ControlMapRow(idx, row()),
+            // A text list's fields are keyed by row: an item's, or the add
+            // row's — `usize::MAX` there, a row past every item.
+            ("text", _) => match crate::view::settings::live::text_list::row_of(key) {
+                Some(Some(i)) => SettingsHit::ControlTextListRow(idx, i),
+                Some(None) => SettingsHit::ControlTextListRow(idx, usize::MAX),
+                None => SettingsHit::ControlText(idx),
             },
+            // An item's `[x]`.
+            ("button", _) => match part.strip_prefix("remove::").and_then(|i| i.parse().ok()) {
+                Some(i) => SettingsHit::ControlTextListRemove(idx, i),
+                None => SettingsHit::Item(idx),
+            },
+            // A row of a map's or an object array's list: an entry, or the
+            // add row last, which a map names apart.
+            ("list", _) => {
+                let r = row();
+                match (&page.items[idx].control, page.items[idx].control.add_row()) {
+                    (SettingControl::Map { .. }, Some(add)) if add == r => {
+                        SettingsHit::ControlMapAddNew(idx)
+                    }
+                    _ => SettingsHit::ControlMapRow(idx, r),
+                }
+            }
             ("dual_list", _) => match hit.payload.get("column").and_then(|v| v.as_str()) {
                 Some("included") => SettingsHit::ControlDualListIncluded(idx, row()),
                 _ => SettingsHit::ControlDualListAvailable(idx, row()),
@@ -1366,7 +1374,7 @@ impl Editor {
         // A byte needs none of that: the shaping that drew the row is the one
         // that answered.
         let caret = match resolved {
-            SettingsHit::ControlText(_) => {
+            SettingsHit::ControlText(_) | SettingsHit::ControlTextListRow(..) => {
                 byte.and_then(|b| crate::widgets::value_byte_from_hit(hit, b))
             }
             _ => None,
@@ -1404,7 +1412,6 @@ impl Editor {
             s.selected_category = idx;
             s.selected_item = 0;
             s.body_anchor.scroll_to(fresh_ui::Point::ZERO);
-            s.sub_focus = None;
             // A click lands the cursor on the category row itself, even after
             // auto-expand reveals its sections — which is where keyboard
             // Up/Down arrives too.
@@ -1610,8 +1617,12 @@ impl Editor {
     ) {
         // A message is a change to something the description reads — that
         // is what a `UiFact` is for — so the description is stale once one
-        // has been applied, and the next reader lays it out again.
-        if !msgs.is_empty() {
+        // has been applied, and the next reader lays it out again. Except
+        // the pointer's transient facts: a hover, a wheel, a grip's drag
+        // change nothing the next input's routing reads, and marking them
+        // stale cost a layout per motion report (the geometry pass counts
+        // them: `a_divider_drag_that_moves_nothing_lays_out_nothing`).
+        if msgs.iter().any(|m| !m.is_pointer_transient()) {
             self.shell_description_stale = true;
         }
         for msg in msgs {
@@ -1661,7 +1672,6 @@ impl Editor {
                 slot,
                 event: hit,
                 byte,
-                at,
                 clicks,
             } => {
                 // **The byte the press landed on, and nothing is done to it.**
@@ -1695,7 +1705,16 @@ impl Editor {
                     // The same, one surface in: an entry dialog's fields are
                     // its own, not the page's.
                     crate::view::shell::widgets::Slot::SettingsEntry => {
-                        self.settings_entry_widget_hit(&hit, byte, at, clicks);
+                        self.settings_entry_widget_hit(&hit, byte, clicks);
+                        return;
+                    }
+                    // The overlay prompt's toolbar: the plugin's panel
+                    // `PROMPT_TOOLBAR_PANEL_ID`, and the same dispatch — a
+                    // press focuses the control and the kind answers it.
+                    crate::view::shell::widgets::Slot::PromptToolbar => {
+                        if let Some(panel_key) = self.prompt_toolbar_key() {
+                            self.deliver_widget_hit(&panel_key, &hit, clicked_byte);
+                        }
                         return;
                     }
                     // A panel mounted into a pane's buffer. It is a plugin
@@ -1741,8 +1760,9 @@ impl Editor {
                     // flips it, so the dismissal goes through the same
                     // dispatch rather than reaching into the state map.
                     // A pane-mounted panel has no pop-over yet: its dropdown
-                    // rows come with the rest of C.5's second step.
-                    Slot::Pane(_) => {}
+                    // rows come with the rest of C.5's second step. The prompt
+                    // toolbar's toggles and buttons raise none.
+                    Slot::Pane(_) | Slot::PromptToolbar => {}
                     Slot::Dock | Slot::Floating | Slot::Sidebar(_) => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
@@ -1805,13 +1825,20 @@ impl Editor {
             // cannot tell a click from a Tab and should not have to.
             UiFact::WidgetFocus { slot, widget } => {
                 use crate::view::shell::widgets::Slot;
-                let panel = match slot {
-                    Slot::Dock => crate::app::PanelSlot::Dock,
-                    Slot::Floating => crate::app::PanelSlot::Floating,
-                    Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
-                    _ => return,
-                };
-                let Some(key) = self.panel(panel).map(|p| p.panel_key.clone()) else {
+                let key = match slot {
+                    Slot::Dock => self.panel(crate::app::PanelSlot::Dock),
+                    Slot::Floating => self.panel(crate::app::PanelSlot::Floating),
+                    Slot::Sidebar(i) => self.panel(crate::app::PanelSlot::Sidebar(i)),
+                    _ => None,
+                }
+                .map(|p| p.panel_key.clone())
+                // The prompt toolbar's landing, the same fact: a control on
+                // the prompt's ring took the keyboard from the query input.
+                .or_else(|| match slot {
+                    Slot::PromptToolbar => self.prompt_toolbar_key(),
+                    _ => None,
+                });
+                let Some(key) = key else {
                     return;
                 };
                 if self.widget_registry.focus_key(&key) == Some(widget.as_str()) {
@@ -1857,6 +1884,25 @@ impl Editor {
                 entered,
             } => {
                 use crate::view::shell::widgets::Slot;
+                // The prompt toolbar's memo is its registry entry's, the
+                // way a pane's is; the leave rule below is the same.
+                if slot == Slot::PromptToolbar {
+                    let Some(key) = self.prompt_toolbar_key() else {
+                        return;
+                    };
+                    let (w, i) = self.widget_registry.hover_keys(&key);
+                    let next = match entered {
+                        true => Some((widget, item)),
+                        false if w == widget && i == item => Some((String::new(), String::new())),
+                        false => None,
+                    };
+                    if let Some((w, i)) = next {
+                        if self.widget_registry.set_hover_keys(&key, w, i) {
+                            self.shell_description_stale = true;
+                        }
+                    }
+                    return;
+                }
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
@@ -1926,8 +1972,9 @@ impl Editor {
                             s.hovered_popup_row = now;
                         }
                     }
-                    // As above: no pop-over on a pane-mounted panel yet.
-                    Slot::Pane(_) => {}
+                    // As above: no pop-over on a pane-mounted panel yet, and
+                    // none on the prompt toolbar.
+                    Slot::Pane(_) | Slot::PromptToolbar => {}
                     Slot::Dock | Slot::Floating | Slot::Sidebar(_) => {
                         let panel = match slot {
                             Slot::Dock => crate::app::PanelSlot::Dock,
@@ -2122,12 +2169,11 @@ impl Editor {
                 if self.pane_content_took_wheel(x, y) {
                     return;
                 }
-                // A plugin's panel inside the pane's content scrolls itself
-                // first — it was a box at z 120 over the pane's content rect,
-                // and a nested surface's wheel is genuinely the nested one's.
-                if self.handle_split_widget_panel_wheel(x, y, delta) {
-                    return;
-                }
+                // A plugin's panel inside the pane's content scrolls itself:
+                // its lists are viewports the library chains the notch into
+                // before this fact is ever emitted, and a panel that shows
+                // everything hands the notch on to the pane, which is what
+                // reaches here.
                 let Some(buffer_id) = self.active_window().pane_buffer(pane) else {
                     return;
                 };
@@ -2232,9 +2278,14 @@ impl Editor {
                 // The pointer cell the reactions want is the one the fact
                 // arrived at; a hover fact is always produced by a pointer
                 // event, and the event's own facts are where that position is.
+                // A reaction that changed state — a submenu opened under the
+                // pointer — is a change the next input's routing reads, and
+                // the hover fact itself is transient: this is where it says so.
                 let (col, row) = ev.at;
                 for c in crate::app::chrome::components() {
-                    c.on_hover_change(self, old.as_ref(), target.as_ref(), col, row);
+                    if c.on_hover_change(self, old.as_ref(), target.as_ref(), col, row) {
+                        self.shell_description_stale = true;
+                    }
                 }
             }
             UiFact::MenuBarPress { index } => {
@@ -2262,28 +2313,11 @@ impl Editor {
             UiFact::PopupSelect(i) => self.select_popup_item(i),
             UiFact::PopupKey(k) => self.popup_key(k),
             UiFact::PopupDismissTransient => self.dismiss_transient_popups(),
-            // The toolbar's controls are a plugin's `WidgetSpec`, hit-tested
-            // against the widget runtime's own boxes. The band said where the
-            // press landed inside it; this is the walk `chrome:prompt_scrim`
-            // did after subtracting a stored origin by hand.
-            UiFact::CardToolbarPress { x, y } => {
-                let hit = {
-                    let boxes = &self.active_chrome().prompt_toolbar_boxes;
-                    crate::widgets::layout_box::hit_path(boxes, y as u32, x as u32)
-                        .into_iter()
-                        .rev()
-                        .filter(|&i| boxes[i].focusable)
-                        .find_map(|i| boxes[i].key.clone())
-                };
-                if let Some(widget_key) = hit {
-                    // Move keyboard focus to the clicked control so Tab
-                    // continues from here, then flip it through the host.
-                    if let Some(p) = self.active_window_mut().prompt.as_mut() {
-                        p.toolbar_focus = Some(widget_key.clone());
-                    }
-                    self.toggle_overlay_toolbar_widget(&widget_key);
-                }
-            }
+            // The card's query input has the keyboard back — the ring
+            // wrapped off the toolbar's last control. The toolbar's controls
+            // are the toolbar panel's, so their presses and landings arrive
+            // as `WidgetHit` and `WidgetFocus` on `Slot::PromptToolbar`.
+            UiFact::CardInputFocus => self.release_prompt_toolbar_focus(),
             UiFact::CardPreviewScroll(delta) => {
                 self.active_window_mut()
                     .scroll_overlay_preview_by_lines(delta);
@@ -2373,9 +2407,6 @@ impl Editor {
                 if self.dock.as_ref().is_some_and(|f| !f.focused) {
                     self.refocus_floating_panel(crate::app::PanelSlot::Dock);
                 }
-            }
-            UiFact::DockScroll { delta, x, y } => {
-                self.handle_floating_widget_panel_wheel(crate::app::PanelSlot::Dock, x, y, delta);
             }
             // The memo the overlay scrollbar reads. It is a memo rather than
             // a value derived where it is used because the *other* thing that
@@ -2753,6 +2784,11 @@ impl Editor {
                 let Some(ev) = self.shell_key_event else {
                     return;
                 };
+                // A key the prompt takes is the query input's. Raised from a
+                // focused toolbar control (`overlay_prompt::toolbar_band`'s
+                // capture rule — the arrows, paging, typing), it hands the
+                // keyboard back to the input along with the key.
+                self.release_prompt_toolbar_focus();
                 // `None` is the prompt declining, and a declined key is the
                 // editor's — resolved in the `Prompt` context the focus chain
                 // still names, which is how the file browser's toggles reach
@@ -2778,12 +2814,31 @@ impl Editor {
                     // The settings surfaces reuse the widget vocabulary but
                     // are not panels and never raise this layer.
                     Slot::Settings | Slot::SettingsEntry => return,
-                    // A pane-mounted panel's key the mode did not bind (the
-                    // keymap on its interior answered those) and its widgets
-                    // did not take: the buffer's own route — the mode's text
-                    // input, chords, keybinding resolution — as it always was.
-                    Slot::Pane(_) => {
-                        self.hand_key_to_editor(ev);
+                    // The prompt toolbar's controls answer their own keys —
+                    // Space and Enter on a toggle — and what they decline is
+                    // the prompt's, the route the card's input row takes.
+                    Slot::PromptToolbar => {
+                        if !self.dispatch_prompt_toolbar_key(ev.code, ev.modifiers)
+                            && self.dispatch_prompt_key(&ev).is_none()
+                        {
+                            self.hand_key_to_editor(ev);
+                        }
+                        return;
+                    }
+                    // A pane-mounted panel: the key the mode did not bind (the
+                    // keymap on its interior answered those) goes to its
+                    // widgets exactly as a dock's does — the focused list
+                    // steps, the focused field types — and what they decline
+                    // is the buffer's own route: the mode's text input,
+                    // chords, keybinding resolution, as it always was.
+                    Slot::Pane(leaf) => {
+                        let taken = match self.pane_panel_key(leaf) {
+                            Some(pk) => self.dispatch_pane_panel_key(&pk, ev.code, ev.modifiers),
+                            None => false,
+                        };
+                        if !taken {
+                            self.hand_key_to_editor(ev);
+                        }
                         return;
                     }
                 };
@@ -2857,19 +2912,6 @@ impl Editor {
                     self.hand_key_to_editor(ev);
                 }
             }
-            UiFact::ModalPointer(slot) => {
-                use crate::view::shell::modal::Slot;
-                let Some((ev, _)) = self.shell_pointer_event else {
-                    return;
-                };
-                let r = match slot {
-                    Slot::Settings => self.handle_settings_mouse(ev),
-                    Slot::FloatingPanel => self.handle_floating_modal_mouse(ev),
-                };
-                if let Err(e) = r {
-                    tracing::warn!("modal mouse failed: {e}");
-                }
-            }
             // The workspace-trust prompt. Each body is an arm of
             // `handle_workspace_trust_mouse`, which the capture band reached
             // with a raw `MouseEvent` and a hand-written hit test over four
@@ -2895,23 +2937,24 @@ impl Editor {
             // places used to make: an outside-press guard returning
             // `PassAfter`, an `on_key` that cleared the field and returned
             // `None`, and the popup's own opacity in between.
-            // The file-open dialog. Each body is the arm
-            // `chrome::FileBrowser` ran; the box that decided *which* — and
-            // its full-frame stand-in for the frame before the first paint —
-            // is gone.
-            UiFact::BrowserPress { x, y, double } => {
-                if double {
-                    self.handle_file_open_double_click(x, y);
-                } else {
-                    self.handle_file_open_click(x, y);
+            // The file-open dialog. Each control names itself; the
+            // coordinate facts, the painter's recorded spans and the hit
+            // tests that resolved one against the other are gone.
+            UiFact::BrowserToggle(t) => match t {
+                crate::app::file_open::Toggle::ShowHidden => self.file_open_toggle_hidden(),
+                crate::app::file_open::Toggle::DetectEncoding => {
+                    self.file_open_toggle_detect_encoding()
+                }
+            },
+            UiFact::BrowserShortcut(i) => self.file_open_press_shortcut(i),
+            UiFact::BrowserNavigation => {
+                if let Some(state) = &mut self.active_window_mut().file_open_state {
+                    state.active_section = crate::app::file_open::FileOpenSection::Navigation;
                 }
             }
-            UiFact::BrowserHover { x, y } => {
-                self.shell_hover = self.compute_file_browser_hover(x, y);
-            }
-            UiFact::BrowserScroll(delta) => {
-                self.handle_file_open_scroll(delta);
-            }
+            UiFact::BrowserSort(mode) => self.file_open_toggle_sort(mode),
+            UiFact::BrowserSelect(i) => self.file_open_select_entry(i),
+            UiFact::BrowserActivate(i) => self.file_open_activate_entry(i),
             UiFact::ThemeInfoDismiss => self.active_window_mut().theme_info_popup = None,
             UiFact::ThemeInspect { x, y } => {
                 if let Err(e) = self.show_theme_info_popup(x, y) {

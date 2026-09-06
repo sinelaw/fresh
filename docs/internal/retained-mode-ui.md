@@ -248,8 +248,13 @@ swallow — is permanent: a non-modal panel (the dock, a sidebar section, a
 pane's panel) confines traversal while it is focused and lets the keys it
 does not bind reach the buffer host behind it, which is exactly what a
 minibuffer's `Ctrl+P` needs. Its doc (`desc.rs:588`) says the opposite and
-is corrected. `Modality::Pointer` exists for one painted interior
-(`view/shell/modal.rs:123`) and is deleted with it (§3.6).
+is corrected. `Modality::Pointer` is permanent too, and for the mirrored
+reason: it is one channel's claim for a surface whose *other* channel is
+elsewhere — the file-open dialog owns the pointer while its keys are the
+prompt's (`prompt::keys_layer`), the floating panel owns it while its keys
+are its own `Modality::Focus` layer. An earlier draft of this ledger called
+it a painted interior's seam; the painted interior is gone (§3.6) and the
+claim is unchanged, which is what shows it was never the painter's.
 
 **L11 — Reconcile accounting.** `diagnose.rs` counts rebuilds; the frame
 must also report reconciled elements and re-laid-out nodes so the editor
@@ -281,6 +286,19 @@ tree lands on the selected card, not the first, and Shift+Tab from the
 footer likewise. `FocusEntry::group` carries the innermost group and its
 resolved entry; `FocusScope::entered_at` is the one rule. *Landed*, for the
 settings body, with its tests in `crates/fresh-ui/tests/focus.rs`.
+
+**L15 — Flex contributes nothing to an intrinsic measure.** A stack hands
+its `Flex` children the whole loose maximum even when it is being asked
+how big it wants to be, so a row of `label · spacer · accelerator` inside a
+`Sizing::Auto` box makes the box as wide as the frame. The rule a flex
+layout has everywhere else is that flex divides the room a *definite*
+extent leaves, and contributes its floor to an intrinsic one. Making that
+the library's rule is what lets a menu dropdown and an anchored panel say
+`Auto` instead of measuring their rows' text (`menu::content_width`,
+`Panel::anchored_width`). It is not a local change: the settings entry
+dialog and the keybinding editor both place flex children under a loose
+measure today and read the maximum, so the rule lands with those surfaces
+sized by what they hold (S5), not before.
 
 ### 1.3 What the library does not do, by decision
 
@@ -369,7 +387,15 @@ the tree follow the mark whenever it moves.
    overwrites. The e2e harness renders between events and cannot see this
    class; the test sends two events before rendering. *Landed*:
    `Editor::lay_out_shell_if_stale`, at the head of `shell_dispatch` and of
-   a host-driven focus advance.
+   a host-driven focus advance. *Refined*: what leaves the description stale
+   is decided where an event is spent, not by the event. Every key does
+   (its route is the editor's own pipeline); a fact does unless it is one of
+   the pointer's transient ones (`UiFact::is_pointer_transient` — a hover, a
+   wheel, a grip's press and drag, a scrollbar's thumb), and a hover reaction
+   that changed state marks the description itself; the legacy pointer walk,
+   which cannot say what it changed, marks it for every press and release it
+   takes and never for a motion report. A drag along a divider therefore
+   costs no layout (`geometry_pass::a_divider_drag_that_moves_nothing_lays_out_nothing`).
 5. **One ring.** `handle_widget_focus_advance` (`:1216`) and its spec walk
    (`focus_ring_scoped_in_spec`) are deleted. A `FocusAdvance` on a panel the
    tree is focused in is `Ui::move_focus`; on one it is not, it is
@@ -556,23 +582,41 @@ Status bar, search options, sidebar (with sections, dividers, accordion and
 persistence — shipped), dock, floating panels, context menus, popups: described,
 and the tree measures them. What is left:
 
-- **Menu dropdowns are still a picture.** `DropdownLevel { x, y, width,
-  rows }` (`view/shell/menu.rs:179`) carries a rect and pre-fitted rows
-  computed by `fit_dropdown_area`, `calculate_dropdown_width` and
-  `items_to_show` (`view/ui/menu.rs`). The chain is already nested as layers
-  (a mouse bug fixed that); the content model moves into the description —
-  rows as nodes, width by `Auto`, the one-row rise by `Anchor::Node` (which
-  has real callers now), placement by `Place`/`Fit` — and the legacy layout
-  walk and the web's `menu_layout_now` reader (`view/scene.rs:195`) go. The
-  known eleven-cell difference between the editor's flip rule and
-  `Fit::FLIP` is decided by a test naming the chosen behaviour.
+- **Menu dropdowns are content.** *Landed (S6)*: `DropdownLevel { from,
+  rows }` says what a level hangs off and what its rows read
+  (`RowBody::Item { text, trail }`, `Separator`); `menu::describe` derives
+  the bar and the chain from the menu state, and the tree places them —
+  `Anchor::Node` on the bar label with `Place::Below` and `Fit::CLAMP`, a
+  submenu `Place::RightOf` its parent row with the one-row rise as an anchor
+  offset and `Fit::FLIP` to the left at the right edge, every level `within`
+  the frame below the bar. A row is its text, a flex spacer and its trail, so
+  an accelerator sits against the border; the box is as wide as its widest
+  row, measured from the rows' text (a stack hands flex the whole loose room
+  under an intrinsic measure, so `Sizing::Auto` there would take the frame —
+  the library rule L15 would let it say `Auto`). `MenuRenderer`,
+  `MenuLayout`, `fit_dropdown_area`, `calculate_dropdown_width`,
+  `items_to_show`, `menu_layout_now` and `apply_menu_theme_runs` are deleted;
+  the fold records the menu's provenance like every other item's, and the
+  web's `menu_view` reads label and row rectangles off the tree. The flip
+  rule is `Fit::FLIP`'s, pinned by `a_submenu_flips_left_at_the_right_edge`.
 - **The prompt line is the last host region among the chrome**
   (`frame.rs:30`, `PromptLine`). Its input row is a `TextField` over the
-  editor's one `TextEdit` engine; its overlay toolbar (`Toggle`s and
-  `Button`s, painted by `render_spec_no_autofocus` at `app/render.rs:4728`
-  and `:6532`) is described through the same adapter as every panel, which
-  deletes the third focus ring (`overlay_toolbar_keys`,
-  `prompt_toolbar_boxes`, `Prompt.toolbar_focus`) and `text_click.rs`.
+  editor's one `TextEdit` engine, which deletes `text_click.rs`. *Landed*:
+  its overlay toolbar is described through the same adapter as every
+  panel. The toolbar is the plugin's panel `PROMPT_TOOLBAR_PANEL_ID` in the
+  registry (`Slot::PromptToolbar`), described in the card's header band as
+  tall as its controls lay out; the card is the prompt keyboard layer's
+  scope (`prompt::keys_layer` → `scope_at(card_key())`), with the input row
+  as the focus holder the layer's sink used to be, so Tab walks input →
+  controls → input on the tree's one ring. A control's landing is
+  `WidgetFocus`, the input's is `CardInputFocus`, and the panel's
+  `focus_key` is the one fact; the toolbar's capture-leg rule (arrows,
+  paging, typing are the query input's) is on its interior node
+  (`panel::interior_capturing`). The third focus ring is gone:
+  `overlay_toolbar_keys`, `cycle_overlay_focus`, `handle_overlay_toolbar_key`,
+  `prompt_toolbar_boxes`, `Prompt.toolbar_focus`, `Prompt.toolbar_widget`,
+  `CardToolbarPress` and `render_spec_no_autofocus` are deleted;
+  `toggleOverlayToolbarWidget` runs the control's kind against the panel.
 - **The editor scrollbar column.** A popup clamps to the frame, not to the
   frame minus the split's scrollbar; that inset is stated by the chrome
   column node once the split grid is a region with its own rectangle (§3.7).
@@ -609,6 +653,45 @@ mounted panel is described, the mirror is derived, `git_log` selects through
 the `List`'s own selection model with `reveal`, and `mouse_click` buffer
 coordinates are not a panel API. `hit_test_row_aware`, `row_select_hit`,
 `click_handlers.rs`'s byte-range scan and `pane_panel_owns_its_scroll` go.
+*Landed in part*: `git_log`'s log and the package manager's list are
+`scrollable: false` panes whose `List` windows itself and reports its
+selection (`select`), the cursor-driven mirror and its `cursor_moved`
+subscription are gone, and **a pane's panel answers its keys through the
+same widget router the dock's does** (`Editor::dispatch_pane_panel_key`,
+from the `PanelKey(Pane)` applier; what its widgets decline is
+`FallThrough`, the buffer's own route). Three rules that came with it: the
+router names a caret key with its modifiers (`S-Right`, `C-S-Left`) so a
+field's selection and word motion are the kind's on every surface; a
+focused text field takes a printable key ahead of the panel's mode
+bindings, on the keymap node (`panel::Keymap::text_focused`) rather than
+in a host stage; and a described interior is its layer's scope whether or
+not it holds a Tab stop (an interior with none holds focus itself), so the
+key sink exists only for a panel the adapter cannot describe. The mode
+stage's own text-widget branches — its selection moves, clipboard
+forwarding and focused-field gate — are deleted as unreachable. **A panel that is a page** — the welcome screen: a document longer than
+its pane, scrolling as a whole — declares `WidgetPanelOptions::page`, and
+the description puts its content in one viewport the tree owns
+(`splits::panel_content`, `fresh_ui::viewport` with a scrollbar), with a
+`fresh_ui::behavior::Anchor` as the host's handle on that window
+(`Editor::page_anchors`). Its lists take their natural height; the wheel
+and the bar move the window; the arrow, page, Home and End keys scroll it
+when no widget takes them (`handle_widget_key`); and `scrollToWidget` is
+`Anchor::top_key` / `reveal_key` on the widget's node — every keyed widget
+carries `widgets::widget_node_key` in the tree, focusable or not. The
+library grew `Anchor::scroll_by`, `scroll_by_pages` and `scroll_to_end`
+for it. The mirror buffer under a page neither scrolls nor shows a caret.
+*Landed, the deletions*: with no pane-mounted panel left outside the
+tree, `pane_panel_owns_its_scroll` is gone and a pane's panel is described
+whenever one is mounted; `WidgetPanelState::hits` with `hit_test`,
+`hit_test_row_aware`, `row_select_hit` and `row_of_widget`,
+`click_handlers.rs`'s byte-range scan, the hover probe over the projection
+(`update_mounted_widget_hover`), the wheel-by-boxes path
+(`handle_widget_panel_wheel_at` and both routes into it, with the
+`DockScroll` fact), the split-mounted scrollbar pass and its tracks
+(`render_split_widget_panel_scrollbars`, `WidgetScrollbarTrack`,
+`PointerGrab::WidgetScrollbar`) and the registry's host-driven list scroll
+are deleted. A panel's wheel is its viewports' by the library's chain, its
+bar captures the pointer itself, and a press on a widget is the node's.
 
 **Kinds keep their key handlers, reached from the node.** A described
 widget's `on_key` raises `UiFact::WidgetKey { slot, widget, key, viewport }`
@@ -632,10 +715,120 @@ routes through `handle_widget_key`, and the entry-edit dialog stack
 (`EntryDialogState`) becomes a stack of floating layers over `WidgetSpec`
 with its own store. `SettingsLayout`'s painter is already down to a box and a
 divider; the box goes with the fold. The keybinding editor, calibration
-wizard and workspace-trust dialog follow the same shape; the two that still
-hit-test painter rectangles (`workspace_trust_dialog`, `Window::
-file_browser_layout`) are the last consumers of `Modality::Pointer`, and it
-goes with them (L10).
+wizard and workspace-trust dialog follow the same shape. The file-open
+dialog is the last surface whose interior is a painter recording cell spans
+for hit tests to read back (`FileBrowserRenderer`, `Window::
+file_browser_layout`); it is described like the rest, and its layer keeps
+the pointer claim it has (L10).
+
+*Landed.* `view/controls/` is gone. Every `SettingControl` variant is a
+model value — what the JSON carries, and a label — and each settings
+surface (the page, each level of the entry-dialog stack) keeps one
+`WidgetPanelState::surface`: the store the widget kinds read and write,
+whose `focus_key` names the control that is *live*, or one of its rows. A
+key or a press on a live control goes to its kind (`view::settings::live`
+— the same `on_key`, `on_text`, `on_pointer` a plugin panel's widgets
+answer) and the events the kind reports are written to the model, where a
+plugin would receive a `widget_event`. The kinds grew what the settings'
+own engines had and they lacked: `Number` has an in-place draft (typed
+digits with a caret and a selection, Enter commits, Tab commits before it
+advances, Escape and a blur abandon it — instance state, so the plugin
+sees only the `change`), `Dropdown` restores the selection it opened on
+when Escape closes its list, and every kind takes typed text through
+`on_text`. The spec's `edit_text` fields are gone with the engines.
+
+The dual list is `SettingControl::DualList { options, included, excluded }`
+— the included set is the model's, applied from the kind's `change` as it
+moves, and the sibling's `excluded` follows it; which column the keyboard
+drives and where its cursors sit are `kinds::dual_list`'s instance state,
+painted only while the control is live. The kind grew the Shift chords the
+settings had (`S-Up`/`S-Down` reorder, `S-Left`/`S-Right` *carry* the item
+and follow it into its new column — `DualOp::Carry`), its ops are public,
+and the page's Enter on a live dual list is the kind's Space. The JSON
+editor is `SettingControl::Json { text }` under the multi-line `Text` kind:
+the text is the model's as it is typed (its validity is read off it — a
+warning row under the field, the dialog's legend), Enter is the kind's
+newline, and Tab or Escape leave it keeping a text that parses and putting
+back one that does not; an unset value opens as an empty field with a hint
+in it and reads back as `null`. The node the kind is handed is found *by
+key* in the control's description (`widget_map::live_widget`), so a
+control whose description is a `Col` — a label row over a text area —
+dispatches to the keyed node inside it. `view/controls/dual_list` and
+`JsonEditState` are deleted.
+
+The row-based composites are the same widgets a plugin's form is made of.
+A map (`SettingControl::Map { entries, value_schema, display_field,
+no_add }`) and an object array (`ObjectArray { items, item_schema,
+display_field }`) are one `List` keyed by the path, an entry per row and
+the `[+] Add new` row last; its selection is the surface's *cursor*, kept
+in the store by the `List` kind, live while the card is selected — the
+arrows are the kind's `select_move`, and an arrow at either end of the
+rows (the kind moved nothing) is the page's, which moves on to the next
+card; Enter is the kind's `activate`, which the surface answers by opening
+the row's entry dialog (`composite_activate`). The description is told
+which row the cursor is on (`setting_control_to_widget_aligned`'s
+`cursor`) so the row can say `[Enter to edit]` and the add row can be the
+one the list selects. A text list (`TextList { items, integer }`) is its
+rows as *fields*: one `Text` keyed `{path}::row::{i}` per item with a
+`[x]` `Button` keyed `{path}::remove::{i}` beside it, and the add row's
+field keyed `{path}::add` last, labelled `[+] Add new` — all edited by the
+`Text` kind, the live one painting its own caret. A row's `change` is
+applied to the model as it is typed; the add row's draft is the field's
+until Enter (or Tab, or leaving the field) makes it an item
+(`live::text_list::take_draft`); Up and Down open the adjacent row's
+field — on the page they stop at either end, and in the dialog the form
+enters the list at its first item's field from above (its add row's from
+below) and leaves it past the add row; Delete removes the item the field
+is in. The node a kind is
+handed is found by key in the control's description
+(`widget_map::live_widget`), so a row's field dispatches like any
+control. The page's and the dialog's `sub_focus`, `editing_text`,
+`update_focus_states`, `FocusState` and every per-row editing method are
+deleted, as is `UiFact::WidgetHit::at`, the press column the old text
+list's `[x]` was found by: the `[x]` is a button, and its press names it.
+
+The file-open dialog is described (`shell::file_browser`): a `Browser`
+value built from `FileOpenState` — the directory, the two toggles with
+their localized labels and live shortcuts, the navigation shortcuts, the
+sort, the entries with their columns formatted, and which of them the
+keyboard is on — laid out as a bordered box captioned with the directory
+(`truncate_path` against the width the tree gives the strip), two
+navigation rows, a header row and a `List` of entry rows with the bar's
+column reserved. Every control is a keyed node that answers its own press
+(`UiFact::BrowserToggle`, `BrowserShortcut`, `BrowserSort`,
+`BrowserSelect`, `BrowserActivate`; `BrowserNavigation` for a press on the
+band beside the shortcuts) and reports its own hover
+(`HoverTarget::FileBrowser`); the rows' hover and the bar are the list's.
+The list's window is the viewport's: `FileOpenState::scroll_offset`,
+`last_visible_rows` and the clamp the renderer had to feed are deleted, a
+controlled selection is revealed when it moves, and a new directory is a
+new list (the list sits in a scope keyed by the directory) that starts at
+the top. The web reads the rectangles and the window back by key
+(`file_browser::rects`, `window`) and keeps its card. `FileBrowserRenderer`,
+`FileBrowserLayout`, `Window::file_browser_layout`, the three coordinate
+facts, the four hit tests in `file_open_input.rs` and the six
+`HoverTarget::FileBrowser*` variants are deleted.
+
+The modals are the tree's, box and channel alike. The settings dialog's
+layer draws its own rounded ring, ground, caption and the divider between
+its columns (`render_settings` is deleted), is `Modality::Exclusive` with
+its own `Scrim::Dim`, and a press on its slack stops at the box. The
+floating plugin panel's layer claims its own pointer (`Modality::Pointer`)
+and dismisses an anchored popup on an outside press through the layer's
+`Dismiss` (`UiFact::PanelClosed`), which was the one arm of the modal
+pointer handler that did anything. With that the pointer half of the modal
+seam is gone: `modal::Slot`, `modal::layer`, `UiFact::ModalPointer`,
+`Frame::modal`, `Editor::modal_slot`, `handle_settings_mouse`,
+`handle_floating_modal_mouse`, `FloatingWidgetPanel::last_inner_rect`,
+`SettingsState::{scroll_up, scroll_down, scroll_to_ratio, hover_position}`
+and the `KeybindingEditorLayout` husk are deleted; `UiFact::ModalKey` and
+`modal::keys` remain the keyboard's seam. Two library rules landed with it:
+a pointer event that a pointer-blocking layer let nothing answer is
+*claimed* — by the layer — unless a press dismissed it (the tree's word is
+the claim, so a host pipeline behind the tree stops where the modal says
+it must), and the fold applies `Scrim::Dim` as the painters' own dim
+(`dimming::dim_buffer`) rather than restyling the frame in the palette's
+ground, which is what every described modal's scrim had been doing.
 
 ### 3.7 The body: the text buffer as a `Host` node
 
@@ -860,7 +1053,7 @@ computed by ladder, `layer_rank`, `LayerKind`, `overlay_stack`,
 `global_popup_areas`, `DropdownLevel::{x, y, width}`, `fit_dropdown_area`,
 `menu_layout_now`, `view/ui/tabs.rs`'s hit test, `tab_layouts`,
 `split_areas`, `Band`, `Paints::HostsOnly`, `suppress_chrome_cells`,
-`Paint::Lit`, `Modality::Pointer`, `view/controls/`, `EntryDialogState`,
+`Paint::Lit`, `view/controls/`, `EntryDialogState`,
 `SettingsLayout`, `HostRegion`, `HostTarget`, `HostSpec::Plain` for a pane,
 `view/shell/content.rs`, `WindowLayoutCache`, `view/scene.rs` region views
 other than pane cells, and the `webDockPanels` guard.
@@ -898,7 +1091,7 @@ the most deletion per step.
 | **S2 Keys** | L2, L3; keymap projected onto the tree; dock policy into the plugin's mode + focus-trap navigation; router dock branch deleted; `KeyContext` ladder, `layer_rank`, `LayerKind`, `overlay_stack`, `app/chrome/` deleted; PTY gate on `raw_input()` (§2.3 8–9, §3.1) | S1 | S3, S6 |
 | **S3 Panel authority** | `events()` and the hit split; registry fields deleted; prompt toolbar described; `layout_box.rs` and `text_click.rs` deleted; anchored `Auto`; `git_log` onto the list's selection and the buffer-riding class retired; kinds' keys from the node (§3.5, §3.4 prompt) | S2 (for `WidgetKey`) | S8, S9 |
 | **S4 Markdown** | L5; the last in-build render; `Text::scroll` leaves instance state | — | — |
-| **S5 Settings model** | `view/controls/` deleted; entry dialogs as layers over `WidgetSpec`; the three modals; `Modality::Pointer` deleted (§3.6, L10) | S1 (keyboard) | — |
+| **S5 Settings model** | `view/controls/` deleted; entry dialogs as layers over `WidgetSpec`; the file-open dialog described; the three modals (§3.6, L10) | S1 (keyboard) | — |
 | **S6 Menus** | dropdown content model in the description; legacy menu layout and `menu_layout_now` deleted (§3.4) | S2 (shortcuts on menus) | S9 |
 | **S7 The pane as a host leaf, and its chrome** | `BufferHost` as a `HostSpec::Leaf` with hit, byte, focus, scroll facts and caret (§3.7.1–3.7.8); `content.rs` deleted; tab strip, scrollbars, gutter as nodes; `PointerGrab` → captures; L6, L8, L12, L13; `WindowLayoutCache` deleted; one fold, one caret; provenance gate (§3.2, §3.3, §3.7) | S2 (shortcuts on the leaf) | S8 |
 | **S8 Theme and performance** | `Paint::Lit` retired; resolve cache; benchmark; `Rc<WidgetSpec>`, memo at the seam; L7, L9, L11; the `ThemeKey` decision (§3.3, §3.10) | S3, S7 | — |
@@ -918,7 +1111,28 @@ the dock's policy is the plugin's (§2.3(9)), and the claim is the tree's
 word alone (L2). Open in S2: the buffer host's own keymap on
 the tree — today the base's keys still cross `PanelKey` / the pane's
 content surface into `dispatch_base_key` — and the PTY gate on
-`raw_input()` (§3.1).
+`raw_input()` (§3.1). **S3** has its first slice landed: no panel rides
+the buffer's scroll (§3.5) — a pane's panel answers its keys through the
+widget router, `git_log` and the package manager select through the
+List, and the welcome screen is a page in one host-owned viewport. The
+deletions that slice unblocks are landed too: the byte-range scan, the
+hover probe, the wheel-by-boxes path, the split scrollbar pass and
+`WidgetPanelState::hits` are gone, and every mounted panel is the tree's.
+The prompt toolbar is described (§3.4), the third focus ring with it.
+**S6** is landed: the menu chain is a content model the tree places, and
+the legacy layout walk is deleted (§3.4). **S5**'s controls are landed:
+every settings control is a model value edited by its kind against each
+surface's store — the scalars, the dual list, the JSON editor, and the
+row-based composites as the `List` and `Text` kinds — and `view/controls/`
+is deleted, the file-open dialog is described — the last painted
+interior with a recorded-span hit test — so `FileBrowserRenderer` and
+`Window::file_browser_layout` are gone, and the modals are the tree's box
+and channel alike: `render_settings`, the modal pointer slot and
+`UiFact::ModalPointer` are deleted (§3.6). **S5 is landed.**
+Open in S3: the kinds' keys from the node, `painted`/`boxes` (the text
+projection still runs on the plugin's mount and update, and for the two
+exceptions `resolve_described_panel` names), `text_click.rs` and the
+anchored panel's `Auto` width.
 
 **S1 is one PR** and closes sinelaw/fresh#3176. **S2 is its own PR** and
 the only one that changes what a key does over a shipped surface; it gets
@@ -940,8 +1154,8 @@ can express it", `widget_focus_key`'s reference to the deleted function,
 ## 6. Risks, and what to drive by hand
 
 - **S1's stale-tree rule** costs a layout on the rare dispatch with a write
-  between two keys. If the frame builder is not pure, that is found first
-  and fixed first.
+  between two keys, and none on a motion report. If the frame builder is not
+  pure, that is found first and fixed first.
 - **S2** changes every key over the dock. Land the plugin change and the
   host change in one commit; drive the checklist; assert `.claimed`.
 - **S3's `git_log` migration** changes a bundled plugin's selection model;
@@ -992,7 +1206,8 @@ can express it", `widget_focus_key`'s reference to the deleted function,
 - `Host` is a design choice, not a migration seam: a designed host takes its
   rectangle from layout and its position from paint order and records
   nothing. The pane's text, the terminal grid and window embeds stay hosts.
-- `Modality::Focus` is permanent; `Modality::Pointer` is not.
+- `Modality::Focus` and `Modality::Pointer` are permanent: each is one
+  channel's claim for a surface whose other channel is elsewhere (L10).
 - The kinds' key handlers are host-side; kinds are not plugin-extensible.
 - Precedence is layer declaration order; paint order and keyboard order are
   independent by design; a layer names its focus scope when the two differ.

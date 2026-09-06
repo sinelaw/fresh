@@ -41,6 +41,7 @@ fn create(harness: &mut EditorTestHarness, text: &str, highlight_current_line: O
             highlight_current_line,
             initial_cursor_line: None,
             indentation_guide: None,
+            scrollable: None,
             request_id: None,
         })
         .unwrap();

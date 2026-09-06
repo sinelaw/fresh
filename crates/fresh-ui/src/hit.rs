@@ -90,6 +90,26 @@ impl<M: 'static> Ui<M> {
         Dispatch { msgs: out, claimed }
     }
 
+    /// **A pointer event a pointer-blocking modal let nothing answer is the
+    /// modal's.** `hit_paths` routes nothing below such a layer, so a press
+    /// beside it, a wheel over the slack of its own box and a move across
+    /// the dim it casts all reach no handler — and reporting them unclaimed
+    /// would tell a host with a pipeline of its own behind this tree that
+    /// the event is still free, which is the one thing a modal says it is
+    /// not. The claim is the tree's word, so the tree says it: while a layer
+    /// blocks the pointer, a pointer event is claimed by whatever inside it
+    /// answered or by the layer itself.
+    ///
+    /// The one exception is a press that *dismissed* the layer: the layer
+    /// gave the press up, whether it was spent on the dismissal (a left
+    /// click closing a menu) or handed on (a right click that opens the next
+    /// one from the same press) — `dismiss_for_pointer` decides which, and
+    /// the layer has nothing further to say.
+    fn pointer_owned(&self) -> bool {
+        self.topmost_modal_index(crate::desc::Modality::blocks_pointer)
+            .is_some()
+    }
+
     /// The routing itself, reporting whether anything claimed the event.
     fn route_input(&mut self, input: Input, out: &mut Vec<M>) -> bool {
         match input {
@@ -112,7 +132,7 @@ impl<M: 'static> Ui<M> {
                     1,
                     out,
                 );
-                claimed
+                claimed || self.pointer_owned()
             }
             Input::Press {
                 pos,
@@ -143,7 +163,6 @@ impl<M: 'static> Ui<M> {
                 // Whether anything was dismissed, and whether any of it was
                 // spent on the dismissal.
                 let (dismissed, spent) = self.dismiss_for_pointer(pos, out);
-                let _ = dismissed;
                 let dismiss_claims = spent && button == MouseButton::Left;
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:
@@ -164,7 +183,7 @@ impl<M: 'static> Ui<M> {
                     clicks,
                     out,
                 );
-                claimed || dismiss_claims
+                claimed || dismiss_claims || (!dismissed && self.pointer_owned())
             }
             Input::Release { pos, button, mods } => {
                 if self.scrollbar_drag.take().is_some() {
@@ -208,7 +227,7 @@ impl<M: 'static> Ui<M> {
                     }
                 }
                 self.captured = None;
-                claimed
+                claimed || self.pointer_owned()
             }
             Input::Wheel {
                 pos,
@@ -262,7 +281,7 @@ impl<M: 'static> Ui<M> {
                             Chain::Nothing => {}
                         }
                     }
-                    return contained;
+                    return contained || self.pointer_owned();
                 }
                 claimed
             }

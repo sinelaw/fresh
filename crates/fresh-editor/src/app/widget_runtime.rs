@@ -11,7 +11,6 @@
 
 use crate::model::event::{BufferId, LeafId, SplitId};
 
-use super::chrome::in_rect;
 use super::Editor;
 
 /// Render a floating panel's spec, choosing the marker-gutter
@@ -221,13 +220,10 @@ impl Editor {
     /// **`clicked_byte` is measured from the start of the widget's own
     /// rendered row**, which is the space the `focus` event's
     /// `valueInnerStart` breadcrumb is in. A described widget is its own node,
-    /// so the byte the library reports for a press on it is already that; a
-    /// caller resolving through the text projection's rows
-    /// ([`crate::widgets::WidgetRegistry::hit_test_row_aware`]) holds a byte
-    /// in a *composed* row and rebases it by the matched
-    /// [`HitArea::byte_start`](crate::widgets::HitArea::byte_start) before
-    /// calling. Rebasing here instead is what made the described path add
-    /// `byte_start` on and this function take it straight back off.
+    /// so the byte the library reports for a press on it is already that.
+    /// (The caller that resolved through the text projection's composed rows
+    /// and rebased by the matched area's `byte_start` is deleted with the
+    /// panel class it served; the space is the field's own on every path.)
     ///
     /// `None` when the press carries no byte at all — the web's by-index
     /// route, and a keyboard activation.
@@ -661,7 +657,7 @@ impl Editor {
         }
         // The spec already lives in the registry — mutations (e.g.
         // `append_tree_nodes_in_spec`) edit it in place. Borrow it for
-        // render, then write back only the side-effects (hits, instance
+        // render, then write back only the side-effects (instance
         // states, focus key). The previous shape cloned the
         // whole spec out, rendered, then moved it back — for a Tree
         // with 5 000 nodes that's a multi-MB deep clone per IPC, which
@@ -764,7 +760,6 @@ impl Editor {
             .widget_registry
             .update_side_effects(
                 panel_key,
-                out_pieces.hits,
                 out_pieces.instance_states,
                 out_pieces.focus_key,
                 out_pieces.painted,
@@ -794,9 +789,8 @@ impl Editor {
     ///
     /// **The text projection has no reader for such a panel, so it is not
     /// produced.** Its rows are the tree's nodes, its hit areas are those
-    /// nodes' own presses, its box arena answers no wheel
-    /// ([`Self::handle_widget_panel_wheel_at`] declines a described panel and
-    /// says why), and its painted windows are superseded by the viewport's
+    /// nodes' own presses, its wheel is its viewports' (the box arena that
+    /// answered one is deleted), and its painted windows are superseded by the viewport's
     /// (`Editor::widget_viewport` asks the tree first). What is left is
     /// [`crate::widgets::resolve_panel`]'s three: the state carry, the focus
     /// clamp, and the ring — none of which needs a row, a width or a height.
@@ -865,14 +859,13 @@ impl Editor {
         // `widget_panels_with_stale_height` reports the same panel forever.
         let avail_height = match slot {
             Some(slot) => self.floating_panel_inner_height(slot),
-            None => self.widget_panel_height(state.buffer_id),
+            None => state.buffer_id.and_then(|b| self.widget_panel_height(b)),
         };
         self.record_widget_panel_render_height(panel_key, avail_height);
         if self
             .widget_registry
             .update_side_effects(
                 panel_key,
-                Vec::new(),
                 out.instance_states,
                 out.focus_key,
                 std::collections::HashMap::new(),
@@ -1030,7 +1023,7 @@ impl Editor {
                 ui.find_by_key(&crate::view::shell::panel::interior_key(Slot::Sidebar(i)))
             }
             None => {
-                let buffer = self.widget_registry.get(panel_key)?.buffer_id;
+                let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
                 let leaf = self
                     .window_panes()
                     .into_iter()
@@ -1107,6 +1100,48 @@ impl Editor {
         } else {
             crate::widgets::find_widget_by_key(&panel.spec, &focus_key)
         };
+        // **A page's navigation keys scroll the page** when no widget took
+        // them: the window is the tree's, and the anchor is the host's word
+        // to it. Applied by the layout that measured the page, on the next
+        // frame — which the stale mark below asks for.
+        if let Some(anchor) = self
+            .widget_registry
+            .get(panel_key)
+            .filter(|p| p.page)
+            .and_then(|_| self.page_anchors.get(panel_key))
+        {
+            let scrolled = match key {
+                "Up" => {
+                    anchor.scroll_by(-1);
+                    true
+                }
+                "Down" => {
+                    anchor.scroll_by(1);
+                    true
+                }
+                "PageUp" => {
+                    anchor.scroll_by_pages(-1);
+                    true
+                }
+                "PageDown" => {
+                    anchor.scroll_by_pages(1);
+                    true
+                }
+                "Home" => {
+                    anchor.scroll_to(fresh_ui::Point::new(0, 0));
+                    true
+                }
+                "End" => {
+                    anchor.scroll_to_end();
+                    true
+                }
+                _ => false,
+            };
+            if scrolled {
+                self.shell_description_stale = true;
+                return;
+            }
+        }
         match key {
             "Tab" => self.handle_widget_focus_advance(panel_key, 1),
             "Shift+Tab" => self.handle_widget_focus_advance(panel_key, -1),
@@ -1293,7 +1328,7 @@ impl Editor {
             Some(super::PanelSlot::Sidebar(i)) => return Some(Slot::Sidebar(i)),
             None => {}
         }
-        let buffer = self.widget_registry.get(panel_key)?.buffer_id;
+        let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
         self.window_panes()
             .into_iter()
             .find(|(_, b)| *b == buffer)
@@ -1773,126 +1808,11 @@ impl Editor {
         false
     }
 
-    /// Mouse-wheel scroll over a widget panel buffer. With `pos` —
-    /// the pointer's panel-relative (row, display column) — the wheel
-    /// scrolls the `List`/`Tree` whose rendered region contains the
-    /// pointer, so two side-by-side lists (the code tour's Steps rail
-    /// and prose column) each answer to the wheel hovering over them.
-    /// Without a position, or when the pointer sits on panel chrome
-    /// outside every list, it falls back to the first `Tree`/`List`
-    /// in the spec (the pre-position behaviour). Sets the widget's
-    /// `user_scrolled` flag so the renderer's auto-scroll doesn't
-    /// snap the offset back to the selection. No focus change,
-    /// no `widget_event` fires — wheel is viewport navigation, not
-    /// selection.
-    ///
-    /// **A panel the tree describes is skipped entirely, and the reason is a
-    /// coordinate space.** `pos` is a row and a display column in the *text
-    /// projection's* rows — the ones the collector laid out and, for a
-    /// buffer-mounted panel, wrote into the buffer — and `boxes` is that same
-    /// projection's arena. For a described panel the rows on screen were
-    /// placed by the tree instead, at a different width and with its own
-    /// viewport offsets, so the arena answers about a layout nobody is looking
-    /// at: a notch over one list would move another, or move nothing while the
-    /// list under the pointer sat still. Its wheel is its viewports', which
-    /// `fresh-ui` chains into for any notch nothing claimed.
-    ///
-    /// **With one window that is not a viewport's**, and it is reached by name
-    /// rather than by rectangle: a `Text`'s open candidate list is windowed
-    /// out of `completion_scroll_offset`, host state the plugin's
-    /// `SetCompletions` writes, so no element can hold it. The tree hit-tests
-    /// the float it placed and says which widget the notch landed on;
-    /// [`Self::wheel_widget_by_key`] is the other end. That is not a hole in
-    /// this gate — it is the same `on_wheel`, told the widget instead of asked
-    /// to find one in a layout that is not on screen.
-    ///
-    /// **The gate is here rather than at the callers, because there are three
-    /// of them and each stood down on its own.** `dock::column` returns `None`
-    /// for a described interior, `panel::frame_box` attaches no wheel gesture
-    /// for one, and `splits::panel_content` never took the wheel — so no
-    /// described panel reaches this today by any route I can find. That is
-    /// four sites agreeing by construction, which is exactly the shape F.9
-    /// named: a gate applied at every caller is not a gate, it is a
-    /// coincidence maintained by hand. Stating it once, where the arena is
-    /// actually read, is what makes it a rule.
-    ///
-    /// What still routes here is the class the arena is right for: a
-    /// pane-mounted panel that rides the *buffer's* scroll (`git_log`), whose
-    /// rows on screen really are the projection's rows.
-    ///
-    /// Returns `true` if any panel consumed the scroll.
-    pub(super) fn handle_widget_panel_wheel_at(
-        &mut self,
-        buffer_id: crate::model::event::BufferId,
-        pos: Option<(u32, u32)>,
-        delta: i32,
-    ) -> bool {
-        let panels = self.widget_registry.panels_for_buffer(buffer_id);
-        let mut consumed = false;
-        for panel_key in panels {
-            if self.panel_wheel_is_the_trees(&panel_key, buffer_id) {
-                continue;
-            }
-            // Hit-tested routing: the deepest box under the pointer,
-            // then bubbling outward — each scrollable ancestor gets the
-            // delta until one consumes it (scroll chaining). A widget
-            // already at its bound returns false from `on_wheel`, so a
-            // List/Tree that shows everything (e.g. Git Log, which sets
-            // visible_rows == total and scrolls via its enclosing pane)
-            // lets the wheel keep bubbling instead of going dead. With
-            // no position, or a pointer on chrome outside every box,
-            // fall back to the first scrollable widget in the spec (the
-            // pre-position behaviour).
-            let (spec, mut candidates) = match self.widget_registry.get(&panel_key) {
-                Some(p) => {
-                    let along_path: Vec<String> = pos
-                        .map(|(row, col)| {
-                            crate::widgets::layout_box::hit_path(&p.boxes, row, col)
-                                .into_iter()
-                                .rev()
-                                .filter(|&i| p.boxes[i].scrollable)
-                                .filter_map(|i| p.boxes[i].key.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (p.spec.clone(), along_path)
-                }
-                None => continue,
-            };
-            if candidates.is_empty() {
-                if let Some(k) = find_scrollable_widget_key(&spec) {
-                    candidates.push(k);
-                }
-            }
-            for widget_key in candidates {
-                let Some(widget) = crate::widgets::find_widget_by_key(&spec, &widget_key) else {
-                    continue;
-                };
-                let viewport = self.widget_viewport(&panel_key, widget, &widget_key);
-                let Some(panel) = self.widget_registry.get_mut(&panel_key) else {
-                    break;
-                };
-                if crate::widgets::kinds::behavior(widget).on_wheel(
-                    widget,
-                    &widget_key,
-                    panel,
-                    viewport,
-                    delta,
-                ) {
-                    self.rerender_widget_panel(&panel_key);
-                    consumed = true;
-                    break;
-                }
-            }
-        }
-        consumed
-    }
-
     /// Scroll one *named* widget's own window by a wheel notch.
     ///
     /// **The same `on_wheel`, reached by name instead of by rectangle.**
-    /// [`Self::handle_widget_panel_wheel_at`] finds the widget by hit-testing
-    /// the box arena, which a described panel does not have a layout for; the
+    /// The runtime used to find the widget by hit-testing the text
+    /// projection's box arena, which a described panel has no layout for; the
     /// tree hit-tests its own nodes and says which widget the notch landed on,
     /// and this is the other end of that. Nothing else differs: the kind
     /// decides what a notch means and whether it took it, and a widget that
@@ -1931,42 +1851,13 @@ impl Editor {
         true
     }
 
-    /// Whether this panel's wheel belongs to the tree rather than to the box
-    /// arena — which is the same question as "does the tree describe it".
-    ///
-    /// Two slots and one buffer test, because a panel is described under two
-    /// different rules: [`Self::panel_is_described`] for the dock and the
-    /// floating panel (mounted is described), and
-    /// [`Self::pane_panel_is_described`] for a pane-mounted one (only the
-    /// panels that own their own scroll are). See
-    /// [`Self::handle_widget_panel_wheel_at`] for why the distinction is a
-    /// coordinate space and not a preference.
-    fn panel_wheel_is_the_trees(
-        &self,
-        panel_key: &crate::widgets::PanelKey,
-        buffer_id: crate::model::event::BufferId,
-    ) -> bool {
-        match self.slot_of_panel(panel_key) {
-            Some(slot) => self.panel_is_described(slot),
-            None => self.pane_panel_is_described(buffer_id),
-        }
-    }
-
-    /// **Does the tree describe this panel's interior** — the same two rules,
-    /// asked of the panel rather than of a wheel's target buffer.
-    ///
-    /// [`Self::panel_wheel_is_the_trees`] takes the buffer the notch was
-    /// aimed at, because a wheel arrives at a buffer and several panels can
-    /// render into one. A re-render has a panel in hand and takes the buffer
-    /// off it.
+    /// **Does the tree describe this panel's interior** — and it does for
+    /// every mounted panel. The dock, the floating modal, a sidebar section
+    /// and a pane all describe what is mounted in them; the pane-mounted class
+    /// that rode the buffer's scroll and kept the text projection is gone
+    /// (design §3.5). What is left to ask is whether the panel is mounted.
     pub(crate) fn panel_is_the_trees(&self, panel_key: &crate::widgets::PanelKey) -> bool {
-        match self.slot_of_panel(panel_key) {
-            Some(slot) => self.panel_is_described(slot),
-            None => self
-                .widget_registry
-                .get(panel_key)
-                .is_some_and(|p| self.pane_panel_is_described(p.buffer_id)),
-        }
+        self.widget_registry.get(panel_key).is_some()
     }
 
     /// Fire `widget_event { event_type: "activate" }` for the focused
@@ -2361,18 +2252,37 @@ impl Editor {
     /// editor was constructed single-line. `text` may be a single
     /// codepoint, a grapheme cluster, or a multi-codepoint IME
     /// commit; `insert_str` handles each identically.
+    /// Typed text goes to the focused widget's kind (`WidgetImpl::on_text`):
+    /// a field inserts it, a number cell reads its digits, and a kind with
+    /// nothing to type into passes — the same dispatch a named key gets.
     pub(super) fn handle_widget_text_char(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         text: &str,
     ) {
-        if text.is_empty() || self.focused_text_mode(panel_key).1 {
+        if text.is_empty() {
             return;
         }
-        let text = text.to_string();
-        self.with_focused_text_editor(panel_key, move |editor| {
-            editor.insert_str(&text);
-        });
+        let Some(panel) = self.widget_registry.get(panel_key) else {
+            return;
+        };
+        let focus_key = panel.focus_key.clone();
+        let Some(widget) = crate::widgets::find_widget_by_key(&panel.spec, &focus_key).cloned()
+        else {
+            return;
+        };
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        let disposition = match self.widget_registry.get_mut(panel_key) {
+            Some(panel_mut) => crate::widgets::kinds::behavior(&widget)
+                .on_text(&widget, &focus_key, panel_mut, text, &mut fx),
+            None => return,
+        };
+        if disposition != crate::widgets::kinds::KeyDisposition::Pass {
+            self.rerender_widget_panel(panel_key);
+        }
+        for (event_type, payload) in fx.events {
+            self.fire_widget_event(panel_key, focus_key.clone(), event_type, payload);
+        }
     }
 
     /// Inner-rect column budget for a floating panel render — the
@@ -2811,123 +2721,17 @@ impl Editor {
 }
 
 /// Panel pointer machinery shared by every mounted floating panel (the dock
-/// and the centered modal): wheel routing, the text drag, and dismissal.
-/// Behavior owned by the panel runtime (moved from mouse_input.rs).
+/// and the centered modal): the text drag and dismissal.
 ///
 /// **What is no longer here.** The cell→widget probe, the list scrollbar's
-/// press and drag, and the dropdown pop-over's click all resolved a screen
-/// cell against rectangles the interior painter had recorded. That painter
-/// went in 2.4 and they went with it in S7 — a described panel's widgets are
-/// nodes that answer their own presses, and its list's bar is the viewport's,
-/// which captures the pointer itself. What survives here is what a *node*
-/// cannot answer: a notch aimed at the panel's own scroll, a drag through
-/// text inside a widget, and closing the panel.
+/// press and drag, the dropdown pop-over's click and the wheel all resolved a
+/// screen cell against rectangles the interior painter or the text projection
+/// had recorded. Every mounted panel is described now: its widgets are nodes
+/// that answer their own presses, its lists are viewports whose wheel the
+/// library chains into and whose bar captures the pointer itself. What
+/// survives here is what a *node* cannot answer: a drag through text inside a
+/// widget, and closing the panel.
 impl Editor {
-    /// Forward a vertical-wheel scroll to the active floating
-    /// widget panel — same plumbing the orchestrator's
-    /// embedded-widget panels use, but the floating panel
-    /// doesn't show up in `split_at_position` so it needs its
-    /// own dispatch entry point. Returns `true` when the panel
-    /// is active AND the mouse is inside its inner rect (so the
-    /// caller knows the wheel was consumed and shouldn't fall
-    /// through to buffer scrolling).
-    pub(super) fn handle_floating_widget_panel_wheel(
-        &mut self,
-        slot: super::PanelSlot,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> bool {
-        let inner = match self.panel(slot) {
-            Some(fwp) => match fwp.last_inner_rect {
-                Some(rect) => rect,
-                None => return false,
-            },
-            None => return false,
-        };
-        if col < inner.x || col >= inner.x + inner.width {
-            return false;
-        }
-        if row < inner.y || row >= inner.y + inner.height {
-            return false;
-        }
-        // Panel-relative pointer position, so the wheel scrolls the
-        // List/Tree under it rather than the first one in the spec.
-        // Floating panels paint their entries from row 0 at `inner`,
-        // so the translation is a plain offset.
-        let pos = (u32::from(row - inner.y), u32::from(col - inner.x));
-        let scrolled = self.handle_widget_panel_wheel_at(slot.buffer_id(), Some(pos), delta);
-        // The non-modal dock must swallow the wheel whenever the pointer
-        // is over it, even when the list is too short to scroll — the
-        // scroll must never leak through to the active window beneath.
-        let is_dock = matches!(
-            self.panel(slot).map(|f| f.placement),
-            Some(super::PanelPlacement::LeftDock { .. })
-                | Some(super::PanelPlacement::SidebarSection { .. })
-        );
-        scrolled || is_dock
-    }
-
-    /// Route a vertical wheel to a widget panel mounted into an editor
-    /// split (Settings, Search & Replace, the code-tour dock). Resolves
-    /// the split under the pointer, translates the screen position into
-    /// the panel's (buffer row, display column), and hands it to
-    /// [`handle_widget_panel_wheel_at`](Self::handle_widget_panel_wheel_at)
-    /// so the wheel scrolls the list the pointer is actually over —
-    /// not the first list in the spec. Returns `true` when a panel
-    /// consumed the scroll.
-    pub(super) fn handle_split_widget_panel_wheel(
-        &mut self,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> bool {
-        // The pane the pointer is over, counting its scrollbar column — the
-        // wheel scrolls a panel whose bar the pointer is on. `split_at_position`
-        // answered this by scanning the two rectangles it recorded per pane.
-        let Some(split_id) = self.pane_at(col, row) else {
-            return false;
-        };
-        let Some(buffer_id) = self.active_window().pane_buffer(split_id) else {
-            return false;
-        };
-        if self.widget_registry.panels_for_buffer(buffer_id).is_empty() {
-            return false;
-        }
-        let content_rect = self.pane_content_rect(split_id);
-        let pos = content_rect.and_then(|rect| {
-            if !in_rect(col, row, rect) {
-                return None;
-            }
-            // Buffer row = viewport top line + rows below the content
-            // origin. Panels render one entry per line (no soft wrap)
-            // and are normally pinned to the top, but honour a scrolled
-            // viewport all the same.
-            let top_byte = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .and_then(|vs| vs.get(&split_id))
-                .map(|vs| vs.viewport.top_byte())
-                .unwrap_or(0);
-            let top_line = self
-                .buffers()
-                .get(&buffer_id)
-                .map(|s| s.buffer.get_line_number(top_byte))
-                .unwrap_or(0);
-            let gutter = self
-                .buffers()
-                .get(&buffer_id)
-                .map(|s| s.margins.left_total_width() as u16)
-                .unwrap_or(0);
-            let panel_row = u32::from(row - rect.y).saturating_add(top_line as u32);
-            let panel_col = u32::from(col.saturating_sub(rect.x).saturating_sub(gutter));
-            Some((panel_row, panel_col))
-        });
-        self.handle_widget_panel_wheel_at(buffer_id, pos, delta)
-    }
-
     /// Extend an armed widget-text drag selection to the pointer.
     ///
     /// Translates the screen position into the document's (rendered
@@ -2943,7 +2747,9 @@ impl Editor {
         let Some(panel) = self.widget_registry.get(&drag.panel) else {
             return;
         };
-        let buffer_id = panel.buffer_id;
+        let Some(buffer_id) = panel.buffer_id else {
+            return;
+        };
         let Some(region) = panel
             .boxes
             .iter()
@@ -2989,117 +2795,6 @@ impl Editor {
             .unwrap_or_default();
         let byte_in_line = grapheme_byte_at_visual_column(&line_text, widget_col);
         self.extend_widget_text_selection_to(&drag, line, byte_in_line);
-    }
-
-    /// Try to start a drag on a scrollbar painted over a *buffer-mounted*
-    /// widget panel (the review-diff sidebar, Search & Replace). Returns
-    /// true when the press landed on a track, so the caller skips the
-    /// click it would otherwise have delivered to the panel underneath.
-    ///
-    /// The floating-panel twin is [`Self::try_widget_scrollbar_press`];
-    /// the difference is only where the tracks live (on the editor here,
-    /// on the panel struct there).
-    pub(super) fn try_split_widget_scrollbar_press(&mut self, col: u16, row: u16) -> bool {
-        use crate::view::ui::scrollbar::ScrollbarState;
-        // Only tracks belonging to a keyed List/Tree: those are the ones
-        // `apply_widget_scroll` can move. A press claimed for anything else
-        // (a keyless box, an overflowing multi-line Text) would scroll
-        // nothing while still swallowing the click the panel underneath
-        // was owed.
-        let Some((panel_key, track)) = self
-            .split_widget_scrollbar_tracks
-            .iter()
-            .find(|(panel_key, t)| {
-                crate::view::ui::point_in_rect(t.rect, col, row)
-                    && self
-                        .widget_registry
-                        .buffer_and_spec_ref(panel_key)
-                        .is_some_and(|(_, spec)| {
-                            crate::widgets::find_widget_by_key(spec, &t.list_key).is_some_and(|w| {
-                                matches!(
-                                    w,
-                                    fresh_core::api::WidgetSpec::List { .. }
-                                        | fresh_core::api::WidgetSpec::Tree { .. }
-                                )
-                            })
-                        })
-            })
-            .map(|(p, t)| (p.clone(), t.clone()))
-        else {
-            return false;
-        };
-        let state = ScrollbarState::new(track.total, track.visible, track.scroll);
-        let Some(new_offset) = self
-            .split_widget_scrollbar_mouse
-            .press(state, track.rect, col, row)
-        else {
-            return false;
-        };
-        self.split_widget_scrollbar_drag = Some((panel_key.clone(), track.list_key.clone()));
-        self.apply_widget_scroll(&panel_key, &track.list_key, new_offset, track.visible);
-        true
-    }
-
-    /// Continue an in-flight buffer-mounted scrollbar drag. Returns true
-    /// while one is active.
-    pub(super) fn try_split_widget_scrollbar_drag(&mut self, row: u16) -> bool {
-        use crate::view::ui::scrollbar::ScrollbarState;
-        let Some((panel_key, list_key)) = self.split_widget_scrollbar_drag.clone() else {
-            return false;
-        };
-        // Re-read the track: the panel re-renders as it scrolls, so its
-        // recorded geometry is the one from the latest draw.
-        let Some(track) = self
-            .split_widget_scrollbar_tracks
-            .iter()
-            .find(|(p, t)| *p == panel_key && t.list_key == list_key)
-            .map(|(_, t)| t.clone())
-        else {
-            return true;
-        };
-        let state = ScrollbarState::new(track.total, track.visible, track.scroll);
-        if let Some(off) = self
-            .split_widget_scrollbar_mouse
-            .drag(state, track.rect, row)
-        {
-            self.apply_widget_scroll(&panel_key, &list_key, off, track.visible);
-        }
-        true
-    }
-
-    /// End any in-flight buffer-mounted scrollbar drag.
-    pub(super) fn release_split_widget_scrollbar(&mut self) {
-        self.split_widget_scrollbar_mouse.release();
-        self.split_widget_scrollbar_drag = None;
-    }
-
-    /// Apply a host-driven scroll to a panel list (scrollbar press /
-    /// drag): update the registry's instance state, re-render, and —
-    /// when the list has a live selection that moved into the new
-    /// window — notify the plugin so its own selection mirror +
-    /// preview stay in sync with the thumb.
-    fn apply_widget_scroll(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        list_key: &str,
-        new_offset: usize,
-        visible: usize,
-    ) {
-        let moved_sel = self.widget_registry.set_list_scroll(
-            panel_key,
-            list_key,
-            new_offset as u32,
-            visible as u32,
-        );
-        self.rerender_widget_panel(panel_key);
-        if let Some(sel) = moved_sel {
-            self.fire_widget_event(
-                panel_key,
-                list_key.to_string(),
-                "select".to_string(),
-                serde_json::json!({ "index": sel as i64 }),
-            );
-        }
     }
 
     /// Right-click hit-test against a floating widget panel. Resolves the
@@ -3159,36 +2854,6 @@ impl Editor {
         true
     }
 
-    /// True when the centered (`Floating`) slot currently holds an
-    /// anchored context-menu popup rather than a centered modal.
-    pub(super) fn floating_panel_is_anchored(&self) -> bool {
-        matches!(
-            self.floating_widget_panel.as_ref().map(|f| f.placement),
-            Some(super::PanelPlacement::Anchored { .. })
-        )
-    }
-
-    /// True when `(col, row)` falls within the panel's drawn box — the
-    /// last-rendered inner rect grown by its 1-cell border. False when the
-    /// panel or its rect is absent.
-    pub(super) fn point_in_floating_panel(
-        &self,
-        slot: super::PanelSlot,
-        col: u16,
-        row: u16,
-    ) -> bool {
-        let Some(inner) = self.panel(slot).and_then(|f| f.last_inner_rect) else {
-            return false;
-        };
-        let x0 = inner.x.saturating_sub(1);
-        let y0 = inner.y.saturating_sub(1);
-        // inner.{x,y} + {width,height} already lands on the far border cell.
-        col >= x0 && col <= inner.x + inner.width && row >= y0 && row <= inner.y + inner.height
-    }
-
-    /// Unmount the floating panel and fire a `cancel` widget_event so the
-    /// owning plugin clears its state — the click-outside analogue of the
-    /// Esc dismissal in `dispatch_floating_widget_key`.
     pub(super) fn dismiss_floating_panel_with_cancel(&mut self, slot: super::PanelSlot) {
         let panel_key = match self.panel(slot) {
             Some(f) => f.panel_key.clone(),
@@ -3209,143 +2874,6 @@ impl Editor {
             *o = None;
         }
         let _ = self.widget_registry.unmount(&panel_key);
-    }
-
-    /// Track what the pointer is over inside a panel mounted into a
-    /// BUFFER that the shell tree does not describe, and re-render it
-    /// when the answer changes.
-    ///
-    /// A described pane answers its own hover: its rows are nodes and they
-    /// report enter and leave, which is why the runtime's dock/floating
-    /// probe could be deleted outright. But the flip is gated on panels
-    /// that own their scroll (`pane_panel_owns_its_scroll`), and the pages
-    /// whose selection rides the buffer cursor — the welcome screen, Git
-    /// Log — stay on the painter. Nothing on the tree side reaches them,
-    /// so without this every clickable thing in one stays dark under the
-    /// pointer.
-    ///
-    /// Resolution goes through the same `screen_to_buffer_position` →
-    /// `hit_test_row_aware` pair the mounted click path uses, so hover and
-    /// click can never disagree about what the pointer is on.
-    pub(super) fn update_mounted_widget_hover(&mut self, col: u16, row: u16) -> bool {
-        // Which mounted panel is under the pointer, and on what.
-        //
-        // `pane_content_at` is the one answer to "which pane's content covers
-        // this cell", and it reads the rectangle off the shell tree rather
-        // than a recorded list — the same source the click path resolves
-        // against, which is what keeps hover and click from disagreeing.
-        let mut hit_for: Option<(BufferId, String, String)> = None;
-        let pane = self.pane_content_at(col, row);
-        let panes = self.window_panes();
-        'probe: {
-            let Some((split_id, content_rect)) = pane.as_ref().map(|(l, r)| (l, *r)) else {
-                break 'probe;
-            };
-            let Some(buffer_id) = panes
-                .iter()
-                .find(|(leaf, _)| leaf == split_id)
-                .map(|(_, b)| b)
-            else {
-                break 'probe;
-            };
-            if self
-                .widget_registry
-                .panels_for_buffer(*buffer_id)
-                .is_empty()
-            {
-                break 'probe;
-            }
-            let cached_mappings = self
-                .active_layout()
-                .view_line_mappings
-                .get(split_id)
-                .cloned();
-            let splits = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs);
-            let fallback = splits
-                .and_then(|vs| vs.get(split_id))
-                .map(|vs| vs.viewport.top_byte())
-                .unwrap_or(0);
-            let compose_width = splits
-                .and_then(|vs| vs.get(split_id))
-                .and_then(|vs| vs.compose_width);
-            let gutter_width = self
-                .buffers()
-                .get(buffer_id)
-                .map(|s| s.margins.left_total_width() as u16)
-                .unwrap_or(0);
-            let Some(byte_pos) = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true,
-                compose_width,
-            ) else {
-                break 'probe;
-            };
-            let Some(state) = self
-                .windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .and_then(|b| b.get(buffer_id))
-            else {
-                break 'probe;
-            };
-            let (brow, bcol) = state.buffer.position_to_line_col(byte_pos);
-            // `on_overlay = false`: a mounted panel drops the overlay and
-            // popup channels at mount, so there is no covering surface.
-            if let Some((_, hit)) = self.widget_registry.hit_test_row_aware(
-                *buffer_id,
-                brow.min(u32::MAX as usize) as u32,
-                bcol.min(u32::MAX as usize) as u32,
-                false,
-            ) {
-                let item = hit
-                    .event
-                    .payload
-                    .get("key")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                hit_for = Some((*buffer_id, hit.event.widget_key.clone(), item));
-            }
-        }
-        // Every other mounted panel resolves to "nothing hovered", which
-        // is what clears a highlight the pointer has left.
-        let mut changed = Vec::new();
-        for panel_key in self.widget_registry.panel_keys() {
-            let Some(buffer_id) = self
-                .widget_registry
-                .buffer_and_spec_ref(&panel_key)
-                .map(|(b, _)| b)
-            else {
-                continue;
-            };
-            if Self::slot_for_panel_buffer(buffer_id).is_some() {
-                continue;
-            }
-            let (widget, item) = match &hit_for {
-                Some((b, w, i)) if *b == buffer_id => (w.clone(), i.clone()),
-                _ => (String::new(), String::new()),
-            };
-            if self
-                .widget_registry
-                .set_hover_keys(&panel_key, widget, item)
-            {
-                changed.push(panel_key);
-            }
-        }
-        let any = !changed.is_empty();
-        for panel_key in changed {
-            self.rerender_widget_panel(&panel_key);
-        }
-        any
     }
 }
 
@@ -3384,7 +2912,6 @@ mod tests {
             focused: true,
             mode: None,
             entries: Vec::new(),
-            last_inner_rect: None,
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
@@ -3492,84 +3019,12 @@ mod tests {
             panel_key.clone(),
             buffer_id,
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
             out.boxes,
             true,
             false,
-        );
-    }
-
-    /// The list's scroll offset — the *painted* window's, which is where
-    /// an offset lives now.
-    fn list_scroll(editor: &Editor, panel_key: &crate::widgets::PanelKey) -> u32 {
-        match editor
-            .widget_registry
-            .get(panel_key)
-            .and_then(|p| p.painted.get("lst"))
-        {
-            Some(w) => w.offset,
-            None => panic!("a painted window for the list"),
-        }
-    }
-
-    /// **A described panel's wheel never reaches the box arena, and the arena
-    /// is still there for the panel that needs it.**
-    ///
-    /// Both halves matter, which is why they are one test. The position handed
-    /// to `handle_widget_panel_wheel_at` is a row and a column in the *text
-    /// projection's* rows, and `boxes` is that projection's arena — so it is
-    /// the right answer for a panel whose rows on screen are those rows, and
-    /// an answer about an invisible layout for a panel the tree placed.
-    ///
-    /// The dock is described whenever a panel is mounted in it, so its notch
-    /// belongs to the viewport the description built and this must decline it
-    /// (the caller then lets `fresh-ui`'s scroll chain run). The same spec on
-    /// an ordinary buffer is not described — nothing built a viewport for it —
-    /// and the arena is the only thing that can say which list the pointer is
-    /// over.
-    #[test]
-    fn the_arena_answers_a_wheel_only_where_the_tree_did_not_place_the_rows() {
-        let (mut editor, _t) = make_editor();
-        let described = crate::widgets::PanelKey::new("test-plugin", 1);
-        let plain = crate::widgets::PanelKey::new("test-plugin", 2);
-        let dock_buffer = crate::app::PanelSlot::Dock.buffer_id();
-        let plain_buffer = crate::model::event::BufferId(9_999);
-        mount_list_panel(&mut editor, &described, dock_buffer);
-        mount_list_panel(&mut editor, &plain, plain_buffer);
-        editor.dock = Some(dock_panel(described.clone()));
-        assert!(
-            editor.panel_is_described(crate::app::PanelSlot::Dock),
-            "a mounted dock panel is described — the premise of the first half"
-        );
-        assert!(
-            !editor.pane_panel_is_described(plain_buffer),
-            "an ordinary buffer's panel is not — the premise of the second"
-        );
-
-        // Row 1, column 2: inside the list's own box in the projection's
-        // arena, which is what makes this a hit rather than a miss.
-        let took_dock = editor.handle_widget_panel_wheel_at(dock_buffer, Some((1, 2)), 3);
-        assert!(
-            !took_dock,
-            "the described panel declines, so the caller can let the tree's \
-             scroll chain have the notch"
-        );
-        assert_eq!(
-            list_scroll(&editor, &described),
-            0,
-            "and it moved nothing: the registry's offset is not the window the \
-             description draws from"
-        );
-
-        let took_plain = editor.handle_widget_panel_wheel_at(plain_buffer, Some((1, 2)), 3);
-        assert!(took_plain, "the projection's own panel consumes its notch");
-        assert_eq!(
-            list_scroll(&editor, &plain),
-            3,
-            "and the arena resolved the pointer to the list under it"
         );
     }
 
@@ -3626,7 +3081,6 @@ mod tests {
             panel_key.clone(),
             buffer,
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -3791,7 +3245,6 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -3859,7 +3312,6 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -3933,7 +3385,6 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec.clone(),
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -4045,9 +3496,8 @@ mod tests {
 
         let panel = editor.widget_registry.get(&described).expect("the panel");
         assert!(
-            panel.hits.is_empty() && panel.boxes.is_empty() && panel.painted.is_empty(),
-            "no text projection: {} hits, {} boxes, {} painted windows",
-            panel.hits.len(),
+            panel.boxes.is_empty() && panel.painted.is_empty(),
+            "no text projection: {} boxes, {} painted windows",
             panel.boxes.len(),
             panel.painted.len()
         );
@@ -4063,11 +3513,16 @@ mod tests {
             "and the state was carried, not re-seeded from the spec"
         );
 
+        // The same panel outside a slot is a pane's, and a pane's panel is
+        // described too — there is no mounted panel the tree does not lay
+        // out, so no re-render runs the collector.
         editor.rerender_widget_panel(&plain);
         let panel = editor.widget_registry.get(&plain).expect("the panel");
         assert!(
-            !panel.hits.is_empty() && !panel.boxes.is_empty(),
-            "a panel the tree does not describe still gets its projection"
+            panel.boxes.is_empty() && panel.painted.is_empty(),
+            "a pane-mounted panel is the tree's as well: {} boxes, {} painted windows",
+            panel.boxes.len(),
+            panel.painted.len()
         );
     }
 
@@ -4171,7 +3626,6 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -4237,12 +3691,12 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
             out.boxes,
             true,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -4295,12 +3749,12 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
             out.boxes,
             true,
+            false,
         );
         let mut dock = dock_panel(panel_key.clone());
         dock.focused = false;
@@ -4352,11 +3806,11 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
             out.boxes,
+            false,
             false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
@@ -4400,12 +3854,12 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
             out.boxes,
             true,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -4471,7 +3925,6 @@ mod tests {
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             closed,
-            out.hits,
             out.instance_states,
             out.focus_key,
             out.painted,
@@ -4509,7 +3962,6 @@ mod tests {
             .update(
                 &panel_key,
                 open,
-                out.hits,
                 out.instance_states,
                 out.focus_key,
                 out.painted,

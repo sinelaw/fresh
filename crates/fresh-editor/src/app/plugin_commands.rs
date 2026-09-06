@@ -1308,61 +1308,51 @@ impl Editor {
         self.seat_buffer_cursor(buffer_id, position);
     }
 
-    /// Handle ScrollToWidget: put the cursor on the keyed widget, and
-    /// move the view to it as `align` asks.
+    /// `scrollToWidget`: move the panel's page to the widget the plugin
+    /// names.
     ///
-    /// The row comes from the panel's own hit areas, so this asks where
-    /// the widget actually landed rather than deriving it.
-    ///
-    /// `Top` scrolls and moves the cursor together, because they answer
-    /// the same request: "take me to this", not "reveal this somewhere
-    /// on screen".
-    ///
-    /// `Minimal` is that other request, and it is the *cursor move
-    /// alone* — the host's own reveal is already minimal, leaving the
-    /// target just inside an edge and doing nothing at all when it is
-    /// already on screen. Which is right for following focus: a Tab
-    /// between two controls of one card should not move the page, and
-    /// the control that gains focus should not land on the top row with
-    /// its own card title scrolled off above it.
+    /// A buffer-mounted panel is described, and a *page* panel is one
+    /// viewport the tree owns (`WidgetPanelOptions::page`); "take me to
+    /// this widget" is a command on that window, answered by the layout that
+    /// measured the page (`fresh_ui::behavior::Anchor`). `Top` puts the
+    /// widget's band on the window's top row; `Minimal` moves the window
+    /// only as far as it takes to bring the band into view — following
+    /// focus, where a Tab between two controls of one card should not move
+    /// the page. A panel that is not a page has nothing to scroll: its lists
+    /// window themselves and follow their own selection.
     pub(super) fn handle_scroll_to_widget(
         &mut self,
         buffer_id: BufferId,
         key: &str,
         align: fresh_core::api::ScrollAlign,
     ) {
-        let Some(row) = self.widget_registry.row_of_widget(buffer_id, key) else {
+        let Some(anchor) = self
+            .widget_registry
+            .panels_for_buffer(buffer_id)
+            .into_iter()
+            .find_map(|pk| self.page_anchors.get(&pk).cloned())
+        else {
+            tracing::debug!("ScrollToWidget: no page panel in buffer {buffer_id:?} for {key:?}");
+            return;
+        };
+        let Some(node) = self
+            .widget_registry
+            .panels_for_buffer(buffer_id)
+            .into_iter()
+            .filter_map(|pk| self.widget_registry.get(&pk))
+            .find_map(|p| crate::widgets::find_widget_by_key(&p.spec, key))
+            .and_then(crate::view::shell::widgets::node_key_of)
+        else {
             tracing::debug!("ScrollToWidget: no widget {key:?} in buffer {buffer_id:?}");
             return;
         };
-        let offset = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
-            .and_then(|st| st.buffer.line_start_offset(row as usize));
-        let Some(offset) = offset else {
-            return;
-        };
-        if align == fresh_core::api::ScrollAlign::Minimal {
-            // Un-latch the splits showing this buffer before the cursor
-            // move, or the reveal this alignment *is* may not happen —
-            // and `ScrollAlign::Top` is one of the things that latches
-            // them. See `Editor::unlatch_ensure_visible`.
-            self.unlatch_ensure_visible(buffer_id);
-            self.handle_set_buffer_cursor(buffer_id, offset);
-            return;
+        match align {
+            fresh_core::api::ScrollAlign::Minimal => anchor.reveal_key(node),
+            fresh_core::api::ScrollAlign::Top => anchor.top_key(node),
         }
-        self.handle_set_buffer_cursor(buffer_id, offset);
-        let splits = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .splits_for_buffer(buffer_id);
-        for leaf in splits {
-            self.handle_set_split_scroll(leaf.0, offset);
-        }
+        // The command is applied by the next layout, which the stale mark
+        // asks for.
+        self.shell_description_stale = true;
     }
 
     /// Handle SetSplitScroll command

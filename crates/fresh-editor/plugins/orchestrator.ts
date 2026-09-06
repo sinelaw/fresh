@@ -11035,18 +11035,15 @@ registerHandler("orchestrator_dock_enter", () => {
   openPanel.command({ kind: "activate" });
 });
 
-// Space — accepts an open dropdown's cursor; types into the filter; the
-// tree ignores it (bulk select is the modal picker's); any other control
-// runs.
+// Space — accepts an open dropdown's cursor; the tree ignores it (bulk
+// select is the modal picker's); any other control runs. In the filter it
+// never arrives here: a focused text field takes a printable key ahead of
+// the mode's bindings, so the host types it.
 registerHandler("orchestrator_dock_space", () => {
   if (!dockMode || !openPanel) return;
   const menu = dockOpenMenu();
   if (menu === "menu") return acceptDockMenu();
   if (menu === "project") return acceptProjectMenu();
-  if (pickerFocusKey === "filter") {
-    openPanel.command({ kind: "textInputChar", text: " " });
-    return;
-  }
   if (dockOnSessions()) return;
   openPanel.command({ kind: "activate" });
 });

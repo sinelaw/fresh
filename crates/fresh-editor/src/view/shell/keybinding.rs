@@ -40,7 +40,7 @@ pub const MIN_HEIGHT: u16 = 20;
 
 /// What a press on one of the editor's dialogs asks for.
 ///
-/// Each was a rectangle the painter filed in `KeybindingEditorLayout` and the
+/// Each was a rectangle the painter filed in a `KeybindingEditorLayout` and the
 /// mouse arm compared a cell against, in a chain of `point_in_rect`. They are
 /// where the nodes are now, and the fact says what was pressed rather than
 /// where.
@@ -611,7 +611,8 @@ fn spans(v: &[Span]) -> Vec<Node<UiMsg>> {
 }
 
 /// The search row, which is the one part of the chrome that answers a press:
-/// clicking it starts a search, which is what `layout.search_bar` was for.
+/// clicking it starts a search, which is what the painter's recorded
+/// `search_bar` rectangle was for.
 fn search_row(v: &[Span]) -> Node<UiMsg> {
     gesture(
         row()

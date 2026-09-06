@@ -154,17 +154,6 @@ impl Editor {
         use crate::model::event::{CursorId, Event};
         use crossterm::event::KeyModifiers;
 
-        // A scrollbar painted over a buffer-mounted widget panel sits
-        // inside the split's content rect (the panel reserves the columns
-        // for it), so the press arrives here rather than through
-        // `handle_click_scrollbar`. Grab it before anything else: the bar
-        // overlaps the list's rightmost column, and a press there is a
-        // scroll, not a click on the row behind it.
-        if self.try_split_widget_scrollbar_press(col, row) {
-            self.focus_split(split_id, buffer_id);
-            return Ok(());
-        }
-
         // Build modifiers string for plugins
         let modifiers_str = if modifiers.contains(KeyModifiers::SHIFT) {
             "shift".to_string()
@@ -258,44 +247,10 @@ impl Editor {
             }
         };
 
-        // Widget hit-test: if the click landed on a Toggle/Button
-        // inside a mounted widget panel, fire the semantic
-        // `widget_event` hook. We still fall through to `mouse_click`
-        // afterwards so plugins that bind both hooks get both events
-        // — needed for incremental migration of plugins that haven't
-        // moved their click handlers off the raw `mouse_click` path
-        // yet. Once a plugin's click handling is fully widget-event
-        // driven, it stops listening to `mouse_click` for its panel
-        // and the duplicate dispatch becomes a no-op.
-        if let (Some(brow), Some(bcol)) = (mc_buffer_row, mc_buffer_col) {
-            // Row-aware so a click past a list/tree row's text still lands on
-            // the row (see `hit_test_row_aware`) — the mounted panels
-            // (Settings, Search & Replace) get the same full-width rows the
-            // floating dock does, from the one shared resolver.
-            // `on_overlay=false` is a KNOWN LIMITATION, not an oversight:
-            // mounted panels drop the overlay/popup channels at mount
-            // (see `handle_mount_widget_panel`), so there is never an
-            // overlay surface to resolve against here.
-            //
-            // A *described* pane never gets here: the projection above is
-            // `None` for one, because its widgets carry their own hits on
-            // their own rectangles and the runtime's stored list is the
-            // second layout this migration exists to remove.
-            if let Some((panel_key, hit)) = self
-                .widget_registry
-                .hit_test_row_aware(buffer_id, brow, bcol, false)
-            {
-                // **The one place that rebases, because it is the one place
-                // holding a byte in a composed row.** `bcol` is measured from
-                // the start of the buffer *line*, and a line can carry two
-                // fields side by side (Search + Replace); the matched area's
-                // `byte_start` is where the widget's own row begins in it,
-                // which is the space `deliver_widget_hit` and the `focus`
-                // event's `valueInnerStart` are both in.
-                let byte_in_field = (bcol as usize).saturating_sub(hit.byte_start);
-                self.deliver_widget_hit(&panel_key, &hit.event, Some(byte_in_field));
-            }
-        }
+        // A press on a widget never reaches here: a mounted panel's widgets
+        // are nodes in the tree, and a node answers its own press and stops
+        // it (`view::shell::widgets`). What arrives is a press the panel's
+        // nodes declined, and the buffer's own readers below get it.
 
         // A line that points somewhere (`editor.setLineTargets`) opens its
         // target on click. Checked before the plugin hook so a declarative
@@ -349,8 +304,8 @@ impl Editor {
                 return Ok(());
             }
             // Widget panel: take the focus, then stop. The panel owns every
-            // row it draws, and the hit dispatch above already delivered any
-            // click that landed on a control. A click that missed one — a
+            // row it draws, and its nodes already answered any click that
+            // landed on a control. A click that missed one — a
             // `labeledSection` border, the padding under a short list — must
             // not fall through to cursor placement: the buffer's cursor is
             // hidden, but the viewport still follows it, so the click scrolls

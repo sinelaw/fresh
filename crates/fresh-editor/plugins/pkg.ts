@@ -2607,7 +2607,8 @@ function renderPkgList(): void {
       items: rows.map((r) => r.entry),
       itemKeys: rows.map((r) => r.key),
       selectedIndex: rowSel,
-      visibleRows: Math.max(1, rows.length),
+      // No `visibleRows`: the List windows itself to the pane's height
+      // and scrolls to keep the selection in view.
       key: "pkg-list",
     }),
   );
@@ -2777,7 +2778,11 @@ async function openPackageManager(): Promise<void> {
         type: "split",
         direction: "h",
         ratio: 0.4,
-        first: { type: "scrollable", id: "list" },
+        // The list is a List widget that windows itself to the pane;
+        // the buffer under it does not scroll (`scrollable: false` is
+        // what makes the pane's panel a described one). The detail is
+        // plain panel content and scrolls as a buffer.
+        first: { type: "scrollable", id: "list", scrollable: false },
         second: { type: "scrollable", id: "detail" },
       },
       second: { type: "fixed", id: "footer", height: 1 },

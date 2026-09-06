@@ -94,11 +94,12 @@ impl Editor {
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {
         // As `handle_key`: routed over a tree laid out from the facts as they
-        // stand, and stale once handled.
+        // stand. What it leaves stale is decided where the event is spent —
+        // a fact says whether it changed anything routing reads
+        // (`UiFact::is_pointer_transient`), and the legacy walk, which cannot,
+        // marks the description stale for every press and release it takes.
         self.lay_out_shell_if_stale();
-        let r = self.handle_mouse_routed(mouse_event);
-        self.shell_description_stale = true;
-        r
+        self.handle_mouse_routed(mouse_event)
     }
 
     fn handle_mouse_routed(
@@ -221,6 +222,17 @@ impl Editor {
             // continues. See `Dispatched`.
             needs_render = needs_render || d.changed;
         }
+        // **The legacy walk cannot say what it changed**, so a press or a
+        // release it takes leaves the description stale for routing. A
+        // motion report is spent on trackers and grabs that change nothing
+        // routing reads, and a drag along a divider must not cost a layout
+        // per report.
+        if !matches!(
+            mouse_event.kind,
+            MouseEventKind::Moved | MouseEventKind::Drag(_)
+        ) {
+            self.shell_description_stale = true;
+        }
         // A live terminal's own mouse, and the Ctrl+Click that opens a path it
         // printed. Both belong to a pane's *content*, and the pane's content
         // is a node — so its handlers ask this first, before placing a caret
@@ -268,7 +280,6 @@ impl Editor {
                 // Blanket sweep: every remaining drag flag drops here,
                 // so no grab can outlive its release even if its
                 // finalizer above was skipped.
-                self.release_split_widget_scrollbar();
                 self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
 
@@ -322,13 +333,6 @@ impl Editor {
                 // Dismissing the popup is a repaint, and this is the only
                 // party that knows it happened — see the docstring.
                 needs_render = self.update_lsp_hover_state(col, row) || needs_render;
-
-                // A panel mounted into a buffer that the tree does NOT
-                // describe still needs someone to light its controls under
-                // the pointer: the described panes answer their own hover
-                // with nodes, but the flip is gated on panels that own their
-                // scroll, and the welcome screen's scroll is the buffer's.
-                needs_render = self.update_mounted_widget_hover(col, row) || needs_render;
             }
             _ => {
                 // Ignore other mouse events for now
@@ -957,9 +961,7 @@ impl Editor {
         // `hit.rs` owns its thumb, capturing the pointer itself for the
         // duration of the drag, so nothing reaches this walk to be let
         // through.
-        if self.overlay_prompt_active()
-            && !matches!(grab, PointerGrab::WidgetText | PointerGrab::WidgetScrollbar)
-        {
+        if self.overlay_prompt_active() && !matches!(grab, PointerGrab::WidgetText) {
             return Ok(());
         }
         match grab {
@@ -969,18 +971,10 @@ impl Editor {
             PointerGrab::WidgetText => {
                 self.handle_widget_text_selection_drag(col, row);
             }
-            // A scrollbar drag on a buffer-mounted widget panel (the
-            // review-diff sidebar, Search & Replace), whose tracks live on the
-            // editor rather than on a panel struct.
-            //
-            // The dock's and the centered modal's bars were on this arm too.
-            // They are the tree's now — a described panel's list is a viewport
-            // and `hit.rs` captures the pointer for its own thumb — and the
-            // painter that recorded their tracks went with the interior it
-            // painted, so nothing could arm the grab for them any more.
-            PointerGrab::WidgetScrollbar => {
-                let _ = self.try_split_widget_scrollbar_drag(row);
-            }
+            // A panel's list scrollbar was an arm here — the dock's and the
+            // modal's, then a buffer-mounted panel's. A described panel's
+            // list is a viewport and `hit.rs` captures the pointer for its
+            // own thumb, so the drag never reaches this walk.
             // The split separator's and the file explorer's width drags were
             // here, and so were both of a pane's scrollbars. All four are
             // nodes that capture the pointer, so their moves arrive as

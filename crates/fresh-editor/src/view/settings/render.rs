@@ -1,109 +1,13 @@
-//! What is left of the settings painter.
+//! What is left of the settings painter: nothing that paints.
 //!
-//! The dialog is a description now — `view::shell::settings` builds it and
-//! `view::shell::entry` builds its entry-edit stack. Two things stayed: the
-//! box, because it is drawn under the tree's overlay band rather than in it,
-//! and the shapes the tree asks this module for, which are domain knowledge
-//! (what a search result reads as, what a category's icon is, what a Delete
-//! button is called) rather than paint.
+//! The dialog is a description — `view::shell::settings` builds it, box and
+//! all, and `view::shell::entry` builds its entry-edit stack. What stayed
+//! here are the shapes the tree asks this module for, which are domain
+//! knowledge (what a search result reads as, what a category's icon is, what
+//! a Delete button is called) rather than paint.
 
 use super::entry_dialog::EntryDialogState;
 use super::search::{DeepMatch, SearchResult};
-use super::state::SettingsState;
-use crate::view::theme::Theme;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
-use ratatui::Frame;
-
-/// Render the settings dialog into the box the tree placed.
-///
-/// `modal_area` used to be computed here — ninety percent of `area`, capped at
-/// 160 columns, centred with `area.x` and `area.y` added back so the dock did
-/// not over-draw its left edge — and then filed in `SettingsLayout::modal_area`
-/// for the mouse handler to measure every other rectangle from. It is
-/// `view::shell::settings`'s now, and this is handed the answer.
-///
-/// It is not a node itself because it is *under* everything: `Clear`, the
-/// popup ground and the border are painted before the tree's overlay band
-/// folds over them.
-///
-/// `area` is still needed for one thing: the too-small message, which is not
-/// the dialog and does not go where the dialog would have.
-pub fn render_settings(
-    frame: &mut Frame,
-    area: Rect,
-    modal_area: Rect,
-    panel_area: Option<Rect>,
-    state: &SettingsState,
-    theme: &Theme,
-) {
-    // Minimum size guard — prevent panics from zero-sized layout arithmetic.
-    // The tree applies the same guard by placing no box; this is what it looks
-    // like when it did.
-    if modal_area.width == 0 || modal_area.height == 0 {
-        let msg = "[Terminal too small for settings]";
-        let x = area.x + area.width.saturating_sub(msg.len() as u16) / 2;
-        let y = area.y + area.height / 2;
-        if area.width > 0 && area.height > 0 {
-            frame.render_widget(
-                Paragraph::new(msg).style(Style::default().fg(theme.diagnostic_warning_fg)),
-                Rect::new(x, y, msg.len() as u16, 1),
-            );
-        }
-        return;
-    }
-
-    // Clear the modal area and draw border
-    frame.render_widget(Clear, modal_area);
-
-    let title = if state.has_changes() {
-        format!(" Settings [{}] • (modified) ", state.target_layer_name())
-    } else {
-        format!(" Settings [{}] ", state.target_layer_name())
-    };
-
-    let block = Block::default()
-        .title(title.as_str())
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.popup_border_fg))
-        .style(Style::default().bg(theme.popup_bg));
-    frame.render_widget(block, modal_area);
-
-    // Inner area after border
-    let inner_area = Rect::new(
-        modal_area.x + 1,
-        modal_area.y + 1,
-        modal_area.width.saturating_sub(2),
-        modal_area.height.saturating_sub(2),
-    );
-
-    // **Everything inside the box is the tree's.** The categories (a `List`
-    // down the left, or a strip across the top), the page header, the body's
-    // cards, the search's results, both footers, all seven dialogs and the
-    // entry-edit stack. What is left to paint is the box itself and the one
-    // column between its two panes.
-    //
-    // Narrow below sixty columns — the threshold the tree splits on too, and
-    // the only place the two layouts still differ here, because the wide one
-    // has a divider and the narrow one does not.
-    if inner_area.width >= 60 {
-        // `Layout::horizontal([Length(24), Length(1), Min(40)])`'s middle
-        // column. The tree lays the same three out and the panel's rectangle
-        // is read back rather than split a second time; this is the line
-        // between them.
-        let x = panel_area
-            .map(|p| p.x.saturating_sub(1))
-            .unwrap_or(inner_area.x + 24);
-        let top = inner_area.y + 2;
-        let bottom = inner_area.y + inner_area.height.saturating_sub(2);
-        let style = Style::default().fg(theme.split_separator_fg);
-        for y in top..bottom {
-            frame.render_widget(Paragraph::new("│").style(style), Rect::new(x, y, 1, 1));
-        }
-    }
-}
 
 /// Get an icon for a settings category name.
 ///

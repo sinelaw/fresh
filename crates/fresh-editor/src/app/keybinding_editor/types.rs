@@ -2,7 +2,6 @@
 
 use crate::config::{KeyPress, Keybinding};
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::layout::Rect;
 
 /// Where a binding comes from
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,22 +262,4 @@ pub enum DisplayRow {
     },
     /// A binding row (index into `bindings`)
     Binding(usize),
-}
-
-/// Layout information for mouse hit testing
-#[derive(Debug, Clone, Default)]
-pub struct KeybindingEditorLayout {
-    /// The full modal area (all mouse events inside are captured)
-    pub modal_area: Rect,
-    // **The five the dialogs owned are gone.** `dialog_buttons`,
-    // `dialog_key_field`, `dialog_action_field`, `dialog_context_field` and
-    // `confirm_buttons` were rectangles the painter filed for a chain of
-    // `point_in_rect` in the mouse arm. The dialogs are descriptions now and
-    // their fields and buttons answer their own presses.
-    /// Search bar area (for clicking to focus)
-    pub search_bar: Option<Rect>,
-    // `table_area`, `table_first_row_y` and `table_scrollbar` are gone with the
-    // table. The first two existed so a mouse arm could turn a cell back into
-    // a row index — the row knows its own — and the third so a second arm
-    // could drag a thumb the library's viewport already drags.
 }

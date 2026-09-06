@@ -12,18 +12,21 @@
 //! and clipping the rounded top-left corner". Naming the region the layer may
 //! occupy is that, said where the placing happens.
 //!
-//! **A rectangle, not a surface.** The interior is hit-tested against the
-//! rectangles the painter records, and the modal slot is what routes a press
-//! to it. A layer is offered the pointer before the ones below it and the
-//! first with a path at the point wins, so a box that merely existed here
-//! would swallow every click in the dialog. `PointerMode::Ignore` is what
-//! keeps it geometry.
+//! **A surface, all the way down.** Every part of the dialog is a node that
+//! answers its own press, the box included: its rounded ring, its ground,
+//! the caption on its top edge and the divider between its two columns were
+//! the last cells `render_settings` painted under the tree's overlay band,
+//! and they are the layer's own now — as is the dim over everything behind
+//! it (`Scrim::Dim`), and the claim that nothing behind it is interactive
+//! (`Modality::Exclusive`). The modal pointer slot that used to sit under the
+//! box to catch the presses no node answered is gone with the painter it was
+//! routing to; a press on the box's slack stops at the box.
 
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, layout_reader, row, stack, text, viewport, Align, Anchor, Event, GestureKind,
-    LayoutInfo, Modality, MouseButton, Node, Place, PointerMode, Scrim, Sizing,
+    col, gesture, layout_reader, row, stack, text, viewport, Align, Anchor, BorderStyle, Event,
+    GestureKind, LayoutInfo, Modality, MouseButton, Node, Place, PointerMode, Scrim, Sizing,
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -58,15 +61,8 @@ pub fn fit(info: LayoutInfo) -> Option<(u16, u16)> {
     Some(((w * 90 / 100).min(MAX_WIDTH), h * 90 / 100))
 }
 
-/// The dialog's box as a layer: centred beside the dock, with the chrome the
-/// tree owns inside it and the painter's body between.
-///
-/// **Everything the tree does not own routes to the modal slot.** The panels
-/// are still hit-tested by `settings/mouse.rs` against rectangles the painter
-/// recorded, so a press there has to reach `handle_settings_mouse` — and a
-/// layer is the first thing asked at a point, so it cannot simply let the hit
-/// fall through: it has to say where it goes. The chrome nodes that *are* the
-/// tree's stop their own presses before they get that far.
+/// The dialog as a layer: centred on the frame, dimming everything behind
+/// it, exclusive, and drawn by the tree from the ring in.
 ///
 /// While there is no chrome — the box is empty, which is how it started — the
 /// layer is `PointerMode::Ignore` instead: a rectangle and nothing else.
@@ -87,7 +83,17 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
         .anchor(Anchor::Screen(Align::Center))
         .place(Place::Over);
     let body = layout_reader(move |info: LayoutInfo| {
-        let (w, h) = fit(info).unwrap_or((0, 0));
+        let Some((w, h)) = fit(info) else {
+            // The painter wrote "[Terminal too small for settings]" over the
+            // editor, centred, and placed no box. The layer is centred
+            // already; this is the message where the box would be.
+            return match &c {
+                None => col().key(key()).pointer_mode(PointerMode::Ignore),
+                Some(_) => text(TOO_SMALL)
+                    .theme(pair("diagnostic.warning_fg", "editor.bg"))
+                    .key(too_small_key()),
+            };
+        };
         // **Which layout is a question about this box, and it is answered
         // where the box is measured.** It used to be answered by asking the
         // *previous* frame's tree for this node's rectangle — so on the frame
@@ -142,8 +148,7 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                         col()
                             .w(Sizing::Cells(CATEGORY_COLS))
                             .children(c.categories.iter().map(categories).collect::<Vec<_>>()),
-                        // The divider column, which the painter draws.
-                        row().w(Sizing::Cells(1)),
+                        divider(),
                         page().key(panel_key()),
                     ]),
                     // The narrow layout's categories are a horizontal strip:
@@ -156,41 +161,25 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                         page().h(Sizing::Flex(1)).key(panel_key()),
                     ]),
                 };
+                // Inside the ring — a bordered box holds its children inside
+                // it by construction, so the rows the painter's border used
+                // to occupy are not reserved here any more.
                 let mut rows: Vec<Node<UiMsg>> = vec![
-                    // The box's own top border, which the painter draws.
-                    row().h(Sizing::Cells(1)),
-                    row()
-                        .h(Sizing::Cells(1))
-                        .children([row().w(Sizing::Cells(1)), search_row(&c.search)]),
+                    row().h(Sizing::Cells(1)).child(search_row(&c.search)),
                     // The blank row under the search bar —
                     // `search_header_height + search_gap` in the painter,
                     // which is where it measures its content band from.
                     row().h(Sizing::Cells(1)),
-                    // The content band, inset by the box's border on each
-                    // side. **Both insets are load-bearing now that the tree
-                    // draws the body**: the band is what the painter reads
-                    // back as its own `content_area`, and a band one column
-                    // wide and one row tall too much put the panel over the
-                    // divider between the two columns.
-                    row().flex(1).children([
-                        row().w(Sizing::Cells(1)),
-                        body,
-                        row().w(Sizing::Cells(1)),
-                    ]),
+                    body.flex(1),
                 ];
                 if let Some(f) = &c.footer {
                     // The separator the painter drew one row above the
-                    // buttons, then the buttons, then the border. The rule is
-                    // inset by the same cell as the buttons: the box's border
-                    // is the painter's and a full-width rule drew straight
-                    // over both of its sides.
-                    rows.push(row().h(Sizing::Cells(1)).children([
-                        row().w(Sizing::Cells(1)),
-                        rule().flex(1),
-                        row().w(Sizing::Cells(1)),
-                    ]));
+                    // buttons, then the buttons. The rule runs from ring to
+                    // ring, as the painter's did once it was inset from the
+                    // border it drew over.
+                    rows.push(rule());
                     // One row across, five rows down — `footer_height` was 2
-                    // and 7, and the second cell of indent is the narrow
+                    // and 7, and the extra cell of indent is the narrow
                     // footer's `modal_area.x + 2`.
                     rows.push(
                         row()
@@ -199,17 +188,29 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                                 true => 1,
                             }))
                             .children([
-                                row().w(Sizing::Cells(1 + !wide as u16)),
+                                row().w(Sizing::Cells(!wide as u16)),
                                 match wide {
                                     false => footer_column(f).flex(1),
                                     true => footer_row(f).flex(1),
                                 },
-                                row().w(Sizing::Cells(1)),
                             ]),
                     );
-                    // The border's own row, which the painter draws.
-                    rows.push(row().h(Sizing::Cells(1)));
                 }
+                // The box: `Block::default().borders(ALL).border_type(Rounded)
+                // .border_style(popup_border_fg).style(bg(popup_bg))`, with
+                // its title stacked on the top edge as every described box
+                // carries one (`modal::title_strip`).
+                let ring = pair("ui.popup_border_fg", "ui.popup_bg");
+                let boxed = stack().children([
+                    col()
+                        .theme(ring.clone())
+                        .border_style(BorderStyle::Rounded)
+                        .child(col().children(rows)),
+                    super::modal::title_strip(
+                        c.title.clone(),
+                        attrs("ui.popup_border_fg", "ui.popup_bg", &["bold"]),
+                    ),
+                ]);
                 // **The box is the dialog's focus scope, and its rest.** The
                 // layer names it (`scope_at`), so the ring is what is inside
                 // it — the category list, the cards, the footer's buttons —
@@ -219,7 +220,7 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                 // so that focus rests here rather than on whichever stop is
                 // first — the same rule `panel::interior` applies when a
                 // panel's focus key is empty. Its keys reach the seam.
-                let n = fresh_ui::focusable(route(n.children(rows)))
+                let n = fresh_ui::focusable(absorb(boxed))
                     .w(Sizing::Cells(w))
                     .h(Sizing::Cells(h))
                     .key(key())
@@ -232,23 +233,16 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
         }
     });
     match has_chrome {
-        // **The dialog's keyboard is claimed here, not by the modal slot
-        // behind it.** `modal::layer(Slot::Settings)` is a *full-frame* layer
-        // and its `keys` wrapper lives inside it, so while that was the
-        // topmost keyboard-owning layer the focus scope was the empty frame
-        // node: `focus_scope` retains only focusables within the topmost
-        // modal, and every node of this box is in a different layer. Nothing
-        // inside the dialog could hold focus, so nothing inside it could ever
-        // be offered a key — which is why the whole surface was routed by one
-        // `ModalKey` fact.
-        //
-        // `Modality::Keyboard` rather than `Exclusive`: the pointer is still
-        // the slot's. `handle_settings_mouse` answers the wheel, the presses
-        // the tree's own nodes decline, and a press on the dim outside the
-        // box — all of which arrive because the layer *below* this one blocks
-        // the pointer and this one does not.
+        // **The dialog is exclusive, and the box is its focus scope.** The
+        // keyboard is confined to the box (`scope_at`): the ring is what is
+        // inside it, and a key nothing inside answers reaches the seam
+        // (`keys`). The pointer is the layer's too — nothing behind it is
+        // interactive while it is up, which is what the modal slot's
+        // full-frame surface used to say from underneath — and the dim over
+        // everything behind it is the scrim `apply_dimming` painted by hand.
         true => l
-            .modality(Modality::Keyboard)
+            .modality(Modality::Exclusive)
+            .scrim(Some(Scrim::Dim))
             .scope_at(key())
             .child(keys(body)),
         false => l.pointer_mode(PointerMode::Ignore).child(body),
@@ -324,32 +318,53 @@ fn keys(content: Node<UiMsg>) -> Node<UiMsg> {
         })
 }
 
-/// Send every pointer event that reaches this node to the modal slot, which
-/// routes it to `handle_settings_mouse`. The parts the tree owns stop the flow
-/// before it gets here.
+/// A press on the box that nothing inside it answered stops at the box.
 ///
-/// **Except the wheel, which is never this node's.** Scroll chaining runs only
-/// for a notch nothing claimed, so a catch-all that stops the wheel stops it
-/// for every viewport underneath — and all three of the dialog's scrolling
-/// regions are viewports now: the category tree, the cards, and the search
-/// results. Claiming it here meant a wheel over the results moved nothing at
-/// all, while `handle_settings_mouse`'s own wheel arm sat behind a comment
-/// saying a notch over the tree "is the tree's ... nothing reaches here from
-/// over it" — true only if the notch is allowed to get there.
-fn route(n: Node<UiMsg>) -> Node<UiMsg> {
-    let mut g = gesture(n);
-    for kind in [GestureKind::Press, GestureKind::Release, GestureKind::Move] {
-        g = g.on(
-            kind,
-            Rc::new(|e: &Event| {
-                e.stop();
-                Some(UiMsg::Ui(UiFact::ModalPointer(
-                    super::modal::Slot::Settings,
-                )))
-            }),
-        );
-    }
-    g
+/// The parts the tree owns stop their own presses before it gets here; what
+/// reaches this is the ring, the header's slack, the blank rows under a
+/// short page. It used to be sent to the modal slot for `handle_settings_mouse`
+/// to swallow, which is the same statement made one layer lower.
+///
+/// **The wheel is never this node's.** Scroll chaining runs only for a notch
+/// nothing claimed, so a catch-all that stops the wheel stops it for every
+/// viewport underneath — and all three of the dialog's scrolling regions are
+/// viewports: the category tree, the cards, and the search results. A notch
+/// none of them wants is contained by the layer, as every floating surface's
+/// is.
+fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
+    gesture(n).on(
+        GestureKind::Press,
+        Rc::new(|e: &Event| {
+            e.stop();
+            None
+        }),
+    )
+}
+
+/// The painter's message where the box would be, when the area is under
+/// `MIN_AREA`.
+pub const TOO_SMALL: &str = "[Terminal too small for settings]";
+
+pub fn too_small_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("settings_too_small".into())
+}
+
+/// The column between the category tree and the page, in the wide layout.
+///
+/// `Layout::horizontal([Length(24), Length(1), Min(40)])`'s middle column,
+/// which `render_settings` filled with `│` from the body band's top row to
+/// its bottom one. The band is the tree's, so the column is as tall as it.
+fn divider() -> Node<UiMsg> {
+    let ink = pair("ui.split_separator_fg", "ui.popup_bg");
+    layout_reader(move |info: LayoutInfo| {
+        let h = info.constraints.max_h as usize;
+        col().children(
+            (0..h)
+                .map(|_| text("│").theme(ink.clone()))
+                .collect::<Vec<_>>(),
+        )
+    })
+    .w(Sizing::Cells(1))
 }
 
 /// The width the painter's `Constraint::Length(24)` gave the tree.
@@ -895,8 +910,15 @@ fn gutter(c: &Card, band: &str) -> Node<UiMsg> {
 /// The control itself — the same `WidgetSpec` the widget mapping produced,
 /// described by the same adapter a plugin's panel goes through.
 fn control(c: &Card, band: &str) -> Node<UiMsg> {
-    let spec = c.spec.clone();
+    let mut spec = c.spec.clone();
+    // The key hint under a dual list's columns is the page's word — what
+    // the control can do from here depends on whether it is selected or
+    // live, which the card knows and the widget mapping does not.
+    if let fresh_core::api::WidgetSpec::DualList { hint, .. } = &mut spec {
+        *hint = crate::view::settings::widget_map::dual_list_hint(c.live, c.selected);
+    }
     let focus_key = c.focus_key.clone();
+    let states = c.states.clone();
     let hovered_popup_row = c.hovered_popup_row.clone();
     use crate::app::shell_host::shell_theme::Ink;
     let banded = Ink::keys("ui.popup_text_fg", band.to_string());
@@ -905,7 +927,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
         let w = info.constraints.max_w.max(1);
         let cx = |surface: &Ink| super::widgets::Ctx {
             slot: super::widgets::Slot::Settings,
-            states: super::widgets::no_state(),
+            states: &states,
             focus_key: focus_key.clone(),
             keyboard: true,
             hovered_key: None,
@@ -964,11 +986,14 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
                     .collect::<Vec<_>>(),
             ),
             // A scalar control *is* its label row, so the band is the whole
-            // of it. The rest — a `DualList`'s two columns, a `Json` editor's
-            // box — is many rows the painter left on the dialog's ground, and
-            // there is no first child to split off, so it keeps the band it
-            // has always had rather than being pinned to one row.
-            W::Toggle { .. } | W::Text { .. } | W::Number { .. } | W::Dropdown { .. } => {
+            // of it. The rest — a `DualList`'s two columns — is many rows the
+            // painter left on the dialog's ground, and there is no first
+            // child to split off, so it keeps the band it has always had
+            // rather than being pinned to one row.
+            W::Toggle { .. } | W::Number { .. } | W::Dropdown { .. } => {
+                strip(super::widgets::node(&spec, w, &cx(&banded)))
+            }
+            W::Text { rows, .. } if *rows <= 1 => {
                 strip(super::widgets::node(&spec, w, &cx(&banded)))
             }
             _ => super::widgets::node(&spec, w, &cx(&banded)),
@@ -1307,6 +1332,10 @@ pub struct Card {
     /// The control is live — editing, typing a number, a dropdown open —
     /// and its keys are the host's until it is left.
     pub live: bool,
+    /// The page's widget instance state, by key: what the kinds wrote
+    /// (a field's editor, a number's draft, a dropdown's list), read by
+    /// the description the control is painted from.
+    pub states: std::rc::Rc<std::collections::HashMap<String, crate::widgets::WidgetInstanceState>>,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
     /// empty. The pop-over's rows report their own hover, because a settings
     /// control has no panel behind it for the runtime's probe to walk.
@@ -1965,7 +1994,6 @@ fn buttons(c: &Choice, target: impl Fn(usize) -> Target + 'static) -> Node<UiMsg
 mod tests {
     use super::*;
     use crate::view::shell::frame::{frame_tree, Frame};
-    use crate::view::shell::modal::Slot;
     use crate::view::shell::msg::UiFact;
     use fresh_ui::{Size, Ui};
 
@@ -2028,6 +2056,7 @@ mod tests {
 
     fn searching(query: &str) -> Chrome {
         Chrome {
+            page: None,
             title: " Settings [user] ".into(),
             search: Search::Active {
                 field: std::rc::Rc::new(fresh_core::api::WidgetSpec::Text {
@@ -2061,7 +2090,6 @@ mod tests {
             categories: None,
             strip: None,
             results: None,
-            page: None,
             items: None,
         }
     }
@@ -2088,7 +2116,6 @@ mod tests {
         ui.frame(
             frame_tree(Frame {
                 settings: Some(c),
-                modal: Some(Slot::Settings),
                 dock,
                 menu_bar: false,
                 status_bar: false,
@@ -2120,6 +2147,7 @@ mod tests {
                     },
                     focus_key: String::new(),
                     live: false,
+                    states: Default::default(),
                     hovered_popup_row: String::new(),
                     description: None,
                     layer: None,
@@ -2166,7 +2194,6 @@ mod tests {
         let frame = |c: Chrome| {
             frame_tree(Frame {
                 settings: Some(c),
-                modal: Some(Slot::Settings),
                 dock: None,
                 menu_bar: false,
                 status_bar: false,
@@ -2235,7 +2262,6 @@ mod tests {
         let frame = |c: Chrome| {
             frame_tree(Frame {
                 settings: Some(c),
-                modal: Some(Slot::Settings),
                 dock: None,
                 menu_bar: false,
                 status_bar: false,
@@ -2353,19 +2379,24 @@ mod tests {
         assert!(r.x < 40, "and its left edge is inside the dock column");
     }
 
-    /// An area below the guard has no dialog in it — the painter writes that
-    /// it is too small instead.
+    /// An area below the guard has no dialog in it — the message that it is
+    /// too small stands where the box would.
     #[test]
     fn an_area_below_the_guard_has_no_box() {
         let ui = laid_out(30, 8, None);
-        assert_eq!(boxed(&ui).w, 0, "nothing to place");
+        assert!(ui.find_by_key(&key()).is_none(), "nothing to place");
+        let msg = ui.rect_of(ui.find_by_key(&too_small_key()).expect("the message"));
+        assert_eq!(
+            msg.w as usize,
+            TOO_SMALL.len().min(30),
+            "clipped to the frame"
+        );
     }
 
-    /// **A rectangle, not a surface**: a press inside it reaches the slot that
-    /// routes to `handle_settings_mouse`, which hit-tests the interior's own
-    /// recorded rectangles.
+    /// **A surface, not a rectangle**: a press on the box that no node inside
+    /// it answers stops at the box, and nothing behind the dialog is asked.
     #[test]
-    fn a_press_inside_the_box_reaches_the_modal_router() {
+    fn a_press_inside_the_box_stops_at_the_box() {
         let mut ui = laid_out(200, 60, None);
         let r = boxed(&ui);
         let got = ui.dispatch(fresh_ui::Input::press(
@@ -2373,11 +2404,10 @@ mod tests {
             fresh_ui::MouseButton::Left,
             fresh_ui::Mods::NONE,
         ));
+        assert!(got.claimed, "the dialog takes it");
         assert!(
-            got.msgs
-                .iter()
-                .any(|m| matches!(m, UiMsg::Ui(UiFact::ModalPointer(Slot::Settings)))),
-            "the slot behind it answers: {:?}",
+            got.msgs.is_empty(),
+            "and nothing behind it is asked: {:?}",
             got.msgs
         );
     }
@@ -2400,7 +2430,6 @@ mod tests {
             frame_tree(Frame {
                 settings: Some(chrome()),
                 settings_dialog: Some(d),
-                modal: Some(Slot::Settings),
                 menu_bar: false,
                 status_bar: false,
                 ..Frame::default()
@@ -2546,7 +2575,6 @@ mod tests {
         ui.frame(
             frame_tree(Frame {
                 settings: Some(c),
-                modal: Some(Slot::Settings),
                 menu_bar: false,
                 status_bar: false,
                 ..Frame::default()
@@ -2968,7 +2996,6 @@ mod tests {
         ui.frame(
             frame_tree(Frame {
                 settings: Some(searching("theme")),
-                modal: Some(Slot::Settings),
                 menu_bar: false,
                 status_bar: false,
                 ..Frame::default()
@@ -2994,24 +3021,20 @@ mod tests {
         );
     }
 
-    /// **The body band is invisible to the pointer, not a claim.** The panels
-    /// under it are still hit-tested against rectangles the painter recorded,
-    /// so a press there has to reach the slot that routes to them — taking it
-    /// here would make the whole settings body inert.
+    /// **The body band's slack is the box's.** A press on a row of the body
+    /// that no card occupies is swallowed by the dialog rather than reaching
+    /// the buffer behind it.
     #[test]
-    fn a_press_on_the_body_reaches_the_modal_router() {
+    fn a_press_on_the_body_stops_at_the_box() {
         let mut ui = laid_out(200, 60, None);
         let b = ui.rect_of(ui.find_by_key(&key()).expect("the box"));
-        let got = facts(ui.dispatch(fresh_ui::Input::press(
+        let got = ui.dispatch(fresh_ui::Input::press(
             fresh_ui::Point::new(b.x + 10, b.y + 10),
             fresh_ui::MouseButton::Left,
             fresh_ui::Mods::NONE,
-        )));
-        assert!(
-            got.iter()
-                .any(|f| matches!(f, UiFact::ModalPointer(Slot::Settings))),
-            "the slot answers: {got:?}"
-        );
+        ));
+        assert!(got.claimed, "the dialog takes it");
+        assert!(facts(got).is_empty(), "and no slot answers");
     }
 
     /// **The footer's five buttons sit where the painter put them**: `[ Edit ]`

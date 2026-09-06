@@ -75,18 +75,30 @@ impl CardRegion {
 /// body. The design doc's §5, "preview pane size when terminal is narrow".
 pub const PREVIEW_MIN_COLS: u16 = 120;
 
-/// What the card is showing. Content and counts — never a rectangle, except the
-/// one the card sits in.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// What the card is showing. Content — never a rectangle, except the one the
+/// card sits in.
+#[derive(Clone, Debug)]
 pub struct Card {
     /// Where `centered_overlay_rect` put the card.
     pub at: Rect,
-    /// How many rows the plugin's toolbar renders to at this width. Measured
-    /// by the widget runtime, which is the only thing that knows: a toolbar is
-    /// two rows on a wide terminal and wraps to more on a narrow one.
-    pub toolbar_rows: u16,
+    /// The plugin's toolbar, when it set one: the interior of its toolbar
+    /// panel (`PROMPT_TOOLBAR_PANEL_ID`), described in the header band and
+    /// as tall as its controls need. The band measures it; nothing counts
+    /// rows for it.
+    pub toolbar: Option<super::panel::Interior>,
+    /// Without a toolbar, whether the header band holds the painter's
+    /// styled-text title row.
+    pub title_row: bool,
     /// Whether the plugin set a footer.
     pub footer: bool,
+    /// Whether the prompt is a search prompt, which names its key section
+    /// (`prompt::keys_key`).
+    pub search: bool,
+    /// Whether the query input holds the keyboard — the toolbar panel's focus
+    /// fact says no control does. The input's focus holder marks `autofocus`
+    /// exactly then, so the ring rests on it unless a toolbar control has
+    /// been given the keyboard.
+    pub input_focused: bool,
 }
 
 impl Card {
@@ -102,6 +114,12 @@ impl Card {
 
 pub fn region_key(r: CardRegion) -> fresh_ui::Key {
     fresh_ui::Key::Pair("card".into(), r.id())
+}
+
+/// The card's own key — what the prompt's keyboard layer confines the ring
+/// to while the card is up (`prompt::keys_layer`).
+pub fn card_key() -> fresh_ui::Key {
+    CARD_KEY.with(|k| k.clone())
 }
 
 fn region(r: CardRegion) -> Node<UiMsg> {
@@ -175,12 +193,120 @@ fn body(c: &Card) -> Node<UiMsg> {
         ]),
     };
     col().children([
-        region(CardRegion::Input).h(Sizing::Cells(1)),
-        toolbar(region(CardRegion::Toolbar).h(Sizing::Cells(c.toolbar_rows))),
+        input_band(c),
+        toolbar_band(c),
         separator,
         middle,
         region(CardRegion::Footer).h(Sizing::Cells(c.footer as u16)),
     ])
+}
+
+/// The input row: the painter's line, and **the prompt's focus holder**.
+///
+/// A bottom-row prompt's keyboard layer holds a sink that takes every key for
+/// `dispatch_prompt_key`; with a card up the layer confines the ring to the
+/// card instead, and this band is that sink — keyed the same way, so
+/// `frame::key_context_of` reads the same key section off it. It marks
+/// `autofocus` while no toolbar control has the keyboard, and reports when
+/// the ring lands back on it so the toolbar's focus fact can be cleared
+/// (`UiFact::CardInputFocus`).
+fn input_band(c: &Card) -> Node<UiMsg> {
+    let ring = c.toolbar.is_some();
+    let n = fresh_ui::focusable(region(CardRegion::Input).h(Sizing::Cells(1)))
+        .h(Sizing::Cells(1))
+        .key(super::prompt::keys_key(c.search))
+        .on_key(move |e: &Event| {
+            // **Tab is the ring's while there is a ring to walk.** With a
+            // toolbar in the card, Tab and Shift+Tab are declined here so
+            // the tree's traversal moves onto its controls — the
+            // interception `handle_overlay_toolbar_key` did ahead of the
+            // prompt. Without one, Tab is the prompt's, as it is on the
+            // bottom row (path completion, `sync_input_on_navigate`).
+            let tab = e.key.is_some_and(|k| {
+                matches!(k.code, fresh_ui::KeyCode::Tab | fresh_ui::KeyCode::BackTab)
+            });
+            if ring && tab {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(UiFact::PromptKey))
+        })
+        .on_focus_change(
+            |e: &Event| match e.kind == fresh_ui::GestureKind::FocusGained {
+                true => Some(UiMsg::Ui(UiFact::CardInputFocus)),
+                false => None,
+            },
+        );
+    match c.input_focused {
+        true => n.autofocus(),
+        false => n,
+    }
+}
+
+/// The header band under the input row: the plugin's toolbar, described, or
+/// the painter's title row, or nothing.
+///
+/// **The toolbar is a panel's interior, on the prompt's ring.** Its controls
+/// are the same nodes a dock panel's are (`widgets::node`), its presses and
+/// keys route to the toolbar panel through `Slot::PromptToolbar`, and the
+/// band is as tall as they lay out — the count `render_spec_no_autofocus`
+/// used to produce for the band's height was a second layout of the same
+/// spec. Its capture-leg rule is the surface's: a key that navigates the
+/// results or types is the query input's, and pressing it on a focused
+/// toggle hands the keyboard back with the key — the ring the old
+/// `handle_overlay_toolbar_key` walked by hand, said on the node.
+fn toolbar_band(c: &Card) -> Node<UiMsg> {
+    let Some(i) = c.toolbar.clone() else {
+        return region(CardRegion::Toolbar).h(Sizing::Cells(c.title_row as u16));
+    };
+    let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+        let inner_w = info.constraints.max_w.max(1);
+        super::widgets::node(
+            &i.spec,
+            inner_w,
+            &super::widgets::Ctx {
+                slot: super::widgets::Slot::PromptToolbar,
+                states: &i.states,
+                focus_key: i.focus_key.clone(),
+                keyboard: i.keyboard,
+                hovered_key: i.hovered_key.clone(),
+                marker_gutter: i.marker_gutter,
+                hovered_item_key: i.hovered_item_key.clone(),
+                hovered_popup_row: i.hovered_popup_row.clone(),
+                avail_height: None,
+                scrollbar_reveal: None,
+                surface: super::widgets::panel_surface(),
+                markdown: i.markdown.as_ref().map(|m| m.ctx()),
+            },
+        )
+        .w(Sizing::Cells(inner_w))
+    });
+    let to_input: super::panel::Capture = Rc::new(|e: &Event| {
+        let k = e.key?;
+        let input_key = match k.code {
+            fresh_ui::KeyCode::Up
+            | fresh_ui::KeyCode::Down
+            | fresh_ui::KeyCode::PageUp
+            | fresh_ui::KeyCode::PageDown => true,
+            // Space activates the focused control; every other character
+            // types into the query.
+            fresh_ui::KeyCode::Char(ch) => ch != ' ',
+            _ => false,
+        };
+        if !input_key {
+            return None;
+        }
+        e.stop();
+        Some(UiMsg::Ui(UiFact::PromptKey))
+    });
+    super::panel::interior_capturing(
+        super::widgets::Slot::PromptToolbar,
+        Some(to_input),
+        false,
+        body,
+    )
+    .key(region_key(CardRegion::Toolbar))
+    .h(Sizing::Auto)
 }
 
 /// A press anywhere on the card that no band claimed dies here, and so does a
@@ -230,28 +356,6 @@ fn preview(n: Node<UiMsg>) -> Node<UiMsg> {
     )
 }
 
-/// The toolbar band reports where it was pressed.
-///
-/// Its controls are a plugin's `WidgetSpec`, laid out by the widget runtime and
-/// hit-tested against its own box tree — `chrome:overlay_prompt_scrim` did that
-/// hit-test after subtracting a stored origin. `Event::local` is that
-/// subtraction, done by the thing that knows the origin.
-fn toolbar(n: Node<UiMsg>) -> Node<UiMsg> {
-    fresh_ui::gesture(n).on(
-        fresh_ui::GestureKind::Press,
-        Rc::new(|e: &Event| {
-            if e.button != fresh_ui::MouseButton::Left {
-                return None;
-            }
-            e.stop();
-            Some(UiMsg::Ui(UiFact::CardToolbarPress {
-                x: e.local.x.max(0) as u16,
-                y: e.local.y.max(0) as u16,
-            }))
-        }),
-    )
-}
-
 thread_local! {
     static CARD_KEY: fresh_ui::Key = fresh_ui::Key::Str("overlay_prompt_card".into());
 }
@@ -297,6 +401,56 @@ mod tests {
         rs.iter().find(|(k, _)| *k == r).unwrap().1
     }
 
+    /// A toolbar of `rows` toggles, one per row — the shape the tests count
+    /// bands by. `0` is no toolbar at all.
+    fn toolbar_of(rows: u16) -> Option<super::super::panel::Interior> {
+        use fresh_core::api::WidgetSpec;
+        if rows == 0 {
+            return None;
+        }
+        let children = (0..rows)
+            .map(|i| WidgetSpec::Toggle {
+                checked: false,
+                label: format!("T{i}"),
+                focused: false,
+                indeterminate: false,
+                label_first: false,
+                label_width: 0,
+                key: Some(format!("t{i}")),
+            })
+            .collect();
+        Some(super::super::panel::Interior {
+            spec: Rc::new(WidgetSpec::Col {
+                children,
+                key: None,
+            }),
+            states: Rc::new(Default::default()),
+            focus_key: String::new(),
+            keyboard: true,
+            page: None,
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+            keymap: None,
+            markdown: None,
+        })
+    }
+
+    /// A card whose header band holds `toolbar_rows` rows.
+    fn card_of(at: Rect, toolbar_rows: u16, footer: bool) -> Card {
+        Card {
+            at,
+            toolbar: toolbar_of(toolbar_rows),
+            title_row: false,
+            footer,
+            search: false,
+            input_focused: true,
+        }
+    }
+
     /// **The header band's height is the sum of its rows, not a constant.**
     ///
     /// `render_overlay_prompt` said `header_h = 2 + toolbar_h` and, forty lines
@@ -305,13 +459,9 @@ mod tests {
     /// border and the footer. Stacked, the sum is what stacking does.
     #[test]
     fn the_toolbar_pushes_the_body_down_by_its_own_height() {
-        let base = Card {
-            at: Rect::new(10, 4, 150, 40),
-            toolbar_rows: 0,
-            footer: false,
-        };
+        let base = card_of(Rect::new(10, 4, 150, 40), 0, false);
         let tall = Card {
-            toolbar_rows: 3,
+            toolbar: toolbar_of(3),
             ..base.clone()
         };
         let a = laid_out(&base);
@@ -331,11 +481,7 @@ mod tests {
     /// **The footer takes its row off the bottom of the body.**
     #[test]
     fn a_footer_shortens_the_body_by_one_row() {
-        let base = Card {
-            at: Rect::new(10, 4, 150, 40),
-            toolbar_rows: 2,
-            footer: false,
-        };
+        let base = card_of(Rect::new(10, 4, 150, 40), 2, false);
         let with = Card {
             footer: true,
             ..base.clone()
@@ -358,16 +504,16 @@ mod tests {
     /// one — the rule `frame_tree` states for a hidden row.
     #[test]
     fn a_narrow_card_hides_the_preview_without_losing_it() {
-        let wide = laid_out(&Card {
-            at: Rect::new(0, 0, PREVIEW_MIN_COLS + 10, 30),
-            toolbar_rows: 1,
-            footer: false,
-        });
-        let narrow = laid_out(&Card {
-            at: Rect::new(0, 0, PREVIEW_MIN_COLS - 1, 30),
-            toolbar_rows: 1,
-            footer: false,
-        });
+        let wide = laid_out(&card_of(
+            Rect::new(0, 0, PREVIEW_MIN_COLS + 10, 30),
+            1,
+            false,
+        ));
+        let narrow = laid_out(&card_of(
+            Rect::new(0, 0, PREVIEW_MIN_COLS - 1, 30),
+            1,
+            false,
+        ));
         assert!(
             at(&wide, CardRegion::Preview).width > 0,
             "wide enough for a preview"
@@ -406,11 +552,7 @@ mod tests {
             for h in [10u16, 24, 40, 59] {
                 for toolbar_rows in [0u16, 1, 3] {
                     for footer in [false, true] {
-                        let c = Card {
-                            at: Rect::new(1, 1, w, h),
-                            toolbar_rows,
-                            footer,
-                        };
+                        let c = card_of(Rect::new(1, 1, w, h), toolbar_rows, footer);
                         let rs = laid_out(&c);
 
                         // The painter's version.
@@ -467,11 +609,7 @@ mod tests {
     /// says it, and it clips as well as insets.
     #[test]
     fn the_bands_are_inside_the_border() {
-        let c = Card {
-            at: Rect::new(10, 4, 150, 40),
-            toolbar_rows: 2,
-            footer: true,
-        };
+        let c = card_of(Rect::new(10, 4, 150, 40), 2, true);
         let rs = laid_out(&c);
         for r in CardRegion::ALL {
             let b = at(&rs, r);

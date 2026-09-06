@@ -128,6 +128,11 @@ pub enum Slot {
     /// index. The dock's case with a different slot: the same interior, the
     /// same keys layer, and hits that route to the panel the section holds.
     Sidebar(usize),
+    /// The floating-overlay prompt's toolbar (`editor.setPromptToolbar`):
+    /// the plugin's panel `PROMPT_TOOLBAR_PANEL_ID`, described in the card's
+    /// header band. Its widgets are on the prompt's Tab ring beside the
+    /// query input, and its hits and keys route to that panel.
+    PromptToolbar,
 }
 
 impl Slot {
@@ -254,6 +259,7 @@ impl Ctx<'static> {
             states: no_state(),
             focus_key: String::new(),
             keyboard: false,
+
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
@@ -541,7 +547,33 @@ fn row_surface(st: fresh_ui::widgets::RowState, plain: &Ink) -> Ink {
 }
 
 fn node_in(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMsg> {
-    on_the_ring(spec, cx, node_body(spec, width, cx, site))
+    let body = node_body(spec, width, cx, site);
+    // **Every keyed widget is findable in the tree by its key**, focusable or
+    // not: a page's section banner is a bare, unfocusable button the page
+    // names when it asks to be scrolled there (`scrollToWidget` →
+    // `Anchor::top_key`). A stateful kind's body already carries its own key
+    // (`state_key`, which names its window) and keeps it; every other keyed
+    // body takes one in its own namespace. [`node_key_of`] is the one
+    // answer to "which key names this widget's node".
+    let body = match body.key.is_some() {
+        true => body,
+        false => keyed(body, spec.key().map(widget_node_key)),
+    };
+    on_the_ring(spec, cx, body)
+}
+
+/// The key the tree carries for plugin widget `k` when its kind has no key
+/// of its own. See [`node_in`] and [`node_key_of`].
+pub fn widget_node_key(k: &str) -> fresh_ui::Key {
+    fresh_ui::Key::Str(format!("widget:{k}").into())
+}
+
+/// The key that names `spec`'s node in the tree: a stateful kind's own
+/// ([`spec_state_key`]), else the widget namespace ([`widget_node_key`]).
+/// `None` for an unkeyed widget. What the host hands an `Anchor` to move a
+/// page to a widget.
+pub fn node_key_of(spec: &WidgetSpec) -> Option<fresh_ui::Key> {
+    spec_state_key(spec).or_else(|| spec.key().map(widget_node_key))
 }
 
 /// **Put a plugin widget on the tree's focus ring, if it is one.**
@@ -826,10 +858,6 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             label,
             focused,
             label_width,
-            edit_text,
-            edit_cursor,
-            edit_sel_start,
-            edit_sel_end,
             key,
             ..
         } => {
@@ -838,24 +866,22 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 true => cx.is_focused(key),
                 false => *focused,
             };
-            let cur = match key.filter(|k| !k.is_empty()).and_then(|k| cx.states.get(k)) {
-                Some(crate::widgets::WidgetInstanceState::Number { value }) => *value,
-                _ => *value,
-            };
-            let cur = crate::widgets::clamp_number(cur, *min, *max);
+            // The value and the draft being typed into it are the kind's
+            // resolution of the spec and the state map, the same read the
+            // collector makes.
+            let resolved =
+                crate::widgets::kinds::number::resolve(*value, *min, *max, key, cx.states);
             let rendered = crate::widgets::render_number(
-                cur,
+                resolved.value,
                 *integer,
                 *percent,
                 label,
                 is_focused,
                 *label_width,
-                edit_text.as_deref().map(|t| crate::widgets::NumberEdit {
-                    text: t,
-                    cursor: *edit_cursor,
-                    sel_start: *edit_sel_start,
-                    sel_end: *edit_sel_end,
-                }),
+                resolved
+                    .draft
+                    .as_ref()
+                    .map(crate::widgets::NumberEdit::from),
                 cx.marker_gutter,
             );
             entry_row_hit(
@@ -1279,21 +1305,6 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         owner_key: Some(list_key.clone()),
                     },
                     byte: None,
-                    // **A row press here reports no column, and one reader
-                    // needs one.** `Editor::entry_text_list_press` asks
-                    // `widget_map::text_list_target(col)` whether the press
-                    // was on the row's trailing `[x]`/`[+]`, and reads this
-                    // through `at.unwrap_or(0)` — so with `None` every press
-                    // on such a row answers "the cell", and the button is
-                    // unreachable by mouse in the settings entry dialog.
-                    //
-                    // Not fixed here because what to send is not obvious:
-                    // `List::on_activate_handler` hands the activation's own
-                    // `Event`, whose `local` is relative to whatever node
-                    // carries the listener, and `text_list_target` wants a
-                    // column of the *row*. Establishing which those are is a
-                    // change to this arm's contract, not to the hit split.
-                    at: None,
                     clicks: e.clicks,
                 }))
             }));
@@ -1477,7 +1488,6 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         owner_key: Some(list_key.clone()),
                     },
                     byte: None,
-                    at: None,
                     clicks: e.clicks,
                 }))
             }));
@@ -2934,20 +2944,13 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
     let route = move |e: &fresh_ui::Event| -> Option<UiMsg> {
         e.stop();
         match (slot, e.kind) {
-            // The modal owns the whole pointer channel and replays the event
-            // it was handed, so a wheel and a hover both land where they did.
-            (Slot::Floating, _) => Some(UiMsg::Ui(super::msg::UiFact::ModalPointer(
-                super::modal::Slot::FloatingPanel,
-            ))),
+            // The floating panel owns its pointer through its own layer, and
+            // a float over it swallows what it covers, as a pane's does.
+            (Slot::Floating, _) => None,
             // The dock is not a modal: its column answers each gesture with a
-            // fact of its own, and the wheel is the one a float covers.
-            (Slot::Dock, fresh_ui::GestureKind::Wheel) => {
-                Some(UiMsg::Ui(super::msg::UiFact::DockScroll {
-                    delta: e.delta,
-                    x: e.pos.x.max(0) as u16,
-                    y: e.pos.y.max(0) as u16,
-                }))
-            }
+            // fact of its own, and a float over it swallows what it covers —
+            // the notch included, since the column's own lists are viewports
+            // that would otherwise take a wheel aimed at the float.
             (Slot::Dock, _) => None,
             // A sidebar section is a described interior like the dock's, and
             // its rows scroll themselves; a float over it swallows the
@@ -2959,11 +2962,12 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
             // already kept it off the pane underneath. So the float swallows
             // it, which is what no fact means here.
             (Slot::Pane(_), _) => None,
-            // The settings dialog is a modal too, and its own box already
-            // routes everything the tree does not answer for to that slot.
-            (Slot::Settings | Slot::SettingsEntry, _) => Some(UiMsg::Ui(
-                super::msg::UiFact::ModalPointer(super::modal::Slot::Settings),
-            )),
+            // The settings dialog and its entry stack are exclusive layers;
+            // a float over either swallows what it covers.
+            (Slot::Settings | Slot::SettingsEntry, _) => None,
+            // The prompt card is mouse-modal already; a float over its
+            // toolbar swallows what it covers, as a pane's does.
+            (Slot::PromptToolbar, _) => None,
         }
     };
     let mut n = fresh_ui::gesture(n);
@@ -2975,9 +2979,9 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
 
 /// Send a wheel over this node to the named widget's own `on_wheel`.
 ///
-/// **The tree names the widget; the runtime moves the window.** For a
-/// described panel the box arena is in the wrong coordinate space and stands
-/// down (`handle_widget_panel_wheel_at` says so at length), and for every
+/// **The tree names the widget; the runtime moves the window.** The text
+/// projection's box arena, which used to resolve a wheel by rectangle, is in
+/// the wrong coordinate space for a described panel and is deleted; for every
 /// scrolling surface but one that costs nothing, because the surface is a
 /// `viewport` and the library scrolls it. The one it does cost is a `Text`'s
 /// completion list, whose window lives in `WidgetInstanceState::Text` — so the
@@ -3048,6 +3052,7 @@ fn dropdown_anchor_key(slot: Slot, widget_key: &str) -> fresh_ui::Key {
         Slot::SettingsEntry => "settings_entry".to_string(),
         Slot::Pane(leaf) => format!("pane:{}", leaf.0 .0),
         Slot::Sidebar(i) => format!("sidebar:{i}"),
+        Slot::PromptToolbar => "prompt_toolbar".to_string(),
     };
     fresh_ui::Key::Str(format!("widget_dropdown_anchor:{scope}:{widget_key}").into())
 }
@@ -3058,6 +3063,7 @@ fn popup_anchor_key(slot: Slot, row: usize) -> fresh_ui::Key {
         Slot::Floating => "widget_popup_anchor:floating",
         Slot::Settings => "widget_popup_anchor:settings",
         Slot::SettingsEntry => "widget_popup_anchor:settings_entry",
+        Slot::PromptToolbar => "widget_popup_anchor:prompt_toolbar",
         // A pane's tag carries its leaf, because two panes *can* each hold an
         // open pop-over: a mounted panel is a subtree now, and a `Dropdown`
         // inside one raises the same layer the dock's does.
@@ -3237,7 +3243,6 @@ fn hit_node(
                     // this adds nothing; for a field whose caret split its row
                     // they do not.
                     byte: e.text_byte.map(|b| piece_at + b),
-                    at: Some(e.local.x.max(0) as u16),
                     clicks: e.clicks,
                 }))
             }
@@ -3379,6 +3384,7 @@ pub fn caret_key(slot: Slot) -> fresh_ui::Key {
         Slot::Floating => "widget_caret:floating",
         Slot::Settings => "widget_caret:settings",
         Slot::SettingsEntry => "widget_caret:settings_entry",
+        Slot::PromptToolbar => "widget_caret:prompt_toolbar",
         Slot::Pane(leaf) => {
             return fresh_ui::Key::Pair("widget_caret:pane".into(), leaf.0 .0 as u64)
         }
@@ -3495,11 +3501,12 @@ fn row_pieces(
     // (`dock_right_click_opens_context_menu_in_compact_mode`) landed on
     // nothing at all.
     //
-    // The runtime answered this with a *second* resolver: `hit_test_row_aware`
-    // tries an exact byte hit and falls back to `row_select_hit`, "the
-    // row-body `select` hit of a list/tree row, regardless of column". The
-    // description needs no fallback and no second pass — the row simply
-    // extends, carrying the hit its `row_target` flag already declares.
+    // The runtime answered this with a *second* resolver over the text
+    // projection, which tried an exact byte hit and fell back to "the
+    // row-body `select` hit of a list/tree row, regardless of column". That
+    // resolver is deleted. The description needs no fallback and no second
+    // pass — the row simply extends, carrying the hit its `row_target` flag
+    // already declares.
     //
     // The last such hit wins, which is the collector's own precedence: "the
     // narrow targets are named before the row-wide one, so a byte inside the
@@ -3672,6 +3679,7 @@ mod tests {
             states: no_state(),
             focus_key: String::new(),
             keyboard: true,
+
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
@@ -4121,7 +4129,7 @@ mod tests {
     fn runtime_text(spec: &WidgetSpec, c: &Ctx<'_>) -> Vec<String> {
         crate::widgets::render_spec_with_options(
             spec,
-            &Default::default(),
+            c.states,
             WIDTH as u32,
             crate::widgets::RenderOptions {
                 prev_focus_key: &c.focus_key,
@@ -4440,10 +4448,6 @@ mod tests {
             label: "size".into(),
             focused: false,
             label_width: 8,
-            edit_text: None,
-            edit_cursor: -1,
-            edit_sel_start: -1,
-            edit_sel_end: -1,
             key: Some("n".into()),
         };
         let mut cases: Vec<(String, WidgetSpec, Ctx<'static>)> = vec![
@@ -4465,22 +4469,31 @@ mod tests {
             *value = 999.0;
         }
         cases.push(("clamped".into(), over, cx()));
-        // Mid-edit: the buffer being typed replaces the value cell.
-        let mut editing = base(true, false);
-        if let WidgetSpec::Number {
-            edit_text,
-            edit_cursor,
-            ..
-        } = &mut editing
-        {
-            *edit_text = Some("7".into());
-            *edit_cursor = 1;
-        }
-        cases.push(("editing".into(), editing, cx()));
-
         for (label, spec, c) in cases {
             assert_eq!(tree_text(&spec, &c), runtime_text(&spec, &c), "{label}");
         }
+        // Mid-edit: the draft being typed — the kind's instance state —
+        // replaces the value cell.
+        let mut editor = crate::primitives::text_edit::TextEdit::single_line_with_text("7");
+        editor.move_end();
+        let states = std::collections::HashMap::from([(
+            "n".to_string(),
+            crate::widgets::WidgetInstanceState::Number {
+                value: 42.0,
+                edit: Some(editor),
+            },
+        )]);
+        let editing = Ctx {
+            states: &states,
+            focus_key: "n".into(),
+            ..cx()
+        };
+        let spec = base(true, false);
+        assert_eq!(
+            tree_text(&spec, &editing),
+            runtime_text(&spec, &editing),
+            "editing"
+        );
     }
 
     /// **The value cell, and only the value cell.** "A click on the value cell
@@ -4497,10 +4510,6 @@ mod tests {
             label: "size".into(),
             focused: false,
             label_width: 8,
-            edit_text: None,
-            edit_cursor: -1,
-            edit_sel_start: -1,
-            edit_sel_end: -1,
             key: Some("n".into()),
         };
         let mut ui: Ui<UiMsg> = Ui::new();
@@ -6665,8 +6674,8 @@ mod tests {
     /// and scrolling it also sets `completion_navigated`, which is what makes
     /// Enter accept the highlighted row. So the notch cannot be answered by a
     /// viewport — and it was not answered at all: the float claimed it, handed
-    /// it to the modal, and `handle_widget_panel_wheel_at` declined a
-    /// described panel outright, so the list under the pointer sat still. What
+    /// it to the modal, and the runtime's arena declined a described panel
+    /// outright, so the list under the pointer sat still. What
     /// the tree can say is *which widget* the notch landed on, and this is it
     /// saying so — from the box, and from the field the box hangs off, which
     /// are the two places `Text::on_wheel` has always accepted one from.
@@ -6939,6 +6948,8 @@ mod tests {
             states: Default::default(),
             focus_key: String::new(),
             keyboard: true,
+
+            page: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -6949,8 +6960,8 @@ mod tests {
             markdown: None,
         };
         assert!(
-            interior.has_focus_targets(),
-            "the interior answers from the spec it is about to describe"
+            any_on_the_ring(&interior.spec),
+            "the ring is read from the spec the interior is about to describe"
         );
     }
 

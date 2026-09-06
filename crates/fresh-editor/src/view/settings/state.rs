@@ -6,12 +6,11 @@
 use super::entry_dialog::EntryDialogState;
 use super::hit::SettingsHit;
 use super::items::{control_to_value, SettingControl, SettingItem, SettingsPage};
+use super::live;
 use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, DeepMatch, SearchResult};
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
-use crate::view::controls::text_input::TextInputState;
-use crate::view::controls::FocusState;
 use crate::view::ui::ScrollablePanel;
 use std::collections::HashMap;
 
@@ -141,13 +140,9 @@ pub struct SettingsState {
     original_config: serde_json::Value,
     /// Whether the settings panel is visible
     pub visible: bool,
-    /// The search filter's text field. Backed by the same `TextInputState`
-    /// control the rest of the Settings dialog uses, so the filter gets
-    /// grapheme-aware cursor movement (arrow keys, Home/End, mid-string
-    /// insert/delete) for free instead of the old append-only string.
-    /// Read the text via [`SettingsState::search_query`] and the caret via
-    /// [`SettingsState::search_cursor`].
-    pub search_input: TextInputState,
+    /// The search filter's text field: the same editing engine every text
+    /// surface runs on, so its caret and selection move as a field's do.
+    pub search_input: crate::primitives::text_edit::TextEdit,
     /// Whether search is active
     pub search_active: bool,
     /// Current search results
@@ -211,12 +206,6 @@ pub struct SettingsState {
     /// (`Anchor::reveal_key`) rather than a second copy of every item's
     /// height, which is what `ScrollablePanel::ensure_focused_visible` needed.
     pub body_anchor: std::rc::Rc<fresh_ui::behavior::Anchor>,
-    /// Sub-focus index within the selected item (for TextList/Map navigation)
-    pub sub_focus: Option<usize>,
-    /// Whether we're in text editing mode (for TextList controls)
-    pub editing_text: bool,
-    /// Current mouse hover position (for hover feedback)
-    pub hover_position: Option<(u16, u16)>,
     /// Current hover hit result (computed from hover_position and cached layout)
     pub hover_hit: Option<SettingsHit>,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
@@ -280,16 +269,13 @@ pub struct SettingsState {
     /// Text edit is not in progress. See [`Self::start_editing`] /
     /// [`Self::revert_editing`].
     text_edit_snapshot: Option<TextEditSnapshot>,
-    /// Persistent widget instance-state store for the mounted-panel
-    /// migration. Keyed by control field name (JSON pointer). Each entry
-    /// carries the runtime-owned interaction state for that control —
-    /// TextEdit cursor + selection, Number edit buffer, Dropdown open
-    /// flag, DualList cursors. Input handlers evolve these entries by
-    /// routing keys through the widget runtime; render reads them as the
-    /// `prev` instance-state so cursor/selection/edit affordances persist
-    /// across frames. Empty until a control's input is routed through the
-    /// runtime (behavior is then identical to the old per-control State).
-    pub widget_states: std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
+    /// The page's controls as the widget kinds see them: the store the
+    /// kinds read and write (a text field's editor, a number's draft, a
+    /// dropdown's list), and `focus_key` — the path of the control that is
+    /// *live*, holding the keyboard until it is left. Reset when the
+    /// dialog opens; the description reads it every frame, so what the
+    /// kinds decided is what is painted. See `view::settings::live`.
+    pub controls: crate::widgets::WidgetPanelState,
     /// Live theme options `(display, value)` for the theme dropdown, sourced
     /// from the `ThemeRegistry` via [`Self::set_theme_options`] when Settings
     /// opens. Empty until set — the dropdown then simply lists nothing rather
@@ -298,27 +284,16 @@ pub struct SettingsState {
     theme_options: Vec<super::items::ThemeOption>,
 }
 
-/// Pre-edit state of a plain `Text` setting, captured by `start_editing` and
-/// restored by `revert_editing` (the Esc path). Enter/Tab commit instead and
-/// clear it. Reverting has to undo not just the control's typed buffer but also
-/// the pending-change bookkeeping, since a mid-edit `on_value_changed` (e.g.
-/// from Delete) can flush the buffer into `pending_changes` before Esc.
+/// What a `Text` setting said before its edit began. The kind applies what
+/// is typed to the model as it goes, so a dialog title or a search can read
+/// the field live; Enter and Tab record the result, and Escape puts this
+/// back. Nothing else moves during the edit — the pending-change
+/// bookkeeping is written once, when the edit is recorded.
 #[derive(Debug)]
 struct TextEditSnapshot {
     /// JSON pointer of the edited setting (`current_item().path`).
     path: String,
-    /// The control exactly as it was before the first keystroke.
-    control: SettingControl,
-    /// `item.modified` before the edit.
-    modified: bool,
-    /// `item.layer_source` before the edit.
-    layer_source: ConfigLayer,
-    /// `item.is_null` before the edit.
-    is_null: bool,
-    /// The `pending_changes` entry for `path` before the edit (`None` = absent).
-    pending: Option<serde_json::Value>,
-    /// Whether `path` was in `pending_deletions` before the edit.
-    was_pending_deletion: bool,
+    value: String,
 }
 
 /// One row of the left-panel tree. Either a top-level category, or a section
@@ -410,7 +385,7 @@ impl SettingsState {
             pending_changes: HashMap::new(),
             original_config: config_value,
             visible: false,
-            search_input: TextInputState::new("").with_focus(FocusState::Focused),
+            search_input: crate::primitives::text_edit::TextEdit::single_line(),
             search_active: false,
             search_results: Vec::new(),
             selected_search_result: 0,
@@ -431,10 +406,7 @@ impl SettingsState {
             showing_help: false,
             body: BodyWindow::default(),
             body_anchor: fresh_ui::behavior::Anchor::new(),
-            sub_focus: None,
-            editing_text: false,
             available_status_bar_tokens,
-            hover_position: None,
             hover_hit: None,
             hovered_popup_row: String::new(),
             entry_dialog_stack: Vec::new(),
@@ -447,7 +419,10 @@ impl SettingsState {
             tree_cursor_section: None,
             cursor_drove_body: false,
             text_edit_snapshot: None,
-            widget_states: std::collections::HashMap::new(),
+            controls: crate::widgets::WidgetPanelState::surface(fresh_core::api::WidgetSpec::Col {
+                children: Vec::new(),
+                key: None,
+            }),
             theme_options,
         })
     }
@@ -488,7 +463,6 @@ impl SettingsState {
         if was == FocusPanel::Settings {
             self.update_control_focus(false);
         }
-        self.sub_focus = None;
         match target {
             FocusTarget::Categories => self.focus_panel = FocusPanel::Categories,
             FocusTarget::Card(i) => {
@@ -498,8 +472,7 @@ impl SettingsState {
                     0 => 0,
                     _ => i.min(n - 1),
                 };
-                self.init_map_focus(true);
-                self.update_control_focus(true);
+                self.enter_composite(true);
             }
             FocusTarget::Footer(i) => {
                 self.focus_panel = FocusPanel::Footer;
@@ -531,7 +504,6 @@ impl SettingsState {
         self.selected_category = 0;
         self.selected_item = 0;
         self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
-        self.sub_focus = None;
         // Reset all dialog states so re-opening settings starts clean
         self.showing_confirm_dialog = false;
         self.confirm_dialog_selection = 0;
@@ -540,8 +512,12 @@ impl SettingsState {
         self.reset_dialog_selection = 0;
         self.reset_dialog_hover = None;
         self.showing_help = false;
-        // Runtime-owned widget interaction state is per-session; start clean.
-        self.widget_states.clear();
+        // The kinds' state is per-session; start clean.
+        self.controls =
+            crate::widgets::WidgetPanelState::surface(fresh_core::api::WidgetSpec::Col {
+                children: Vec::new(),
+                key: None,
+            });
     }
 
     /// Rebuild pages with current state
@@ -746,7 +722,6 @@ impl SettingsState {
                 if idx != prev_category {
                     self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
                 }
-                self.sub_focus = None;
                 self.update_control_focus(true);
             }
             TreeRow::Section {
@@ -760,8 +735,7 @@ impl SettingsState {
                 if cat_idx != prev_category {
                     self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
                 }
-                self.sub_focus = None;
-                self.init_map_focus(true);
+                self.enter_composite(true);
                 self.update_control_focus(true);
             }
         }
@@ -873,8 +847,7 @@ impl SettingsState {
         // the footer. Jumping to a section means "show this section".
         self.body_anchor
             .top_key(super::super::shell::settings::card_key(target_item));
-        self.sub_focus = None;
-        self.init_map_focus(true);
+        self.enter_composite(true);
         self.update_control_focus(true);
         self.auto_expand_current_category();
     }
@@ -917,77 +890,38 @@ impl SettingsState {
             .and_then(|page| page.items.get_mut(self.selected_item))
     }
 
-    /// Check if the current text field can be exited (valid JSON if required)
-    pub fn can_exit_text_editing(&self) -> bool {
-        self.current_item()
-            .map(|item| {
-                if let SettingControl::Text(state) = &item.control {
-                    state.is_valid()
-                } else {
-                    true
-                }
-            })
-            .unwrap_or(true)
-    }
-
-    /// Initialize map focus when entering a Map control.
-    /// `from_above`: true = start at first entry, false = start at add-new field
-    fn init_map_focus(&mut self, from_above: bool) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::Map(ref mut map_state) => map_state.init_focus(from_above),
-                SettingControl::ObjectArray(ref mut arr) => arr.init_nav_focus(from_above),
-                _ => {}
-            }
-        }
-        // Update sub_focus to match the map/array's focus position
-        self.update_map_sub_focus();
-    }
-
-    /// Update the focus state of the current item's control.
-    /// This should be called when selection changes to ensure the control
-    /// knows whether it's focused (for proper "[Enter to edit]" hints, etc.)
-    pub(super) fn update_control_focus(&mut self, focused: bool) {
-        let focus_state = if focused {
-            FocusState::Focused
-        } else {
-            FocusState::Normal
+    /// Entering a card whose control's rows are a `List` — a map, an object
+    /// array: the list takes the keyboard with its cursor on the first row
+    /// when the card is entered from above, the last (the add row) from
+    /// below. A text list's rows are fields, opened by Enter; a scalar has
+    /// no rows.
+    fn enter_composite(&mut self, from_above: bool) {
+        let Some(item) = self.current_item() else {
+            return;
         };
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::Map(ref mut state) => state.focus = focus_state,
-                SettingControl::TextList(ref mut state) => state.focus = focus_state,
-                SettingControl::DualList(ref mut state) => state.focus = focus_state,
-                SettingControl::ObjectArray(ref mut state) => state.focus = focus_state,
-                SettingControl::Toggle(ref mut state) => state.focus = focus_state,
-                SettingControl::Number(ref mut state) => state.focus = focus_state,
-                SettingControl::Dropdown(ref mut state) => state.focus = focus_state,
-                SettingControl::Text(ref mut state) => {
-                    state.focus = focus_state;
-                    // Leaving a text input via navigation also exits
-                    // edit mode, so the cursor never lingers on a row
-                    // the user is no longer looking at.
-                    if !focused {
-                        state.editing = false;
-                    }
-                }
-                SettingControl::Json(_) | SettingControl::Complex { .. } => {} // These don't have focus state
-            }
+        if !item.control.has_list_rows() {
+            return;
         }
+        let n = item.control.list_row_count();
+        if n == 0 {
+            return;
+        }
+        let path = item.path.clone();
+        live::seed_list(
+            &mut self.controls,
+            &path,
+            if from_above { 0 } else { n - 1 },
+        );
     }
 
-    /// Update sub_focus based on the current Map control's focus position.
-    /// Maps focus_regions use: id=0 for label, id=1+i for entry i, id=1+len for add-new
-    fn update_map_sub_focus(&mut self) {
-        self.sub_focus = self.current_item().and_then(|item| match &item.control {
-            // Map focus_regions: id=0 (label), id=1+i (entry), id=1+len (add-new)
-            SettingControl::Map(ref map_state) => Some(match map_state.focused_entry {
-                Some(i) => 1 + i,
-                None => 1 + map_state.entries.len(), // add-new field
-            }),
-            SettingControl::ObjectArray(ref arr) => Some(arr.sub_focus_row()),
-            _ => None,
-        });
+    /// Leaving the selected card leaves its control: a live scalar is
+    /// committed (a text field's or a number's draft) or closed (a
+    /// dropdown's list), a list hands the keyboard back, before the
+    /// selection moves on.
+    pub(super) fn update_control_focus(&mut self, focused: bool) {
+        if !focused {
+            self.leave_live_control();
+        }
     }
 
     /// Move selection up
@@ -997,25 +931,13 @@ impl SettingsState {
                 self.tree_step(-1);
             }
             FocusPanel::Settings => {
-                // Try to navigate within current Map control first
-                let handled = self
-                    .current_item_mut()
-                    .and_then(|item| match &mut item.control {
-                        SettingControl::Map(map_state) => Some(map_state.focus_prev()),
-                        SettingControl::ObjectArray(arr) => Some(arr.nav_prev()),
-                        _ => None,
-                    })
-                    .unwrap_or(false);
-
-                if handled {
-                    // Update sub_focus for Map/ObjectArray navigation
-                    self.update_map_sub_focus();
-                } else if self.selected_item > 0 {
-                    self.update_control_focus(false); // Unfocus old item
+                // A list's own rows are the kind's (`handle_live_control_key`);
+                // this is the step off a card, entering the one above from
+                // below.
+                if self.selected_item > 0 {
+                    self.update_control_focus(false);
                     self.selected_item -= 1;
-                    self.sub_focus = None;
-                    self.init_map_focus(false); // entering from below
-                    self.update_control_focus(true); // Focus new item
+                    self.enter_composite(false);
                 }
                 self.ensure_visible();
             }
@@ -1035,30 +957,13 @@ impl SettingsState {
                 self.tree_step(1);
             }
             FocusPanel::Settings => {
-                // Try to navigate within current Map control first
-                let handled = self
-                    .current_item_mut()
-                    .and_then(|item| match &mut item.control {
-                        SettingControl::Map(map_state) => Some(map_state.focus_next()),
-                        SettingControl::ObjectArray(arr) => Some(arr.nav_next()),
-                        _ => None,
-                    })
-                    .unwrap_or(false);
-
-                if handled {
-                    // Update sub_focus for Map/ObjectArray navigation
-                    self.update_map_sub_focus();
-                } else {
-                    let can_move = self
-                        .current_page()
-                        .is_some_and(|page| self.selected_item + 1 < page.items.len());
-                    if can_move {
-                        self.update_control_focus(false); // Unfocus old item
-                        self.selected_item += 1;
-                        self.sub_focus = None;
-                        self.init_map_focus(true); // entering from above
-                        self.update_control_focus(true); // Focus new item
-                    }
+                let can_move = self
+                    .current_page()
+                    .is_some_and(|page| self.selected_item + 1 < page.items.len());
+                if can_move {
+                    self.update_control_focus(false);
+                    self.selected_item += 1;
+                    self.enter_composite(true);
                 }
                 self.ensure_visible();
             }
@@ -1119,11 +1024,7 @@ impl SettingsState {
         // layout already measured; the window is asked to hold the innermost
         // one that has a key.
         let key = self
-            .current_item()
-            .and_then(|it| {
-                self.sub_focus
-                    .and_then(|sub| it.control.sub_row_key(&it.path, sub))
-            })
+            .focused_row_key()
             .unwrap_or_else(|| super::super::shell::settings::card_key(self.selected_item));
         self.body_anchor.reveal_key(key);
         // The tree cursor follows the body's window, and the window has not
@@ -1454,46 +1355,15 @@ impl SettingsState {
         }
     }
 
-    /// Update focus states for rendering
-    pub fn update_focus_states(&mut self) {
-        let current_focus = self.focus_panel();
-        for (page_idx, page) in self.pages.iter_mut().enumerate() {
-            for (item_idx, item) in page.items.iter_mut().enumerate() {
-                let is_focused = current_focus == FocusPanel::Settings
-                    && page_idx == self.selected_category
-                    && item_idx == self.selected_item;
-
-                let focus = if is_focused {
-                    FocusState::Focused
-                } else {
-                    FocusState::Normal
-                };
-
-                match &mut item.control {
-                    SettingControl::Toggle(state) => state.focus = focus,
-                    SettingControl::Number(state) => state.focus = focus,
-                    SettingControl::Dropdown(state) => state.focus = focus,
-                    SettingControl::Text(state) => state.focus = focus,
-                    SettingControl::TextList(state) => state.focus = focus,
-                    SettingControl::DualList(state) => state.focus = focus,
-                    SettingControl::Map(state) => state.focus = focus,
-                    SettingControl::ObjectArray(state) => state.focus = focus,
-                    SettingControl::Json(state) => state.focus = focus,
-                    SettingControl::Complex { .. } => {}
-                }
-            }
-        }
-    }
-
     /// The current search filter text.
     pub fn search_query(&self) -> &str {
-        self.search_input.value_str()
+        self.search_input.current_line()
     }
 
     /// The search caret position, as a byte offset into
     /// [`SettingsState::search_query`] (always on a grapheme boundary).
     pub fn search_cursor(&self) -> usize {
-        self.search_input.cursor_byte()
+        self.search_input.flat_cursor_byte()
     }
 
     /// Start search mode
@@ -1516,7 +1386,8 @@ impl SettingsState {
 
     /// Update search query and refresh results
     pub fn set_search_query(&mut self, query: String) {
-        self.search_input.set_value(query);
+        self.search_input.set_value(&query);
+        self.search_input.move_end();
         self.refresh_search_results();
     }
 
@@ -1530,7 +1401,7 @@ impl SettingsState {
 
     /// Insert a character at the cursor position in the search query.
     pub fn search_insert_char(&mut self, c: char) {
-        self.search_input.insert(c);
+        self.search_input.insert_char(c);
         self.refresh_search_results();
     }
 
@@ -1633,15 +1504,13 @@ impl SettingsState {
         self.focus_panel = FocusPanel::Settings;
         // Reset scroll offset but preserve viewport for ensure_visible
         self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
-        self.sub_focus = None;
-        self.init_map_focus(true);
+        self.enter_composite(true);
 
         // Navigate into the deep match target if present
         if let Some(ref deep_match) = result.deep_match {
             self.jump_to_deep_match(deep_match);
         }
 
-        self.update_control_focus(true); // Focus the new item
         self.auto_expand_current_category();
         // Whichever section the matched item lives in becomes the tree
         // cursor — so when the user closes search and Tabs to the
@@ -1651,26 +1520,14 @@ impl SettingsState {
         self.cancel_search();
     }
 
-    /// Navigate into a composite control to focus a specific deep match
+    /// Navigate into a composite control to focus a specific deep match:
+    /// a map's list cursor goes to the entry, a text list's item opens.
     fn jump_to_deep_match(&mut self, deep_match: &DeepMatch) {
         match deep_match {
             DeepMatch::MapKey { entry_index, .. } | DeepMatch::MapValue { entry_index, .. } => {
-                if let Some(item) = self.current_item_mut() {
-                    if let SettingControl::Map(ref mut map_state) = item.control {
-                        map_state.focused_entry = Some(*entry_index);
-                    }
-                }
-                self.update_map_sub_focus();
+                self.select_list_row(*entry_index)
             }
-            DeepMatch::TextListItem { item_index, .. } => {
-                if let Some(item) = self.current_item_mut() {
-                    if let SettingControl::TextList(ref mut list_state) = item.control {
-                        list_state.focused_item = Some(*item_index);
-                    }
-                }
-                // Update sub_focus for TextList
-                self.sub_focus = Some(1 + *item_index);
-            }
+            DeepMatch::TextListItem { item_index, .. } => self.edit_list_row(Some(*item_index)),
         }
     }
 
@@ -1720,33 +1577,35 @@ impl SettingsState {
         self.has_entry_dialog()
     }
 
-    /// Open the entry dialog for the currently focused map entry
-    pub fn open_entry_dialog(&mut self) {
+    /// Open the entry dialog for the map entry at `entry_idx`.
+    pub fn open_entry_dialog(&mut self, entry_idx: usize) {
         let Some(item) = self.current_item() else {
             return;
         };
 
         // Determine what type of entry we're editing based on the path
         let path = item.path.as_str();
-        let SettingControl::Map(map_state) = &item.control else {
+        let SettingControl::Map {
+            entries,
+            value_schema,
+            no_add,
+            ..
+        } = &item.control
+        else {
             return;
         };
 
-        // Get the focused entry
-        let Some(entry_idx) = map_state.focused_entry else {
-            return;
-        };
-        let Some((key, value)) = map_state.entries.get(entry_idx) else {
+        let Some((key, value)) = entries.get(entry_idx) else {
             return;
         };
 
         // Get the value schema for this map
-        let Some(schema) = map_state.value_schema.as_ref() else {
+        let Some(schema) = value_schema.as_ref() else {
             return; // No schema available, can't create dialog
         };
 
         // If the map doesn't allow adding, it also doesn't allow deleting (auto-managed entries)
-        let no_delete = map_state.no_add;
+        let no_delete = *no_add;
 
         // Per-field [Reset] targets must be this entry's *built-in* values
         // (e.g. `languages.html.grammar = "HTML"`), not the generic schema
@@ -1776,10 +1635,10 @@ impl SettingsState {
         let Some(item) = self.current_item() else {
             return;
         };
-        let SettingControl::Map(map_state) = &item.control else {
+        let SettingControl::Map { value_schema, .. } = &item.control else {
             return;
         };
-        let Some(schema) = map_state.value_schema.as_ref() else {
+        let Some(schema) = value_schema.as_ref() else {
             return;
         };
         let path = item.path.clone();
@@ -1803,10 +1662,10 @@ impl SettingsState {
         let Some(item) = self.current_item() else {
             return;
         };
-        let SettingControl::ObjectArray(array_state) = &item.control else {
+        let SettingControl::ObjectArray { item_schema, .. } = &item.control else {
             return;
         };
-        let Some(schema) = array_state.item_schema.as_ref() else {
+        let Some(schema) = item_schema.as_ref() else {
             return;
         };
         let path = item.path.clone();
@@ -1823,21 +1682,21 @@ impl SettingsState {
         self.entry_dialog_stack.push(dialog);
     }
 
-    /// Open dialog for editing an existing array item
-    pub fn open_edit_array_item_dialog(&mut self) {
+    /// Open dialog for editing the array item at `index`.
+    pub fn open_edit_array_item_dialog(&mut self, index: usize) {
         let Some(item) = self.current_item() else {
             return;
         };
-        let SettingControl::ObjectArray(array_state) = &item.control else {
+        let SettingControl::ObjectArray {
+            items, item_schema, ..
+        } = &item.control
+        else {
             return;
         };
-        let Some(schema) = array_state.item_schema.as_ref() else {
+        let Some(schema) = item_schema.as_ref() else {
             return;
         };
-        let Some(index) = array_state.focused_index else {
-            return;
-        };
-        let Some(value) = array_state.bindings.get(index) else {
+        let Some(value) = items.get(index) else {
             return;
         };
         let path = item.path.clone();
@@ -1874,21 +1733,27 @@ impl SettingsState {
             let base = dialog.entry_path();
             let relative = item.path.trim_start_matches('/');
             let path = if relative.is_empty() {
-                // `is_single_value` dialogs use an empty item path because
-                // the single non-key item IS the entry's value. In that
-                // case the nested dialog lives at the entry path itself.
+                // `is_single_value` dialogs' one item is the entry's value
+                // itself, at `SINGLE_VALUE_PATH` (`/`, nothing to join), so
+                // the nested dialog lives at the entry path itself.
                 base
             } else {
                 format!("{}/{}", base, relative)
             };
 
+            // The row the dialog's cursor is on: an entry, or the add row.
+            let cursor = dialog.composite_cursor();
             match &item.control {
-                SettingControl::Map(map_state) => {
-                    let schema = map_state.value_schema.as_ref()?;
-                    let no_delete = map_state.no_add; // If can't add, can't delete either
-                    if let Some(entry_idx) = map_state.focused_entry {
+                SettingControl::Map {
+                    entries,
+                    value_schema,
+                    no_add,
+                    ..
+                } => {
+                    let schema = value_schema.as_ref()?;
+                    let no_delete = *no_add; // If can't add, can't delete either
+                    if let Some((key, value)) = cursor.and_then(|i| entries.get(i)) {
                         // Edit existing entry
-                        let (key, value) = map_state.entries.get(entry_idx)?;
                         Some(NestedDialogInfo::MapEntry {
                             key: key.clone(),
                             value: value.clone(),
@@ -1909,11 +1774,12 @@ impl SettingsState {
                         })
                     }
                 }
-                SettingControl::ObjectArray(array_state) => {
-                    let schema = array_state.item_schema.as_ref()?;
-                    if let Some(index) = array_state.focused_index {
+                SettingControl::ObjectArray {
+                    items, item_schema, ..
+                } => {
+                    let schema = item_schema.as_ref()?;
+                    if let Some((index, value)) = cursor.and_then(|i| Some((i, items.get(i)?))) {
                         // Edit existing item
-                        let value = array_state.bindings.get(index)?;
                         Some(NestedDialogInfo::ArrayItem {
                             index: Some(index),
                             value: value.clone(),
@@ -1987,12 +1853,12 @@ impl SettingsState {
             self.entry_dialog_stack
                 .get(self.entry_dialog_stack.len() - 2)
                 .and_then(|parent| parent.current_item())
-                .map(|item| matches!(item.control, SettingControl::ObjectArray(_)))
+                .map(|item| matches!(item.control, SettingControl::ObjectArray { .. }))
                 .unwrap_or(false)
         } else {
             // Top-level dialog - check main settings page item
             self.current_item()
-                .map(|item| matches!(item.control, SettingControl::ObjectArray(_)))
+                .map(|item| matches!(item.control, SettingControl::ObjectArray { .. }))
                 .unwrap_or(false)
         };
 
@@ -2027,25 +1893,15 @@ impl SettingsState {
 
         // Update the map control with the new value
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Map(map_state) = &mut item.control {
+            if let SettingControl::Map { entries, .. } = &mut item.control {
                 // If key was changed, remove old entry first
                 if key_changed {
-                    if let Some(idx) = map_state
-                        .entries
-                        .iter()
-                        .position(|(k, _)| k == &original_key)
-                    {
-                        map_state.entries.remove(idx);
+                    if let Some(idx) = entries.iter().position(|(k, _)| k == &original_key) {
+                        entries.remove(idx);
                     }
                 }
-
                 // Find or add the entry with the (possibly new) key
-                if let Some(entry) = map_state.entries.iter_mut().find(|(k, _)| k == &key) {
-                    entry.1 = value.clone();
-                } else {
-                    map_state.entries.push((key.clone(), value.clone()));
-                    map_state.entries.sort_by(|a, b| a.0.cmp(&b.0));
-                }
+                super::items::map_set(entries, key.clone(), value.clone());
             }
         }
 
@@ -2083,18 +1939,22 @@ impl SettingsState {
             // parent's full entry path (map_path + "/" + entry_key) from the
             // nested dialog's array path. For an is_single_value parent (e.g.
             // a quicklsp entry whose value schema is an array), the inner
-            // ObjectArray item has path "" and the nested dialog lives exactly
-            // at the entry path, so the stripped item path is "".
+            // ObjectArray item is the entry's value at `SINGLE_VALUE_PATH`
+            // and the nested dialog lives exactly at the entry path, so the
+            // stripped path is empty and names that item.
             let parent_entry_path = self
                 .entry_dialog_stack
                 .last()
                 .map(|p| p.entry_path())
                 .unwrap_or_default();
-            let item_path = array_path
+            let item_path = match array_path
                 .strip_prefix(parent_entry_path.as_str())
                 .unwrap_or(&array_path)
                 .trim_end_matches('/')
-                .to_string();
+            {
+                "" => super::entry_dialog::SINGLE_VALUE_PATH.to_string(),
+                rest => rest.to_string(),
+            };
 
             // Find and update the ObjectArray in the parent dialog. Mark
             // the parent dirty so its title flips to `• modified` —
@@ -2103,12 +1963,12 @@ impl SettingsState {
             // owed another save.
             if let Some(parent) = self.entry_dialog_stack.last_mut() {
                 if let Some(item) = parent.items.iter_mut().find(|i| i.path == item_path) {
-                    if let SettingControl::ObjectArray(array_state) = &mut item.control {
+                    if let SettingControl::ObjectArray { items, .. } = &mut item.control {
                         if is_new {
-                            array_state.bindings.push(value.clone());
+                            items.push(value.clone());
                         } else if let Ok(index) = entry_key.parse::<usize>() {
-                            if index < array_state.bindings.len() {
-                                array_state.bindings[index] = value.clone();
+                            if index < items.len() {
+                                items[index] = value.clone();
                             }
                         }
                         parent.user_edited = true;
@@ -2120,8 +1980,8 @@ impl SettingsState {
             // We still record a pending change so the value persists
             if let Some(parent) = self.entry_dialog_stack.last() {
                 if let Some(item) = parent.items.iter().find(|i| i.path == item_path) {
-                    if let SettingControl::ObjectArray(array_state) = &item.control {
-                        let array_value = serde_json::Value::Array(array_state.bindings.clone());
+                    if let SettingControl::ObjectArray { items, .. } = &item.control {
+                        let array_value = serde_json::Value::Array(items.clone());
                         self.set_pending_change(&array_path, array_value);
                     }
                 }
@@ -2129,12 +1989,12 @@ impl SettingsState {
         } else {
             // Top-level dialog - update the main settings page item
             if let Some(item) = self.current_item_mut() {
-                if let SettingControl::ObjectArray(array_state) = &mut item.control {
+                if let SettingControl::ObjectArray { items, .. } = &mut item.control {
                     if is_new {
-                        array_state.bindings.push(value.clone());
+                        items.push(value.clone());
                     } else if let Ok(index) = entry_key.parse::<usize>() {
-                        if index < array_state.bindings.len() {
-                            array_state.bindings[index] = value.clone();
+                        if index < items.len() {
+                            items[index] = value.clone();
                         }
                     }
                 }
@@ -2142,8 +2002,8 @@ impl SettingsState {
 
             // Record the pending change for the entire array
             if let Some(item) = self.current_item() {
-                if let SettingControl::ObjectArray(array_state) = &item.control {
-                    let array_value = serde_json::Value::Array(array_state.bindings.clone());
+                if let SettingControl::ObjectArray { items, .. } = &item.control {
+                    let array_value = serde_json::Value::Array(items.clone());
                     self.set_pending_change(&array_path, array_value);
                 }
             }
@@ -2189,28 +2049,16 @@ impl SettingsState {
             // Find and update the Map in the parent dialog
             if let Some(parent) = self.entry_dialog_stack.last_mut() {
                 if let Some(item) = parent.items.iter_mut().find(|i| i.path == item_path) {
-                    if let SettingControl::Map(map_state) = &mut item.control {
-                        if let Some(idx) = map_state
-                            .entries
-                            .iter()
-                            .position(|(k, _)| k == &dialog.entry_key)
-                        {
-                            map_state.remove_entry(idx);
-                        }
+                    if let SettingControl::Map { entries, .. } = &mut item.control {
+                        entries.retain(|(k, _)| k != &dialog.entry_key);
                     }
                 }
             }
         } else {
             // Top-level dialog - remove from the main settings page item
             if let Some(item) = self.current_item_mut() {
-                if let SettingControl::Map(map_state) = &mut item.control {
-                    if let Some(idx) = map_state
-                        .entries
-                        .iter()
-                        .position(|(k, _)| k == &dialog.entry_key)
-                    {
-                        map_state.remove_entry(idx);
-                    }
+                if let SettingControl::Map { entries, .. } = &mut item.control {
+                    entries.retain(|(k, _)| k != &dialog.entry_key);
                 }
             }
         }
@@ -2224,47 +2072,6 @@ impl SettingsState {
         // `save_changes_to_layer`'s `remove_json_pointer` step).
         self.pending_changes.remove(&path);
         self.pending_deletions.insert(path);
-    }
-
-    /// The furthest the body's window can move (in rows).
-    pub fn max_scroll(&self) -> u16 {
-        self.body.max_offset()
-    }
-
-    /// Move the body's window to an absolute row, and say whether that is
-    /// anywhere new.
-    ///
-    /// **The move is a request, not a write.** The window belongs to the
-    /// element that owns it; this asks for it by handle and the framework
-    /// applies it between frames. What comes back is `self.body` on the next
-    /// layout, so nothing here has to guess where the window ended up.
-    fn scroll_body_to(&mut self, y: u16) -> bool {
-        let y = y.min(self.body.max_offset());
-        if y == self.body.offset {
-            return false;
-        }
-        self.body_anchor
-            .scroll_to(fresh_ui::Point::new(0, y as i32));
-        true
-    }
-
-    /// Scroll up by a given number of rows
-    /// Returns true if the scroll offset changed
-    pub fn scroll_up(&mut self, delta: usize) -> bool {
-        self.scroll_body_to(self.body.offset.saturating_sub(delta as u16))
-    }
-
-    /// Scroll down by a given number of rows
-    /// Returns true if the scroll offset changed
-    pub fn scroll_down(&mut self, delta: usize) -> bool {
-        self.scroll_body_to(self.body.offset.saturating_add(delta as u16))
-    }
-
-    /// Scroll to a position based on a ratio (0.0 to 1.0)
-    /// Returns true if the scroll offset changed
-    pub fn scroll_to_ratio(&mut self, ratio: f32) -> bool {
-        let max = self.body.max_offset() as f32;
-        self.scroll_body_to((ratio.clamp(0.0, 1.0) * max).round() as u16)
     }
 
     /// After the body scroll position changes, snap the tree cursor to
@@ -2295,483 +2102,747 @@ impl SettingsState {
     /// Check if the current control is a number input
     pub fn is_number_control(&self) -> bool {
         self.current_item()
-            .is_some_and(|item| matches!(item.control, SettingControl::Number(_)))
+            .is_some_and(|item| matches!(item.control, SettingControl::Number { .. }))
     }
 
+    /// Enter on the selected card, or a press that means the same: the
+    /// control is edited from here on. A composite flips its own edit flag;
+    /// a scalar's kind acts — a toggle flips, a number opens its draft, a
+    /// dropdown its list, a text field its editor — and the control is
+    /// live while the kind keeps it (`live`).
     pub fn start_editing(&mut self) {
-        // Snapshot a plain Text field before mutating it, so Esc can revert an
-        // abandoned edit to its pre-edit value (Enter/Tab commit, Esc cancels).
-        // Only plain Text gets this treatment; TextList/Map/Json/DualList keep
-        // their own in-place dismiss semantics.
-        self.text_edit_snapshot = None;
-        let text_snap = self.current_item().and_then(|item| {
-            matches!(item.control, SettingControl::Text(_)).then(|| {
-                (
-                    item.path.clone(),
-                    item.control.clone(),
-                    item.modified,
-                    item.layer_source,
-                    item.is_null,
-                )
-            })
-        });
-        if let Some((path, control, modified, layer_source, is_null)) = text_snap {
-            let pending = self.pending_changes.get(&path).cloned();
-            let was_pending_deletion = self.pending_deletions.contains(&path);
-            self.text_edit_snapshot = Some(TextEditSnapshot {
-                path,
-                control,
-                modified,
-                layer_source,
-                is_null,
-                pending,
-                was_pending_deletion,
-            });
-        }
-
-        if let Some(item) = self.current_item() {
-            if matches!(
-                item.control,
-                SettingControl::TextList(_)
-                    | SettingControl::DualList(_)
-                    | SettingControl::Text(_)
-                    | SettingControl::Map(_)
-                    | SettingControl::Json(_)
-            ) {
-                self.editing_text = true;
-            }
-        }
-        if let Some(item) = self.current_item_mut() {
-            match item.control {
-                SettingControl::DualList(ref mut dl) => {
-                    dl.editing = true;
-                }
-                SettingControl::Text(ref mut state) => {
-                    state.editing = true;
-                    // Mirror the spinner's "select-all on enter edit"
-                    // UX: the first printable keystroke replaces the
-                    // current value. Arrow keys or deletion cancel it
-                    // and the input behaves normally from then on.
-                    state.arm_replace_on_type();
-                }
-                _ => {}
-            }
-        }
+        self.activate_control();
     }
 
-    /// Commit the currently-edited `Text` control's value into the pending
-    /// change set, mirroring what the `Enter` path does via `text_add_item`.
-    ///
-    /// A `Text` field's typed value lives only in the control's own state until
-    /// `on_value_changed()` flushes it into `pending_changes` (the set that Save
-    /// persists). The `Enter` path commits, but exiting the edit with `Tab` only
-    /// called `stop_editing`, so the typed value was silently dropped on Save
-    /// even though the row still showed as modified (issue #2515). Returns
-    /// `true` when a `Text` value was committed. Other editable controls
-    /// (DualList/Map/TextList) already record their changes as they are mutated,
-    /// and `Esc` keeps its dismiss semantics, so this is only wired into the
-    /// `Tab` exit path.
-    pub fn commit_text_edit(&mut self) -> bool {
-        let is_text = matches!(
-            self.current_item().map(|item| &item.control),
-            Some(SettingControl::Text(_))
-        );
-        if is_text {
-            self.on_value_changed();
-        }
-        is_text
+    /// The selected card's control as its kind sees it, keyed by its path.
+    fn current_spec(&self) -> Option<(String, fresh_core::api::WidgetSpec)> {
+        let item = self.current_item()?;
+        Some((item.path.clone(), self.spec_for(&item.path)?))
     }
 
-    /// Stop text editing mode. This is the *accept* path — Enter, Tab, and
-    /// clicking away all land here and keep the typed value, so any pending
-    /// revert snapshot is dropped.
-    pub fn stop_editing(&mut self) {
-        self.editing_text = false;
-        self.text_edit_snapshot = None;
-        if let Some(item) = self.current_item_mut() {
-            match item.control {
-                SettingControl::DualList(ref mut dl) => {
-                    dl.editing = false;
-                }
-                SettingControl::Text(ref mut state) => {
-                    state.editing = false;
-                }
-                _ => {}
+    /// The node of the selected card's description that carries `key`: the
+    /// control's own, or one of a text list's rows.
+    fn spec_for(&self, key: &str) -> Option<fresh_core::api::WidgetSpec> {
+        let item = self.current_item()?;
+        Some(super::widget_map::live_widget(
+            &item.path,
+            &item.control,
+            key,
+        ))
+    }
+
+    /// The key of the live control: the selected card's, or one of its
+    /// rows', when the store's focus names it.
+    pub fn live_control(&self) -> Option<String> {
+        let item = self.current_item()?;
+        (self.focus_panel == FocusPanel::Settings
+            && live::kind_edited(&item.control)
+            && self.focus_key_of(item).is_some())
+        .then(|| self.controls.focus_key.clone())
+    }
+
+    /// The store's focus key when it names `item`'s control or one of its
+    /// rows — what the card paints as focused.
+    pub fn focus_key_of(&self, item: &SettingItem) -> Option<&str> {
+        let key = self.controls.focus_key.as_str();
+        (key == item.path
+            || key
+                .strip_prefix(&item.path)
+                .is_some_and(|r| r.starts_with("::")))
+        .then_some(key)
+    }
+
+    /// The row the selected card's list cursor is on, while the list has
+    /// the keyboard: a map's or an object array's entry, or its add row
+    /// (`SettingControl::add_row`).
+    pub fn composite_cursor(&self) -> Option<usize> {
+        let item = self.current_item()?;
+        self.composite_cursor_of(item)
+    }
+
+    /// [`composite_cursor`](Self::composite_cursor) for any card.
+    pub fn composite_cursor_of(&self, item: &SettingItem) -> Option<usize> {
+        if !item.control.has_list_rows() || self.controls.focus_key != item.path {
+            return None;
+        }
+        let spec = super::widget_map::live_widget(&item.path, &item.control, &item.path);
+        live::list_row(&self.controls, &spec, &item.path)
+    }
+
+    /// The tree key of the row the keyboard is on inside the selected card:
+    /// a map's or an object array's cursor row, or a text list's live field.
+    /// `None` when the card is the finest thing to reveal.
+    pub fn focused_row_key(&self) -> Option<fresh_ui::Key> {
+        let item = self.current_item()?;
+        let row = match &item.control {
+            SettingControl::TextList { items, .. } => {
+                live::text_list::live_row(&self.controls, &item.path)?.unwrap_or(items.len())
             }
-        }
+            _ => self.composite_cursor()?,
+        };
+        Some(item.control.row_tree_key(&item.path, row))
     }
 
-    /// True while editing a plain single-line `Text` field (not a
-    /// TextList/Map/Json/DualList). These get the platform edit convention:
-    /// Enter/Tab commit the typed value, Esc reverts it.
-    pub fn is_editing_plain_text(&self) -> bool {
-        self.editing_text
+    /// Whether the selected card's dropdown has its list up.
+    pub fn is_dropdown_open(&self) -> bool {
+        self.current_item().is_some_and(|item| {
+            matches!(item.control, SettingControl::Dropdown { .. })
+                && crate::widgets::kinds::dropdown::is_open(&item.path, &self.controls)
+        })
+    }
+
+    /// Whether the selected card's number has a draft open.
+    pub fn is_number_editing(&self) -> bool {
+        self.current_item().is_some_and(|item| {
+            matches!(item.control, SettingControl::Number { .. })
+                && crate::widgets::kinds::number::editing(&item.path, &self.controls)
+        })
+    }
+
+    /// Whether the selected card's text field is being edited.
+    pub fn is_editing_text_control(&self) -> bool {
+        self.live_control().is_some()
             && matches!(
-                self.current_item().map(|item| &item.control),
-                Some(SettingControl::Text(_))
+                self.current_item().map(|i| &i.control),
+                Some(SettingControl::Text { .. })
             )
     }
 
-    /// Cancel a plain `Text` edit, discarding what was typed and restoring the
-    /// field to its pre-edit state — the Esc path, matching the Windows/macOS/
-    /// web convention where Esc reverts an edit while Enter/Tab commit it.
-    /// Restores both the control's buffer and the pending-change bookkeeping
-    /// (in case a mid-edit `on_value_changed` already flushed the buffer). With
-    /// no snapshot (a non-Text control), this just exits edit mode cleanly.
-    pub fn revert_editing(&mut self) {
-        self.editing_text = false;
-        let Some(snap) = self.text_edit_snapshot.take() else {
+    /// The kinds' events onto the model. A number's, a dropdown's or a dual
+    /// list's change is recorded at once; a text field's or a JSON editor's
+    /// is applied to the model but recorded when its edit ends
+    /// (`commit_text_edit`, `json_exit_editing`), so Escape has nothing to
+    /// undo in the bookkeeping. A dual list's change also reaches its
+    /// sibling, whose Available column must stop offering what this one
+    /// took. Then: the control stays live while its kind holds it.
+    fn absorb(&mut self, key: &str, events: &[(String, serde_json::Value)]) {
+        let (changed, recorded_at_exit, is_dual_list, has_rows) = match self.current_item_mut() {
+            Some(item) => (
+                live::apply(&mut item.control, key, events),
+                matches!(
+                    item.control,
+                    SettingControl::Text { .. } | SettingControl::Json { .. }
+                ),
+                matches!(item.control, SettingControl::DualList { .. }),
+                item.control.has_list_rows(),
+            ),
+            None => (false, false, false, false),
+        };
+        if changed && is_dual_list {
+            self.refresh_dual_list_sibling();
+        }
+        if changed && !recorded_at_exit {
+            self.on_value_changed();
+        }
+        // A list's `activate` is the page's to answer: the row's entry
+        // dialog opens, or the add row's.
+        if has_rows {
+            let activated = events
+                .iter()
+                .find(|(e, _)| e == "activate")
+                .and_then(|(_, p)| p.get("index").and_then(|v| v.as_u64()));
+            if let Some(index) = activated {
+                self.composite_activate(index as usize);
+            }
+        }
+        self.settle_live();
+    }
+
+    fn settle_live(&mut self) {
+        let Some(path) = self.live_control() else {
             return;
         };
-        if let Some(item) = self.current_item_mut() {
-            item.control = snap.control;
-            item.modified = snap.modified;
-            item.layer_source = snap.layer_source;
-            item.is_null = snap.is_null;
-        }
-        // Restore pending_changes / pending_deletions for this path to exactly
-        // what they were before the edit began.
-        match snap.pending {
-            Some(value) => {
-                self.pending_changes.insert(snap.path.clone(), value);
-            }
-            None => {
-                self.pending_changes.remove(&snap.path);
-            }
-        }
-        if snap.was_pending_deletion {
-            self.pending_deletions.insert(snap.path);
-        } else {
-            self.pending_deletions.remove(&snap.path);
+        let held = self
+            .current_item()
+            .is_some_and(|i| live::kind_holds(&i.control, &self.controls, &path));
+        if !held {
+            live::drop_state(&mut self.controls, &path);
         }
     }
 
+    /// Enter (or its press) on the selected card's kind-edited control.
+    pub fn activate_control(&mut self) {
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        let Some(item) = self.current_item() else {
+            return;
+        };
+        match &item.control {
+            SettingControl::Toggle { .. } => {
+                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                self.absorb(&path, &o.fx.events);
+            }
+            SettingControl::Number { .. } | SettingControl::Dropdown { .. } => {
+                let opens_list = matches!(item.control, SettingControl::Dropdown { .. });
+                self.controls.focus_key = path.clone();
+                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                self.absorb(&path, &o.fx.events);
+                // An open list makes its card taller; the window is asked to
+                // hold the taller card, which is the same request as any
+                // other reveal.
+                if opens_list && self.is_dropdown_open() {
+                    self.body_anchor
+                        .reveal_key(super::super::shell::settings::card_key(self.selected_item));
+                }
+            }
+            SettingControl::Text { .. } => self.begin_text_edit(true),
+            SettingControl::Json { .. } => self.begin_text_edit(false),
+            // The dual list takes the keyboard: from here on its arrows
+            // walk its columns rather than the page's cards.
+            SettingControl::DualList { .. } => self.controls.focus_key = path,
+            // A field of the text list already live keeps the keyboard;
+            // otherwise its add row opens.
+            SettingControl::TextList { .. } => {
+                if live::text_list::live_row(&self.controls, &path).is_none() {
+                    self.edit_list_row(None);
+                }
+            }
+            // The list's Enter activates its cursor's row: the entry dialog
+            // opens (`composite_activate`, from the kind's event).
+            SettingControl::Map { .. } | SettingControl::ObjectArray { .. } => {
+                if self.composite_cursor().is_none() {
+                    self.enter_composite(true);
+                }
+                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                self.absorb(&path, &o.fx.events);
+            }
+            SettingControl::Complex { .. } => {}
+        }
+    }
+
+    /// Enter on the selected card from a gesture of the page's own — the
+    /// web's activate: what the key does, the page's conventions included.
+    pub fn activate_current(&mut self) {
+        if self.live_control().is_none() {
+            self.activate_control();
+            return;
+        }
+        match self.current_item().map(|i| &i.control) {
+            Some(SettingControl::TextList { .. }) => self.list_row_enter(),
+            Some(SettingControl::Text { .. }) => {
+                self.commit_text_edit();
+            }
+            _ => {
+                self.live_dispatch(&crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                ));
+            }
+        }
+    }
+
+    // =========== Lists: a map's or an object array's rows ===========
+
+    /// A press on a row of the selected card's list: the list takes the
+    /// keyboard with its cursor on the row.
+    pub fn select_list_row(&mut self, row: usize) {
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        if !self
+            .current_item()
+            .is_some_and(|i| i.control.has_list_rows())
+        {
+            return;
+        }
+        self.controls.focus_key = path.clone();
+        let o = live::pointer(
+            &mut self.controls,
+            &spec,
+            &path,
+            "select",
+            &serde_json::json!({ "index": row }),
+        );
+        self.absorb(&path, &o.fx.events);
+    }
+
+    /// The list's cursor row was activated: an entry's dialog opens, or
+    /// the add row's.
+    fn composite_activate(&mut self, index: usize) {
+        let Some(item) = self.current_item() else {
+            return;
+        };
+        let add = item.control.add_row();
+        match &item.control {
+            SettingControl::Map { .. } if add == Some(index) => self.open_add_entry_dialog(),
+            SettingControl::Map { .. } => self.open_entry_dialog(index),
+            SettingControl::ObjectArray { .. } if add == Some(index) => {
+                self.open_add_array_item_dialog()
+            }
+            SettingControl::ObjectArray { .. } => self.open_edit_array_item_dialog(index),
+            _ => {}
+        }
+    }
+
+    // =========== Text lists: rows as fields ===========
+
+    /// The row of the selected text list whose field is live: `Some(i)`
+    /// an item's, `None` the add row's.
+    pub fn live_list_row(&self) -> Option<Option<usize>> {
+        let item = self.current_item()?;
+        live::text_list::live_row(&self.controls, &item.path)
+    }
+
+    /// Open a row of the selected text list for editing — an item's field,
+    /// or the add row's for `None` — the caret at the end. A draft in the
+    /// add row becomes an item first.
+    pub fn edit_list_row(&mut self, row: Option<usize>) {
+        if row.is_some() {
+            self.commit_list_draft();
+        }
+        let Some(item) = self.current_item() else {
+            return;
+        };
+        let SettingControl::TextList { items, .. } = &item.control else {
+            return;
+        };
+        let (path, items) = (item.path.clone(), items.clone());
+        live::text_list::edit_row(&mut self.controls, &path, &items, row);
+        self.ensure_visible();
+    }
+
+    /// The add row's draft becomes an item. Returns whether one did.
+    fn commit_list_draft(&mut self) -> bool {
+        let Some(item) = self.current_item() else {
+            return false;
+        };
+        let path = item.path.clone();
+        let Some(text) = live::text_list::take_draft(&mut self.controls, &path) else {
+            return false;
+        };
+        if let Some(SettingControl::TextList { items, .. }) =
+            self.current_item_mut().map(|i| &mut i.control)
+        {
+            items.push(text);
+        }
+        self.on_value_changed();
+        true
+    }
+
+    /// Up or Down in a live text list field: the adjacent row's field
+    /// opens — the add row's after the last item. Returns whether the
+    /// keyboard moved; at either end it stays.
+    pub fn list_row_step(&mut self, delta: i32) -> bool {
+        let Some(live) = self.live_list_row() else {
+            return false;
+        };
+        // A draft in the add row becomes an item first, so the row above
+        // the add row is the one just typed.
+        if live.is_none() {
+            self.commit_list_draft();
+        }
+        let Some(SettingControl::TextList { items, .. }) = self.current_item().map(|i| &i.control)
+        else {
+            return false;
+        };
+        let n = items.len();
+        let cur = live.unwrap_or(n) as i32;
+        let target = (cur + delta).clamp(0, n as i32) as usize;
+        if target == cur as usize {
+            return false;
+        }
+        self.edit_list_row((target < n).then_some(target));
+        true
+    }
+
+    /// Enter in a live text list field: the add row's draft becomes an
+    /// item and the add row stays open for the next; an item's field keeps
+    /// the keyboard.
+    pub fn list_row_enter(&mut self) {
+        if self.live_list_row() == Some(None) && self.commit_list_draft() {
+            self.edit_list_row(None);
+        }
+    }
+
+    /// Leave the live text list field: the add row's draft becomes an item
+    /// when `commit` (Tab), and is dropped otherwise (Escape).
+    pub fn leave_list_row(&mut self, commit: bool) {
+        if commit {
+            self.commit_list_draft();
+        }
+        if let Some(item) = self.current_item() {
+            let path = item.path.clone();
+            live::text_list::leave(&mut self.controls, &path);
+        }
+    }
+
+    /// Remove item `i` of the selected text list. A field live on it moves
+    /// to the row that takes its place.
+    pub fn remove_list_row(&mut self, i: usize) {
+        let live = self.live_list_row();
+        let Some(SettingControl::TextList { items, .. }) =
+            self.current_item_mut().map(|it| &mut it.control)
+        else {
+            return;
+        };
+        if i >= items.len() {
+            return;
+        }
+        items.remove(i);
+        let n = items.len();
+        self.on_value_changed();
+        if let Some(row) = live {
+            if let Some(item) = self.current_item() {
+                let path = item.path.clone();
+                live::text_list::leave(&mut self.controls, &path);
+            }
+            let row = match row {
+                Some(r) if r > i => Some(r - 1),
+                Some(r) if r == i => (r < n).then_some(r),
+                other => other,
+            };
+            self.edit_list_row(row);
+        }
+    }
+
+    /// Open the selected card's text field or JSON editor for editing: the
+    /// whole value selected so the first keystroke replaces it
+    /// (`select_all`), or the caret at the end. An unset JSON value opens
+    /// empty, so what is typed is the value rather than an edit of the
+    /// `null` literal.
+    fn begin_text_edit(&mut self, select_all: bool) {
+        let Some(item) = self.current_item() else {
+            return;
+        };
+        let (value, seed, multiline) = match &item.control {
+            SettingControl::Text { value, .. } => (value.clone(), value.clone(), false),
+            SettingControl::Json { text, .. } => {
+                let seed = match super::items::json_is_unset(text) {
+                    true => String::new(),
+                    false => text.clone(),
+                };
+                (text.clone(), seed, true)
+            }
+            _ => return,
+        };
+        let path = item.path.clone();
+        self.text_edit_snapshot = Some(TextEditSnapshot {
+            path: path.clone(),
+            value,
+        });
+        live::seed_text(&mut self.controls, &path, &seed, select_all, multiline);
+        self.controls.focus_key = path;
+    }
+
+    /// A keystroke while a control is live: the kind's, then the model's.
+    /// `None` when nothing is live. What the kind declined is the caller's
+    /// (`handle_live_control_key`): Enter, Tab and Escape on a text field,
+    /// Tab and Escape on a JSON editor or a dual list, and the clipboard
+    /// chords the host owns.
+    ///
+    /// The page's Enter on a live dual list moves the item under its
+    /// cursor across — the kind's Space. The kind's own Enter is a form's
+    /// (advance to the next field), which a page of cards has no use for.
+    pub fn live_dispatch(&mut self, ev: &crossterm::event::KeyEvent) -> Option<live::Outcome> {
+        let key = self.live_control()?;
+        let spec = self.spec_for(&key)?;
+        let outcome = match (&spec, ev.code) {
+            (fresh_core::api::WidgetSpec::DualList { .. }, crossterm::event::KeyCode::Enter) => {
+                live::named(&mut self.controls, &spec, &key, "Space")
+            }
+            _ => live::key(&mut self.controls, &spec, &key, ev),
+        };
+        self.absorb(&key, &outcome.fx.events);
+        // The window is asked to hold the row the keyboard is on — a list's
+        // cursor row after an arrow, as it holds the card after a step off it.
+        self.ensure_visible();
+        Some(outcome)
+    }
+
+    /// Type into the live control: a paste.
+    fn live_text(&mut self, text: &str) -> bool {
+        let Some(key) = self.live_control() else {
+            return false;
+        };
+        let Some(spec) = self.spec_for(&key) else {
+            return false;
+        };
+        let outcome = live::text(&mut self.controls, &spec, &key, text);
+        self.absorb(&key, &outcome.fx.events);
+        true
+    }
+
+    /// Escape on the live text field or JSON editor: what was typed is
+    /// discarded and the value is what it was before the edit began.
+    pub fn revert_text_edit(&mut self) {
+        let Some(path) = self.live_control() else {
+            return;
+        };
+        if let Some(snap) = self.text_edit_snapshot.take() {
+            if let Some(item) = self.current_item_mut() {
+                if item.path == snap.path {
+                    match &mut item.control {
+                        SettingControl::Text { value, .. } => *value = snap.value,
+                        SettingControl::Json { text, .. } => *text = snap.value,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        live::drop_state(&mut self.controls, &path);
+    }
+
+    /// Leaving the selected card while its control is live: a text field's
+    /// and a number's draft are committed, a JSON editor's text is kept
+    /// when it parses, a dropdown's list is closed on the selection it
+    /// opened with, and a dual list hands the keyboard back.
+    pub fn leave_live_control(&mut self) {
+        let Some(path) = self.live_control() else {
+            return;
+        };
+        let Some((_, spec)) = self.current_spec() else {
+            return;
+        };
+        let name = match self.current_item().map(|i| &i.control) {
+            Some(SettingControl::Text { .. }) => {
+                self.commit_text_edit();
+                return;
+            }
+            Some(SettingControl::Json { .. }) => {
+                self.json_exit_editing();
+                return;
+            }
+            Some(SettingControl::TextList { .. }) => {
+                self.leave_list_row(true);
+                return;
+            }
+            Some(
+                SettingControl::DualList { .. }
+                | SettingControl::Map { .. }
+                | SettingControl::ObjectArray { .. },
+            ) => {
+                live::drop_state(&mut self.controls, &path);
+                return;
+            }
+            Some(SettingControl::Dropdown { .. }) => "Escape",
+            _ => "Enter",
+        };
+        let o = live::named(&mut self.controls, &spec, &path, name);
+        self.absorb(&path, &o.fx.events);
+        live::drop_state(&mut self.controls, &path);
+    }
+
+    /// Close the selected card's open list on the selection it opened with
+    /// — a press outside it, or `Escape`.
+    pub fn dropdown_cancel(&mut self) {
+        if !self.is_dropdown_open() {
+            return;
+        }
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        let o = live::named(&mut self.controls, &spec, &path, "Escape");
+        self.absorb(&path, &o.fx.events);
+    }
+
+    /// Step the selected card's dropdown by `delta`, list open or not — the
+    /// `◂`/`▸` presses and the web's increment/decrement.
+    pub fn cycle_dropdown(&mut self, delta: i32) {
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        if !matches!(
+            self.current_item().map(|i| &i.control),
+            Some(SettingControl::Dropdown { .. })
+        ) {
+            return;
+        }
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        crate::widgets::kinds::dropdown::cycle_selection(
+            &spec,
+            &path,
+            &mut self.controls,
+            delta,
+            &mut fx,
+        );
+        self.absorb(&path, &fx.events);
+    }
+
+    /// A press on an option row of the selected card's open list.
+    pub fn select_dropdown_option(&mut self, index: usize) {
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        if !matches!(
+            self.current_item().map(|i| &i.control),
+            Some(SettingControl::Dropdown { .. })
+        ) {
+            return;
+        }
+        self.controls.focus_key = path.clone();
+        let o = live::pointer(
+            &mut self.controls,
+            &spec,
+            &path,
+            "dropdown_select",
+            &serde_json::json!({ "index": index }),
+        );
+        self.absorb(&path, &o.fx.events);
+    }
+
+    /// A press on the selected card's number cell: its draft opens, the
+    /// value selected so the next digit replaces it.
+    pub fn press_number_value(&mut self) {
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        if !matches!(
+            self.current_item().map(|i| &i.control),
+            Some(SettingControl::Number { .. })
+        ) {
+            return;
+        }
+        self.controls.focus_key = path.clone();
+        let o = live::pointer(
+            &mut self.controls,
+            &spec,
+            &path,
+            "number_value",
+            &serde_json::json!({}),
+        );
+        self.absorb(&path, &o.fx.events);
+    }
+
+    /// A press on the selected card's text field or JSON editor: the edit
+    /// opens with the caret where the press landed, when the press said
+    /// where.
+    pub fn press_text(&mut self, byte: Option<usize>) {
+        if self.live_control().is_none() {
+            match self.current_item().map(|i| &i.control) {
+                Some(SettingControl::Text { .. }) => self.begin_text_edit(true),
+                Some(SettingControl::Json { .. }) => self.begin_text_edit(false),
+                _ => return,
+            }
+        }
+        if let Some(byte) = byte {
+            self.position_text_cursor(byte);
+        }
+    }
+    /// Record the live text field's value and leave it — Enter, Tab, and
+    /// leaving the card land here. Returns whether a text edit was open.
+    pub fn commit_text_edit(&mut self) -> bool {
+        if !self.is_editing_text_control() {
+            return false;
+        }
+        let Some(path) = self.live_control() else {
+            return false;
+        };
+        self.on_value_changed();
+        self.text_edit_snapshot = None;
+        live::drop_state(&mut self.controls, &path);
+        true
+    }
+
+    /// Stop editing. The *accept* path — Enter, Tab, and clicking away all
+    /// land here and keep what was typed: a text field's value is recorded.
+    pub fn stop_editing(&mut self) {
+        self.leave_live_control();
+    }
     /// Check if the current item is editable (TextList, DualList, Text, Map, or Json)
     pub fn is_editable_control(&self) -> bool {
         self.current_item().is_some_and(|item| {
             matches!(
                 item.control,
-                SettingControl::TextList(_)
-                    | SettingControl::DualList(_)
-                    | SettingControl::Text(_)
-                    | SettingControl::Map(_)
-                    | SettingControl::Json(_)
+                SettingControl::TextList { .. }
+                    | SettingControl::DualList { .. }
+                    | SettingControl::Text { .. }
+                    | SettingControl::Map { .. }
+                    | SettingControl::Json { .. }
             )
         })
     }
 
-    /// Check if currently editing a JSON control
+    /// Whether the selected card's JSON editor is being edited.
     pub fn is_editing_json(&self) -> bool {
-        if !self.editing_text {
-            return false;
-        }
-        self.current_item()
-            .map(|item| matches!(&item.control, SettingControl::Json(_)))
-            .unwrap_or(false)
+        self.live_control().is_some()
+            && matches!(
+                self.current_item().map(|i| &i.control),
+                Some(SettingControl::Json { .. })
+            )
     }
 
-    /// Move the current single-line `Text` control's caret to a flat byte
-    /// offset in its value — used for click-to-position (#2573). No-op for
-    /// other control kinds. The byte is grapheme-snapped by `TextEdit`.
+    /// Move the live text field's caret to a byte of its value — a press
+    /// (#2573). No-op unless a text edit is open.
     pub fn position_text_cursor(&mut self, byte: usize) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Text(state) = &mut item.control {
-                state.set_cursor_from_flat(byte);
-            }
+        let Some(path) = self.live_control() else {
+            return;
+        };
+        if let Some(editor) = live::text_editor(&mut self.controls, &path) {
+            editor.clear_selection();
+            editor.set_cursor_from_flat(byte);
         }
     }
-
-    /// Insert a character into the current editable control
-    pub fn text_insert(&mut self, c: char) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.insert(c),
-                SettingControl::Text(state) => state.insert(c),
-                SettingControl::Map(state) => {
-                    state.new_key_text.insert(state.cursor, c);
-                    state.cursor += c.len_utf8();
-                }
-                SettingControl::Json(state) => state.insert(c),
-                _ => {}
-            }
-        }
-    }
-
-    /// Insert a whole string into the current editable control. Mirrors
-    /// [`Self::text_insert`] but inserts in one pass so single-line text
-    /// fields can flatten embedded newlines (used by the paste path).
-    pub fn text_insert_str(&mut self, s: &str) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.insert_str(s),
-                SettingControl::Text(state) => state.insert_str(s),
-                SettingControl::Map(state) => {
-                    for c in s.chars() {
-                        state.new_key_text.insert(state.cursor, c);
-                        state.cursor += c.len_utf8();
-                    }
-                }
-                SettingControl::Json(state) => state.insert_str(s),
-                _ => {}
-            }
-        }
-    }
-
-    /// Route a paste to whichever Settings text input currently has focus
-    /// — the entry-dialog field when an entry dialog is open, otherwise the
-    /// main-panel control being edited. Returns `true` when a text field
-    /// accepted the paste. The bracketed-paste router relies on this so a
-    /// paste lands in the focused field instead of the buffer behind the
-    /// dialog (issue #2268).
+    /// Paste into whatever is being edited: the live control's kind, or the
+    /// entry dialog's field. Returns whether the text landed anywhere.
     pub fn paste_into_focused_text(&mut self, text: &str) -> bool {
         if let Some(dialog) = self.entry_dialog_mut() {
-            if dialog.editing_text {
-                dialog.insert_str(text);
-                return true;
-            }
-            return false;
+            return dialog.paste(text);
         }
-        if self.editing_text {
-            self.text_insert_str(text);
-            return true;
-        }
-        false
+        self.live_text(text)
     }
 
-    /// Backspace in the current editable control
-    pub fn text_backspace(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.backspace(),
-                SettingControl::Text(state) => state.backspace(),
-                SettingControl::Map(state) if state.cursor > 0 => {
-                    let mut char_start = state.cursor - 1;
-                    while char_start > 0 && !state.new_key_text.is_char_boundary(char_start) {
-                        char_start -= 1;
-                    }
-                    state.new_key_text.remove(char_start);
-                    state.cursor = char_start;
-                }
-                SettingControl::Json(state) => state.backspace(),
-                _ => {}
-            }
-        }
-    }
-
-    /// Run `f` against the focused plain `Text` control, if that's what
-    /// is being edited. Backs the selection / clipboard key arms.
-    fn with_editing_text<R>(
-        &mut self,
-        f: impl FnOnce(&mut crate::view::controls::TextInputState) -> R,
-    ) -> Option<R> {
-        if !self.is_editing_plain_text() {
-            return None;
-        }
-        match self.current_item_mut().map(|item| &mut item.control) {
-            Some(SettingControl::Text(state)) => Some(f(state)),
-            _ => None,
-        }
-    }
-
-    /// Route a key through the shared text-key engine
-    /// ([`crate::primitives::text_key::apply_text_key`]) when a plain,
-    /// single-line `Text` field is being edited. Returns `true` when the key
-    /// was a universal text-editing key (caret motion, mutation, or
-    /// selection) and was applied, so the caller can stop; `false` leaves
-    /// chrome keys (Enter/Tab/Esc, Up/Down field-nav, Ctrl+A/C/V) for the
-    /// caller's own handling. This is the seam that makes the Settings body
-    /// and the plugin widget runtime share one `key → op` table.
-    pub fn apply_plain_text_key(&mut self, event: &crossterm::event::KeyEvent) -> bool {
-        use crate::primitives::text_key::{apply_text_key, TextKeyContext, TextKeyResult};
-        self.with_editing_text(|state| {
-            matches!(
-                apply_text_key(state, event, TextKeyContext::single_line()),
-                TextKeyResult::Handled
-            )
-        })
-        .unwrap_or(false)
-    }
-
-    /// Select the focused plain Text control's whole value (Ctrl+A).
-    pub fn text_select_all(&mut self) {
-        self.with_editing_text(|state| state.select_all());
-    }
-
-    /// The focused plain Text control's selected text (Ctrl+C).
-    pub fn text_selected_text(&mut self) -> Option<String> {
-        self.with_editing_text(|state| state.selected_text())
-            .flatten()
-    }
-
-    /// Move cursor left in the current editable control
-    pub fn text_move_left(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.move_left(),
-                SettingControl::Text(state) => state.move_left(),
-                SettingControl::Map(state) if state.cursor > 0 => {
-                    let mut new_pos = state.cursor - 1;
-                    while new_pos > 0 && !state.new_key_text.is_char_boundary(new_pos) {
-                        new_pos -= 1;
-                    }
-                    state.cursor = new_pos;
-                }
-                SettingControl::Json(state) => state.move_left(),
-                _ => {}
-            }
-        }
-    }
-
-    /// Move cursor right in the current editable control
-    pub fn text_move_right(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.move_right(),
-                SettingControl::Text(state) => state.move_right(),
-                SettingControl::Map(state) if state.cursor < state.new_key_text.len() => {
-                    let mut new_pos = state.cursor + 1;
-                    while new_pos < state.new_key_text.len()
-                        && !state.new_key_text.is_char_boundary(new_pos)
-                    {
-                        new_pos += 1;
-                    }
-                    state.cursor = new_pos;
-                }
-                SettingControl::Json(state) => state.move_right(),
-                _ => {}
-            }
-        }
-    }
-
-    /// Move cursor to the start of the current editable control (Home).
-    pub fn text_move_home(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.move_home(),
-                SettingControl::Text(state) => state.move_home(),
-                SettingControl::Map(state) => state.cursor = 0,
-                SettingControl::Json(state) => state.move_home(),
-                _ => {}
-            }
-        }
-    }
-
-    /// Move cursor to the end of the current editable control (End).
-    pub fn text_move_end(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.move_end(),
-                SettingControl::Text(state) => state.move_end(),
-                SettingControl::Map(state) => state.cursor = state.new_key_text.len(),
-                SettingControl::Json(state) => state.move_end(),
-                _ => {}
-            }
-        }
-    }
-
-    /// Move focus to previous item in TextList/Map (wraps within control)
-    pub fn text_focus_prev(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.focus_prev(),
-                SettingControl::Map(state) => {
-                    state.focus_prev();
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Move focus to next item in TextList/Map (wraps within control)
-    pub fn text_focus_next(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.focus_next(),
-                SettingControl::Map(state) => {
-                    state.focus_next();
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Add new item in TextList/Map (from the new item field)
-    pub fn text_add_item(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => state.add_item(),
-                SettingControl::Map(state) => state.add_entry_from_input(),
-                _ => {}
-            }
-        }
-        // Record the change
-        self.on_value_changed();
-    }
-
-    /// Remove the currently focused item in TextList/Map
-    pub fn text_remove_focused(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::TextList(state) => {
-                    if let Some(idx) = state.focused_item {
-                        state.remove_item(idx);
-                    }
-                }
-                SettingControl::Map(state) => {
-                    if let Some(idx) = state.focused_entry {
-                        state.remove_entry(idx);
-                    }
-                }
-                _ => {}
-            }
-        }
-        // Record the change
-        self.on_value_changed();
-    }
-
-    /// Check if currently editing a DualList control
+    /// Whether the selected card's dual list has the keyboard.
     pub fn is_editing_dual_list(&self) -> bool {
-        if !self.editing_text {
-            return false;
-        }
-        self.current_item()
-            .map(|item| matches!(&item.control, SettingControl::DualList(_)))
-            .unwrap_or(false)
+        self.live_control().is_some()
+            && matches!(
+                self.current_item().map(|i| &i.control),
+                Some(SettingControl::DualList { .. })
+            )
     }
 
-    // =========== DualList methods ===========
+    // =========== Dual list ===========
 
-    /// Access the DualList at `item_idx` in the current page and run `f` on it.
-    /// Returns `None` if the item isn't a DualList or the index is out of bounds.
-    pub fn with_dual_list_mut<R>(
-        &mut self,
-        item_idx: usize,
-        f: impl FnOnce(&mut crate::view::controls::DualListState) -> R,
-    ) -> Option<R> {
-        let page = self.pages.get_mut(self.selected_category)?;
-        let item = page.items.get_mut(item_idx)?;
-        if let SettingControl::DualList(ref mut state) = item.control {
-            Some(f(state))
-        } else {
-            None
+    /// One of the dual list's moves on the selected card, from a gesture
+    /// of the page's own — the web's buttons beside the columns. The
+    /// control becomes live, as a press on one of its cells makes it.
+    pub fn dual_list_op(&mut self, op: crate::widgets::kinds::dual_list::DualOp) {
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        if !matches!(
+            self.current_item().map(|i| &i.control),
+            Some(SettingControl::DualList { .. })
+        ) {
+            return;
         }
+        self.controls.focus_key = path.clone();
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        crate::widgets::kinds::dual_list::apply_op(&spec, &path, &mut self.controls, op, &mut fx);
+        self.absorb(&path, &fx.events);
     }
 
-    /// Access the currently selected DualList and run `f` on it.
-    /// Returns `None` if the current item isn't a DualList.
-    pub fn with_current_dual_list_mut<R>(
-        &mut self,
-        f: impl FnOnce(&mut crate::view::controls::DualListState) -> R,
-    ) -> Option<R> {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::DualList(ref mut state) = item.control {
-                return Some(f(state));
-            }
+    /// A press on a cell of the selected card's dual list: the control
+    /// becomes live with that column active and its cursor on the row.
+    pub fn press_dual_list(&mut self, included: bool, row: usize) {
+        let Some((path, spec)) = self.current_spec() else {
+            return;
+        };
+        if !matches!(
+            self.current_item().map(|i| &i.control),
+            Some(SettingControl::DualList { .. })
+        ) {
+            return;
         }
-        None
+        self.controls.focus_key = path.clone();
+        let o = live::pointer(
+            &mut self.controls,
+            &spec,
+            &path,
+            "dual_focus",
+            &serde_json::json!({
+                "column": match included {
+                    true => "included",
+                    false => "available",
+                },
+                "index": row,
+            }),
+        );
+        self.absorb(&path, &o.fx.events);
     }
 
-    /// After changing a DualList, refresh the sibling's excluded set.
+    /// After a dual list's included set changed, the sibling list's
+    /// Available column must stop offering what this one took.
     ///
     /// Assumes the sibling setting lives on the same page as the current item.
     /// This holds for the current use case (`status_bar.left` and `.right` are both
@@ -2782,21 +2853,21 @@ impl SettingsState {
             let Some(item) = self.current_item() else {
                 return;
             };
-            let SettingControl::DualList(state) = &item.control else {
+            let SettingControl::DualList { included, .. } = &item.control else {
                 return;
             };
             let Some(ref sib_path) = item.dual_list_sibling else {
                 return;
             };
-            (state.included.clone(), sib_path.clone())
+            (included.clone(), sib_path.clone())
         };
 
         // Find sibling item in same page and update its excluded
         if let Some(page) = self.pages.get_mut(self.selected_category) {
             for other in page.items.iter_mut() {
                 if other.path == sibling_path {
-                    if let SettingControl::DualList(ref mut sib_state) = other.control {
-                        sib_state.excluded = new_included;
+                    if let SettingControl::DualList { excluded, .. } = &mut other.control {
+                        *excluded = new_included;
                     }
                     break;
                 }
@@ -2804,459 +2875,25 @@ impl SettingsState {
         }
     }
 
-    // =========== JSON editing methods ===========
+    // =========== JSON editor ===========
 
-    /// Move cursor up in JSON editor
-    pub fn json_cursor_up(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.move_up();
-            }
-        }
-    }
-
-    /// Move cursor down in JSON editor
-    pub fn json_cursor_down(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.move_down();
-            }
-        }
-    }
-
-    /// Insert newline in JSON editor
-    pub fn json_insert_newline(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.insert('\n');
-            }
-        }
-    }
-
-    /// Delete character at cursor in JSON editor
-    pub fn json_delete(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.delete();
-            }
-        }
-    }
-
-    /// Stop JSON editing: commit if valid, revert if invalid
+    /// Leaving the live JSON editor — Tab, Escape, or leaving the card: a
+    /// text that parses is recorded; one that does not is put back to what
+    /// it was when the edit began.
     pub fn json_exit_editing(&mut self) {
-        let is_valid = self
-            .current_item()
-            .map(|item| {
-                if let SettingControl::Json(state) = &item.control {
-                    state.is_valid()
-                } else {
-                    true
-                }
-            })
-            .unwrap_or(true);
-
-        if is_valid {
-            if let Some(item) = self.current_item_mut() {
-                if let SettingControl::Json(state) = &mut item.control {
-                    state.commit();
-                }
-            }
+        let Some(path) = self.live_control() else {
+            return;
+        };
+        let valid = matches!(
+            self.current_item().map(|i| &i.control),
+            Some(SettingControl::Json { text, .. }) if super::items::json_is_valid(text)
+        );
+        if valid {
             self.on_value_changed();
-        } else if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.revert();
-            }
-        }
-        self.editing_text = false;
-    }
-
-    /// Select all text in JSON editor
-    pub fn json_select_all(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.select_all();
-            }
-        }
-    }
-
-    /// Get selected text from JSON editor
-    pub fn json_selected_text(&self) -> Option<String> {
-        if let Some(item) = self.current_item() {
-            if let SettingControl::Json(state) = &item.control {
-                return state.selected_text();
-            }
-        }
-        None
-    }
-
-    /// Move cursor up with selection in JSON editor
-    pub fn json_cursor_up_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.editor.move_up_selecting();
-            }
-        }
-    }
-
-    /// Move cursor down with selection in JSON editor
-    pub fn json_cursor_down_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.editor.move_down_selecting();
-            }
-        }
-    }
-
-    /// Move cursor left with selection in JSON editor
-    pub fn json_cursor_left_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.editor.move_left_selecting();
-            }
-        }
-    }
-
-    /// Move cursor right with selection in JSON editor
-    pub fn json_cursor_right_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.editor.move_right_selecting();
-            }
-        }
-    }
-
-    // =========== Dropdown methods ===========
-
-    /// Check if current item is a dropdown with menu open
-    pub fn is_dropdown_open(&self) -> bool {
-        self.current_item().is_some_and(|item| {
-            if let SettingControl::Dropdown(ref d) = item.control {
-                d.open
-            } else {
-                false
-            }
-        })
-    }
-
-    /// Toggle dropdown open/closed
-    pub fn dropdown_toggle(&mut self) {
-        let mut opened = false;
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                d.toggle_open();
-                opened = d.open;
-            }
-        }
-
-        // An open dropdown makes its card taller; the window is asked to hold
-        // the taller card, which is the same request as any other reveal —
-        // there is no content height to update, because the column measures
-        // the card with its options in it.
-        if opened {
-            self.body_anchor
-                .reveal_key(super::super::shell::settings::card_key(self.selected_item));
-        }
-    }
-
-    /// Select previous option in dropdown
-    pub fn dropdown_prev(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                d.select_prev();
-            }
-        }
-    }
-
-    /// Select next option in dropdown
-    pub fn dropdown_next(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                d.select_next();
-            }
-        }
-    }
-
-    /// Jump to first option in dropdown
-    pub fn dropdown_home(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                if !d.options.is_empty() {
-                    d.selected = 0;
-                    d.ensure_visible();
-                }
-            }
-        }
-    }
-
-    /// Jump to last option in dropdown
-    pub fn dropdown_end(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                if !d.options.is_empty() {
-                    d.selected = d.options.len() - 1;
-                    d.ensure_visible();
-                }
-            }
-        }
-    }
-
-    /// Confirm dropdown selection (close and record change)
-    pub fn dropdown_confirm(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                d.confirm();
-            }
-        }
-        self.on_value_changed();
-    }
-
-    /// Cancel dropdown (restore original value and close)
-    pub fn dropdown_cancel(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                d.cancel();
-            }
-        }
-    }
-
-    /// Select a specific dropdown option by index and confirm
-    pub fn dropdown_select(&mut self, option_idx: usize) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                if option_idx < d.options.len() {
-                    d.selected = option_idx;
-                    d.confirm();
-                }
-            }
-        }
-        self.on_value_changed();
-    }
-
-    /// Set dropdown hover index (for mouse hover indication)
-    /// Returns true if the hover index changed
-    pub fn set_dropdown_hover(&mut self, hover_idx: Option<usize>) -> bool {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                if d.open && d.hover_index != hover_idx {
-                    d.hover_index = hover_idx;
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Scroll open dropdown by delta (positive = down, negative = up)
-    pub fn dropdown_scroll(&mut self, delta: i32) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Dropdown(ref mut d) = item.control {
-                if d.open {
-                    d.scroll_by(delta);
-                }
-            }
-        }
-    }
-
-    // =========== Number editing methods ===========
-
-    /// Check if current item is a number input being edited
-    pub fn is_number_editing(&self) -> bool {
-        self.current_item().is_some_and(|item| {
-            if let SettingControl::Number(ref n) = item.control {
-                n.editing()
-            } else {
-                false
-            }
-        })
-    }
-
-    /// Start number editing mode
-    pub fn start_number_editing(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.start_editing();
-            }
-        }
-    }
-
-    /// Insert a character into number input
-    pub fn number_insert(&mut self, c: char) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.insert_char(c);
-            }
-        }
-    }
-
-    /// Backspace in number input
-    pub fn number_backspace(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.backspace();
-            }
-        }
-    }
-
-    /// Confirm number editing
-    pub fn number_confirm(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.confirm_editing();
-            }
-        }
-        self.on_value_changed();
-    }
-
-    /// Cancel number editing
-    pub fn number_cancel(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.cancel_editing();
-            }
-        }
-    }
-
-    /// Delete character forward in number input
-    pub fn number_delete(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.delete();
-            }
-        }
-    }
-
-    /// Move cursor left in number input
-    pub fn number_move_left(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_left();
-            }
-        }
-    }
-
-    /// Move cursor right in number input
-    pub fn number_move_right(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_right();
-            }
-        }
-    }
-
-    /// Move cursor to start of number input
-    pub fn number_move_home(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_home();
-            }
-        }
-    }
-
-    /// Move cursor to end of number input
-    pub fn number_move_end(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_end();
-            }
-        }
-    }
-
-    /// Move cursor left selecting in number input
-    pub fn number_move_left_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_left_selecting();
-            }
-        }
-    }
-
-    /// Move cursor right selecting in number input
-    pub fn number_move_right_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_right_selecting();
-            }
-        }
-    }
-
-    /// Move cursor to start selecting in number input
-    pub fn number_move_home_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_home_selecting();
-            }
-        }
-    }
-
-    /// Move cursor to end selecting in number input
-    pub fn number_move_end_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_end_selecting();
-            }
-        }
-    }
-
-    /// Move word left in number input
-    pub fn number_move_word_left(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_word_left();
-            }
-        }
-    }
-
-    /// Move word right in number input
-    pub fn number_move_word_right(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_word_right();
-            }
-        }
-    }
-
-    /// Move word left selecting in number input
-    pub fn number_move_word_left_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_word_left_selecting();
-            }
-        }
-    }
-
-    /// Move word right selecting in number input
-    pub fn number_move_word_right_selecting(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.move_word_right_selecting();
-            }
-        }
-    }
-
-    /// Select all text in number input
-    pub fn number_select_all(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.select_all();
-            }
-        }
-    }
-
-    /// Delete word backward in number input
-    pub fn number_delete_word_backward(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.delete_word_backward();
-            }
-        }
-    }
-
-    /// Delete word forward in number input
-    pub fn number_delete_word_forward(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut n) = item.control {
-                n.delete_word_forward();
-            }
+            self.text_edit_snapshot = None;
+            live::drop_state(&mut self.controls, &path);
+        } else {
+            self.revert_text_edit();
         }
     }
 
@@ -3333,81 +2970,75 @@ fn apply_builtin_defaults(dialog: &mut EntryDialogState, entry_pointer: &str) {
 
 pub(crate) fn update_control_from_value(control: &mut SettingControl, value: &serde_json::Value) {
     match control {
-        SettingControl::Toggle(state) => {
+        SettingControl::Toggle { checked, .. } => {
             if let Some(b) = value.as_bool() {
-                state.checked = b;
+                *checked = b;
             }
         }
-        SettingControl::Number(state) => {
-            if let Some(n) = value.as_i64() {
-                state.value = n;
+        SettingControl::Number { value: current, .. } => {
+            if let Some(n) = value.as_f64() {
+                *current = n;
             }
         }
-        SettingControl::Dropdown(state) => {
+        SettingControl::Dropdown {
+            options,
+            values,
+            selected,
+            ..
+        } => {
+            let stored = match values.is_empty() {
+                true => options,
+                false => values,
+            };
+            let wanted = match value.as_str() {
+                Some(s) => s,
+                // `null` is a nullable enum's "(none)", stored as the empty value.
+                None if value.is_null() => "",
+                None => return,
+            };
+            if let Some(idx) = stored.iter().position(|o| o == wanted) {
+                *selected = idx;
+            }
+        }
+        SettingControl::Text { value: current, .. } => {
             if let Some(s) = value.as_str() {
-                if let Some(idx) = state.options.iter().position(|o| o == s) {
-                    state.selected = idx;
-                }
+                *current = s.to_string();
             }
         }
-        SettingControl::Text(state) => {
-            if let Some(s) = value.as_str() {
-                // Model update, not user input: apply unconditionally
-                // (`set_value` is gated on the control being enabled,
-                // but a reset/inherit must land even on a control whose
-                // focus state is Disabled).
-                state.force_value(s);
-            }
-        }
-        SettingControl::TextList(state) => {
+        SettingControl::TextList { items, integer, .. } => {
             if let Some(arr) = value.as_array() {
-                state.items = arr
+                *items = arr
                     .iter()
-                    .filter_map(|v| {
-                        if state.is_integer {
-                            v.as_i64()
-                                .map(|n| n.to_string())
-                                .or_else(|| v.as_u64().map(|n| n.to_string()))
-                                .or_else(|| v.as_f64().map(|n| n.to_string()))
-                        } else {
-                            v.as_str().map(String::from)
-                        }
+                    .filter_map(|v| match integer {
+                        true => v
+                            .as_i64()
+                            .map(|n| n.to_string())
+                            .or_else(|| v.as_u64().map(|n| n.to_string()))
+                            .or_else(|| v.as_f64().map(|n| n.to_string())),
+                        false => v.as_str().map(String::from),
                     })
                     .collect();
             }
         }
-        SettingControl::DualList(state) => {
+        SettingControl::DualList { included, .. } => {
             if let Some(arr) = value.as_array() {
-                state.included = arr
+                *included = arr
                     .iter()
                     .filter_map(|v| v.as_str().map(String::from))
                     .collect();
             }
         }
-        SettingControl::Map(state) => {
-            if let Some(obj) = value.as_object() {
-                state.entries = obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                state.entries.sort_by(|a, b| a.0.cmp(&b.0));
+        SettingControl::Map { entries, .. } => {
+            if value.is_object() {
+                *entries = super::items::map_entries(value);
             }
         }
-        SettingControl::ObjectArray(state) => {
+        SettingControl::ObjectArray { items, .. } => {
             if let Some(arr) = value.as_array() {
-                state.bindings = arr.clone();
+                *items = arr.clone();
             }
         }
-        SettingControl::Json(state) => {
-            // Re-create from value with pretty printing
-            let json_str =
-                serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string());
-            let json_str = if json_str.is_empty() {
-                "null".to_string()
-            } else {
-                json_str
-            };
-            state.original_text = json_str.clone();
-            state.editor.set_value(&json_str);
-            state.scroll_offset = 0;
-        }
+        SettingControl::Json { text, .. } => *text = super::items::json_text(Some(value)),
         SettingControl::Complex { .. } => {}
     }
 }
@@ -3427,6 +3058,7 @@ fn normalize_pending_change(path: &str, value: serde_json::Value) -> serde_json:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     const TEST_SCHEMA: &str = r#"
 {
@@ -3491,85 +3123,6 @@ mod tests {
 
         state.discard_changes();
         assert!(!state.has_changes());
-    }
-
-    /// Regression test for issue #2515: committing a text-field edit with Tab
-    /// (which routes through `stop_editing`, unlike Enter which routes through
-    /// `text_add_item`) must still flush the typed value into `pending_changes`
-    /// so Save persists it. Previously only the Enter path committed, so a
-    /// value typed and then dismissed with Tab/Esc was lost on Save even though
-    /// the row showed as modified.
-    #[test]
-    fn test_text_edit_committed_on_stop_editing() {
-        let config = test_config();
-        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
-
-        // `theme` is a plain string property -> a Text control. Items are
-        // sorted within the page, so select it explicitly by path.
-        let theme_idx = state.pages[0]
-            .items
-            .iter()
-            .position(|i| i.path == "/theme")
-            .expect("theme item present");
-        state.selected_category = 0;
-        state.selected_item = theme_idx;
-
-        assert!(matches!(
-            state.current_item().map(|i| &i.control),
-            Some(SettingControl::Text(_))
-        ));
-
-        // Enter edit mode and type a new value (first keystroke replaces the
-        // armed default, mirroring the real key flow).
-        state.start_editing();
-        for c in "light".chars() {
-            state.text_insert(c);
-        }
-
-        // Exit via the Tab path (NOT Enter): commit then stop. This is the bug
-        // surface — Tab previously skipped the commit.
-        assert!(state.commit_text_edit());
-        state.stop_editing();
-
-        assert_eq!(
-            state.pending_changes.get("/theme"),
-            Some(&serde_json::Value::String("light".to_string())),
-            "typed value must be flushed to pending_changes on Tab commit"
-        );
-
-        // And it survives a Save into the live config.
-        let config = state.apply_changes(&config).unwrap();
-        assert_eq!(config.theme.0, "light");
-    }
-
-    /// `Esc` keeps its dismiss semantics: it stops editing without flushing the
-    /// in-progress value into `pending_changes`, so it must not record a change
-    /// the way the Tab/Enter commit paths do.
-    #[test]
-    fn test_text_edit_esc_does_not_commit() {
-        let config = test_config();
-        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
-
-        let theme_idx = state.pages[0]
-            .items
-            .iter()
-            .position(|i| i.path == "/theme")
-            .expect("theme item present");
-        state.selected_category = 0;
-        state.selected_item = theme_idx;
-
-        state.start_editing();
-        for c in "light".chars() {
-            state.text_insert(c);
-        }
-
-        // Esc path: stop_editing without commit_text_edit.
-        state.stop_editing();
-
-        assert!(
-            !state.pending_changes.contains_key("/theme"),
-            "Esc must not record a pending change"
-        );
     }
 
     #[test]
@@ -3672,119 +3225,177 @@ mod tests {
         state
     }
 
-    #[test]
-    fn test_dropdown_toggle() {
-        let config = test_config();
-        let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
+    fn press(state: &mut SettingsState, code: KeyCode) {
+        state.live_dispatch(&KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    fn type_text(state: &mut SettingsState, text: &str) {
+        for c in text.chars() {
+            press(state, KeyCode::Char(c));
+        }
+    }
+
+    fn dropdown_selected(state: &SettingsState) -> usize {
+        match state.current_item().map(|i| &i.control) {
+            Some(SettingControl::Dropdown { selected, .. }) => *selected,
+            other => panic!("not a dropdown: {other:?}"),
+        }
+    }
+
+    fn number_value(state: &SettingsState) -> f64 {
+        match state.current_item().map(|i| &i.control) {
+            Some(SettingControl::Number { value, .. }) => *value,
+            other => panic!("not a number: {other:?}"),
+        }
+    }
+
+    fn text_value(state: &SettingsState) -> String {
+        match state.current_item().map(|i| &i.control) {
+            Some(SettingControl::Text { value, .. }) => value.clone(),
+            other => panic!("not a text field: {other:?}"),
+        }
+    }
+
+    fn select_theme_text(state: &mut SettingsState) {
+        // `theme` is a plain string property -> a Text control. Items are
+        // sorted within the page, so select it explicitly by path.
+        let theme_idx = state.pages[0]
+            .items
+            .iter()
+            .position(|i| i.path == "/theme")
+            .expect("theme item present");
         state.show();
-        state.focus_on(FocusTarget::Card(0)); // Move to settings
+        state.focus_on(FocusTarget::Card(theme_idx));
+        assert!(matches!(
+            state.current_item().map(|i| &i.control),
+            Some(SettingControl::Text { .. })
+        ));
+    }
 
+    /// Enter and Tab keep what was typed: the value is recorded and
+    /// survives a Save into the live config.
+    #[test]
+    fn a_text_edit_is_recorded_when_it_ends() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        select_theme_text(&mut state);
+
+        state.start_editing();
+        assert!(state.is_editing_text_control());
+        // The value opens selected, so the first keystroke replaces it.
+        type_text(&mut state, "light");
+        assert_eq!(text_value(&state), "light", "typed live into the model");
+        assert!(
+            !state.pending_changes.contains_key("/theme"),
+            "nothing is recorded until the edit ends"
+        );
+
+        state.stop_editing();
+        assert!(!state.is_editing_text_control());
+        assert_eq!(
+            state.pending_changes.get("/theme"),
+            Some(&serde_json::Value::String("light".to_string())),
+            "the typed value is recorded when the edit is accepted"
+        );
+        let config = state.apply_changes(&config).unwrap();
+        assert_eq!(config.theme.0, "light");
+    }
+
+    /// Escape discards what was typed: the field says what it said before
+    /// the edit began and nothing is recorded.
+    #[test]
+    fn a_text_edit_reverted_records_nothing() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        select_theme_text(&mut state);
+        let before = text_value(&state);
+
+        state.start_editing();
+        type_text(&mut state, "light");
+        state.revert_text_edit();
+
+        assert!(!state.is_editing_text_control());
+        assert_eq!(text_value(&state), before);
+        assert!(!state.pending_changes.contains_key("/theme"));
+    }
+
+    fn select_theme_dropdown(state: &mut SettingsState) {
+        state.show();
+        state.focus_on(FocusTarget::Card(0));
         // Items are sorted alphabetically: line_numbers, tab_size, theme
-        // Navigate to theme (dropdown) at index 2
         state.select_next();
         state.select_next();
-        assert!(!state.is_dropdown_open());
-
-        state.dropdown_toggle();
-        assert!(state.is_dropdown_open());
-
-        state.dropdown_toggle();
-        assert!(!state.is_dropdown_open());
+        assert!(matches!(
+            state.current_item().map(|i| &i.control),
+            Some(SettingControl::Dropdown { .. })
+        ));
     }
 
     #[test]
-    fn test_dropdown_cancel_restores() {
+    fn enter_opens_a_dropdowns_list_and_enter_closes_it() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
-        state.show();
-        state.focus_on(FocusTarget::Card(0));
+        select_theme_dropdown(&mut state);
+        assert!(!state.is_dropdown_open());
 
-        // Items are sorted alphabetically: line_numbers, tab_size, theme
-        // Navigate to theme (dropdown) at index 2
-        state.select_next();
-        state.select_next();
-
-        // Open dropdown
-        state.dropdown_toggle();
+        state.activate_control();
         assert!(state.is_dropdown_open());
+        assert_eq!(state.live_control().as_deref(), Some("/theme"));
 
-        // Get initial selection
-        let initial = state.current_item().and_then(|item| {
-            if let SettingControl::Dropdown(ref d) = item.control {
-                Some(d.selected)
-            } else {
-                None
-            }
-        });
+        press(&mut state, KeyCode::Enter);
+        assert!(!state.is_dropdown_open());
+        assert!(
+            state.live_control().is_none(),
+            "the list closed, the control is left"
+        );
+    }
 
-        // Change selection
-        state.dropdown_next();
-        let after_change = state.current_item().and_then(|item| {
-            if let SettingControl::Dropdown(ref d) = item.control {
-                Some(d.selected)
-            } else {
-                None
-            }
-        });
-        assert_ne!(initial, after_change);
+    #[test]
+    fn escape_puts_a_dropdown_back_where_it_opened() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
+        select_theme_dropdown(&mut state);
+        state.activate_control();
+        let initial = dropdown_selected(&state);
 
-        // Cancel - should restore
+        press(&mut state, KeyCode::Down);
+        assert_ne!(
+            dropdown_selected(&state),
+            initial,
+            "the selection moves live"
+        );
+        assert!(state.has_changes(), "and is recorded as it moves");
+
         state.dropdown_cancel();
         assert!(!state.is_dropdown_open());
-
-        let after_cancel = state.current_item().and_then(|item| {
-            if let SettingControl::Dropdown(ref d) = item.control {
-                Some(d.selected)
-            } else {
-                None
-            }
-        });
-        assert_eq!(initial, after_cancel);
+        assert_eq!(dropdown_selected(&state), initial);
+        assert!(!state.has_changes(), "back where it was is not a change");
     }
 
     #[test]
-    fn test_dropdown_confirm_keeps_selection() {
+    fn enter_keeps_a_dropdowns_moved_selection() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
-        state.show();
-        state.focus_on(FocusTarget::Card(0));
+        select_theme_dropdown(&mut state);
+        state.activate_control();
+        press(&mut state, KeyCode::Down);
+        let moved = dropdown_selected(&state);
 
-        // Open dropdown
-        state.dropdown_toggle();
-
-        // Change selection
-        state.dropdown_next();
-        let after_change = state.current_item().and_then(|item| {
-            if let SettingControl::Dropdown(ref d) = item.control {
-                Some(d.selected)
-            } else {
-                None
-            }
-        });
-
-        // Confirm - should keep new selection
-        state.dropdown_confirm();
+        press(&mut state, KeyCode::Enter);
         assert!(!state.is_dropdown_open());
-
-        let after_confirm = state.current_item().and_then(|item| {
-            if let SettingControl::Dropdown(ref d) = item.control {
-                Some(d.selected)
-            } else {
-                None
-            }
-        });
-        assert_eq!(after_change, after_confirm);
+        assert_eq!(dropdown_selected(&state), moved);
+        assert!(state.has_changes());
     }
 
     #[test]
     fn dropdown_reverting_to_original_value_clears_pending_and_row_modified() {
         let mut state = open_theme_dropdown_state();
 
-        state.dropdown_select(0); // dark
+        state.select_dropdown_option(0); // dark
         assert!(state.has_changes());
         assert!(state.current_item().unwrap().modified);
 
-        state.dropdown_select(2); // high-contrast, matching Config::default()
+        state.select_dropdown_option(2); // high-contrast, matching Config::default()
         assert!(!state.has_changes());
         let item = state.current_item().unwrap();
         assert!(!item.modified);
@@ -3795,7 +3406,7 @@ mod tests {
     fn reset_after_unsaved_inherited_dropdown_change_cancels_pending_edit() {
         let mut state = open_theme_dropdown_state();
 
-        state.dropdown_select(1); // light
+        state.select_dropdown_option(1); // light
         assert!(state.has_changes());
         assert!(state.current_item().unwrap().modified);
 
@@ -3804,101 +3415,81 @@ mod tests {
         let item = state.current_item().unwrap();
         assert!(!item.modified);
         assert_eq!(item.layer_source, ConfigLayer::System);
-        if let SettingControl::Dropdown(dropdown) = &item.control {
-            assert_eq!(dropdown.selected_value(), Some("high-contrast"));
-        } else {
-            panic!("theme should render as a dropdown");
-        }
+        assert_eq!(
+            item.control.dropdown_selected_value(),
+            Some("high-contrast"),
+            "theme should render as a dropdown showing the default"
+        );
+    }
+
+    fn select_tab_size(state: &mut SettingsState) {
+        state.show();
+        state.focus_on(FocusTarget::Card(0));
+        state.select_next(); // tab_size
+        assert!(matches!(
+            state.current_item().map(|i| &i.control),
+            Some(SettingControl::Number { .. })
+        ));
     }
 
     #[test]
-    fn test_number_editing() {
+    fn a_number_is_typed_into_its_draft_and_enter_records_it() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
-        state.show();
-        state.focus_on(FocusTarget::Card(0));
-
-        // Navigate to tab_size (second item)
-        state.select_next();
-
-        // Should not be editing yet
+        select_tab_size(&mut state);
         assert!(!state.is_number_editing());
 
-        // Start editing
-        state.start_number_editing();
+        state.activate_control();
         assert!(state.is_number_editing());
+        // The draft opens selected: the digit replaces the value.
+        press(&mut state, KeyCode::Char('8'));
+        press(&mut state, KeyCode::Enter);
 
-        // Insert characters
-        state.number_insert('8');
-
-        // Confirm
-        state.number_confirm();
         assert!(!state.is_number_editing());
+        assert!(state.live_control().is_none());
+        assert_eq!(number_value(&state), 8.0);
+        assert!(state.has_changes());
     }
 
     #[test]
-    fn test_number_cancel_editing() {
+    fn escape_abandons_a_numbers_draft() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
-        state.show();
-        state.focus_on(FocusTarget::Card(0));
+        select_tab_size(&mut state);
+        let initial = number_value(&state);
 
-        // Navigate to tab_size
-        state.select_next();
+        state.activate_control();
+        press(&mut state, KeyCode::Backspace);
+        press(&mut state, KeyCode::Char('9'));
+        press(&mut state, KeyCode::Char('9'));
+        press(&mut state, KeyCode::Esc);
 
-        // Get initial value
-        let initial_value = state.current_item().and_then(|item| {
-            if let SettingControl::Number(ref n) = item.control {
-                Some(n.value)
-            } else {
-                None
-            }
-        });
-
-        // Start editing and make changes
-        state.start_number_editing();
-        state.number_backspace();
-        state.number_insert('9');
-        state.number_insert('9');
-
-        // Cancel
-        state.number_cancel();
         assert!(!state.is_number_editing());
-
-        // Value should be unchanged (edit text was just cleared)
-        let after_cancel = state.current_item().and_then(|item| {
-            if let SettingControl::Number(ref n) = item.control {
-                Some(n.value)
-            } else {
-                None
-            }
-        });
-        assert_eq!(initial_value, after_cancel);
+        assert_eq!(number_value(&state), initial);
+        assert!(!state.has_changes());
     }
 
     #[test]
-    fn test_number_backspace() {
+    fn backspace_edits_the_numbers_draft() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
-        state.show();
-        state.focus_on(FocusTarget::Card(0));
-        state.select_next();
+        select_tab_size(&mut state);
+        state.activate_control();
+        press(&mut state, KeyCode::Backspace);
 
-        state.start_number_editing();
-        state.number_backspace();
-
-        // Check edit text was modified
-        let display_text = state.current_item().and_then(|item| {
-            if let SettingControl::Number(ref n) = item.control {
-                Some(n.display_text())
-            } else {
-                None
-            }
-        });
-        // Original "4" should have last char removed, leaving ""
-        assert_eq!(display_text, Some(String::new()));
-
-        state.number_cancel();
+        let path = state.current_item().unwrap().path.clone();
+        let draft = crate::widgets::kinds::number::resolve(
+            0.0,
+            None,
+            None,
+            Some(&path),
+            &state.controls.instance_states,
+        )
+        .draft
+        .expect("the draft is open");
+        // The selected "4" was deleted, leaving an empty draft.
+        assert_eq!(draft.text, "");
+        press(&mut state, KeyCode::Esc);
     }
 
     #[test]
@@ -4103,9 +3694,12 @@ mod tests {
         );
     }
 
+    /// The status bar's two pickers share one option set: what the left one
+    /// takes, the right one's Available column must stop offering. The
+    /// carry is the kind's; the sibling's `excluded` follows the change.
     #[test]
-    fn test_refresh_dual_list_sibling_updates_excluded() {
-        use crate::view::controls::DualListState;
+    fn a_dual_list_change_reaches_its_sibling() {
+        use crate::widgets::kinds::dual_list::DualOp;
 
         // Uses the real config schema (which has /editor/status_bar/left and /right
         // as DualList siblings).
@@ -4113,13 +3707,13 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(schema, &config).unwrap();
 
-        // Find the Editor page and the status bar left/right items
         let editor_page_idx = state
             .pages
             .iter()
             .position(|p| p.path == "/editor")
             .expect("editor page");
         state.selected_category = editor_page_idx;
+        state.focus_panel = FocusPanel::Settings;
 
         let (left_idx, right_idx) = {
             let page = &state.pages[editor_page_idx];
@@ -4135,62 +3729,90 @@ mod tests {
                 .expect("right item");
             (l, r)
         };
+        let included_of = |state: &SettingsState, idx: usize| -> Vec<String> {
+            match &state.pages[editor_page_idx].items[idx].control {
+                SettingControl::DualList { included, .. } => included.clone(),
+                _ => panic!("expected a dual list"),
+            }
+        };
+        let excluded_of = |state: &SettingsState, idx: usize| -> Vec<String> {
+            match &state.pages[editor_page_idx].items[idx].control {
+                SettingControl::DualList { excluded, .. } => excluded.clone(),
+                _ => panic!("expected a dual list"),
+            }
+        };
 
-        // Sanity: both should be DualList controls
-        assert!(matches!(
-            &state.pages[editor_page_idx].items[left_idx].control,
-            SettingControl::DualList(_)
-        ));
-
-        // Capture the initial left.excluded — should match right's default values.
-        let default_right_items: Vec<String> =
-            match &state.pages[editor_page_idx].items[right_idx].control {
-                SettingControl::DualList(dl) => dl.included.clone(),
-                _ => panic!("right should be DualList"),
-            };
-        let initial_left_excluded: Vec<String> =
-            match &state.pages[editor_page_idx].items[left_idx].control {
-                SettingControl::DualList(dl) => dl.excluded.clone(),
-                _ => panic!("left should be DualList"),
-            };
+        // On build, left.excluded mirrors right's included.
         assert_eq!(
-            initial_left_excluded, default_right_items,
-            "left.excluded should mirror right's included on initial build"
+            excluded_of(&state, left_idx),
+            included_of(&state, right_idx)
         );
 
-        // Mutate left: add a new element that's not in right
-        let new_element = "{chord}".to_string();
+        // Carry the first Available entry into left's Included column.
         state.selected_item = left_idx;
-        state
-            .with_current_dual_list_mut(|dl: &mut DualListState| {
-                if !dl.included.contains(&new_element) {
-                    dl.included.push(new_element.clone());
-                }
-            })
-            .expect("current item is a DualList");
+        let before = included_of(&state, left_idx);
+        state.dual_list_op(DualOp::Carry(true));
+        let after = included_of(&state, left_idx);
+        assert_eq!(after.len(), before.len() + 1, "the carry adds one entry");
+        let moved = after.last().unwrap().clone();
+        assert!(state.is_editing_dual_list(), "the control is live");
+        assert!(
+            state
+                .pending_changes
+                .contains_key("/editor/status_bar/left"),
+            "the change is recorded"
+        );
+        assert!(
+            excluded_of(&state, right_idx).contains(&moved),
+            "right.excluded follows left's new inclusion"
+        );
 
-        // Refresh the sibling: right.excluded should now contain the new element
-        state.refresh_dual_list_sibling();
-
-        match &state.pages[editor_page_idx].items[right_idx].control {
-            SettingControl::DualList(dl) => {
-                assert!(
-                    dl.excluded.contains(&new_element),
-                    "right.excluded should be updated to reflect left's new inclusion"
-                );
-            }
-            _ => panic!("right should be DualList"),
-        }
+        // Escape hands the keyboard back; the value stays.
+        state.leave_live_control();
+        assert!(!state.is_editing_dual_list());
+        assert_eq!(included_of(&state, left_idx), after);
     }
 
+    /// A JSON editor's text is the model's as it is typed; Tab keeps a
+    /// text that parses and puts back one that does not.
     #[test]
-    fn test_with_dual_list_mut_returns_none_for_non_dual_list() {
+    fn a_json_editor_keeps_what_parses_and_reverts_what_does_not() {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        state.focus_panel = FocusPanel::Settings;
+        // Put a JSON control on the current card.
+        let path = state.current_item().unwrap().path.clone();
+        state.current_item_mut().unwrap().control = SettingControl::Json {
+            label: "Formatter".into(),
+            text: "null".into(),
+        };
 
-        // TEST_SCHEMA has no DualList items, so all calls should return None
-        let result = state.with_dual_list_mut(0, |_| ());
-        assert!(result.is_none());
+        state.activate_control();
+        assert!(state.is_editing_json());
+        state.paste_into_focused_text("{\"a\": 1}");
+        let text_of = |state: &SettingsState| match &state.current_item().unwrap().control {
+            SettingControl::Json { text, .. } => text.clone(),
+            _ => panic!("expected a JSON control"),
+        };
+        assert_eq!(text_of(&state), "{\"a\": 1}");
+        assert!(
+            !state.pending_changes.contains_key(&path),
+            "recorded when the edit ends, not as it is typed"
+        );
+        state.json_exit_editing();
+        assert!(!state.is_editing_json());
+        assert_eq!(
+            state.pending_changes.get(&path),
+            Some(&serde_json::json!({ "a": 1 }))
+        );
+
+        // Break it (the paste lands at the caret, at the end), then leave:
+        // the text comes back.
+        state.activate_control();
+        state.paste_into_focused_text("{");
+        assert_eq!(text_of(&state), "{\"a\": 1}{");
+        state.json_exit_editing();
+        assert_eq!(text_of(&state), "{\"a\": 1}");
     }
 
     /// The search filter moves by grapheme cluster (like the Command

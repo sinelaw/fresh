@@ -127,7 +127,6 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 ///   - `prompt_toolbar_boxes` (overlay toolbar box tree, in the
 ///     toolbar band's own coordinates — the tree gesture reports the
 ///     press in that space, so no origin travels with it)
-///   - `Window::file_browser_layout` (the file-open dialog)
 ///
 /// This list is the ONE enumeration of the parallel geometry path
 /// (recorded by ruling; `docs/internal/retained-mode-ui.md` §3.7 retires it).
@@ -152,13 +151,6 @@ pub(crate) struct ChromeLayout {
     /// Used to absorb clicks on the popup chrome so they don't reach the
     /// buffer below while the prompt is open.
     pub suggestions_outer_area: Option<Rect>,
-    /// The toolbar's layout-box tree from its most recent render, plus
-    /// the screen position of the toolbar band's top-left cell. The
-    /// overlay focus ring derives from the tree (document order of
-    /// focusable boxes — any focusable kind the plugin puts in the
-    /// toolbar joins the ring) and clicks hit-test it, the same way
-    /// panel rings and clicks work — no paint-recorded rect list.
-    pub prompt_toolbar_boxes: Vec<crate::widgets::LayoutBox>,
     /// Screen rect of the floating-overlay prompt's results list (issue
     /// #2119). `None` when no overlay is open. The mouse-wheel handler reads
     /// this to scroll the result list (without moving the selection) when the

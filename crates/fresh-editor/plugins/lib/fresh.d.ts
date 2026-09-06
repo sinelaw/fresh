@@ -2143,28 +2143,17 @@ type WidgetPanelOptions = {
 	*/
 	autoFocusFirst?: boolean;
 	/**
-	* Keep this panel's focus and its buffer's caret on the same thing.
+	* The panel is a *page*: its whole content scrolls together in a
+	* window the host owns, the way a document does, rather than each
+	* list windowing itself to the panel's height. Lists and text areas
+	* inside a page take their natural height. The arrow and page keys
+	* scroll it when no widget takes them, the wheel and its scrollbar
+	* move it, and `scrollToWidget` moves it to a widget by key.
 	*
-	* For a panel mounted into a buffer the reader *reads* — a page
-	* with a caret in it, laid out by widgets — focus and the cursor
-	* are two answers to one question: what am I looking at. Left
-	* independent they contradict each other, and the contradiction is
-	* not cosmetic: Tab moves focus while the caret stays three cards
-	* above, and an arrow key moves the caret while Enter still fires
-	* whatever the last Tab left focused — off screen, unasked for.
-	*
-	* Saying so makes the host maintain both directions: a focus move
-	* (Tab, Shift+Tab, a plugin's `setFocusKey`) seats the caret on the
-	* focused widget's row, and a cursor move (an arrow key, a page
-	* key, a click on the text) focuses the widget on the row it landed
-	* on — or clears focus, when the row carries none. "Nothing
-	* focused" is a state this option produces constantly, so a panel
-	* declaring it almost certainly wants `autoFocusFirst: false` too.
-	*
-	* `None` reads as `false`: every panel written before this field
-	* keeps focus and cursor independent.
+	* A buffer-mounted panel only; the dock and the floating panels
+	* window their lists. Unspecified reads as `false`.
 	*/
-	focusFollowsCursor?: boolean;
+	page?: boolean;
 };
 type ScrollAlign = "top" | "minimal";
 type WidgetAction = {
@@ -2519,6 +2508,13 @@ type CreateVirtualBufferOptions = {
 	* lit band across a centred wordmark is noise.
 	*/
 	highlightCurrentLine?: boolean;
+	/**
+	* Whether the buffer is user-scrollable (default: true). `false` for a
+	* buffer a widget panel is mounted into: the panel is described in the
+	* tree and its widgets — or, for a `page` panel, its one viewport —
+	* own the scrolling, and the buffer under them never moves.
+	*/
+	scrollable?: boolean;
 	/**
 	* Initial content as **spans, concatenated verbatim** — a span is a run
 	* of text with optional styling, not a line. Nothing inserts newlines
@@ -4765,7 +4761,7 @@ interface EditorAPI {
 	* Mount a declarative widget panel as a centered floating
 	* overlay (not bound to any virtual buffer).
 	*/
-	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean): boolean;
+	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean, mode?: string): boolean;
 	/**
 	* Mount a declarative widget panel as a **sidebar section**: a titled,
 	* collapsible section of the file explorer's column, appended after

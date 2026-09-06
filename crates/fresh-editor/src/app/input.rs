@@ -349,7 +349,7 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<AnyhowResult<()>> {
-        use crate::input::router::{ModeKeyDisposition, WidgetSelectionMove};
+        use crate::input::router::ModeKeyDisposition;
 
         // effective_mode() returns buffer-local mode if present, else
         // global mode, so virtual buffer modes aren't hijacked by global
@@ -358,14 +358,6 @@ impl Editor {
         let allows_text_input = effective_mode
             .as_deref()
             .is_some_and(|m| self.mode_registry.allows_text_input(m));
-        // Only a text-input mode routes selection keys to a focused
-        // widget Text — don't pay for the panel lookup otherwise.
-        let focused_widget_panel = if allows_text_input {
-            let buffer_id = self.active_buffer();
-            self.focused_text_widget_panel_for_buffer(buffer_id)
-        } else {
-            None
-        };
         let view = router::ModeKeyView {
             allows_text_input,
             global_mode_read_only: self
@@ -373,7 +365,6 @@ impl Editor {
                 .editor_mode
                 .as_deref()
                 .map(|m| self.mode_registry.is_read_only(m)),
-            has_focused_text_widget: focused_widget_panel.is_some(),
             effective_mode,
         };
         let disposition = {
@@ -411,63 +402,6 @@ impl Editor {
                 Some(Ok(()))
             }
             ModeKeyDisposition::Forward(action) => Some(self.handle_action(action)),
-            ModeKeyDisposition::WidgetSelection { mv, extend } => {
-                // Always consumed on a focused widget Text — a no-op move
-                // (already at a boundary) is still the correct shortcut
-                // behaviour. `extend` distinguishes Shift+nav, which grows
-                // the selection, from a plain move, which collapses it.
-                if let Some(panel_id) = focused_widget_panel {
-                    let _ = match (mv, extend) {
-                        (WidgetSelectionMove::WordLeft, true) => self
-                            .with_focused_text_editor(&panel_id, |e| e.move_word_left_selecting()),
-                        (WidgetSelectionMove::WordRight, true) => self
-                            .with_focused_text_editor(&panel_id, |e| e.move_word_right_selecting()),
-                        (WidgetSelectionMove::Left, true) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_left_selecting())
-                        }
-                        (WidgetSelectionMove::Right, true) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_right_selecting())
-                        }
-                        (WidgetSelectionMove::Up, true) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_up_selecting())
-                        }
-                        (WidgetSelectionMove::Down, true) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_down_selecting())
-                        }
-                        (WidgetSelectionMove::Home, true) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_home_selecting())
-                        }
-                        (WidgetSelectionMove::End, true) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_end_selecting())
-                        }
-                        (WidgetSelectionMove::WordLeft, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_word_left())
-                        }
-                        (WidgetSelectionMove::WordRight, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_word_right())
-                        }
-                        (WidgetSelectionMove::Left, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_left())
-                        }
-                        (WidgetSelectionMove::Right, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_right())
-                        }
-                        (WidgetSelectionMove::Up, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_up())
-                        }
-                        (WidgetSelectionMove::Down, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_down())
-                        }
-                        (WidgetSelectionMove::Home, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_home())
-                        }
-                        (WidgetSelectionMove::End, false) => {
-                            self.with_focused_text_editor(&panel_id, |e| e.move_end())
-                        }
-                    };
-                }
-                Some(Ok(()))
-            }
             ModeKeyDisposition::Block => Some(Ok(())),
             ModeKeyDisposition::FallThrough => None,
         }
@@ -533,7 +467,6 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
-        use crate::input::router::WidgetKeyOutcome;
         let panel_key = match self.panel(slot) {
             Some(fwp) => fwp.panel_key.clone(),
             None => {
@@ -546,11 +479,57 @@ impl Editor {
                 return false;
             }
         };
+        let non_modal = matches!(
+            self.panel(slot).map(|f| f.placement),
+            Some(super::PanelPlacement::LeftDock { .. })
+        ) || matches!(slot, super::PanelSlot::Sidebar(_));
+        self.dispatch_widget_panel_key(&panel_key, Some(slot), non_modal, code, modifiers)
+    }
+
+    /// Route a keystroke to the panel mounted into a pane's buffer. The
+    /// same router and the same widget handling as a slot's panel; what
+    /// its widgets decline is `FallThrough`, and the caller hands that on
+    /// to the buffer's own route.
+    /// A key on a focused control of the overlay prompt's toolbar. The
+    /// toolbar owns no channel — like a pane's panel, what its widgets
+    /// decline is the surface's own route (the prompt's).
+    pub(super) fn dispatch_prompt_toolbar_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        match self.prompt_toolbar_key() {
+            Some(pk) => self.dispatch_widget_panel_key(&pk, None, true, code, modifiers),
+            None => false,
+        }
+    }
+
+    pub(super) fn dispatch_pane_panel_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        self.dispatch_widget_panel_key(panel_key, None, true, code, modifiers)
+    }
+
+    /// The one key path every described panel's widgets share. `slot` is
+    /// the panel's slot when it has one — the blur and cancel outcomes act
+    /// on it — and `None` for a pane's panel, which the router never asks
+    /// to blur or cancel.
+    fn dispatch_widget_panel_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        slot: Option<super::PanelSlot>,
+        non_modal: bool,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        use crate::input::router::WidgetKeyOutcome;
+        let panel_key = panel_key.clone();
         let view = router::WidgetPanelView {
-            non_modal: matches!(
-                self.panel(slot).map(|f| f.placement),
-                Some(super::PanelPlacement::LeftDock { .. })
-            ) || matches!(slot, super::PanelSlot::Sidebar(_)),
+            non_modal,
+            pane: slot.is_none(),
             focus_key: self
                 .widget_registry
                 .focus_key(&panel_key)
@@ -569,15 +548,20 @@ impl Editor {
             modifiers = ?modifiers,
             focus_key = ?view.focus_key,
             ?outcome,
-            "dispatch_floating_widget_key: decision"
+            "dispatch_widget_panel_key: decision"
         );
         match outcome {
+            WidgetKeyOutcome::FallThrough => false,
             WidgetKeyOutcome::Blur => {
-                self.blur_floating_panel(slot);
+                if let Some(slot) = slot {
+                    self.blur_floating_panel(slot);
+                }
                 true
             }
             WidgetKeyOutcome::BlurUnconsumed => {
-                self.blur_floating_panel(slot);
+                if let Some(slot) = slot {
+                    self.blur_floating_panel(slot);
+                }
                 false
             }
             WidgetKeyOutcome::CancelAndUnmount => {
@@ -594,7 +578,7 @@ impl Editor {
                     "cancel".to_string(),
                     serde_json::json!({}),
                 );
-                if let Some(o) = self.panel_opt_mut(slot) {
+                if let Some(o) = slot.and_then(|s| self.panel_opt_mut(s)) {
                     *o = None;
                 }
                 let _ = self.widget_registry.unmount(&panel_key);
@@ -603,9 +587,7 @@ impl Editor {
             WidgetKeyOutcome::SmartKey(name) => {
                 self.handle_widget_command(
                     &panel_key,
-                    fresh_core::api::WidgetAction::Key {
-                        key: name.to_string(),
-                    },
+                    fresh_core::api::WidgetAction::Key { key: name },
                 );
                 true
             }

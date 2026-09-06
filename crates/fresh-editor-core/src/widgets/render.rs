@@ -799,6 +799,7 @@ pub fn render_spec(
         RenderOptions {
             prev_focus_key,
             auto_focus_first: true,
+
             ..Default::default()
         },
     )
@@ -823,26 +824,7 @@ pub fn render_spec_with_marker(
             prev_focus_key,
             marker_gutter: true,
             auto_focus_first: true,
-            ..Default::default()
-        },
-    )
-}
 
-/// Like [`render_spec`] but does **not** fall back to focusing the first
-/// tabbable widget when `focus_key` matches none. See
-/// [`RenderOptions::auto_focus_first`]. Pass `""` for no focus.
-pub fn render_spec_no_autofocus(
-    spec: &WidgetSpec,
-    prev: &HashMap<String, WidgetInstanceState>,
-    focus_key: &str,
-    panel_width: u32,
-) -> RenderOutput {
-    render_spec_with_options(
-        spec,
-        prev,
-        panel_width,
-        RenderOptions {
-            prev_focus_key: focus_key,
             ..Default::default()
         },
     )
@@ -4001,6 +3983,7 @@ pub mod tests {
             u32::MAX,
             RenderOptions {
                 auto_focus_first: true,
+
                 prev_painted: Some(prev_painted),
                 ..Default::default()
             },
@@ -6603,6 +6586,7 @@ pub mod tests {
             40,
             RenderOptions {
                 auto_focus_first: true,
+
                 prev_painted: Some(&window_at("T", 6, 2)),
                 ..Default::default()
             },
@@ -7316,10 +7300,6 @@ pub mod tests {
     fn make_number(value: f64, key: Option<&str>) -> WidgetSpec {
         WidgetSpec::Number {
             label_width: 0,
-            edit_text: None,
-            edit_cursor: -1,
-            edit_sel_start: -1,
-            edit_sel_end: -1,
             value,
             min: None,
             max: None,
@@ -7399,10 +7379,6 @@ pub mod tests {
     fn a_number_render_clamps_without_recording_it() {
         let spec = WidgetSpec::Number {
             label_width: 0,
-            edit_text: None,
-            edit_cursor: -1,
-            edit_sel_start: -1,
-            edit_sel_end: -1,
             value: 42.0,
             min: Some(0.0),
             max: Some(10.0),
@@ -7435,7 +7411,13 @@ pub mod tests {
     fn number_instance_state_overrides_spec_value() {
         let spec = make_number(1.0, Some("n"));
         let mut prev = HashMap::new();
-        prev.insert("n".to_string(), WidgetInstanceState::Number { value: 7.0 });
+        prev.insert(
+            "n".to_string(),
+            WidgetInstanceState::Number {
+                value: 7.0,
+                edit: None,
+            },
+        );
         let r = render_spec(&spec, &prev, "", u32::MAX);
         // The rendered value reflects instance state (7), not spec (1).
         assert!(
@@ -7595,6 +7577,7 @@ pub mod tests {
             WidgetInstanceState::Dropdown {
                 selected_index: 2,
                 open: true,
+                restore: None,
             },
         );
         let (_out, _hits, state) = render_no_focus(&spec, &prev);
@@ -7602,6 +7585,7 @@ pub mod tests {
             Some(WidgetInstanceState::Dropdown {
                 selected_index,
                 open,
+                ..
             }) => {
                 assert_eq!(*selected_index, 2, "the stored index, not the spec's");
                 assert!(
@@ -7690,6 +7674,7 @@ pub mod tests {
             WidgetInstanceState::Dropdown {
                 selected_index: 2,
                 open: false,
+                restore: None,
             },
         );
         let r = render_spec(&spec, &prev, "", u32::MAX);
@@ -7711,6 +7696,7 @@ pub mod tests {
             WidgetInstanceState::Dropdown {
                 selected_index: 1,
                 open: true,
+                restore: None,
             },
         );
         let out = render_spec(&spec, &prev, "d", u32::MAX);
@@ -7771,6 +7757,7 @@ pub mod tests {
             WidgetInstanceState::Dropdown {
                 selected_index: 0,
                 open: true,
+                restore: None,
             },
         );
         assert_eq!(
@@ -7889,11 +7876,20 @@ pub mod tests {
             WidgetInstanceState::Dropdown {
                 selected_index: 0,
                 open: true,
+                restore: None,
             },
         );
         // Not the focused widget → popup suppressed, state closed.
         // (no-autofocus so the sole tabbable isn't auto-selected).
-        let out = render_spec_no_autofocus(&spec, &prev, "", u32::MAX);
+        let out = render_spec_with_options(
+            &spec,
+            &prev,
+            u32::MAX,
+            RenderOptions {
+                prev_focus_key: "",
+                ..Default::default()
+            },
+        );
         assert!(out.overlays.is_empty());
         assert!(
             out.popup.is_none(),
@@ -8323,15 +8319,15 @@ pub mod tests {
     fn wheel_panel(spec: &WidgetSpec) -> crate::widgets::WidgetPanelState {
         let out = render_spec(spec, &HashMap::new(), "", 40);
         crate::widgets::WidgetPanelState {
-            buffer_id: crate::model::event::BufferId(1),
+            buffer_id: Some(crate::model::event::BufferId(1)),
             spec: spec.clone(),
-            hits: out.hits,
             instance_states: out.instance_states,
             focus_key: out.focus_key,
             painted: out.painted,
             boxes: out.boxes,
             auto_focus_first: true,
-            focus_follows_cursor: false,
+
+            page: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
         }
@@ -8524,6 +8520,7 @@ pub mod tests {
             WidgetInstanceState::Dropdown {
                 selected_index: 0,
                 open: true,
+                restore: None,
             },
         );
         let out = render_spec(&spec, &prev, "dd", 40);

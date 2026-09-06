@@ -45,11 +45,9 @@ impl WidgetImpl for Dropdown {
                 _ => Pass,
             };
         }
-        // Open: Up/Down move the (live) selection, Enter/Space
-        // commit-and-close, Esc closes.
-        if !matches!(key, "Up" | "Down" | "Enter" | "Space" | "Escape") {
-            return Pass;
-        }
+        // Open: Up/Down move the (live) selection and Home/End jump it,
+        // Enter/Space commit-and-close, Esc puts back the selection the
+        // list opened on and closes.
         match key {
             "Up" => {
                 cycle_selection(spec, widget_key, panel, -1, fx);
@@ -59,9 +57,28 @@ impl WidgetImpl for Dropdown {
                 cycle_selection(spec, widget_key, panel, 1, fx);
                 Consumed
             }
-            "Enter" | "Space" | "Escape" => {
+            "Home" => {
+                set_selection(spec, widget_key, panel, 0, fx);
+                Consumed
+            }
+            "End" => {
+                set_selection(spec, widget_key, panel, i32::MAX, fx);
+                Consumed
+            }
+            "Enter" | "Space" => {
                 // The selection is already live (Up/Down fired
                 // `change`); closing just dismisses the list.
+                set_open(spec, widget_key, panel, false, fx);
+                Consumed
+            }
+            "Escape" => {
+                if let Some(WidgetInstanceState::Dropdown {
+                    restore: Some(at), ..
+                }) = panel.instance_states.get(widget_key)
+                {
+                    let at = *at;
+                    set_selection(spec, widget_key, panel, at, fx);
+                }
                 set_open(spec, widget_key, panel, false, fx);
                 Consumed
             }
@@ -308,6 +325,7 @@ pub fn resolve(
             Some(WidgetInstanceState::Dropdown {
                 selected_index,
                 open,
+                ..
             }) => (*selected_index, Some(*open)),
             _ => (spec_selected, None),
         },
@@ -500,12 +518,13 @@ pub fn cycle_selection(
     if options.is_empty() {
         return;
     }
-    let (cur, open) = match panel.instance_states.get(widget_key) {
+    let (cur, open, restore) = match panel.instance_states.get(widget_key) {
         Some(WidgetInstanceState::Dropdown {
             selected_index,
             open,
-        }) => (*selected_index, *open),
-        _ => (*spec_sel, false),
+            restore,
+        }) => (*selected_index, *open, *restore),
+        _ => (*spec_sel, false, None),
     };
     let cur = cur.clamp(0, options.len() as i32 - 1);
     let new_sel = crate::widgets::wrap_index(cur, delta, options.len());
@@ -516,6 +535,7 @@ pub fn cycle_selection(
             // Preserve the popup's open state across a cycle so
             // Up/Down inside the open list keeps it open.
             open,
+            restore,
         },
     );
     if new_sel != cur {
@@ -549,12 +569,13 @@ pub fn set_selection(
     if options.is_empty() {
         return;
     }
-    let (cur, open) = match panel.instance_states.get(widget_key) {
+    let (cur, open, restore) = match panel.instance_states.get(widget_key) {
         Some(WidgetInstanceState::Dropdown {
             selected_index,
             open,
-        }) => (*selected_index, *open),
-        _ => (*spec_sel, false),
+            restore,
+        }) => (*selected_index, *open, *restore),
+        _ => (*spec_sel, false, None),
     };
     let new_sel = index.clamp(0, options.len() as i32 - 1);
     let changed = new_sel != cur.clamp(0, options.len() as i32 - 1);
@@ -563,6 +584,7 @@ pub fn set_selection(
         WidgetInstanceState::Dropdown {
             selected_index: new_sel,
             open,
+            restore,
         },
     );
     if changed {
@@ -597,6 +619,7 @@ pub fn set_open(
         Some(WidgetInstanceState::Dropdown {
             selected_index,
             open,
+            ..
         }) => (*selected_index, *open),
         _ => (*spec_sel, false),
     };
@@ -605,6 +628,10 @@ pub fn set_open(
         WidgetInstanceState::Dropdown {
             selected_index: cur,
             open,
+            // Opening records where the list started, for Escape; closing
+            // any other way — Enter, a click, a blur — is a commit and
+            // forgets it.
+            restore: open.then_some(cur),
         },
     );
     if open != prev_open {
@@ -637,5 +664,7 @@ pub fn set_index_state(
     crate::widgets::WidgetInstanceState::Dropdown {
         selected_index: clamped,
         open,
+        // A plugin's set is the value now: nothing older to go back to.
+        restore: None,
     }
 }

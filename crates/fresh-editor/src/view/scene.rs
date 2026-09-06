@@ -77,15 +77,14 @@ pub struct MenuEntry {
     pub items: Vec<MenuItemView>,
 }
 
-/// The currently open dropdown's cell geometry (from the pipeline's MenuLayout),
-/// so a frontend can position native rows at the exact cells the editor
-/// hit-tests against.
+/// The currently open dropdown's cell geometry, read off the shell tree that
+/// placed it, so a frontend can position native rows at the exact cells the
+/// editor hit-tests against.
 #[derive(Debug, Clone, Serialize)]
 pub struct DropdownView {
-    /// The dropdown's full bordered box from the pipeline's `MenuLayout` —
-    /// one row/column larger than the item union on every side, flush under
-    /// the menu bar (falls back to the item union if the layout predates the
-    /// recorded box).
+    /// The dropdown's full bordered box — one row/column larger than the
+    /// item union on every side, under its bar label (falls back to the item
+    /// union when the box has no rectangle).
     pub rect: Option<RectView>,
     pub items: Vec<ItemArea>,
     pub submenus: Vec<SubmenuArea>,
@@ -142,7 +141,7 @@ fn item_view(editor: &Editor, item: &fresh_core::menu::MenuItem) -> MenuItemView
             action: action.clone(),
             args: args.clone(),
             accel: editor.accelerator_for(action),
-            // Same enabled/checked logic the TUI MenuRenderer uses — one source.
+            // Same enabled/checked logic the TUI description uses — one source.
             enabled: crate::view::ui::menu::is_menu_item_enabled(
                 item,
                 &editor.menu_state().context,
@@ -187,16 +186,16 @@ impl Editor {
     /// structure, enabled/checked state and accelerators are derived; the TUI
     /// renderer and the web bridge both consume this rather than recomputing it.
     ///
-    /// Geometry (`x`/`w`, dropdown rects) comes from `menu_layout_now` — the
-    /// same live-state layout walk the TUI paints from.
+    /// Geometry — each label's `x`/`w`, the dropdown boxes and their rows —
+    /// is read off the shell tree that placed them (`view::shell::menu`), the
+    /// same rectangles the TUI painted from.
     pub fn menu_view(&self) -> MenuView {
-        // Geometry derived from live state — the same layout walk the TUI
-        // paints from (`menu_layout_now`), not a paint recording.
-        let menu_layout = self.menu_layout_now();
-        let menu_areas: HashMap<usize, Rect> = menu_layout
-            .as_ref()
-            .map(|m| m.menu_areas.iter().cloned().collect())
-            .unwrap_or_default();
+        use crate::view::shell::menu::{dropdown_item_key, dropdown_key, menu_label_key};
+        let rect_of = |key: &fresh_ui::Key| -> Option<Rect> {
+            let ui = self.shell_ui.as_ref()?;
+            let f = self.active_chrome().last_frame;
+            crate::view::shell::rect_of(ui, key, Rect::new(0, 0, f.width, f.height))
+        };
 
         // Same expanded menu list the TUI renderer uses (config + plugin menus),
         // so the two frontends never diverge on which menus/items exist.
@@ -204,50 +203,63 @@ impl Editor {
             .all_menus_expanded()
             .iter()
             .enumerate()
-            .map(|(i, m)| MenuEntry {
-                label: m.label.clone(),
-                visible: crate::view::ui::menu::is_menu_visible(m, &self.menu_state().context),
-                x: menu_areas.get(&i).map(|r| r.x),
-                w: menu_areas.get(&i).map(|r| r.width),
-                items: m.items.iter().map(|it| item_view(self, it)).collect(),
+            .map(|(i, m)| {
+                let label = rect_of(&menu_label_key(i));
+                MenuEntry {
+                    label: m.label.clone(),
+                    visible: crate::view::ui::menu::is_menu_visible(m, &self.menu_state().context),
+                    x: label.map(|r| r.x),
+                    w: label.map(|r| r.width),
+                    items: m.items.iter().map(|it| item_view(self, it)).collect(),
+                }
             })
             .collect();
 
-        let dropdown = menu_layout.as_ref().and_then(|ml| {
-            if ml.item_areas.is_empty() {
+        // The open chain: level by level, each box and its rows as the tree
+        // laid them out. Rows are keyed by depth and index, so their
+        // rectangles come straight back without a walk.
+        let (_, levels) = self.menu_description();
+        let rows_of = |depth: usize, n: usize| -> Vec<(usize, Rect)> {
+            (0..n)
+                .filter_map(|i| rect_of(&dropdown_item_key(depth, i)).map(|r| (i, r)))
+                .collect()
+        };
+        let dropdown = levels.first().and_then(|top| {
+            let items = rows_of(0, top.rows.len());
+            if items.is_empty() {
                 return None;
             }
-            let rects: Vec<Rect> = ml.item_areas.iter().map(|(_, r)| *r).collect();
+            let rects: Vec<Rect> = items.iter().map(|(_, r)| *r).collect();
+            let mut submenus = Vec::new();
+            let mut submenu_boxes = Vec::new();
+            for (depth, level) in levels.iter().enumerate().skip(1) {
+                for (index, r) in rows_of(depth, level.rows.len()) {
+                    submenus.push(SubmenuArea {
+                        depth,
+                        index,
+                        rect: RectView::from(r),
+                    });
+                }
+                if let Some(r) = rect_of(&dropdown_key(depth)) {
+                    submenu_boxes.push(SubmenuBoxArea {
+                        depth,
+                        rect: RectView::from(r),
+                    });
+                }
+            }
             Some(DropdownView {
-                rect: ml
-                    .dropdown_box
+                rect: rect_of(&dropdown_key(0))
                     .map(RectView::from)
                     .or_else(|| union_rect(&rects).map(RectView::from)),
-                items: ml
-                    .item_areas
+                items: items
                     .iter()
                     .map(|(index, r)| ItemArea {
                         index: *index,
                         rect: RectView::from(*r),
                     })
                     .collect(),
-                submenus: ml
-                    .submenu_areas
-                    .iter()
-                    .map(|(depth, index, r)| SubmenuArea {
-                        depth: *depth,
-                        index: *index,
-                        rect: RectView::from(*r),
-                    })
-                    .collect(),
-                submenu_boxes: ml
-                    .submenu_boxes
-                    .iter()
-                    .map(|(depth, r)| SubmenuBoxArea {
-                        depth: *depth,
-                        rect: RectView::from(*r),
-                    })
-                    .collect(),
+                submenus,
+                submenu_boxes,
             })
         });
 
@@ -551,8 +563,17 @@ impl Editor {
                     disabled: s.disabled,
                 })
                 .collect(),
-            toolbar: p.toolbar_widget.clone(),
-            toolbar_focus: p.toolbar_focus.clone(),
+            toolbar: p
+                .toolbar
+                .as_ref()
+                .and_then(|k| self.widget_registry.get(k))
+                .map(|panel| panel.spec.clone()),
+            toolbar_focus: p
+                .toolbar
+                .as_ref()
+                .and_then(|k| self.widget_registry.focus_key(k))
+                .filter(|f| !f.is_empty())
+                .map(str::to_string),
             search_options,
         })
     }
@@ -745,9 +766,9 @@ impl Editor {
 // ──────────────────── file browser (Open File / Save As / Switch Project) ────────────────────
 
 /// One visible file row of the browser popup. The window of rows is the
-/// editor's own (`scroll_offset` … `+ visible_rows`), so `row` — the grid row
-/// the entry was laid out on — routes a click straight back through
-/// `FileBrowserLayout::click_to_index`.
+/// tree's (`shell::file_browser::window`), so `row` — the grid row the entry
+/// was laid out on — is the cell a click on it is sent to, where the row
+/// answers for itself.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileBrowserRowView {
@@ -769,8 +790,8 @@ pub struct FileBrowserRowView {
 }
 
 /// A checkbox toggle (Show Hidden / Detect Encoding) with the cell span the
-/// renderer laid it out at, so a native frontend can draw its own checkbox and
-/// route the click back to the cells `FileBrowserLayout::toggle_at` hit-tests.
+/// tree laid it out at, so a native frontend can draw its own checkbox and
+/// send the click to the cells where the toggle's own node answers it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileBrowserToggleView {
@@ -815,8 +836,8 @@ pub struct FileBrowserColumnView {
 /// Switch Project. Everything the TUI paints into its bordered band — the
 /// directory, the toggles, the nav shortcuts, the sortable columns and the
 /// visible slice of entries — with the cell span of every interactive element
-/// so a native frontend renders it as DOM and routes clicks back through the
-/// editor's existing hit-tests. `None` unless one of those prompts is active.
+/// so a native frontend renders it as DOM and sends clicks to the cells the
+/// tree placed each control at. `None` unless one of those prompts is active.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileBrowserView {
@@ -847,56 +868,86 @@ pub struct FileBrowserView {
 }
 
 impl Editor {
-    /// Semantic file browser, derived from the dialog state plus the layout
-    /// the renderer captured this frame (rects, viewport height and the cell
-    /// span of every interactive element). Rendered natively by the web
-    /// frontend; clicks route back through `handle_mouse` at those spans,
-    /// which the existing file-browser hit-tests resolve — so there is no
-    /// second hit-testing implementation anywhere.
+    /// Semantic file browser, derived from the dialog's description and the
+    /// tree that laid it out (rects, the list's window and the cell span of
+    /// every interactive element, read back by key). Rendered natively by
+    /// the web frontend; clicks go to those cells, where the controls answer
+    /// for themselves — so there is no hit-testing implementation anywhere
+    /// but the tree's.
     pub fn file_browser_view(&self) -> Option<FileBrowserView> {
-        use crate::app::file_open::{format_modified, format_size, FileOpenSection, SortMode};
+        use crate::app::file_open::{FileOpenSection, SortMode, Toggle};
+        use crate::view::shell::file_browser as fb;
         use fresh_i18n::t;
 
         let win = self.active_window();
-        let layout = win.file_browser_layout.as_ref()?;
         let state = win.file_open_state.as_ref()?;
+        let ui = self.shell_ui.as_ref()?;
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: frame.width,
+            height: frame.height,
+        };
+        let rects = fb::rects(ui, size, state.shortcuts.len())?;
+        let window = fb::window(ui, size)?;
+        // The same content the tree laid out, so a label the web shows is
+        // the label the TUI painted.
+        let b = self.browser_description(rects.dialog.height)?;
+        // The band's last column is the bar's, reserved whether or not the
+        // list overflows — the painter's `scrollbar_width` beside the rows.
+        let list_rect = ratatui::layout::Rect {
+            width: rects.list.width.saturating_sub(1),
+            ..rects.list
+        };
+        let scrollbar_rect = ratatui::layout::Rect {
+            x: rects.list.x + list_rect.width,
+            width: rects.list.width.min(1),
+            ..rects.list
+        };
 
-        let toggles = layout
-            .toggle_spans
+        let toggles = rects
+            .toggles
             .iter()
-            .map(|t| FileBrowserToggleView {
-                name: t.id.name(),
-                label: t.label.clone(),
-                shortcut: t.shortcut.clone(),
-                active: t.active,
-                x: t.x,
-                y: layout.nav_area.y,
-                w: t.w,
-            })
-            .collect();
-
-        let nav_selected = state.active_section == FileOpenSection::Navigation;
-        let shortcuts = layout
-            .shortcut_spans
-            .iter()
-            .filter_map(|(idx, x, w)| {
-                let sc = state.shortcuts.get(*idx)?;
-                Some(FileBrowserShortcutView {
-                    index: *idx,
-                    label: sc.label.clone(),
-                    description: sc.description.clone(),
-                    selected: nav_selected && *idx == state.selected_shortcut,
-                    x: *x,
-                    y: layout.nav_area.y + 1,
-                    w: *w,
+            .filter_map(|(id, r)| {
+                let t = b.toggles.iter().find(|t| t.id == *id)?;
+                Some(FileBrowserToggleView {
+                    name: id.name(),
+                    label: t.label.clone(),
+                    shortcut: t.shortcut.clone(),
+                    active: match id {
+                        Toggle::ShowHidden => state.show_hidden,
+                        Toggle::DetectEncoding => state.detect_encoding,
+                    },
+                    x: r.x,
+                    y: r.y,
+                    w: r.width,
                 })
             })
             .collect();
 
-        let columns = layout
-            .column_spans
+        let shortcuts = rects
+            .shortcuts
             .iter()
-            .map(|(mode, x, w)| {
+            .enumerate()
+            .filter_map(|(idx, r)| {
+                let sc = state.shortcuts.get(idx)?;
+                Some(FileBrowserShortcutView {
+                    index: idx,
+                    label: sc.label.clone(),
+                    description: sc.description.clone(),
+                    selected: b.selected_shortcut == Some(idx),
+                    x: r.x,
+                    y: r.y,
+                    w: r.width,
+                })
+            })
+            .collect();
+
+        let columns = rects
+            .columns
+            .iter()
+            .map(|(mode, r)| {
                 let (name, label) = match mode {
                     SortMode::Name => ("name", t!("file_browser.name")),
                     SortMode::Size => ("size", t!("file_browser.size")),
@@ -908,63 +959,55 @@ impl Editor {
                     label: label.to_string(),
                     active: state.sort_mode == *mode,
                     ascending: state.sort_ascending,
-                    x: *x,
-                    y: layout.header_area.y,
-                    w: *w,
+                    x: r.x,
+                    y: r.y,
+                    w: r.width,
                 }
             })
             .collect();
 
-        // The same window the TUI draws: `visible_rows` entries from the
-        // editor's scroll offset. Rendering a different number of rows would
-        // desync every click from `click_to_index`.
-        let files_active = state.active_section == FileOpenSection::Files;
-        let rows = state
-            .visible_entries(layout.visible_rows)
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                let index = state.scroll_offset + i;
-                let meta = e.fs_entry.metadata.as_ref();
-                FileBrowserRowView {
+        // The window the tree is showing: the rows the TUI has on screen, at
+        // the grid rows it put them on.
+        let rows = match &b.listing {
+            fb::Listing::Entries(entries) => entries
+                .iter()
+                .enumerate()
+                .skip(window.first)
+                .take(window.visible)
+                .map(|(index, e)| FileBrowserRowView {
                     index,
-                    row: layout.list_area.y + i as u16,
-                    name: e.fs_entry.name.clone(),
-                    is_dir: e.fs_entry.is_dir(),
-                    is_symlink: e.fs_entry.is_symlink(),
-                    size: if e.fs_entry.is_dir() {
-                        String::new()
-                    } else {
-                        meta.map(|m| format_size(m.size)).unwrap_or_default()
-                    },
-                    modified: meta
-                        .and_then(|m| m.modified)
-                        .map(format_modified)
-                        .unwrap_or_default(),
-                    selected: files_active && state.selected_index == Some(index),
-                    matches_filter: e.matches_filter,
-                }
-            })
-            .collect();
+                    row: list_rect.y + (index - window.first) as u16,
+                    name: e.name.clone(),
+                    is_dir: e.is_dir,
+                    is_symlink: e.is_symlink,
+                    size: e.size.clone().unwrap_or_default(),
+                    modified: e.modified.clone().unwrap_or_default(),
+                    selected: b.selected == Some(index),
+                    matches_filter: e.matches,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let files_active = state.active_section == FileOpenSection::Files;
 
         Some(FileBrowserView {
-            rect: RectView::from(layout.popup_area),
-            list_rect: RectView::from(layout.list_area),
-            scrollbar_rect: RectView::from(layout.scrollbar_area),
+            rect: RectView::from(rects.dialog),
+            list_rect: RectView::from(list_rect),
+            scrollbar_rect: RectView::from(scrollbar_rect),
             path: state.current_dir.display().to_string(),
             toggles,
             shortcuts,
             columns,
             rows,
-            scroll_offset: state.scroll_offset,
-            visible_rows: layout.visible_rows,
+            scroll_offset: window.first,
+            visible_rows: window.visible,
             total: state.entries.len(),
             selected: state.selected_index,
             active_section: if files_active { "files" } else { "navigation" },
             loading: state.loading,
             error: state.error.clone(),
-            thumb_start: layout.thumb_start,
-            thumb_end: layout.thumb_end,
+            thumb_start: window.thumb.0,
+            thumb_end: window.thumb.1,
         })
     }
 }
@@ -1756,9 +1799,12 @@ pub enum SettingControlView {
         checked: bool,
     },
     Number {
-        value: i64,
-        min: Option<i64>,
-        max: Option<i64>,
+        /// The value as the JSON carries it; a `percent` displays ×100.
+        value: f64,
+        min: Option<f64>,
+        max: Option<f64>,
+        integer: bool,
+        percent: bool,
     },
     Dropdown {
         selected: usize,
@@ -1894,103 +1940,173 @@ pub struct SettingsView {
     pub showing_reset: bool,
 }
 
-fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> SettingControlView {
+/// `store` is the surface's — the page's or the dialog's — and says which
+/// control is live (a text field being edited, a dropdown's list up).
+/// The row a map's or an object array's list cursor is on, while the list
+/// has the keyboard.
+fn list_cursor(
+    c: &crate::view::settings::items::SettingControl,
+    path: &str,
+    store: &crate::widgets::WidgetPanelState,
+) -> Option<usize> {
+    if store.focus_key != path {
+        return None;
+    }
+    let spec = crate::view::settings::widget_map::live_widget(path, c, path);
+    crate::view::settings::live::list_row(store, &spec, path)
+}
+
+fn setting_control_view(
+    c: &crate::view::settings::items::SettingControl,
+    path: &str,
+    store: &crate::widgets::WidgetPanelState,
+) -> SettingControlView {
     use crate::view::settings::items::SettingControl as C;
     match c {
-        C::Toggle(s) => SettingControlView::Toggle { checked: s.checked },
-        C::Number(s) => SettingControlView::Number {
-            value: s.value,
-            min: s.min,
-            max: s.max,
+        C::Toggle { checked, .. } => SettingControlView::Toggle { checked: *checked },
+        C::Number {
+            value,
+            min,
+            max,
+            integer,
+            percent,
+            ..
+        } => SettingControlView::Number {
+            value: *value,
+            min: *min,
+            max: *max,
+            integer: *integer,
+            percent: *percent,
         },
-        C::Dropdown(s) => SettingControlView::Dropdown {
-            selected: s.selected,
-            options: s.options.clone(),
-            open: s.open,
+        C::Dropdown {
+            selected, options, ..
+        } => SettingControlView::Dropdown {
+            selected: *selected,
+            options: options.clone(),
+            open: crate::widgets::kinds::dropdown::is_open(path, store),
         },
-        C::Text(s) => SettingControlView::Text {
-            value: s.value(),
-            editing: s.editing,
-            placeholder: s.placeholder.clone(),
+        C::Text {
+            value, placeholder, ..
+        } => SettingControlView::Text {
+            value: value.clone(),
+            editing: store.focus_key == path,
+            placeholder: placeholder.clone(),
         },
-        C::TextList(s) => SettingControlView::TextList {
-            items: s.items.clone(),
-            focused: s.focused_item,
+        // A text list's focused row is the one whose field is live.
+        C::TextList { items, .. } => SettingControlView::TextList {
+            items: items.clone(),
+            focused: crate::view::settings::live::text_list::live_row(store, path).flatten(),
         },
-        C::DualList(s) => SettingControlView::DualList {
-            // Use the control's own item enumerations so the row indices the
-            // web sends back (ControlDualListIncluded/Available(idx,row)) match
-            // exactly what `add_selected`/`remove_selected` index into.
-            included: s
-                .included_items()
+        // The columns and cursors as the kind resolves them — the same call
+        // the TUI's description makes — so the row indices the web sends
+        // back (`ControlDualListIncluded/Available(idx, row)`) name the rows
+        // the kind's `dual_focus` press expects.
+        C::DualList {
+            options,
+            included,
+            excluded,
+            ..
+        } => {
+            use crate::widgets::kinds::dual_list as dl;
+            let opts: Vec<fresh_core::api::DualListOption> = options
                 .iter()
-                .map(|(_, n)| n.to_string())
-                .collect(),
-            available: s.available_items().iter().map(|(_, n)| n.clone()).collect(),
-            included_cursor: s.included_cursor,
-            available_cursor: s.available_cursor,
-            active_column: match s.active_column {
-                crate::view::controls::DualListColumn::Included => "included",
-                crate::view::controls::DualListColumn::Available => "available",
-            },
-        },
-        // Rows must read exactly as the TUI's: the same domain helper
-        // (`get_display_value`, e.g. `/grammar` → "Assembly") formats the
-        // value preview, and the value-column title mirrors the TUI's
-        // `Name │ <Col>` header — never the raw JSON blob.
-        C::Map(s) => SettingControlView::Map {
-            entries: s
-                .entries
-                .iter()
-                .map(|(k, v)| MapEntryView {
-                    key: k.clone(),
-                    display: s.get_display_value(v),
+                .map(|(value, label)| fresh_core::api::DualListOption {
+                    value: value.clone(),
+                    label: label.clone(),
                 })
-                .collect(),
-            column: s
-                .display_field
-                .as_deref()
-                .map(crate::view::settings::widget_map::column_title),
-            no_add: s.no_add,
-            focused: (s.focus == crate::view::controls::FocusState::Focused)
-                .then_some(s.focused_entry)
-                .flatten(),
-            add_focused: s.focus == crate::view::controls::FocusState::Focused
-                && s.focused_entry.is_none(),
-        },
+                .collect();
+            let st = dl::resolve(
+                &opts,
+                &dl::DualListSeed {
+                    included,
+                    excluded,
+                    active_included: false,
+                    available_cursor: 0,
+                    included_cursor: 0,
+                },
+                Some(path),
+                &store.instance_states,
+                store.focus_key == path,
+            );
+            let name = |v: &String| {
+                options
+                    .iter()
+                    .find(|(value, _)| value == v)
+                    .map(|(_, label)| label.clone())
+                    .unwrap_or_else(|| v.clone())
+            };
+            SettingControlView::DualList {
+                included: st.included.iter().map(name).collect(),
+                available: st.available.iter().map(name).collect(),
+                included_cursor: st.included_cursor,
+                available_cursor: st.available_cursor,
+                active_column: match st.active_included {
+                    true => "included",
+                    false => "available",
+                },
+            }
+        }
+        // Rows must read exactly as the TUI's: the same domain helper
+        // (`map_display_value`, e.g. `/grammar` → "Assembly") formats the
+        // value preview, and the value-column title mirrors the TUI's
+        // `Name │ <Col>` header — never the raw JSON blob. The cursor is the
+        // list's, as the kind resolves it, while the list has the keyboard.
+        C::Map {
+            entries,
+            display_field,
+            no_add,
+            ..
+        } => {
+            let cursor = list_cursor(c, path, store);
+            SettingControlView::Map {
+                entries: entries
+                    .iter()
+                    .map(|(k, v)| MapEntryView {
+                        key: k.clone(),
+                        display: crate::view::settings::items::map_display_value(
+                            display_field.as_deref(),
+                            v,
+                        ),
+                    })
+                    .collect(),
+                column: display_field
+                    .as_deref()
+                    .map(crate::view::settings::widget_map::column_title),
+                no_add: *no_add,
+                focused: cursor.filter(|r| *r < entries.len()),
+                add_focused: cursor.is_some() && cursor == c.add_row(),
+            }
+        }
         // Same combo → action row text the TUI renders (keybinding-shaped
         // entries), collapsing to the bare display value when there is no
         // key combo (LSP server lists and other non-keybinding arrays).
-        C::ObjectArray(s) => SettingControlView::ObjectArray {
-            entries: s
-                .bindings
-                .iter()
-                .map(|b| {
-                    let field = s
-                        .display_field
-                        .as_deref()
-                        .and_then(|p| p.strip_prefix('/'))
-                        .or(s.display_field.as_deref())
-                        .unwrap_or("action");
-                    let combo = crate::view::controls::keybinding_list::format_key_combo(b);
-                    let action = b
-                        .get(field)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no action)");
-                    if combo.trim().is_empty() {
-                        action.to_string()
-                    } else {
-                        format!("{combo} → {action}")
-                    }
-                })
-                .collect(),
-            focused: (s.focus == crate::view::controls::FocusState::Focused)
-                .then_some(s.focused_index)
-                .flatten(),
-            add_focused: s.focus == crate::view::controls::FocusState::Focused
-                && s.focused_index.is_none(),
+        C::ObjectArray {
+            items,
+            display_field,
+            ..
+        } => {
+            let cursor = list_cursor(c, path, store);
+            SettingControlView::ObjectArray {
+                entries: items
+                    .iter()
+                    .map(|b| {
+                        let (combo, action) = crate::view::settings::items::object_array_row(
+                            display_field.as_deref(),
+                            b,
+                        );
+                        match combo.trim().is_empty() {
+                            true => action,
+                            false => format!("{combo} → {action}"),
+                        }
+                    })
+                    .collect(),
+                focused: cursor.filter(|r| *r < items.len()),
+                add_focused: cursor.is_some() && cursor == c.add_row(),
+            }
+        }
+        C::Json { text, .. } => SettingControlView::Json {
+            value: text.clone(),
         },
-        C::Json(s) => SettingControlView::Json { value: s.value() },
         C::Complex { type_name } => SettingControlView::Complex {
             type_name: type_name.clone(),
         },
@@ -2001,6 +2117,7 @@ fn setting_item_view(
     item: &crate::view::settings::items::SettingItem,
     i: usize,
     selected: bool,
+    store: &crate::widgets::WidgetPanelState,
 ) -> SettingItemView {
     SettingItemView {
         index: i,
@@ -2014,7 +2131,7 @@ fn setting_item_view(
         nullable: item.nullable,
         is_null: item.is_null,
         selected,
-        control: setting_control_view(&item.control),
+        control: setting_control_view(&item.control, &item.path, store),
     }
 }
 
@@ -2051,7 +2168,7 @@ impl Editor {
                 p.items
                     .iter()
                     .enumerate()
-                    .map(|(i, it)| setting_item_view(it, i, i == st.selected_item))
+                    .map(|(i, it)| setting_item_view(it, i, i == st.selected_item, &st.controls))
                     .collect()
             })
             .unwrap_or_default();
@@ -2063,7 +2180,7 @@ impl Editor {
                 .items
                 .iter()
                 .enumerate()
-                .map(|(i, it)| setting_item_view(it, i, i == d.selected_item))
+                .map(|(i, it)| setting_item_view(it, i, i == d.selected_item, &d.controls))
                 .collect(),
             selected_item: d.selected_item,
             focus_on_buttons: d.focus_on_buttons,

@@ -13,7 +13,7 @@ import {
   resolveGitRepo,
   resolveGitRepoForPath,
 } from "./lib/git_repo.ts";
-import { button, flexSpacer, list, row, WidgetPanel } from "./lib/index.ts";
+import { button, flexSpacer, list, row, selectMove, WidgetPanel } from "./lib/index.ts";
 
 const editor = getEditor();
 
@@ -26,8 +26,8 @@ const editor = getEditor();
  *   * `setPanelContent` with `TextPropertyEntry[]` + `inlineOverlays` for
  *     aligned columns and per-theme colouring (every colour is a theme key,
  *     so the panel follows theme changes).
- *   * `cursor_moved` subscription to live-update the right-hand detail panel
- *     as the user scrolls through the commit list.
+ *   * the log List's own `select` events to live-update the right-hand
+ *     detail panel as the user steps through the commit list.
  *
  * The rendering helpers live in `lib/git_history.ts` so the same commit-list
  * view can be reused by `audit_mode`'s PR-branch review mode.
@@ -133,25 +133,23 @@ const SELECT_DEBOUNCE_MS = 60;
 // handlers below branch on which panel currently has focus to do the
 // right thing (`Return` jumps into the detail panel when pressed in
 // the log, and opens the file at the cursor when pressed in the detail).
+//
+// The log pane is a List: Up/Down/PageUp/PageDown/Home/End are the
+// widget's own (the host routes a described panel's keys to its focused
+// widget before the mode's inherited bindings), and every move comes back
+// as a `select` event that picks the commit. `j`/`k` are the vi aliases
+// for the same step. On the detail pane the same keys are the buffer's
+// ordinary motion, and `j`/`k` alias Up/Down there too.
 // =============================================================================
 
-// The log pane is cursor-driven: j/k/Up/Down/PageUp/PageDown move the
-// pane's real buffer cursor (normal editor movement), which scrolls via
-// the standard `ensure_cursor_visible` wheel — only when the cursor
-// crosses the top/bottom edge. The cursor is the source of truth for
-// which commit is selected; a `cursor_moved` subscription mirrors its
-// line into the List highlight + detail pane. On the detail pane the
-// same keys scroll the diff. Other actions (q/r/y/Tab/Return) are direct
-// bindings — they don't depend on the cursor row.
+// The List's own selection is the source of truth for which commit is
+// selected (`select` events); the detail pane is a real buffer whose keys
+// are the editor's. `q`/`r`/`y`/Tab/Return are direct bindings.
 editor.defineMode(
   "git-log",
   [
-    ["k", "move_up"],
-    ["j", "move_down"],
-    ["Up", "move_up"],
-    ["Down", "move_down"],
-    ["PageUp", "move_page_up"],
-    ["PageDown", "move_page_down"],
+    ["k", "git_log_prev"],
+    ["j", "git_log_next"],
     ["Return", "git_log_enter"],
     ["Tab", "git_log_tab"],
     ["q", "git_log_q"],
@@ -183,7 +181,11 @@ const GROUP_LAYOUT = JSON.stringify({
     type: "split",
     direction: "h",
     ratio: 0.6,
-    first: { type: "scrollable", id: "log" },
+    // The log is a List that windows itself to the pane: the buffer under
+    // it does not scroll, the widget does (`scrollable: false` is what
+    // makes the pane's panel a described one, whose rows answer their own
+    // keys and clicks). The detail is a real diff buffer and scrolls as one.
+    first: { type: "scrollable", id: "log", scrollable: false },
     second: { type: "scrollable", id: "detail" },
   },
 });
@@ -255,11 +257,16 @@ editor.on("widget_event", (data) => {
     }
     return;
   }
-  // Log pane (List of commit rows). Selection is cursor-driven (see the
-  // `cursor_moved` handler), so the List's `select` event is ignored —
-  // a row click places the buffer cursor, and `cursor_moved` mirrors it
-  // into the selection. `activate` (Enter / double-click) still opens.
+  // Log pane (List of commit rows). The List's own selection — an arrow,
+  // a page key, a row click — comes back as `select` with the row index,
+  // and that is the selected commit. `activate` (Enter / double-click)
+  // opens.
   if (state.logPanel !== null && data.panel_id === state.logPanel.id()) {
+    if (data.event_type === "select") {
+      const idx = data.payload?.index;
+      if (typeof idx === "number") void selectCommitLine(idx);
+      return;
+    }
     if (data.event_type === "activate") {
       void git_log_enter();
     }
@@ -283,7 +290,7 @@ function detailFooter(hash: string): string {
 
 /** Stable widget key for the log List. The host keys selection +
  * scroll instance state off this; the plugin re-pins selection
- * through it after click/keyboard `select` events. */
+ * through it after a refresh. */
 const LOG_LIST_KEY = "git-log-list";
 
 function renderLog(): void {
@@ -302,11 +309,8 @@ function renderLog(): void {
       items,
       itemKeys,
       selectedIndex: state.selectedIndex,
-      // Visible-rows only matters for virtualization; setting it to
-      // commits.length renders all rows and lets the buffer's natural
-      // scroll handle viewport. Revisit if commit lists grow into the
-      // tens of thousands.
-      visibleRows: Math.max(1, state.commits.length),
+      // No `visibleRows`: the List windows itself to the pane's height
+      // and scrolls to keep the selection in view.
       key: LOG_LIST_KEY,
     }),
   );
@@ -667,20 +671,10 @@ async function openGitLog(pathFilter: string | null): Promise<void> {
 
   renderToolbar();
   renderLog();
-  // Cursor-driven selection: give the log pane a real, visible cursor and
-  // take ownership of it (`setBufferShowCursors` locks it so the widget
-  // runtime won't clear it on repaint). The cursor's line is the selected
-  // commit; `cursor_moved` mirrors it into the List highlight + detail.
-  // Start on HEAD (line 0). Scrolling is the normal cursor-follow wheel.
-  if (state.logBufferId !== null) {
-    editor.setBufferShowCursors(state.logBufferId, true);
-    editor.setBufferCursor(state.logBufferId, 0);
-  }
   await refreshDetail();
 
   editor.on("resize", on_git_log_resize);
   editor.on("buffer_closed", on_git_log_buffer_closed);
-  editor.on("cursor_moved", on_git_log_cursor_moved);
 
   editor.setStatus(
     editor.t("status.log_ready", { count: String(state.commits.length) })
@@ -718,7 +712,6 @@ function git_log_cleanup(): void {
   if (!state.isOpen) return;
   editor.off("resize", on_git_log_resize);
   editor.off("buffer_closed", on_git_log_buffer_closed);
-  editor.off("cursor_moved", on_git_log_cursor_moved);
   // Kill any still-running `git show` spawns — we no longer care.
   for (const [, handle] of state.inFlightSpawns) {
     handle.kill?.();
@@ -838,6 +831,20 @@ function isDetailFocused(): boolean {
     editor.getActiveBufferId() === state.detailBufferId
   );
 }
+
+/** One step through the log, or one line through the diff: the vi
+ *  aliases of Up/Down, which are the List's own keys on the log pane and
+ *  the buffer's on the detail pane. */
+function stepLog(delta: number): void {
+  if (state.groupId === null) return;
+  if (isDetailFocused()) {
+    editor.executeAction(delta < 0 ? "move_up" : "move_down");
+    return;
+  }
+  state.logPanel?.command(selectMove(delta));
+}
+registerHandler("git_log_prev", () => stepLog(-1));
+registerHandler("git_log_next", () => stepLog(1));
 
 function git_log_tab(): void {
   if (state.groupId === null) return;
@@ -1176,32 +1183,21 @@ function git_log_file_view_close(): void {
 registerHandler("git_log_file_view_close", git_log_file_view_close);
 
 // =============================================================================
-// Selection tracking — the log pane is cursor-driven. The buffer cursor's
-// line (set by arrow-key movement or a click) is the selected commit; this
-// `cursor_moved` subscription mirrors it into the List highlight and the
-// detail pane. Scrolling is handled by the normal cursor-follow wheel, so
-// the viewport only moves when the cursor crosses the top/bottom edge.
+// Selection tracking — the log List's selection is the selected commit.
+// An arrow, a page key or a row click moves it (the widget's own keys and
+// pointer), it comes back as a `select` event, and this mirrors it into
+// the detail pane. The List windows and scrolls itself.
 // =============================================================================
-
-function on_git_log_cursor_moved(data: { buffer_id: number; line: number }): void {
-  if (!state.isOpen || state.logBufferId === null) return;
-  if (data.buffer_id !== state.logBufferId) return;
-  // `cursor_moved.line` is 1-based; commit rows are 0-based (no header),
-  // so the selected commit index is `line - 1`.
-  const idx = data.line - 1;
-  if (idx < 0 || idx >= state.commits.length) return;
-  void selectCommitLine(idx);
-}
 
 async function selectCommitLine(idx: number): Promise<void> {
   if (!state.isOpen) return;
+  if (idx < 0 || idx >= state.commits.length) return;
   if (idx === state.selectedIndex) return;
   state.selectedIndex = idx;
 
-  // Move the List's highlight bar to the cursor's row. The cursor itself
-  // is the real (plugin-owned) buffer cursor, so it stays exactly where
-  // the user moved or clicked it — this only repaints the row styling,
-  // and the repaint preserves the cursor position.
+  // The List's highlight is the host's instance state and already sits
+  // on this row when the selection came from the List itself; after a
+  // refresh re-emitted the spec it is re-pinned here.
   state.logPanel?.setSelectedIndex(LOG_LIST_KEY, idx);
 
   const commit = state.commits[state.selectedIndex];

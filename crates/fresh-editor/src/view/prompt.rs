@@ -268,17 +268,14 @@ pub struct Prompt {
     /// session_preview delegate region was already provided by
     /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,
-    /// Optional toolbar for the overlay's header band, as real widgets
-    /// (`Toggle`/`Button` in a `Row`/`Col`). When `Some`, it is rendered via
-    /// the widget engine *in place of* the styled-text `title`, so the
-    /// controls are themed and clickable. Plugin-controlled via
-    /// `editor.setPromptToolbar(spec)`. No effect on non-overlay prompts.
-    pub toolbar_widget: Option<fresh_core::api::WidgetSpec>,
-    /// Overlay focus ring position: `None` = the query input is focused
-    /// (typing edits the query, the caret shows there); `Some(key)` = that
-    /// toolbar control is focused (Space/Enter toggles it, it renders
-    /// highlighted). Tab/Shift+Tab cycle input → toggles → input.
-    pub toolbar_focus: Option<String>,
+    /// The plugin's toolbar for the overlay's header band, when it set one
+    /// (`editor.setPromptToolbar(spec)`): the key of the registry panel that
+    /// holds its spec, its widgets' state and its focus fact. Described in the
+    /// card's header band *in place of* the styled-text `title`, so the
+    /// controls are themed, clickable and on the prompt's Tab ring. Which
+    /// control has the keyboard is the panel's `focus_key`; empty means the
+    /// query input has it. No effect on non-overlay prompts.
+    pub toolbar: Option<crate::widgets::PanelKey>,
     /// Short status shown right-aligned on the input row, just left of the
     /// `selected / total` count (e.g. "Searching…", "No matches"). Plugin-
     /// controlled via `editor.setPromptStatus(text)`; overlay-only.
@@ -315,8 +312,7 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
-            toolbar_widget: None,
-            toolbar_focus: None,
+            toolbar: None,
             status: String::new(),
         }
     }
@@ -349,8 +345,7 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
-            toolbar_widget: None,
-            toolbar_focus: None,
+            toolbar: None,
             status: String::new(),
         }
     }
@@ -402,8 +397,7 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
-            toolbar_widget: None,
-            toolbar_focus: None,
+            toolbar: None,
             status: String::new(),
         }
     }

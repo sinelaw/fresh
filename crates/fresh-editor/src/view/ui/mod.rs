@@ -9,7 +9,6 @@
 //! - `file_explorer` - File tree explorer rendering
 //! - `scrollbar` - Reusable scrollbar widget
 //! - `scroll_panel` - Reusable scrollable panel for variable-height items
-//! - `file_browser` - File open dialog popup
 
 // WASM-compatible modules (pure rendering, no runtime deps)
 pub mod layout;
@@ -27,8 +26,6 @@ pub use crate::primitives::text_edit;
 #[cfg(feature = "runtime")]
 pub mod expanded_menus_cache;
 #[cfg(feature = "runtime")]
-pub mod file_browser;
-#[cfg(feature = "runtime")]
 pub mod file_explorer;
 #[cfg(feature = "runtime")]
 pub mod menu;
@@ -45,15 +42,11 @@ pub use crate::primitives::text_edit::TextEdit;
 #[cfg(feature = "runtime")]
 pub use expanded_menus_cache::ExpandedMenusCache;
 #[cfg(feature = "runtime")]
-pub use file_browser::{
-    FileBrowserLayout, FileBrowserRenderer, FileBrowserToggle, FileBrowserToggleSpan,
-};
-#[cfg(feature = "runtime")]
 pub use file_explorer::FileExplorerRenderer;
 pub use layout::point_in_rect;
 pub(crate) use menu::MenuRowStyle;
 #[cfg(feature = "runtime")]
-pub use menu::{context_keys, MenuContext, MenuLayout, MenuRenderer, MenuState};
+pub use menu::{context_keys, MenuContext, MenuState};
 #[cfg(feature = "runtime")]
 pub use scroll_panel::{FocusRegion, ScrollItem, ScrollState, ScrollablePanel};
 pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};

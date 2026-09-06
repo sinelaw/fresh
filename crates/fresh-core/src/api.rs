@@ -1925,56 +1925,30 @@ pub struct WidgetPanelOptions {
     #[serde(default)]
     #[ts(optional)]
     pub auto_focus_first: Option<bool>,
-    /// Keep this panel's focus and its buffer's caret on the same thing.
+    /// The panel is a *page*: its whole content scrolls together in a
+    /// window the host owns, the way a document does, rather than each
+    /// list windowing itself to the panel's height. Lists and text areas
+    /// inside a page take their natural height. The arrow and page keys
+    /// scroll it when no widget takes them, the wheel and its scrollbar
+    /// move it, and `scrollToWidget` moves it to a widget by key.
     ///
-    /// For a panel mounted into a buffer the reader *reads* — a page
-    /// with a caret in it, laid out by widgets — focus and the cursor
-    /// are two answers to one question: what am I looking at. Left
-    /// independent they contradict each other, and the contradiction is
-    /// not cosmetic: Tab moves focus while the caret stays three cards
-    /// above, and an arrow key moves the caret while Enter still fires
-    /// whatever the last Tab left focused — off screen, unasked for.
-    ///
-    /// Saying so makes the host maintain both directions: a focus move
-    /// (Tab, Shift+Tab, a plugin's `setFocusKey`) seats the caret on the
-    /// focused widget's row, and a cursor move (an arrow key, a page
-    /// key, a click on the text) focuses the widget on the row it landed
-    /// on — or clears focus, when the row carries none. "Nothing
-    /// focused" is a state this option produces constantly, so a panel
-    /// declaring it almost certainly wants `autoFocusFirst: false` too.
-    ///
-    /// `None` reads as `false`: every panel written before this field
-    /// keeps focus and cursor independent.
-    ///
-    /// It makes `autoFocusFirst` false whatever the panel said — see
-    /// [`WidgetPanelOptions::auto_focus_first`]. The pair is not a
-    /// setting with two useful values; it is one broken combination, so
-    /// it is not representable rather than advised against.
+    /// A buffer-mounted panel only; the dock and the floating panels
+    /// window their lists. Unspecified reads as `false`.
     #[serde(default)]
     #[ts(optional)]
-    pub focus_follows_cursor: Option<bool>,
+    pub page: Option<bool>,
 }
 
 impl WidgetPanelOptions {
     /// Whether to seed focus onto the first tabbable when the focus key
     /// names none. Unspecified is the historical `true`.
-    ///
-    /// **Never true alongside `focusFollowsCursor`**, whatever the panel
-    /// asked for. Seeding re-runs on every repaint, and on a panel whose
-    /// caret follows focus that means every repaint drags the reader's
-    /// caret to the first control on the page — a plugin repainting on a
-    /// timer, or when `git status` lands, would move the cursor out from
-    /// under them. Stating it in prose and hoping was not enough: the
-    /// default for `autoFocusFirst` is `true`, so the broken pair was
-    /// what a plugin got by *not* thinking about it.
     pub fn auto_focus_first(&self) -> bool {
-        !self.focus_follows_cursor() && self.auto_focus_first.unwrap_or(true)
+        self.auto_focus_first.unwrap_or(true)
     }
 
-    /// Whether the panel's focus and its buffer's caret track each
-    /// other. Unspecified is the historical `false`.
-    pub fn focus_follows_cursor(&self) -> bool {
-        self.focus_follows_cursor.unwrap_or(false)
+    /// Whether the panel scrolls as one page. Unspecified is `false`.
+    pub fn page(&self) -> bool {
+        self.page.unwrap_or(false)
     }
 }
 
@@ -2204,10 +2178,11 @@ pub enum WidgetSpec {
     },
     /// Numeric form field, rendered as `label: [ 42 ]`. Adjusted by
     /// the keyboard (Left/Down decrement, Right/Up increment) in
-    /// `step` units, clamped to `[min, max]` when set; a click on the
-    /// value cell (or typing) begins in-place editing when the host
-    /// surface supports it (`edit_text` renders the live buffer with
-    /// caret + selection).
+    /// `step` units, clamped to `[min, max]` when set; Enter, a click
+    /// on the value cell, or typing a digit begins an in-place edit
+    /// that Enter commits (Tab commits before it advances) and Escape
+    /// abandons. The draft is the widget's own state; the plugin sees
+    /// the `change` a commit fires.
     ///
     /// Like `Text`/`List`, the *value* is host-owned instance state
     /// after first render: the spec's `value` is initial-only. Every
@@ -2251,21 +2226,6 @@ pub enum WidgetSpec {
         /// controls aligns their value cells. `0` = no padding.
         #[serde(default)]
         label_width: u32,
-        /// In-place edit buffer. `Some` = the value is being edited:
-        /// the cell renders this text (with caret / selection) instead
-        /// of the formatted value. `None` = display mode.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        edit_text: Option<String>,
-        /// Byte offset of the edit caret within `edit_text`. `-1` =
-        /// no caret (ignored unless `edit_text` is `Some`).
-        #[serde(default = "default_neg_one")]
-        edit_cursor: i32,
-        /// Selection byte range within `edit_text` (`start`, `end`).
-        /// `-1` for either end = no selection.
-        #[serde(default = "default_neg_one")]
-        edit_sel_start: i32,
-        #[serde(default = "default_neg_one")]
-        edit_sel_end: i32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -3027,6 +2987,36 @@ impl WidgetSpec {
     /// price for returning an iterator whose type depends on the
     /// variant; the allocation is single-digit-byte and dwarfed
     /// by everything else in the dispatch path.
+    /// The plugin's stable key for this widget, whatever its kind, or `None`
+    /// for an unkeyed one. Every kind that can carry a key is here; a kind
+    /// that cannot answers `None`.
+    pub fn key(&self) -> Option<&str> {
+        let k = match self {
+            WidgetSpec::Button { key, .. }
+            | WidgetSpec::Col { key, .. }
+            | WidgetSpec::Component { key, .. }
+            | WidgetSpec::Divider { key, .. }
+            | WidgetSpec::Dropdown { key, .. }
+            | WidgetSpec::DualList { key, .. }
+            | WidgetSpec::HintBar { key, .. }
+            | WidgetSpec::LabeledSection { key, .. }
+            | WidgetSpec::List { key, .. }
+            | WidgetSpec::Number { key, .. }
+            | WidgetSpec::Overlay { key, .. }
+            | WidgetSpec::Popup { key, .. }
+            | WidgetSpec::Raw { key, .. }
+            | WidgetSpec::Row { key, .. }
+            | WidgetSpec::Spacer { key, .. }
+            | WidgetSpec::Text { key, .. }
+            | WidgetSpec::Toggle { key, .. }
+            | WidgetSpec::Tree { key, .. }
+            | WidgetSpec::WindowEmbed { key, .. } => key,
+            #[allow(unreachable_patterns)]
+            _ => &None,
+        };
+        k.as_deref().filter(|k| !k.is_empty())
+    }
+
     pub fn children(&self) -> Box<dyn Iterator<Item = &WidgetSpec> + '_> {
         match self {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
@@ -4305,7 +4295,13 @@ pub enum PluginCommand {
     /// `live_grep_toggle_<key>`-style action). `None`/absent leaves the
     /// styled-text title in place. Has no visible effect on non-overlay
     /// prompts.
-    SetPromptToolbar { spec: Option<WidgetSpec> },
+    SetPromptToolbar {
+        /// The plugin whose toolbar it is: its `widget_event`s go back to it,
+        /// tagged with `PanelId` 0 (the toolbar is a panel of that plugin's,
+        /// keyed `PanelKey::new(plugin, PROMPT_TOOLBAR_PANEL_ID)`).
+        plugin: String,
+        spec: Option<WidgetSpec>,
+    },
 
     /// Short status text shown right-aligned on the floating-overlay prompt's
     /// input row, just left of the `selected / total` count (e.g.
@@ -4405,6 +4401,10 @@ pub enum PluginCommand {
         /// on for a virtual buffer that shows real source (e.g. git log's
         /// file-at-commit view).
         indentation_guide: Option<bool>,
+        /// Whether the buffer is user-scrollable. `None` is the default,
+        /// `true`; `Some(false)` for a buffer a widget panel is mounted into.
+        #[serde(default)]
+        scrollable: Option<bool>,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
@@ -6294,6 +6294,13 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "highlightCurrentLine")]
     #[ts(optional, rename = "highlightCurrentLine")]
     pub highlight_current_line: Option<bool>,
+    /// Whether the buffer is user-scrollable (default: true). `false` for a
+    /// buffer a widget panel is mounted into: the panel is described in the
+    /// tree and its widgets — or, for a `page` panel, its one viewport —
+    /// own the scrolling, and the buffer under them never moves.
+    #[serde(default)]
+    #[ts(optional)]
+    pub scrollable: Option<bool>,
     /// Initial content as **spans, concatenated verbatim** — a span is a run
     /// of text with optional styling, not a line. Nothing inserts newlines
     /// for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
@@ -7320,9 +7327,14 @@ impl PluginApi {
     }
 
     /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,
-    /// clickable `Toggle`/`Button` widgets). `None` clears it.
-    pub fn set_prompt_toolbar(&self, spec: Option<WidgetSpec>) -> Result<(), String> {
-        self.send_command(PluginCommand::SetPromptToolbar { spec })
+    /// clickable `Toggle`/`Button` widgets). `None` clears it. `plugin` is
+    /// the plugin the toolbar's `widget_event`s go back to.
+    pub fn set_prompt_toolbar(
+        &self,
+        plugin: String,
+        spec: Option<WidgetSpec>,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptToolbar { plugin, spec })
     }
 
     /// Set the floating-overlay prompt's input-row status text. Empty clears.
@@ -7415,6 +7427,7 @@ impl PluginApi {
             highlight_current_line: None,
             initial_cursor_line: None,
             indentation_guide: None,
+            scrollable: None,
             request_id: None,
         })
     }

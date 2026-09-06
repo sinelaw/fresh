@@ -14,7 +14,6 @@ mod base;
 mod context_menu;
 mod dock;
 mod file_explorer;
-mod floating_modal;
 mod menu;
 mod modals;
 mod popups;
@@ -37,8 +36,6 @@ use super::Editor;
 pub(crate) enum PointerGrab {
     /// Drag-to-select in a widget markdown/text document.
     WidgetText,
-    /// A floating/dock panel's list scrollbar drag.
-    WidgetScrollbar,
     /// A press on a live terminal grid whose first motion converts to
     /// scrollback text selection (selection intent).
     TerminalSelectPending,
@@ -72,16 +69,11 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     if ed.widget_text_drag.is_some() {
         return Some(PointerGrab::WidgetText);
     }
-    // A scrollbar on a buffer-mounted widget panel; its tracks live on the
-    // editor rather than on a panel struct.
-    //
-    // The dock's and the floating panel's own drag flags were tested here
-    // first. Nothing set them: the press that armed one was resolved against
-    // tracks the interior painter recorded, and that painter is deleted, so
-    // the two clauses answered `false` on every path (S7).
-    if ed.split_widget_scrollbar_drag.is_some() {
-        return Some(PointerGrab::WidgetScrollbar);
-    }
+    // A panel's list scrollbar was a grab here, for the dock and the floating
+    // panel first and then for a buffer-mounted panel. A described panel's
+    // list is a viewport whose bar captures the pointer itself, and every
+    // mounted panel is described, so no panel scrollbar is a grab of this
+    // walk's any more.
     let ms = &ed.active_window().mouse_state;
     if ms.terminal_drag_pending.is_some() {
         return Some(PointerGrab::TerminalSelectPending);

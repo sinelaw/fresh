@@ -731,9 +731,8 @@ fn completion_popup_scrolls_with_mouse_wheel() {
     // Locate a row owned by the popup so the wheel lands on its
     // hit-test target. `alpha_00/` is the top candidate row when
     // the popup just opened; find its on-screen row and scroll
-    // there. Column is irrelevant for the host's wheel routing
-    // (it only checks `last_inner_rect` containment), but pick
-    // a column inside the panel for realism.
+    // there. The wheel is the popup's own viewport's, so the
+    // column only has to be inside the panel.
     let (col, row) = harness
         .find_text_on_screen("alpha_00/")
         .expect("`alpha_00/` should be visible before scrolling");

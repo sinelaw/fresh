@@ -643,38 +643,6 @@ impl Editor {
         self.pane_content_rect(pane)
     }
 
-    /// The pane a screen cell belongs to, counting its scrollbar column.
-    ///
-    /// The wider question than [`Self::pane_content_at`], and the one
-    /// `Window::split_at_position` answered by scanning `split_areas` for
-    /// either of the two rectangles it recorded per pane. Both are nodes.
-    pub(crate) fn pane_at(&self, col: u16, row: u16) -> Option<LeafId> {
-        if let Some((pane, _)) = self.pane_content_at(col, row) {
-            return Some(pane);
-        }
-        let ui = self.shell_ui.as_ref()?;
-        let frame = ratatui::layout::Rect::new(
-            0,
-            0,
-            self.active_chrome().last_frame.width,
-            self.active_chrome().last_frame.height,
-        );
-        let leaves = self
-            .windows
-            .get(&self.active_window)?
-            .buffers
-            .splits()
-            .map(|(mgr, _)| mgr.visible_leaves())?;
-        leaves.into_iter().find_map(|(pane, _)| {
-            let bar = crate::view::shell::rect_of(
-                ui,
-                &crate::view::shell::splits::vscroll_key(pane),
-                frame,
-            )?;
-            crate::app::chrome::in_rect(col, row, bar).then_some(pane)
-        })
-    }
-
     /// The terminal a screen cell is over, and the rectangle its grid occupies.
     ///
     /// The terminal's own mouse handling lives on `impl Window`, which cannot

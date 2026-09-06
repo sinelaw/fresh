@@ -39,8 +39,11 @@ pub enum SettingsHit {
     ControlDropdownOption(usize, usize),
     /// Click on text input
     ControlText(usize),
-    /// Click on text list row (item_idx, row_idx)
+    /// Click on a text list's field (item_idx, row_idx); a row past the
+    /// items is the add row's
     ControlTextListRow(usize, usize),
+    /// Click on a text list item's `[x]` (item_idx, row_idx)
+    ControlTextListRemove(usize, usize),
     /// Click on map row (item_idx, row_idx)
     ControlMapRow(usize, usize),
     /// Click on map add-new row (item_idx)

@@ -25,7 +25,6 @@ pub mod composite_view;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod conceal;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
-pub mod controls;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod dimming;
 #[cfg(any(feature = "runtime", feature = "wasm"))]

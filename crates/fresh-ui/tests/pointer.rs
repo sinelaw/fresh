@@ -1234,3 +1234,66 @@ fn a_press_on_a_wrapped_run_reports_the_byte_on_the_row_it_landed_on() {
         );
     }
 }
+
+/// **A pointer event a pointer-blocking modal let nothing answer is the
+/// modal's.** The row behind the layer never sees a press beside the layer's
+/// box, and the dispatch says so: `claimed`, with no message. A host with its
+/// own pointer pipeline behind the tree reads that word and stops; reported
+/// unclaimed, the press would have gone on to the surface the modal covers.
+/// The wheel likewise: the modal's slack scrolls nothing, and the buffer
+/// under the dim must not scroll in its place.
+#[test]
+fn a_pointer_modal_claims_what_it_lets_nothing_answer() {
+    use fresh_ui::{layer, Align, Anchor, Modality, Place};
+    let pressed = Rc::new(std::cell::Cell::new(0));
+    let mk = {
+        let pressed = pressed.clone();
+        move || {
+            stack().children([
+                gesture(row().w(Sizing::Cells(20)).h(Sizing::Cells(10))).on(
+                    GestureKind::Press,
+                    Rc::new({
+                        let p = pressed.clone();
+                        move |_: &Event| {
+                            p.set(p.get() + 1);
+                            None
+                        }
+                    }),
+                ),
+                layer()
+                    .modality(Modality::Pointer)
+                    .anchor(Anchor::Screen(Align::Start))
+                    .place(Place::Over)
+                    .child(text("box").w(Sizing::Cells(6)).h(Sizing::Cells(3))),
+            ])
+        }
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(), FRAME);
+    let beside = Point::new(15, 8);
+    let got = ui.dispatch(Input::press(beside, MouseButton::Left, Mods::NONE));
+    assert_eq!(pressed.get(), 0, "the row behind the modal never sees it");
+    assert!(got.claimed, "and the modal claims it");
+    assert!(got.msgs.is_empty());
+    let got = ui.dispatch(Input::Wheel {
+        pos: beside,
+        delta: 3,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert!(got.claimed, "the wheel is the modal's too");
+    let got = ui.dispatch(Input::Move {
+        pos: beside,
+        mods: Mods::NONE,
+    });
+    assert!(got.claimed, "and so is a move across the dim");
+    // Inside the box, the same: a press on its slack reaches no handler and
+    // is still the modal's.
+    let got = ui.dispatch(Input::press(
+        Point::new(2, 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(got.claimed);
+    assert_eq!(pressed.get(), 0);
+}

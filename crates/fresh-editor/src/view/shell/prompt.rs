@@ -813,9 +813,9 @@ pub fn suggestions_window(spec: &fresh_ui::LayoutSpec) -> Option<(usize, usize)>
 ///
 /// It paints nothing and takes no pointer: the prompt row, its card and its
 /// suggestion list are described elsewhere, and this is only the keyboard.
-pub fn keys_layer(search: bool) -> Node<UiMsg> {
+pub fn keys_layer(search: bool, card: bool) -> Node<UiMsg> {
     use fresh_ui::{layer, Align, Anchor, Modality, Place, PointerMode};
-    layer()
+    let l = layer()
         .anchor(Anchor::Screen(Align::Start))
         // The whole frame, so the confinement is unambiguous — and
         // `PointerMode::Ignore` so covering it costs nothing: neither this
@@ -825,8 +825,15 @@ pub fn keys_layer(search: bool) -> Node<UiMsg> {
         // over, deliberately.
         .place(Place::Fill)
         .pointer_mode(PointerMode::Ignore)
-        .modality(Modality::Focus)
-        .child(
+        .modality(Modality::Focus);
+    match card {
+        // **The overlay card is the ring.** Its query input holds the focus
+        // the sink below holds for a bottom-row prompt (`overlay_prompt::
+        // input_band`), and the plugin's toolbar controls are Tab stops
+        // beside it — so the layer confines traversal to the card the way a
+        // panel's layer confines it to the panel's interior.
+        true => l.scope_at(super::overlay_prompt::card_key()),
+        false => l.child(
             fresh_ui::focusable(row())
                 .key(keys_key(search))
                 .pointer_mode(PointerMode::Ignore)
@@ -835,7 +842,8 @@ pub fn keys_layer(search: bool) -> Node<UiMsg> {
                     e.stop();
                     Some(UiMsg::Ui(UiFact::PromptKey))
                 }),
-        )
+        ),
+    }
 }
 
 /// The key of the prompt's keyboard sink, which names the prompt's key
@@ -1258,8 +1266,11 @@ mod tests {
                     prompt_line: true,
                     card: Some(Card {
                         at: fresh_ui::Rect::new(4, 2, PREVIEW_MIN_COLS + 20, 30),
-                        toolbar_rows: 2,
+                        toolbar: None,
+                        title_row: true,
                         footer: true,
+                        search: false,
+                        input_focused: true,
                     }),
                     suggestions: Some(Suggestions {
                         rows: rows(3),
