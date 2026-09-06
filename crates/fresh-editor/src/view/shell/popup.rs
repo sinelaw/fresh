@@ -374,10 +374,9 @@ fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
         PK::Hover => f = f.action(Intent::Confirm, step(PopupKey::Close)),
         // **A completion list declares no `Confirm`, deliberately.** Enter
         // there means "close this and insert a newline" — the popup is not in
-        // the way of the keystroke, so it must not spend it. With no action
-        // bound, Enter reaches the layer's pass-through dismissal below,
-        // which is exactly what `InputResult::Ignored` after a deferred
-        // `ClosePopup` was saying.
+        // the way of the keystroke, so it must not take it. With no action
+        // bound, Enter reaches the layer's dismissal below, which closes the
+        // list and hands the key on to the editor (`PopupKey::Through`).
         PK::Completion => {}
     }
 
@@ -454,12 +453,14 @@ fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
             .dismiss(gone)
             .on_dismiss(|_| UiMsg::Ui(UiFact::PopupKey(PopupKey::Close)))
             .child(f),
-        // A completion list goes away too, but the key goes on: the user was
-        // typing at the buffer, not at the popup, so the popup was never in
-        // the way of the keystroke.
+        // A completion list goes away too, and the key goes on to the
+        // editor: the user was typing at the buffer, not at the popup, so
+        // the popup was never in the way of the keystroke. Handed on as a
+        // step rather than left unclaimed: the tree is the whole keyboard,
+        // and a key it declines everywhere is nobody's (design §3.7.5).
         PK::Completion => l
-            .dismiss(gone.passing_through())
-            .on_dismiss(|_| UiMsg::Ui(UiFact::PopupKey(PopupKey::Close)))
+            .dismiss(gone)
+            .on_dismiss(|_| UiMsg::Ui(UiFact::PopupKey(PopupKey::Through)))
             .child(f),
     }
 }
@@ -1421,14 +1422,16 @@ mod tests {
     }
 
     /// **A completion list is not in the way of the keystroke.** Enter means
-    /// "close this and insert a newline", so it must close *and* let the key
-    /// through — which is why no `Confirm` is declared on it.
+    /// "close this and insert a newline", so it closes *and* hands the key
+    /// on to the editor — which is why no `Confirm` is declared on it. The
+    /// hand-on is a step the popup claims the key with: the tree is the
+    /// whole keyboard, so a key left unclaimed would be nobody's.
     #[test]
-    fn a_completion_popup_closes_and_lets_the_key_through() {
+    fn a_completion_popup_closes_and_hands_the_key_on() {
         let mut ui = with_keys(PopupKind::Completion, Vec::new());
         let d = press(&mut ui, KeyCode::Enter, Mods::NONE);
-        assert_eq!(steps(&d), vec![PopupKey::Close]);
-        assert!(!d.claimed, "the newline still reaches the buffer");
+        assert_eq!(steps(&d), vec![PopupKey::Through]);
+        assert!(d.claimed, "claimed, and handed on as the step says");
 
         // A word character filters instead, and is spent doing it.
         let mut ui = with_keys(PopupKind::Completion, Vec::new());

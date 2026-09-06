@@ -99,7 +99,7 @@ fn content_rect_for_buffer(
             .editor()
             .get_split_areas()
             .iter()
-            .map(|(_, b, _, _)| *b)
+            .map(|(_, b)| *b)
             .collect::<Vec<_>>()
     );
 }

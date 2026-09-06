@@ -387,9 +387,7 @@ impl crate::app::window::Window {
                     };
 
                     // Calculate current visual column from cached layout
-                    let current_visual_col = self
-                        .layout_cache
-                        .byte_to_visual_column(split_id, from_pos)?;
+                    let current_visual_col = self.byte_to_visual_column(split_id, from_pos)?;
 
                     let goal_visual_col = if let Some(sticky) = sticky_column {
                         sticky
@@ -397,12 +395,7 @@ impl crate::app::window::Window {
                         current_visual_col
                     };
 
-                    match self.layout_cache.move_visual_line(
-                        split_id,
-                        from_pos,
-                        goal_visual_col,
-                        *direction,
-                    ) {
+                    match self.move_visual_line(split_id, from_pos, goal_visual_col, *direction) {
                         Some((pos, goal)) => (pos, Some(goal)),
                         None => {
                             // Target visual row is past the cached view-line
@@ -432,10 +425,7 @@ impl crate::app::window::Window {
                 VisualAction::LineEnd { .. } => {
                     // Allow advancing to next visual segment only if not at a physical line ending
                     let allow_advance = !at_line_ending;
-                    match self
-                        .layout_cache
-                        .visual_line_end(split_id, position, allow_advance)
-                    {
+                    match self.visual_line_end(split_id, position, allow_advance) {
                         // The row reports its end as the last source byte it
                         // drew, which is one cell short when that byte is a
                         // content character — every row a compose-mode soft
@@ -449,10 +439,7 @@ impl crate::app::window::Window {
                 VisualAction::LineStart { .. } => {
                     // Allow advancing to previous visual segment only if not at a physical line start
                     let allow_advance = !at_line_start;
-                    match self
-                        .layout_cache
-                        .visual_line_start(split_id, position, allow_advance)
-                    {
+                    match self.visual_line_start(split_id, position, allow_advance) {
                         Some(start_pos) => (start_pos, None),
                         None => return None,
                     }
@@ -588,9 +575,9 @@ impl crate::app::window::Window {
             // authoritative "end of current visual row" position that the
             // renderer itself uses.
             let cur_row_line_end = {
-                let mappings = self.layout_cache.view_line_mappings.get(&active_split)?;
-                let row_idx = self.layout_cache.find_visual_row(active_split, from_pos)?;
-                mappings.get(row_idx)?.line_end_byte
+                let view = self.pane_view(active_split)?;
+                let row_idx = view.find_visual_row(from_pos)?;
+                view.rows.get(row_idx)?.line_end_byte
             };
 
             let state = self.buffers.get_mut(&active_buffer)?;
@@ -663,9 +650,9 @@ impl crate::app::window::Window {
             // stepping back one byte lands on the previous line's
             // trailing newline — again the end of its last visual row.
             let (cur_row_anchor, row_is_empty) = {
-                let mappings = self.layout_cache.view_line_mappings.get(&active_split)?;
-                let row_idx = self.layout_cache.find_visual_row(active_split, from_pos)?;
-                let row = mappings.get(row_idx)?;
+                let view = self.pane_view(active_split)?;
+                let row_idx = view.find_visual_row(from_pos)?;
+                let row = view.rows.get(row_idx)?;
                 match row.char_source_bytes.iter().find_map(|b| *b) {
                     Some(start) => (start, false),
                     None => (row.line_end_byte, true),

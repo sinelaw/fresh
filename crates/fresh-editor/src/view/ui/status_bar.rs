@@ -7,13 +7,10 @@ use crate::app::WarningLevel;
 use crate::config::{StatusBarElement, VirtualSpaceMode};
 use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
-use crate::view::prompt::Prompt;
 use chrono::Timelike;
 use fresh_i18n::t;
-use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::text::Span;
 
 /// Text that both marks a buffer as "edited over a disconnected SSH session"
 /// and styles the prefix in the status bar. Kept as constants so `render_element`
@@ -405,7 +402,7 @@ impl TruncatedPath {
 /// The separator a path string is written with: `\` for a Windows-style
 /// path (so it round-trips natively), `/` otherwise. Splitting always
 /// accepts both — this only decides how pieces are re-joined for display.
-fn path_display_sep(path_str: &str) -> char {
+pub(crate) fn path_display_sep(path_str: &str) -> char {
     if path_str.contains('\\') {
         '\\'
     } else {
@@ -703,219 +700,10 @@ pub(crate) fn input_hscroll(cursor_cells: usize, width: usize) -> usize {
     }
 }
 
-/// Renders the status bar and prompt/minibuffer
+/// Renders the status bar.
 pub struct StatusBarRenderer;
 
 impl StatusBarRenderer {
-    /// Render the prompt/minibuffer
-    pub fn render_prompt(
-        buf: &mut ratatui::buffer::Buffer,
-        area: Rect,
-        prompt: &Prompt,
-        theme: &crate::view::theme::Theme,
-        // Where the terminal caret wants to sit. An out-parameter because this
-        // is reached from the fold, which resolves the caret across every
-        // region rather than letting each one place it.
-        caret: &mut Option<(u16, u16)>,
-    ) {
-        let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
-
-        // Create spans for the input (the message/label is rendered
-        // separately so it stays anchored while the input scrolls).
-        let mut spans = Vec::new();
-
-        // If there's a selection, split the input into parts
-        if let Some((sel_start, sel_end)) = prompt.selection_range() {
-            let input = prompt.input_str();
-
-            // Text before selection
-            if sel_start > 0 {
-                spans.push(Span::styled(input[..sel_start].to_string(), base_style));
-            }
-
-            // Selected text (blue background for visibility, cursor remains visible)
-            if sel_start < sel_end {
-                // Use theme colors for selection to ensure consistency across themes
-                let selection_style = Style::default()
-                    .fg(theme.prompt_selection_fg)
-                    .bg(theme.prompt_selection_bg);
-                spans.push(Span::styled(
-                    input[sel_start..sel_end].to_string(),
-                    selection_style,
-                ));
-            }
-
-            // Text after selection
-            if sel_end < input.len() {
-                spans.push(Span::styled(input[sel_end..].to_string(), base_style));
-            }
-        } else {
-            // No selection, render entire input normally
-            spans.push(Span::styled(prompt.input_str().to_string(), base_style));
-        }
-
-        Self::render_prompt_label_and_input(
-            buf,
-            area,
-            vec![Span::styled(prompt.message.clone(), base_style)],
-            spans,
-            base_style,
-            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
-            caret,
-        );
-    }
-
-    /// Shared tail of the prompt-line renderers: paint the label spans
-    /// anchored at the left edge, then the input spans in the remaining
-    /// columns with a horizontal scroll that keeps the cursor visible
-    /// (issue #2876), and always place the terminal cursor on the input.
-    ///
-    /// `cursor_cells` is the display width of the input up to the cursor.
-    fn render_prompt_label_and_input(
-        buf: &mut ratatui::buffer::Buffer,
-        area: Rect,
-        label_spans: Vec<Span<'static>>,
-        input_spans: Vec<Span<'static>>,
-        base_style: Style,
-        cursor_cells: usize,
-        caret: &mut Option<(u16, u16)>,
-    ) {
-        // Label, clipped to the area. Use display width (not byte length)
-        // for proper handling of double-width CJK and zero-width
-        // combining characters.
-        let label_cells: usize = label_spans.iter().map(|s| str_width(&s.content)).sum();
-        let label_cols = (label_cells.min(area.width as usize)) as u16;
-        let label_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: label_cols,
-            height: area.height,
-        };
-        ratatui::widgets::Widget::render(
-            Paragraph::new(Line::from(label_spans)).style(base_style),
-            label_area,
-            buf,
-        );
-
-        // Input, horizontally scrolled so the cursor never leaves the
-        // viewport: with text longer than the box the line scrolls left
-        // and the cursor rides the last column.
-        let input_area = Rect {
-            x: area.x + label_cols,
-            y: area.y,
-            width: area.width - label_cols,
-            height: area.height,
-        };
-        let scroll = input_hscroll(cursor_cells, input_area.width as usize);
-        ratatui::widgets::Widget::render(
-            Paragraph::new(Line::from(input_spans))
-                .style(base_style)
-                .scroll((0, scroll as u16)),
-            input_area,
-            buf,
-        );
-
-        if input_area.width > 0 {
-            // `input_hscroll` guarantees cursor_cells - scroll < width.
-            *caret = Some((input_area.x + (cursor_cells - scroll) as u16, area.y));
-        }
-    }
-
-    /// Render the file open prompt with colorized path
-    /// Shows: "Open: /path/to/current/dir/filename" where the directory part is dimmed
-    /// Long paths are truncated: "/private/[...]/project/" with [...] styled differently
-    pub fn render_file_open_prompt(
-        buf: &mut ratatui::buffer::Buffer,
-        area: Rect,
-        prompt: &Prompt,
-        file_open_state: &crate::app::file_open::FileOpenState,
-        theme: &crate::view::theme::Theme,
-        caret: &mut Option<(u16, u16)>,
-    ) {
-        let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
-        let dir_style = Style::default()
-            .fg(theme.help_separator_fg)
-            .bg(theme.prompt_bg);
-        // Style for the [...] ellipsis - use a more visible color
-        let ellipsis_style = Style::default()
-            .fg(theme.menu_highlight_fg)
-            .bg(theme.prompt_bg);
-
-        let mut spans = Vec::new();
-
-        // Label prefix — the prompt's own message, not a hardcoded
-        // "Open file: ": a plugin-opened pick browser (editor.pickFile)
-        // carries its own label ("Enter tour file path: ", …).
-        let open_prompt = prompt.message.clone();
-        spans.push(Span::styled(open_prompt.clone(), base_style));
-
-        // Calculate if we need to truncate
-        // Only truncate if full path + input exceeds 90% of available width
-        let prefix_len = str_width(&open_prompt);
-        let dir_path = file_open_state.current_dir.to_string_lossy();
-        let dir_path_len = dir_path.len() + 1; // +1 for trailing slash
-        let input_len = prompt.input_str().len();
-        let total_len = prefix_len + dir_path_len + input_len;
-        let threshold = (area.width as usize * 90) / 100;
-
-        // Truncate the path only if total length exceeds 90% of width
-        let truncated = if total_len > threshold {
-            // Calculate how much space we have for the path after truncation
-            let available_for_path = threshold
-                .saturating_sub(prefix_len)
-                .saturating_sub(input_len);
-            truncate_path(&file_open_state.current_dir, available_for_path)
-        } else {
-            // No truncation needed - return full path
-            TruncatedPath {
-                prefix: String::new(),
-                truncated: false,
-                suffix: dir_path.to_string(),
-                sep: path_display_sep(&dir_path),
-            }
-        };
-
-        // Build the directory display with separate spans for styling
-        if truncated.truncated {
-            // Prefix (dimmed)
-            spans.push(Span::styled(truncated.prefix.clone(), dir_style));
-            // Ellipsis "<sep>[...]" (highlighted)
-            spans.push(Span::styled(
-                format!("{}[...]", truncated.sep),
-                ellipsis_style,
-            ));
-            // Suffix with trailing slash (dimmed)
-            let suffix_with_slash = if truncated.suffix.ends_with('/') {
-                truncated.suffix.clone()
-            } else {
-                format!("{}/", truncated.suffix)
-            };
-            spans.push(Span::styled(suffix_with_slash, dir_style));
-        } else {
-            // No truncation - just show the path with trailing slash
-            let path_display = if truncated.suffix.ends_with('/') {
-                truncated.suffix.clone()
-            } else {
-                format!("{}/", truncated.suffix)
-            };
-            spans.push(Span::styled(path_display, dir_style));
-        }
-
-        // The label here is the whole prefix (message + colorized dir path);
-        // the user input (the filename part) scrolls after it so the cursor
-        // stays visible even when the typed name overflows the line.
-        let input_spans = vec![Span::styled(prompt.input_str().to_string(), base_style)];
-        Self::render_prompt_label_and_input(
-            buf,
-            area,
-            spans,
-            input_spans,
-            base_style,
-            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
-            caret,
-        );
-    }
-
     /// Render a single element to its text representation.
     /// Returns None if the element has nothing to display.
     fn render_element(
@@ -2354,107 +2142,5 @@ mod tests {
         }
         // Degenerate zero-width viewport must not underflow.
         assert_eq!(input_hscroll(50, 0), 0);
-    }
-
-    /// Reproducer for issue #2876 at the renderer level: with input wider
-    /// than the prompt line, the tail must scroll into view and the
-    /// terminal cursor must always be placed (the old renderer clipped the
-    /// paragraph at the right edge and skipped `set_cursor_position`
-    /// whenever the cursor's logical column was past it).
-    #[test]
-    fn test_render_prompt_scrolls_long_input_and_places_cursor() {
-        use ratatui::backend::TestBackend;
-        use ratatui::Terminal;
-
-        let theme =
-            crate::view::theme::Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
-        let mut prompt = Prompt::new(
-            "Search: ".to_string(),
-            crate::view::prompt::PromptType::Search,
-        );
-        // 100 chars in an 80-column line: 8 label cols + 72 input cols.
-        let input: String = ('a'..='z').cycle().take(100).collect();
-        prompt.set_input_plain(input.clone());
-
-        let width: u16 = 80;
-        let backend = TestBackend::new(width, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        // **Where the caret wants to sit is reported, not set.**
-        // `render_prompt` takes a `&mut Buffer` and an out-parameter now:
-        // the fold resolves the caret across every region rather than
-        // letting each one call `set_cursor_position` itself. Asking the
-        // test backend where its cursor is asks a question nobody answers.
-        let mut caret: Option<(u16, u16)> = None;
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, 1);
-                StatusBarRenderer::render_prompt(
-                    frame.buffer_mut(),
-                    area,
-                    &prompt,
-                    &theme,
-                    &mut caret,
-                );
-            })
-            .unwrap();
-
-        // The label stays anchored and the *tail* of the input is visible.
-        let buffer = terminal.backend().buffer().clone();
-        let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
-        assert!(
-            row.starts_with("Search: "),
-            "label must stay visible: {row:?}"
-        );
-        // Scroll = 100 - 71 = 29 cells, so chars 29.. are visible and the
-        // last column is left free for the cursor.
-        let tail: String = input.chars().skip(100 - 71).collect();
-        assert!(
-            row.trim_end().ends_with(&tail),
-            "tail of the input must scroll into view: {row:?}"
-        );
-        // Cursor rides the last column instead of being skipped.
-        assert_eq!(caret, Some((width - 1, 0)));
-
-        // Move the cursor 15 chars left: still visible (pinned to the last
-        // column), and the window follows it leftward.
-        prompt.set_cursor_byte(prompt.cursor_byte() - 15);
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, 1);
-                StatusBarRenderer::render_prompt(
-                    frame.buffer_mut(),
-                    area,
-                    &prompt,
-                    &theme,
-                    &mut caret,
-                );
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
-        let shifted_window: String = input.chars().skip(85 - 71).take(72).collect();
-        assert!(
-            row.ends_with(&shifted_window[shifted_window.len() - 20..]),
-            "window must shift with the cursor: {row:?}"
-        );
-        assert_eq!(caret, Some((width - 1, 0)));
-
-        // With a short input nothing scrolls and the cursor sits right
-        // after the typed text.
-        prompt.set_input_plain("abc".to_string());
-        prompt.set_cursor_byte(3);
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, 1);
-                StatusBarRenderer::render_prompt(
-                    frame.buffer_mut(),
-                    area,
-                    &prompt,
-                    &theme,
-                    &mut caret,
-                );
-            })
-            .unwrap();
-        assert_eq!(caret, Some((8 + 3, 0)));
     }
 }

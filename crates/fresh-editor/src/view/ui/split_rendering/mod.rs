@@ -27,8 +27,8 @@ mod orchestration;
 // rectangle is the one layout gave it.
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
 pub(crate) use orchestration::{
-    paint_leaf, paint_separators, prepare_content, reconcile_panes, record_scrollbar_theme_runs,
-    ContentPass, FrameFacts, PaneAreas, Stores,
+    content_pass, paint_leaf, prepare_content, reconcile_panes, ContentPass, FrameFacts,
+    PaneContent, Stores,
 };
 mod post_pass;
 pub(crate) mod scrollbar;
@@ -39,17 +39,13 @@ mod style;
 pub(crate) mod transforms;
 pub(crate) mod view_data;
 
-use crate::app::types::ViewLineMapping;
-use crate::app::BufferMetadata;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
-use crate::model::event::{BufferId, EventLog, LeafId};
+use crate::model::event::{BufferId, EventLog};
 use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
-use crate::view::split::SplitManager;
 use ratatui::layout::Rect;
-use std::collections::HashMap;
 
 /// Maximum line width before forced wrapping is applied, even when line wrapping is disabled.
 /// This prevents memory exhaustion when opening files with extremely long lines (e.g., 10MB
@@ -124,7 +120,7 @@ impl<'a> EditorRenderConfig<'a> {
 /// every split in a frame: the theme, the ANSI backdrop, and the editor
 /// render config. Built once at the top of the render pass and threaded by
 /// reference through the whole painter chain (`render_content` →
-/// `render_buffer_in_split` → …), so each layer forwards one `RenderStyle`
+/// `content_pass` → `paint_leaf` → …), so each layer forwards one `RenderStyle`
 /// instead of re-listing ~16 style parameters. Distinct from per-split state
 /// and the draw target, which vary or are mutated.
 //
@@ -144,114 +140,6 @@ pub struct RenderStyle<'a> {
 pub struct SplitRenderer;
 
 impl SplitRenderer {
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::type_complexity)]
-    pub fn render_content(
-        buf: &mut ratatui::buffer::Buffer,
-        area: Rect,
-        split_manager: &SplitManager,
-        buffers: &mut HashMap<BufferId, EditorState>,
-        buffer_metadata: &HashMap<BufferId, BufferMetadata>,
-        preview_buffer: Option<BufferId>,
-        event_logs: &mut HashMap<BufferId, EventLog>,
-        composite_buffers: &mut HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
-        composite_view_states: &mut HashMap<
-            (LeafId, BufferId),
-            crate::view::composite_view::CompositeViewState,
-        >,
-        style: RenderStyle<'_>,
-        lsp_waiting: bool,
-        split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
-        grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
-        hide_cursor: bool,
-        hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>,
-        hovered_close_split: Option<LeafId>,
-        hovered_maximize_split: Option<LeafId>,
-        is_maximized: bool,
-        tab_bar_visible: bool,
-        session_mode: bool,
-        scrollback_view_splits: &std::collections::HashSet<LeafId>,
-        pane_chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
-        cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
-        screen_width: u16,
-        pending_hardware_cursor: &mut Option<(u16, u16)>,
-        // Forwarded to the tab-bar renderer: when false the tab bar lays out but
-        // paints no cells (web renders tabs natively); panes always draw.
-        draw_tab_bar: bool,
-    ) -> (
-        Vec<(LeafId, BufferId, usize, usize)>,
-        Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
-        HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-        HashMap<LeafId, Vec<ViewLineMapping>>,
-        Vec<(LeafId, BufferId, usize, usize, usize)>,
-    ) {
-        orchestration::render_content(
-            buf,
-            area,
-            split_manager,
-            buffers,
-            buffer_metadata,
-            preview_buffer,
-            event_logs,
-            composite_buffers,
-            composite_view_states,
-            style,
-            lsp_waiting,
-            split_view_states,
-            grouped_subtrees,
-            hide_cursor,
-            hovered_tab,
-            hovered_close_split,
-            hovered_maximize_split,
-            is_maximized,
-            tab_bar_visible,
-            session_mode,
-            scrollback_view_splits,
-            pane_chrome,
-            cell_theme_map,
-            screen_width,
-            pending_hardware_cursor,
-            draw_tab_bar,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn compute_content_layout(
-        rects: &crate::view::shell::geometry::PaneRects,
-        split_manager: &SplitManager,
-        buffers: &mut HashMap<BufferId, EditorState>,
-        split_view_states: &mut HashMap<LeafId, crate::view::split::SplitViewState>,
-        theme: &crate::view::theme::Theme,
-        lsp_waiting: bool,
-        estimated_line_length: usize,
-        highlight_context_bytes: usize,
-        relative_line_numbers: bool,
-        use_terminal_bg: bool,
-        session_mode: bool,
-        software_cursor_only: bool,
-        diagnostics_inline_text: bool,
-        show_tilde: bool,
-        bracket_highlight: BracketHighlightSettings,
-    ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
-        orchestration::compute_content_layout(
-            rects,
-            split_manager,
-            buffers,
-            split_view_states,
-            theme,
-            lsp_waiting,
-            estimated_line_length,
-            highlight_context_bytes,
-            relative_line_numbers,
-            use_terminal_bg,
-            session_mode,
-            software_cursor_only,
-            diagnostics_inline_text,
-            show_tilde,
-            bracket_highlight,
-        )
-    }
-
     /// Render a single buffer into an arbitrary screen rect.
     ///
     /// Public façade over the per-leaf renderer for callers that
@@ -292,7 +180,6 @@ impl SplitRenderer {
         // - lsp_waiting = false (preview never owns LSP requests)
         // - pending_hardware_cursor: the preview must not move the
         //   terminal's hardware cursor away from the prompt input.
-        let mut sink: Option<(u16, u16)> = None;
         // The leaf is outside the split tree, so the frame's pre-paint
         // reconcile never saw it: place it here, immediately before its
         // text pass. Only the formatter's half — this pane never ran the
@@ -307,37 +194,68 @@ impl SplitRenderer {
             show_line_numbers,
             area,
         );
-        let text = orchestration::render_buffer_in_split(
-            buf,
+        let crate::view::ui::EditorRenderConfig {
+            estimated_line_length,
+            highlight_context_bytes,
+            relative_line_numbers,
+            use_terminal_bg,
+            software_cursor_only,
+            diagnostics_inline_text,
+            indentation_guide,
+            indentation_guide_glyph,
+            rainbow_indentation,
+            bracket_highlight,
+            background_fade,
+            ..
+        } = style.cfg;
+        let mut layout = orchestration::compute_buffer_layout(
             state,
             cursors,
             viewport,
             folds,
-            event_log,
             area,
             /* is_active */ false,
-            style,
+            style.theme,
             /* lsp_waiting */ false,
             view_mode,
             compose_width,
-            compose_column_guides,
-            buffer_id,
-            /* hide_cursor */ true,
+            estimated_line_length,
+            highlight_context_bytes,
+            relative_line_numbers,
+            use_terminal_bg,
             session_mode,
-            rulers,
+            software_cursor_only,
             show_line_numbers,
             highlight_current_line,
             true, // preview leaves have no per-split fold pin
+            diagnostics_inline_text,
             show_tilde,
-            highlight_current_column,
-            cell_theme_map,
-            screen_width,
-            &mut sink,
+            indentation_guide,
+            indentation_guide_glyph,
+            rainbow_indentation,
+            bracket_highlight,
+            Some((cell_theme_map, screen_width)),
         );
-        // No horizontal scrollbar here; store the column the rows were
-        // drawn with.
-        orchestration::reconcile::settle_pane(state, viewport, text.left_column, false);
-        text.view_line_mappings
+        let _ = (event_log, highlight_current_column, buffer_id);
+        let rows = std::mem::take(&mut layout.view_line_mappings);
+        let left_column = layout.left_column;
+        // A preview leaf is never the active pane: it shows no caret, and
+        // no caret column is highlighted.
+        orchestration::draw_buffer_in_split(
+            buf,
+            layout,
+            area,
+            style.theme,
+            style.ansi_background,
+            background_fade,
+            software_cursor_only,
+            rulers,
+            compose_column_guides,
+            false,
+            None,
+        );
+        orchestration::reconcile::settle_pane(state, viewport, left_column, false);
+        rows
     }
 
     /// Public wrapper for building base tokens - used by render.rs for the

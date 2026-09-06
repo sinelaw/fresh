@@ -35,16 +35,11 @@ impl Editor {
         // Which pane covers the cell, and where its content is — one
         // question the shell answers from the tree, rather than a scan of
         // the painter's record repeating the containment test by hand.
-        let Some((split_id, content_rect)) = self.pane_content_at(col, row) else {
-            return None;
-        };
-        let Some(buffer_id) = self
+        let (split_id, content_rect) = self.pane_content_at(col, row)?;
+        let buffer_id = self
             .windows
             .get(&self.active_window)
-            .and_then(|w| w.pane_buffer(split_id))
-        else {
-            return None;
-        };
+            .and_then(|w| w.pane_buffer(split_id))?;
         let (split_id, buffer_id, content_rect) = (&split_id, &buffer_id, &content_rect);
         // Neither a terminal grid nor a composite view has fold gutters.
         if self.active_window().is_terminal_buffer(*buffer_id)
@@ -76,10 +71,9 @@ impl Editor {
         };
 
         let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(split_id)
-            .cloned();
+            .active_window()
+            .pane_view(*split_id)
+            .map(|v| v.rows.clone());
         let fallback = self
             .windows
             .get(&self.active_window)
@@ -103,7 +97,7 @@ impl Editor {
             row,
             *content_rect,
             gutter_width,
-            &cached_mappings,
+            cached_mappings.as_deref(),
             fallback,
             true,
             compose_width,
@@ -142,8 +136,10 @@ impl Editor {
     }
 
     /// Handle click in editor content area
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_editor_click(
         &mut self,
+        byte: Option<usize>,
         col: u16,
         row: u16,
         split_id: crate::model::event::LeafId,
@@ -166,85 +162,32 @@ impl Editor {
         // `screen_to_buffer_position` call) is non-trivial — share the
         // result.
         // **A described pane has no screen-to-line projection, and must say
-        // so rather than answer.**
-        //
-        // Every other pointer probe is gated on whether the tree describes the
-        // panel — the floating and dock right press, the hover walk, the dock
-        // and floating left press. This one was not, and the projection it
-        // reads is not merely stale for a described pane: the text pass that
-        // fills `view_line_mappings` does not run there, so the map is written
-        // *empty* and `screen_to_buffer_position` falls back to the viewport's
-        // top byte. Every click in the pane therefore resolved to the same
-        // line and column — the first row of the panel — and the widget
-        // hit-test below happily matched whatever control sits there. A press
-        // that lands on a widget is stopped by the node, so what reached here
-        // was exactly the case the projection cannot answer.
-        //
-        // `None` is what both readers below already expect for "no position",
-        // and it is what the `mouse_click` hook's `Option` fields mean. A
-        // number that is wrong for every click but one is worse than no
-        // number.
+        // so rather than answer.** Its content is the panel's subtree, not
+        // the buffer's leaf, so no rows are settled for it and a byte would
+        // be a number that is wrong for every click but one; `None` is what
+        // both readers below expect for "no position", and what the
+        // `mouse_click` hook's `Option` fields mean.
         let described_pane = self.pane_panel_is_described(buffer_id);
-        let (mc_buffer_row, mc_buffer_col) = if described_pane {
-            (None, None)
-        } else {
-            let cached_mappings = self
-                .active_layout()
-                .view_line_mappings
-                .get(&split_id)
-                .cloned();
-            let fallback = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&split_id)
-                .map(|vs| vs.viewport.top_byte())
-                .unwrap_or(0);
-            let compose_width = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&split_id)
-                .and_then(|vs| vs.compose_width);
-            let gutter_width = self
-                .buffers()
-                .get(&buffer_id)
-                .map(|s| s.margins.left_total_width() as u16)
-                .unwrap_or(0);
-            let target = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true,
-                compose_width,
-            );
-            match target {
-                Some(byte_pos) => {
-                    let state = self
-                        .windows
-                        .get(&self.active_window)
-                        .map(|w| &w.buffers)
-                        .expect("active window present")
-                        .get(&buffer_id);
-                    if let Some(s) = state {
+        let (mc_buffer_row, mc_buffer_col) = match byte.filter(|_| !described_pane) {
+            Some(byte_pos) => {
+                let state = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&buffer_id);
+                match state {
+                    Some(s) => {
                         let (line, col_b) = s.buffer.position_to_line_col(byte_pos);
                         (
                             Some(line.min(u32::MAX as usize) as u32),
                             Some(col_b.min(u32::MAX as usize) as u32),
                         )
-                    } else {
-                        (None, None)
                     }
+                    None => (None, None),
                 }
-                None => (None, None),
             }
+            None => (None, None),
         };
 
         // A press on a widget never reaches here: a mounted panel's widgets
@@ -370,23 +313,12 @@ impl Editor {
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
-        // Get cached view line mappings for this split (before mutable borrow of buffers)
+        // The rows the pane's last text pass drew, as its leaf keeps them —
+        // the same rows the leaf answered `byte` from.
         let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(&split_id)
-            .cloned();
-
-        // Get fallback from SplitViewState viewport
-        let fallback = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&split_id)
-            .map(|vs| vs.viewport.top_byte())
-            .unwrap_or(0);
+            .active_window()
+            .pane_view(split_id)
+            .map(|v| v.rows.clone());
 
         // Get compose width for this split (adjusts content rect for centered layout)
         let compose_width = self
@@ -413,21 +345,30 @@ impl Editor {
         {
             let gutter_width = state.margins.left_total_width() as u16;
 
-            let Some(click_target) =
-                super::click_geometry::screen_to_buffer_position_with_overshoot(
-                    col,
-                    row,
-                    content_rect,
-                    gutter_width,
-                    &cached_mappings,
-                    fallback,
-                    true, // Allow gutter clicks - position cursor at start of line
-                    compose_width,
+            // **The byte is the leaf's; the overshoot is read from the same
+            // rows.** The press carries the byte the pane's leaf answered
+            // (`Event::text_byte`); how far past the drawn content the cell
+            // was — what virtual space places the caret by — is the same
+            // projection asked once more here, in the leaf's own cells
+            // (`content_rect` is the tree's, as the leaf's rectangle was
+            // when it answered), and the two agree because they are one
+            // function over one view.
+            let Some(click_target) = self.active_window().pane_view(split_id).and_then(|v| {
+                v.click_target(
+                    col.saturating_sub(content_rect.x),
+                    row.saturating_sub(content_rect.y),
                 )
-            else {
+            }) else {
                 return Ok(());
             };
-            let target_position = click_target.position;
+            if byte.is_some() {
+                debug_assert_eq!(
+                    byte,
+                    Some(click_target.position),
+                    "the press's byte is the leaf's answer for its cell"
+                );
+            }
+            let target_position = byte.unwrap_or(click_target.position);
 
             // Toggle fold on gutter click if this line is foldable/collapsed
             let adjusted_rect =

@@ -339,6 +339,9 @@ impl Terminal {
                 };
                 self.fill(r, ch, fg, bg, clip);
             }
+            // A wash recolours what is under it and keeps the text; this
+            // backend has no ground to recolour, so it paints nothing.
+            Draw::Wash => {}
             Draw::Scrim(Scrim::Opaque) => {
                 self.fill(frame, ' ', c(roles.text), c(roles.base), frame)
             }
@@ -363,6 +366,7 @@ impl Terminal {
                 offset,
                 content,
                 window,
+                ..
             } => {
                 let track = r.h.max(1);
                 let (top, len) =

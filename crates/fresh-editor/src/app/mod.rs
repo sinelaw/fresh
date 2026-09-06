@@ -14,7 +14,7 @@ mod buffer_management;
 mod calibration_actions;
 pub mod calibration_wizard;
 pub(crate) mod chrome;
-mod click_geometry;
+pub(crate) mod click_geometry;
 mod click_handlers;
 mod clipboard;
 mod composite_buffer_actions;
@@ -76,6 +76,7 @@ mod regex_replace;
 pub(crate) mod render;
 mod scan_orchestrators;
 mod scroll_sync;
+mod scrollbar_facts;
 mod scrollbar_input;
 mod scrollbar_math;
 mod search_ops;
@@ -96,6 +97,7 @@ mod terminal_link;
 mod terminal_mouse;
 mod text_ops;
 mod theme_inspect;
+pub use theme_inspect::CellsProvenance;
 mod toggle_actions;
 pub mod types;
 mod ui_tree_dump;
@@ -237,7 +239,7 @@ use crate::input::quick_open::{
     BufferProvider, CommandProvider, FileProvider, GotoLineProvider, QuickOpenRegistry,
 };
 use crate::model::cursor::Cursors;
-use crate::model::event::{Event, EventLog, LeafId, SplitDirection};
+use crate::model::event::{Event, EventLog, LeafId};
 use crate::model::filesystem::FileSystem;
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::fs::FsManager;
@@ -249,7 +251,6 @@ use crate::types::{LspLanguageConfig, LspServerConfig};
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
-use crate::view::ui::{SplitRenderer, StatusBarRenderer};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::Frame;
 use std::collections::HashMap;
@@ -1042,6 +1043,11 @@ pub struct Editor {
     /// Flag set by plugin commands that need a render (e.g., RefreshLines)
     #[cfg(feature = "plugins")]
     plugin_render_requested: bool,
+    /// A frame is owed: the last frame's reconcile moved a viewport under
+    /// the rectangle layout gave it (a resize), so what was described from
+    /// the viewport before the move — a scrollbar's thumb — is a frame
+    /// behind what was painted. Taken by the main loop's tick.
+    pub(crate) frame_requested: bool,
 
     /// Clone of the buffer as it stood at the end of the previous render
     /// pass. Ratatui's `swap_buffers` resets the "current" buffer, so at
@@ -1133,11 +1139,6 @@ pub struct Editor {
     /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
     /// See docs/internal/web-ui.md.
     pub(crate) suppress_chrome_cells: bool,
-    /// Theme-key runs the background band's fold recorded, held until the
-    /// overlay band has added its own so both are applied to the per-cell map
-    /// together — in paint order, which is what the inspector wants. Frame
-    /// -scoped: taken and refilled every frame, never read between them.
-    pub(crate) fold_provenance: Vec<crate::app::types::ThemeRun>,
     /// The status bar's elements for the frame being rendered.
     ///
     /// Kept because reading a rectangle
@@ -2269,6 +2270,63 @@ mod tests {
         }
     }
 
+    /// A frame, drawn: the same `render` a terminal's frame runs, into a
+    /// test backend.
+    fn draw_frame(editor: &mut Editor) {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| editor.render(frame)).expect("draw");
+    }
+
+    /// **The provenance gate.** Every cell a frame shows is the fold's, from
+    /// a described item, or the pane painter's inside a host leaf; no
+    /// painter writes outside one. Over a plain frame, a split one, and one
+    /// with a prompt and its list up.
+    #[test]
+    fn no_painter_written_cell_lies_outside_a_host_leaf() {
+        use crate::input::keybindings::Action;
+        let mut editor = default_test_editor();
+        for c in "fn main() {}".chars() {
+            editor.handle_action(Action::InsertChar(c)).unwrap();
+        }
+        editor.handle_action(Action::InsertNewline).unwrap();
+        for c in "let x = 1;".chars() {
+            editor.handle_action(Action::InsertChar(c)).unwrap();
+        }
+        draw_frame(&mut editor);
+        let p = editor.cells_provenance();
+        assert!(p.fold > 0, "the chrome is the fold's: {p:?}");
+        assert!(
+            p.painter_in_hosts > 0,
+            "the pane's text is the painter's: {p:?}"
+        );
+        assert!(
+            p.painter_outside_hosts.is_empty(),
+            "a painter wrote outside every host: {:?}",
+            p.painter_outside_hosts
+        );
+
+        editor.handle_action(Action::SplitVertical).unwrap();
+        draw_frame(&mut editor);
+        let p = editor.cells_provenance();
+        assert!(p.painter_in_hosts > 0);
+        assert!(
+            p.painter_outside_hosts.is_empty(),
+            "{:?}",
+            p.painter_outside_hosts
+        );
+
+        editor.handle_action(Action::CommandPalette).unwrap();
+        draw_frame(&mut editor);
+        let p = editor.cells_provenance();
+        assert!(p.fold > 0);
+        assert!(
+            p.painter_outside_hosts.is_empty(),
+            "{:?}",
+            p.painter_outside_hosts
+        );
+    }
+
     /// One frame of the shell's tree, without a terminal — the same call
     /// `render` makes, so the context read below reads a real tree.
     fn frame_the_shell(editor: &mut Editor) {
@@ -2277,6 +2335,12 @@ mod tests {
         let split = editor.compute_dock_split(rect);
         let shell = editor.shell_frame(split);
         editor.lay_out_shell_tree(shell, fresh_ui::Size::new(80, 24));
+    }
+
+    /// The PTY gate, as the tree derives it: a live terminal's leaf takes
+    /// raw input while the keyboard is its own (`Ui::raw_input`).
+    fn pty_open(editor: &Editor) -> bool {
+        editor.shell_ui.as_ref().is_some_and(|ui| ui.raw_input())
     }
 
     /// With nothing layered over the content, the context is the active
@@ -2290,7 +2354,10 @@ mod tests {
         frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
         assert!(editor.editor_base_owns_keyboard());
-        assert!(!editor.presents_blocking_overlay());
+        assert!(!pty_open(&editor), "no terminal takes the keyboard raw");
+        editor.active_window_mut().key_context = KeyContext::Terminal;
+        frame_the_shell(&mut editor);
+        assert!(pty_open(&editor), "the terminal's pane leaf does");
     }
 
     /// A *focused* dock holds the keyboard (`KeyContext::Dock`), read off
@@ -2303,19 +2370,20 @@ mod tests {
         use crate::input::keybindings::KeyContext;
 
         let mut editor = default_test_editor();
+        editor.active_window_mut().key_context = KeyContext::Terminal;
         editor.dock = Some(test_panel(
             PanelPlacement::LeftDock { width_cols: 30 },
             true,
         ));
         frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Dock);
-        assert!(editor.presents_blocking_overlay());
+        assert!(!pty_open(&editor), "the dock holds the keyboard");
         assert!(!editor.editor_base_owns_keyboard());
 
         editor.dock.as_mut().unwrap().focused = false;
         frame_the_shell(&mut editor);
-        assert_eq!(editor.get_key_context(), KeyContext::Normal);
-        assert!(!editor.presents_blocking_overlay());
+        assert_eq!(editor.get_key_context(), KeyContext::Terminal);
+        assert!(pty_open(&editor), "blurred, the terminal has it back");
     }
 
     /// A focused centered modal over a focused dock: the frame declares the
@@ -2327,6 +2395,7 @@ mod tests {
         use crate::input::keybindings::KeyContext;
 
         let mut editor = default_test_editor();
+        editor.active_window_mut().key_context = KeyContext::Terminal;
         editor.dock = Some(test_panel(
             PanelPlacement::LeftDock { width_cols: 30 },
             true,
@@ -2334,7 +2403,7 @@ mod tests {
         editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
         frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
-        assert!(editor.presents_blocking_overlay());
+        assert!(!pty_open(&editor), "the modal holds the keyboard");
     }
 
     /// F3: hiding the left dock (Toggle Dock → unmount) must request a
@@ -4412,6 +4481,139 @@ mod tests {
         );
         assert_eq!(editor.pane_beside(source), Some(right.0));
         assert_eq!(editor.pane_beside(right.0), Some(source));
+    }
+
+    /// **A prompt opened over another takes the other's toolbar down.** The
+    /// toolbar's registry entry lives exactly as long as the prompt that
+    /// shows it; a prompt assigned over another used to leave the other's
+    /// mounted, and the next toolbar for that plugin found it and carried a
+    /// focus the user never gave this session.
+    #[test]
+    fn a_prompt_opened_over_another_unmounts_its_toolbar() {
+        use crate::view::prompt::{Prompt, PromptType};
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        editor.set_prompt(Prompt::new("a: ".into(), PromptType::QueryReplaceConfirm));
+        let key =
+            crate::widgets::PanelKey::new("test-plugin", crate::widgets::PROMPT_TOOLBAR_PANEL_ID);
+        editor.mount_prompt_toolbar(
+            &key,
+            fresh_core::api::WidgetSpec::Col {
+                children: Vec::new(),
+                key: None,
+            },
+        );
+        editor.active_window_mut().prompt.as_mut().unwrap().toolbar = Some(key.clone());
+        assert!(editor.widget_registry.get(&key).is_some(), "mounted");
+
+        editor.set_prompt(Prompt::new("b: ".into(), PromptType::QueryReplaceConfirm));
+        assert!(
+            editor.widget_registry.get(&key).is_none(),
+            "the toolbar went down with the prompt it belonged to"
+        );
+        assert!(
+            editor.active_window().prompt.is_some(),
+            "and the new prompt is up"
+        );
+    }
+
+    /// **The terminal's context is read off the leaf, not the window.** The
+    /// window's mode is what the description states on the active pane's
+    /// leaf, and `get_key_context` reads it off the focus chain like every
+    /// other surface's; the window is asked for nothing.
+    #[test]
+    fn terminal_mode_is_read_off_the_pane_leaf() {
+        use crate::input::keybindings::KeyContext;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        editor.active_window_mut().key_context = KeyContext::Terminal;
+        editor.shell_description_stale = true;
+        assert_eq!(editor.get_key_context(), KeyContext::Terminal);
+        assert!(
+            editor.shell_ui.as_ref().is_some_and(|ui| ui.raw_input()),
+            "and the tree says the terminal takes raw input"
+        );
+        editor.active_window_mut().key_context = KeyContext::Normal;
+        editor.shell_description_stale = true;
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// **A typed key lays the tree out once.** The key's own spend marks the
+    /// description stale, so the *next* key lays it out at its head; the
+    /// fact the key produced is applied over the tree that produced it, and
+    /// its context read does not lay it out again. Two layouts per key made
+    /// typing a long text on CI time out.
+    #[test]
+    fn a_typed_key_lays_the_tree_out_once() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        editor
+            .handle_key(KeyCode::Char('a'), KeyModifiers::NONE)
+            .unwrap();
+        let _ = stats::take();
+        editor
+            .handle_key(KeyCode::Char('b'), KeyModifiers::NONE)
+            .unwrap();
+        assert_eq!(stats::take().shell, 1, "one layout for one key");
+        assert_eq!(editor.active_state().buffer.to_string().unwrap(), "ab");
+    }
+
+    /// **A key before the first frame is routed by the tree, not dropped.**
+    /// The tree is the whole keyboard, so an editor that has never rendered
+    /// — a daemon's, whose client types before its terminal reports a size
+    /// — lays the tree out from its description at its own size and routes
+    /// the key over it; the active pane's content is the base's focus
+    /// holder there and hands the key to the editor.
+    #[test]
+    fn a_key_before_the_first_frame_reaches_the_buffer() {
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        editor
+            .handle_key(KeyCode::Char('a'), KeyModifiers::NONE)
+            .unwrap();
+        assert_eq!(
+            editor.active_state().buffer.to_string().unwrap(),
+            "a",
+            "typed into the buffer with no frame ever rendered"
+        );
     }
 
     /// Every window's panes are placed by the layout funnel, not only the

@@ -42,11 +42,11 @@ pub use ambient::{provide, provide_eq, scope, Ambient, AmbientKey, ProvideProps}
 pub use behavior::Behavior;
 pub use component::{memo, AnyComponent, Component, Memo};
 pub use desc::{
-    col, focusable, gesture, host, host_leaf, layer, layout_reader, node_key, node_type, resolve,
-    row, shared_rc, stack, text, text_runs, viewport, Align, Anchor, BoxProps, ComponentExt, Desc,
-    Dir, Dismiss, ElemType, Elide, Fit, FocusProps, GestureProps, Handler, HostId, HostSpec,
-    ItemHeight, LayerProps, LayoutReaderProps, Listener, Modality, Node, Pad, Place, PointerMode,
-    Run, Scrim, ScrollMode, Sizing, TextProps, ViewportProps,
+    col, focusable, gesture, host, host_leaf, host_object, layer, layout_reader, node_key,
+    node_type, resolve, row, shared_rc, stack, text, text_runs, viewport, Align, Anchor, BoxProps,
+    ComponentExt, Desc, Dir, Dismiss, ElemType, Elide, Fit, FocusProps, GestureProps, Handler,
+    HostId, HostSpec, ItemHeight, LayerProps, LayoutReaderProps, Listener, Modality, Node, Pad,
+    Place, PointerMode, Run, Scrim, ScrollMode, Sizing, TextProps, ViewportProps,
 };
 pub use element::ElementId;
 pub use event::{
@@ -62,10 +62,10 @@ pub use key::{Key, KeyPath};
 pub use render::geom::{distribute, Constraints, Point, Rect, Size};
 pub use render::glyph;
 pub use render::object::{
-    Band, FocusReg, Geom, Hit, HostLeaf, LayerGeom, LayoutCx, LayoutInfo, PlainHost, RenderId,
-    RenderObject, ScrollInfo,
+    Band, FocusReg, Geom, Hit, HostLeaf, HostObject, LayerGeom, LayoutCx, LayoutInfo, PlainHost,
+    RenderId, RenderObject, ScrollInfo,
 };
-pub use render::spec::{BorderStyle, CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};
+pub use render::spec::{BorderStyle, CursorSpec, Draw, DrawList, Item, LayoutSpec, Mark, ThemeKey};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};
 pub use services::{GeomHandle, GeomSnapshot, Geometry, Job, Services};
 pub use widgets::{

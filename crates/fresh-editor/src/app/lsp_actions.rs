@@ -106,7 +106,7 @@ impl Editor {
         }
 
         // Start prompt with suggestions
-        self.active_window_mut().prompt = Some(Prompt::with_suggestions(
+        self.set_prompt(Prompt::with_suggestions(
             "Restart LSP server: ".to_string(),
             PromptType::RestartLspServer,
             suggestions.clone(),
@@ -324,7 +324,7 @@ impl Editor {
         }
 
         // Start prompt with suggestions
-        self.active_window_mut().prompt = Some(Prompt::with_suggestions(
+        self.set_prompt(Prompt::with_suggestions(
             "Stop LSP server: ".to_string(),
             PromptType::StopLspServer,
             suggestions.clone(),

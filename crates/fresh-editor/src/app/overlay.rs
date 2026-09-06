@@ -107,25 +107,6 @@ impl Editor {
         })
     }
 
-    /// Whether a surface in the tree carries `key` — the presence question
-    /// for a layer that is up whether or not it holds focus.
-    fn shell_has(&self, key: &fresh_ui::Key) -> bool {
-        self.shell_ui
-            .as_ref()
-            .is_some_and(|ui| ui.find_by_key(key).is_some())
-    }
-
-    /// True iff an overlay is blocking key routing to a terminal buffer's
-    /// PTY child: something over the content holds the keyboard, or a popup
-    /// or the centered widget panel is up over the content. A blurred dock
-    /// leaves the dived-into terminal usable; a merely-visible popup does
-    /// not (it covers the active buffer and the keystrokes belong to it).
-    pub(crate) fn presents_blocking_overlay(&self) -> bool {
-        self.focus_in_a_layer()
-            || self.shell_has(&crate::view::shell::popup::popup_key(0))
-            || self.shell_has(&crate::view::shell::panel::key())
-    }
-
     /// True iff the editor pane itself owns the keyboard — nothing above
     /// it (menu, prompt, modal, context menu, dock, floating panel, a
     /// key-capturing popup) has claimed it.
@@ -168,25 +149,26 @@ impl Editor {
             if let Some(f) = ui.focused() {
                 for e in ui.path_to(f).into_iter().rev() {
                     let Some(k) = ui.key_of(e) else { continue };
+                    // A pane's content resolves keys in the context its leaf
+                    // settled — a terminal taking the keyboard, a composite
+                    // (`PaneHandle::context`). The plain one is no answer:
+                    // a mounted panel's interior carries the content key too
+                    // and names its own surface further up.
+                    if let Some(pane) = crate::view::shell::splits::pane_of_content_key(&k) {
+                        if let Some(c) = self.active_window().pane_context(pane) {
+                            if c != crate::input::keybindings::KeyContext::Normal {
+                                return c;
+                            }
+                        }
+                    }
                     if let Some(c) = crate::view::shell::frame::key_context_of(&k) {
                         return c;
                     }
                 }
             }
         }
-        self.base_key_context()
-    }
-
-    /// The editor content's own context.
-    fn base_key_context(&self) -> crate::input::keybindings::KeyContext {
-        use crate::input::keybindings::KeyContext;
-        if self
-            .active_window()
-            .is_composite_buffer(self.active_buffer())
-        {
-            KeyContext::CompositeBuffer
-        } else {
-            self.active_window().key_context.clone()
-        }
+        // A chain that names no surface is the editor's plain content, so
+        // nothing is read off the window here.
+        crate::input::keybindings::KeyContext::Normal
     }
 }

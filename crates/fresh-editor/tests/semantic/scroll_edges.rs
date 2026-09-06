@@ -361,16 +361,33 @@ fn a_multi_line_notch_walks_the_view_a_line_at_a_time() {
         "this test is about a notch worth more than one line"
     );
 
-    // `mouse_scroll_down` renders the frame the event produces.
-    harness.mouse_scroll_down(20, 10).unwrap();
+    // The event alone, before any frame: the line it carries has landed and
+    // the other two are owed to the walk. Asserted on the editor's state
+    // rather than on a frame, because the walk is paced by the clock — a
+    // frame that takes longer than a step to draw (a loaded CI runner)
+    // delivers the next line with it, which is the walk degrading toward the
+    // jump as designed, not the notch failing to walk.
+    let before = harness.top_line_number();
+    harness
+        .send_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollDown,
+            column: 20,
+            row: 10,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        })
+        .unwrap();
     assert_eq!(
-        top_visible_line(&harness, LINES),
-        2,
-        "the first line of the notch lands right away, screen:\n{}",
-        harness.screen_to_string()
+        harness.top_line_number(),
+        before + 1,
+        "the first line of the notch lands with the event"
+    );
+    assert!(
+        harness.editor().has_pending_wheel_scroll(),
+        "the rest of the notch is owed to the walk, not delivered with the event"
     );
 
     // And the walk carries the view the rest of the notch.
+    harness.render().unwrap();
     harness
         .wait_until(|h| top_visible_line(h, LINES) == 4)
         .unwrap();

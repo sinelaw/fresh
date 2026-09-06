@@ -36,14 +36,6 @@ use super::Editor;
 pub(crate) enum PointerGrab {
     /// Drag-to-select in a widget markdown/text document.
     WidgetText,
-    /// A press on a live terminal grid whose first motion converts to
-    /// scrollback text selection (selection intent).
-    TerminalSelectPending,
-    /// Buffer text selection (the press placed the caret; drags
-    /// extend the selection).
-    TextSelection,
-    /// A tab being dragged toward a drop zone.
-    TabDrag,
 }
 
 /// The grab in effect for the current event, if any. The terminal
@@ -74,16 +66,10 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     // list is a viewport whose bar captures the pointer itself, and every
     // mounted panel is described, so no panel scrollbar is a grab of this
     // walk's any more.
-    let ms = &ed.active_window().mouse_state;
-    if ms.terminal_drag_pending.is_some() {
-        return Some(PointerGrab::TerminalSelectPending);
-    }
-    if ms.dragging_text_selection {
-        return Some(PointerGrab::TextSelection);
-    }
-    if ms.dragging_tab.is_some() {
-        return Some(PointerGrab::TabDrag);
-    }
+    // A tab drag was a grab here, and so were the buffer's text selection
+    // and a live terminal grid's selection intent. The tab's node and the
+    // pane's content leaf capture the pointer on their press, so their moves
+    // and their release never reach this walk.
     None
 }
 

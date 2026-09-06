@@ -143,7 +143,7 @@ impl Editor {
         self.active_window_mut().on_editor_focus_lost();
 
         self.drop_prompt();
-        self.active_window_mut().prompt = Some(Prompt::with_initial_text(
+        self.set_prompt(Prompt::with_initial_text(
             message,
             prompt_type,
             initial_text,
@@ -164,7 +164,7 @@ impl Editor {
         self.drop_prompt();
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
         prompt.set_input_plain(prefix.to_string());
-        self.active_window_mut().prompt = Some(prompt);
+        self.set_prompt(prompt);
 
         self.update_quick_open_suggestions(prefix);
     }
@@ -1135,7 +1135,7 @@ impl Editor {
                     .any(|s| s.text == final_input || s.get_value() == final_input);
                 if !is_valid {
                     // Restore the prompt and don't confirm
-                    self.active_window_mut().prompt = Some(prompt);
+                    self.set_prompt(prompt);
                     self.set_status_message(
                         t!("error.no_lsp_match", input = final_input.clone()).to_string(),
                     );
@@ -1154,7 +1154,7 @@ impl Editor {
                             final_input = suggestion.get_value().to_string();
                         }
                     } else {
-                        self.active_window_mut().prompt = Some(prompt);
+                        self.set_prompt(prompt);
                         return None;
                     }
                 } else {
@@ -1165,7 +1165,7 @@ impl Editor {
                         final_input = suggestion.get_value().to_string();
                     } else {
                         // Typed text doesn't match any ruler — reject
-                        self.active_window_mut().prompt = Some(prompt);
+                        self.set_prompt(prompt);
                         return None;
                     }
                 }

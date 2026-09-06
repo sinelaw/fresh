@@ -332,13 +332,17 @@ fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
         .children(children);
     // The caret indicator the panel paints under the hardware cursor when it
     // owns the keyboard. It replaces the left-most cell of the row, which is
-    // what the old `Paragraph::new("▌")` overwrote.
+    // what the old `Paragraph::new("▌")` overwrote — and it places the
+    // hardware cursor on that cell (`cursor_byte`), so the row the keyboard
+    // is on is the display list's caret, not arithmetic over the region's
+    // origin and the box's border.
     let body = if caret {
         stack().h(Sizing::Cells(1)).children([
             body,
-            row()
-                .h(Sizing::Cells(1))
-                .children([text("▌").theme(caret_ink(&r.theme)).w(Sizing::Cells(1))]),
+            row().h(Sizing::Cells(1)).children([text("▌")
+                .theme(caret_ink(&r.theme))
+                .w(Sizing::Cells(1))
+                .cursor_byte(0)]),
         ])
     } else {
         body

@@ -155,7 +155,7 @@ impl PaneRects {
 ///
 /// The same rule as `SplitManager::visible_leaves` plus `Window::pane_groups`,
 /// stated over the description because that is what the offscreen layout has.
-fn panes_of(s: &Splits) -> Vec<LeafId> {
+pub(crate) fn panes_of(s: &Splits) -> Vec<LeafId> {
     let mut out: Vec<LeafId> = match s.maximized.and_then(|id| s.root.find(id.0)) {
         Some(SplitNode::Leaf { split_id, .. }) => vec![*split_id],
         _ => s
@@ -286,6 +286,10 @@ mod tests {
             controls: Default::default(),
             groups: Default::default(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         let area = Rect::new(3, 2, 100, 40);
         let _ = stats::take();
@@ -337,6 +341,10 @@ mod tests {
             controls: Default::default(),
             groups: Default::default(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         let area = Rect::new(0, 0, 80, 24);
         let rects = PaneRects::offscreen(&s, area);
@@ -372,6 +380,10 @@ mod tests {
             controls: Default::default(),
             groups: [(id(0), group.clone())].into_iter().collect(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         let area = Rect::new(0, 0, 80, 24);
         let rects = PaneRects::offscreen(&s, area);

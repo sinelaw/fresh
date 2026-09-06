@@ -744,8 +744,21 @@ impl CellPass<'_, '_, '_> {
         if self.input.screen_width == 0 {
             return;
         }
-        let screen_col = self.input.render_area.x + self.cell_screen_x();
-        let screen_row = self.input.render_area.y + self.input.current_row;
+        let area = self.input.render_area;
+        let screen_col = area.x + self.cell_screen_x();
+        let screen_row = area.y + self.input.current_row;
+        // **A cell outside the painter's own area is not on the screen, so it
+        // has no provenance to record.** The buffer write for one is clipped
+        // by `ratatui`; this map is not, so a cell the pass walked past the
+        // right edge or below the last row was filed under the painter at a
+        // position somebody else owns — the pane's scrollbar corner, most
+        // often, which is the tree's and kept clear. The theme inspector read
+        // that as "Editor Content", and so did the provenance gate.
+        if screen_col >= area.x.saturating_add(area.width)
+            || screen_row >= area.y.saturating_add(area.height)
+        {
+            return;
+        }
         let idx = screen_row as usize * self.input.screen_width as usize + screen_col as usize;
         if let Some(cell) = self.cell_theme_map.get_mut(idx) {
             *cell = CellThemeInfo {

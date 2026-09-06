@@ -142,6 +142,9 @@ impl BorderStyle {
 pub enum Draw {
     /// A background region.
     Fill,
+    /// A background laid over what was painted before it, keeping the text
+    /// there: the region inherits its content and takes the theme's ground.
+    Wash,
     /// A box outline drawn inside `rect`, in the given corner style.
     Border(BorderStyle),
     /// Covers everything painted before it.
@@ -167,6 +170,21 @@ pub enum Draw {
         /// and a bar drawn from the track instead would say a list of
         /// five-row cards is five times as visible as it is.
         window: u16,
+        /// Which way the track runs. A vertical bar's track is its
+        /// rectangle's height and its thumb travels down it; a horizontal
+        /// bar's is the width. The item's rectangle is one cell thick across
+        /// the other axis.
+        axis: crate::event::Axis,
+        /// Marks on the track: an overview of where things are in the
+        /// content — search hits, diagnostics, unsaved changes — each at a
+        /// track cell, in its own theme. Part of the bar's own item rather
+        /// than a second overlay measured against it, so a backend paints the
+        /// mark and the thumb it may share a cell with together. `full`
+        /// paints the whole cell in the mark's theme (a highlighted track
+        /// cell); otherwise a backend paints a glyph in the mark's foreground
+        /// over the bar's own cell, so mark and scroll position stay readable
+        /// in one cell.
+        marks: Rc<[Mark]>,
     },
     /// A region whose text the backend may let the user select. The library
     /// holds no selection model; this only says where selecting is meaningful.
@@ -175,7 +193,31 @@ pub enum Draw {
     Host(HostId),
 }
 
+/// One mark on a [`Draw::Scrollbar`]'s track.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    /// The track cell, from the bar's start.
+    pub at: u16,
+    /// Where the mark's colour comes from: a backend paints the glyph in this
+    /// theme's foreground (and, for a `full` mark, the cell in its
+    /// background).
+    pub theme: ThemeKey,
+    /// Paint the whole cell rather than a glyph over the bar's cell.
+    pub full: bool,
+}
+
 impl Draw {
+    /// A bar with no marks, running down its rectangle.
+    pub fn scrollbar(offset: u32, content: u32, window: u16) -> Draw {
+        Draw::Scrollbar {
+            offset,
+            content,
+            window,
+            axis: crate::event::Axis::Vertical,
+            marks: Rc::from(Vec::new()),
+        }
+    }
+
     /// Thumb geometry for a [`Draw::Scrollbar`], in track cells: `(top, len)`.
     ///
     /// Shared so every backend renders the bar identically and correctly at the

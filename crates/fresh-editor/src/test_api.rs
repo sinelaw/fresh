@@ -29,6 +29,10 @@
 // one-directional contract documented in §2.1 of the design doc.
 pub use crate::input::keybindings::Action;
 
+/// The provenance gate's answer for the last frame — see
+/// `Editor::cells_provenance` (design §3.7.9).
+pub use crate::app::CellsProvenance;
+
 // The text pipeline's frame-cost counters (`view::ui::split_rendering::instrument`):
 // how many panes a frame placed, formatted and built rows for. The e2e harness
 // asserts the three agree around every frame.
@@ -909,13 +913,14 @@ impl EditorTestApi for crate::app::Editor {
     }
 
     fn primary_scrollbar_geometry(&self) -> Option<(usize, usize, u16, u16)> {
-        let areas = self.get_split_areas();
-        let (split, _buf, thumb_start, thumb_end) = areas.first()?;
-        // The bar is the tree's; the thumb is the record's.
-        let scrollbar_rect = self.pane_vscroll_rect(*split)?;
+        let (split, _buf) = self.get_split_areas().into_iter().next()?;
+        // The bar is the tree's, and so is the thumb: the bar's own facts,
+        // on the track the tree gave it.
+        let scrollbar_rect = self.pane_vscroll_rect(split)?;
+        let (thumb_start, thumb_end, _) = self.bar_thumb(split, fresh_ui::Axis::Vertical)?;
         Some((
-            *thumb_start,
-            *thumb_end,
+            thumb_start,
+            thumb_end,
             scrollbar_rect.height,
             scrollbar_rect.y,
         ))

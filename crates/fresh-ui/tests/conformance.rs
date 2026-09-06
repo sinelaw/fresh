@@ -978,6 +978,86 @@ fn a_leaf_inside_an_exclusive_layer_still_takes_raw_input() {
     assert!(ui.raw_input());
 }
 
+/// **Raw input is the keyboard's.** A leaf takes it only while focus is on
+/// it or inside it, or nothing holds focus: a layer that holds the keyboard
+/// above a raw leaf — a popup over a terminal — takes the keys the leaf
+/// would have taken raw, whatever its modality.
+#[test]
+fn a_raw_leaf_takes_no_input_while_something_else_holds_the_keyboard() {
+    let grid = || {
+        host_leaf(|| {
+            Box::new(Grid {
+                cells: Cell::new(0),
+            })
+        })
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(grid()).child(
+            layer()
+                .modality(Modality::Keyboard)
+                .child(focusable(text("popup")).autofocus()),
+        ),
+        FRAME,
+    );
+    assert!(ui.focused().is_some(), "the layer's field holds focus");
+    assert!(!ui.raw_input(), "so the leaf takes nothing raw");
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(col().child(focusable(grid()).autofocus()), FRAME);
+    assert!(ui.focused().is_some());
+    assert!(
+        ui.raw_input(),
+        "the leaf holds the keyboard and takes it raw"
+    );
+
+    // The leaf's keyboard is its holder's: a leaf wrapped in a focusable —
+    // under a keyed node above that, as a pane's context is — takes raw
+    // input while the wrapper holds focus, and none while a focusable beside
+    // it does.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col()
+            .child(
+                fresh_ui::stack()
+                    .key("context")
+                    .child(focusable(grid()).autofocus()),
+            )
+            .child(focusable(text("field"))),
+        FRAME,
+    );
+    assert!(ui.raw_input(), "focus on the wrapper is focus on the leaf");
+    key(&mut ui, KeyCode::Tab);
+    assert!(
+        !ui.raw_input(),
+        "and the leaf takes nothing raw while the field beside it holds the keyboard"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A wash is a ground that keeps what it covers
+// ---------------------------------------------------------------------------
+
+/// A themed box paints a fill; the same box as a wash paints a wash, in the
+/// same place and before its own content, so a backend recolours the cells
+/// under it and keeps their text.
+#[test]
+fn a_washed_box_paints_a_wash_where_a_themed_box_paints_a_fill() {
+    let grounds = |root: Node<()>| -> Vec<(Draw, Rect)> {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(root, FRAME)
+            .items
+            .iter()
+            .filter(|i| matches!(i.draw, Draw::Fill | Draw::Wash))
+            .map(|i| (i.draw.clone(), i.rect))
+            .collect()
+    };
+    let plain = grounds(col().child(col().theme("ground").child(text("over"))));
+    assert_eq!(plain, vec![(Draw::Fill, Rect::new(0, 0, 20, 1))]);
+    let washed = grounds(col().child(col().theme("ground").wash().child(text("over"))));
+    assert_eq!(washed, vec![(Draw::Wash, Rect::new(0, 0, 20, 1))]);
+}
+
 // ---------------------------------------------------------------------------
 // D11 — the cursor reaches the display list
 // ---------------------------------------------------------------------------

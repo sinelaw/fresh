@@ -2278,7 +2278,7 @@ impl Window {
     /// one cell tall whenever a search prompt is up, so every pane was a row
     /// too tall again with the search bar showing.
     ///
-    /// It cannot be a read of `WindowLayoutCache::last_editor_content_area`:
+    /// It cannot be a read of the frame's body rectangle (`Editor::body_area`):
     /// `apply_layout` calls this *after* setting a new size and *before* the
     /// frame that would record it, and getting the previous frame's answer
     /// there is the bug this whole migration is about. So it stays a function
@@ -2622,90 +2622,62 @@ impl Window {
         }
     }
 
-    /// Render terminal content for terminal buffers in this window's
-    /// split areas. Overlays the live PTY grid (colors, attributes,
-    /// optional cursor) on top of the buffer's regular text content
-    /// inside `content_rect`.
+    /// Paint a live terminal pane's PTY grid into `content_rect` — the
+    /// pane's own paint, run by the frame's host painter after the text pass
+    /// drew the mirror (`shell_host::BodyPainter::pane`).
     ///
-    /// `cursor_visible_if_active` controls whether the cursor is
-    /// painted at all. The active-window render passes `true` so a
-    /// focused terminal in `terminal_mode` blinks normally; the
-    /// preview path passes `false` so the picker preview stays
-    /// read-only.
+    /// `cursor_visible_if_active` controls whether the block cursor is
+    /// painted at all: the frame passes `true` so a focused terminal in
+    /// terminal mode blinks normally; an embed passes `false`, since it is
+    /// not the input target. The cursor belongs to the focused split's live
+    /// terminal only — other live splits mirror the same PTY.
     ///
-    /// Window-local in every respect — reads `terminal_buffers`,
-    /// `terminal_manager`, `terminal_mode`, `active_buffer()`, and
-    /// `resources.theme` from `self`. The caller picks the window
-    /// (active vs previewed); this method never reaches back to an
-    /// `Editor` or to any other window.
-    pub fn render_terminal_splits(
+    /// Window-local in every respect — reads `terminal_manager`,
+    /// `terminal_link_hover` and `resources.theme` from `self`; the caller
+    /// picks the window and has decided the pane is not in scroll-back.
+    pub fn paint_terminal_grid(
         &self,
         buf: &mut ratatui::buffer::Buffer,
-        split_areas: &[(
-            crate::model::event::LeafId,
-            BufferId,
-            ratatui::layout::Rect,
-            ratatui::layout::Rect,
-            usize,
-            usize,
-        )],
+        split_id: crate::model::event::LeafId,
+        buffer_id: BufferId,
+        content_rect: ratatui::layout::Rect,
         cursor_visible_if_active: bool,
     ) {
-        let focused_split = self.effective_active_split();
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            split_areas
-        {
-            let Some(terminal_id) = self.get_terminal_id(*buffer_id) else {
-                continue;
-            };
-            // The live PTY grid overlays every split showing a terminal EXCEPT
-            // one that is in read-only scrollback — there we defer to normal
-            // text rendering so the user can scroll. Keying this on the split
-            // (not the buffer, not the single window flag) is what lets the
-            // same terminal be scrolled back in one split while another keeps
-            // streaming the live grid, independently, even off-focus
-            // (fresh#2595).
-            if self.split_terminal_scrollback(*split_id, *buffer_id) {
-                continue;
-            }
-            let Some(handle) = self.terminal_manager.get(terminal_id) else {
-                continue;
-            };
-            let Ok(state) = handle.state.lock() else {
-                continue;
-            };
-            let cursor_pos = state.cursor_position();
-            // The block cursor belongs to the focused split's live terminal
-            // only — other live splits mirror the same PTY but aren't the
-            // input target.
-            let cursor_visible = state.cursor_visible()
-                && *split_id == focused_split
-                && self.focused_terminal_live()
-                && cursor_visible_if_active;
-            let (_, rows) = state.size();
-            let mut content = Vec::with_capacity(rows as usize);
-            for row in 0..rows {
-                content.push(state.get_line(row));
-            }
-            // Ctrl+hover underline: highlight the link span when it's in this
-            // terminal buffer.
-            let link_highlight = self
-                .terminal_link_hover
-                .as_ref()
-                .and_then(|h| (h.buffer_id == *buffer_id).then(|| (h.row, h.cols.clone())));
-            ratatui::widgets::Widget::render(ratatui::widgets::Clear, *content_rect, buf);
-            let theme = self.resources.theme.read().unwrap();
-            render::render_terminal_content(
-                &content,
-                cursor_pos,
-                cursor_visible,
-                *content_rect,
-                buf,
-                theme.terminal_fg,
-                theme.terminal_bg,
-                link_highlight,
-            );
+        let Some(terminal_id) = self.get_terminal_id(buffer_id) else {
+            return;
+        };
+        let Some(handle) = self.terminal_manager.get(terminal_id) else {
+            return;
+        };
+        let Ok(state) = handle.state.lock() else {
+            return;
+        };
+        let cursor_pos = state.cursor_position();
+        let cursor_visible = state.cursor_visible()
+            && split_id == self.effective_active_split()
+            && self.focused_terminal_live()
+            && cursor_visible_if_active;
+        let (_, rows) = state.size();
+        let mut content = Vec::with_capacity(rows as usize);
+        for row in 0..rows {
+            content.push(state.get_line(row));
         }
+        let link_highlight = self
+            .terminal_link_hover
+            .as_ref()
+            .and_then(|h| (h.buffer_id == buffer_id).then(|| (h.row, h.cols.clone())));
+        ratatui::widgets::Widget::render(ratatui::widgets::Clear, content_rect, buf);
+        let theme = self.resources.theme.read().unwrap();
+        render::render_terminal_content(
+            &content,
+            cursor_pos,
+            cursor_visible,
+            content_rect,
+            buf,
+            theme.terminal_fg,
+            theme.terminal_bg,
+            link_highlight,
+        );
     }
 }
 

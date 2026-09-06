@@ -7,7 +7,84 @@ use crate::view::theme::color_to_rgb;
 use anyhow::Result as AnyhowResult;
 use ratatui::style::{Color, Style};
 
+/// Where the last frame's cells came from, by their theme provenance.
+///
+/// **The provenance gate** (design §3.7.9): every cell a frame shows was
+/// written either by the fold, from a display-list item — recorded with the
+/// region `Chrome`, or relabelled by the described surface it belongs to,
+/// as the status bar does — or by the one painter left, the pane's text
+/// pipeline, which records its own two regions ([`PAINTER_REGIONS`]). A
+/// painter-written cell outside every `Draw::Host` item's rectangle would
+/// be a painter that is not a leaf's, which is the migration's defect;
+/// there are none, and this is what says so.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CellsProvenance {
+    /// Cells the fold wrote from a described item.
+    pub fold: usize,
+    /// Cells the pane's painter wrote inside a host leaf's rectangle.
+    pub painter_in_hosts: usize,
+    /// Cells the pane's painter wrote outside every host leaf's rectangle,
+    /// as `(col, row, region)`. Empty on every frame.
+    pub painter_outside_hosts: Vec<(u16, u16, String)>,
+    /// The host leaves the frame declared, for a report that names where the
+    /// painter was allowed to write as well as where it did.
+    pub hosts: Vec<ratatui::layout::Rect>,
+}
+
+/// The regions the pane's text pipeline files its cells under — the one
+/// painter's labels. Every other region is a described surface's.
+pub const PAINTER_REGIONS: [&str; 2] = ["Editor Content", "Line Numbers"];
+
 impl Editor {
+    /// Classify the last frame's cells by who wrote them — see
+    /// [`CellsProvenance`]. Read after `render`, over the frame it drew.
+    pub fn cells_provenance(&self) -> CellsProvenance {
+        let chrome = self.active_chrome();
+        let (width, height) = (chrome.last_frame.width, chrome.last_frame.height);
+        let hosts: Vec<ratatui::layout::Rect> = self
+            .shell_ui
+            .as_ref()
+            .map(|ui| {
+                ui.spec()
+                    .items
+                    .iter()
+                    .filter(|i| matches!(i.draw, fresh_ui::Draw::Host(_)))
+                    .map(|i| {
+                        let r = i.visible_rect();
+                        ratatui::layout::Rect::new(r.x.max(0) as u16, r.y.max(0) as u16, r.w, r.h)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut out = CellsProvenance::default();
+        for row in 0..height {
+            for col in 0..width {
+                let Some(cell) = chrome.cell_theme_at(col, row) else {
+                    continue;
+                };
+                let region = cell.region.as_ref();
+                if region.is_empty() {
+                    continue;
+                }
+                if !PAINTER_REGIONS.contains(&region) {
+                    out.fold += 1;
+                    continue;
+                }
+                let inside = hosts.iter().any(|h| {
+                    col >= h.x && col < h.x + h.width && row >= h.y && row < h.y + h.height
+                });
+                match inside {
+                    true => out.painter_in_hosts += 1,
+                    false => out
+                        .painter_outside_hosts
+                        .push((col, row, region.to_string())),
+                }
+            }
+        }
+        out.hosts = hosts;
+        out
+    }
+
     /// Show the theme info popup at the given screen position (Ctrl+Right-Click).
     pub(super) fn show_theme_info_popup(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         if let Some(info) = self.resolve_theme_key_at(col, row) {

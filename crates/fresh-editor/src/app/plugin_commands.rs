@@ -2507,7 +2507,7 @@ impl Editor {
             },
         );
         prompt.overlay = floating_overlay;
-        self.active_window_mut().prompt = Some(prompt);
+        self.set_prompt(prompt);
 
         // Fire the prompt_changed hook immediately with empty input
         // This allows plugins to initialize the prompt state
@@ -2543,7 +2543,7 @@ impl Editor {
             initial_value.clone(),
         );
         prompt.overlay = floating_overlay;
-        self.active_window_mut().prompt = Some(prompt);
+        self.set_prompt(prompt);
 
         // Fire the prompt_changed hook immediately with the initial value
         use crate::services::plugins::hooks::HookArgs;
@@ -2599,7 +2599,7 @@ impl Editor {
 
         // Create an async prompt (uses special prompt type)
         use crate::view::prompt::{Prompt, PromptType};
-        self.active_window_mut().prompt = Some(Prompt::with_initial_text(
+        self.set_prompt(Prompt::with_initial_text(
             label,
             PromptType::AsyncPrompt,
             initial_value.clone(),
@@ -4128,10 +4128,10 @@ impl Editor {
 
     /// Handle StartAnimationVirtualBuffer: resolve the virtual buffer's
     /// current on-screen Rect, then delegate to `handle_start_animation_area`.
-    /// If the rect isn't in the cached split layout yet (common when the
+    /// If the retained layout has no rect for it yet (common when the
     /// buffer was just created and no render pass has placed it), the
     /// request is queued and drained at the top of the next render pass
-    /// once `split_areas` has been recomputed.
+    /// once the frame's layout has placed the panes.
     pub(super) fn handle_start_animation_virtual_buffer(
         &mut self,
         id: u64,

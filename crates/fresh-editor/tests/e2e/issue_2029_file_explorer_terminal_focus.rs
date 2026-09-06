@@ -93,6 +93,12 @@ fn toggle_file_explorer_clears_terminal_mode() {
          dispatch_terminal_input stops swallowing keys destined for \
          the file explorer (issue #2029)"
     );
+    // **The context is the frame's, so a frame settles it.** `get_key_context`
+    // reads the focus chain of the tree the last render laid out (design
+    // §3.7.5); the toggle moves focus, and the frame that follows it is what
+    // states where focus now is. The editor's loop renders between one key and
+    // the next, so this is the order the next keystroke actually sees.
+    harness.render().unwrap();
     assert_eq!(
         harness.editor_mut().get_key_context(),
         KeyContext::FileExplorer,

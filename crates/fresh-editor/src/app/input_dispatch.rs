@@ -15,19 +15,19 @@ impl Editor {
     /// Dispatch input when in terminal mode.
     ///
     /// Returns `Some(InputResult)` if terminal mode handled the input,
-    /// `None` if not in terminal mode or if a modal is active.
-    pub fn dispatch_terminal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        // Skip if any overlay layer is blocking — a prompt, popup, menu,
-        // settings/calibration/keybinding modal, the floating widget panel
-        // (Orchestrator picker / new-session form / plugin overlays), or a
-        // *focused* dock. A blurred dock leaves the dived-into terminal
-        // usable, which is why this is a per-layer `blocks_terminal_input`
-        // property and not just "any overlay present." See
-        // `Editor::overlay_layers` for the per-layer rationale.
-        if self.presents_blocking_overlay() {
-            return None;
-        }
-
+    /// `None` if not in terminal mode or the tree says the terminal is not
+    /// taking raw input this frame.
+    pub fn dispatch_terminal_input(
+        &mut self,
+        event: &KeyEvent,
+        context: &KeyContext,
+    ) -> Option<InputResult> {
+        // **The PTY gate is the tree's** (design §3.7.8, §2.3(8)): the live
+        // terminal's leaf takes raw input, and `Ui::raw_input` derives
+        // whether such a leaf is reachable — no exclusive layer above it,
+        // and the keyboard its own. Reached from the base dispatcher in the
+        // context the pane's leaf settled, so a key here was routed to the
+        // pane by focus; the gate is the tree's statement of the same fact.
         // Handle terminal mode input. `focused_terminal_live()` is the derived
         // gate: it is true only when the editor pane owns focus (not the file
         // explorer / a popup), the active buffer is a terminal, and the focused
@@ -35,7 +35,10 @@ impl Editor {
         // belt-and-braces guards here — "active buffer is no longer a terminal"
         // and "file explorer stole focus" — are subsumed: both make this false
         // and fall through to normal dispatch.
-        if self.active_window().focused_terminal_live() {
+        if *context == KeyContext::Terminal
+            && self.shell_ui.as_ref().is_some_and(|ui| ui.raw_input())
+            && self.active_window().focused_terminal_live()
+        {
             // Plugin commands flagged `terminalBypass: true` (via
             // `editor.registerCommand(..., { terminalBypass: true })`)
             // resolve to actions that must reach the editor even
@@ -80,11 +83,12 @@ impl Editor {
 
         // Check for keys that should re-enter terminal mode from scrollback view.
         // Any plain character key exits scrollback and is forwarded to the terminal.
-        // The focus gate matters because the active buffer is still the
-        // terminal while the user is off in the file explorer — without it
-        // Enter and every other plain key went to the PTY from under the
-        // explorer. Issue #2029 was the same class, on the live branch above.
-        if self.active_window().editor_pane_owns_keyboard()
+        // The context is the gate: a terminal parked in scroll-back is the
+        // pane's plain content, and the key reaches here only when the tree
+        // routed it to that content — never from under the explorer or a
+        // popup, which name their own contexts (issue #2029 was that class,
+        // on the live branch above).
+        if *context == KeyContext::Normal
             && self
                 .active_window()
                 .is_terminal_buffer(self.active_buffer())
@@ -548,6 +552,17 @@ impl Editor {
             );
         }
         self.rerender_widget_panel(key);
+    }
+
+    /// Put `prompt` up in the active window, taking down the one that was
+    /// up — and its toolbar panel with it.
+    ///
+    /// The one way a prompt opens: a prompt assigned over another left the
+    /// other's toolbar mounted, and the next toolbar for that plugin found
+    /// it and carried a focus the user never gave this session.
+    pub(crate) fn set_prompt(&mut self, prompt: crate::view::prompt::Prompt) {
+        self.drop_prompt();
+        self.active_window_mut().prompt = Some(prompt);
     }
 
     /// Take the active window's prompt down, and its toolbar panel with it.

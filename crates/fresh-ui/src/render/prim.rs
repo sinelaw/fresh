@@ -1188,7 +1188,15 @@ impl RenderObject for TextRender {
             // is routinely taller than the rect it is scrolled inside, and a
             // terminal has one cursor — placing it on a clipped row would put
             // it somewhere the text it belongs to is not drawn.
-            if g.clip.contains(at) {
+            //
+            // **A caret is a point between cells, so the trailing edge is on
+            // the row.** The position after the last visible glyph is where
+            // typing appends, and it lies on the clip's right edge rather
+            // than inside it; an empty run's only caret is that edge. Rows
+            // are cells, and a caret on a row the clip does not show is off.
+            let on_row = at.y >= g.clip.y && at.y < g.clip.bottom();
+            let on_span = at.x >= g.clip.x && at.x <= g.clip.right();
+            if on_row && on_span {
                 out.set_cursor(at);
             }
         }
@@ -1573,11 +1581,7 @@ impl RenderObject for ViewportRender {
         if content <= window as u32 {
             return;
         }
-        let bar = Draw::Scrollbar {
-            offset,
-            content,
-            window,
-        };
+        let bar = Draw::scrollbar(offset, content, window);
         let rect = Rect::new(g.rect.right() - 1, g.rect.y, 1, g.rect.h);
         match &self.props.bar_theme {
             Some(t) => out.push_themed(bar, rect, g.clip, crate::ThemeKey(Some(t.clone()))),

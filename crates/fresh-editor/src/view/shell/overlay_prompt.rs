@@ -29,7 +29,13 @@
 
 use std::rc::Rc;
 
-use fresh_ui::{col, host, row, Event, Node, Rect, Sizing};
+use fresh_ui::{
+    col, host, layout_reader, row, stack, text, text_runs, Event, LayoutInfo, Node, PointerMode,
+    Rect, Run, Scrim, Sizing,
+};
+
+use crate::app::shell_host::shell_theme::{attrs, pair, Attrs, Ink, Paint};
+use crate::primitives::display_width::str_width;
 
 use super::msg::{UiFact, UiMsg};
 
@@ -77,7 +83,7 @@ pub const PREVIEW_MIN_COLS: u16 = 120;
 
 /// What the card is showing. Content — never a rectangle, except the one the
 /// card sits in.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Card {
     /// Where `centered_overlay_rect` put the card.
     pub at: Rect,
@@ -99,6 +105,68 @@ pub struct Card {
     /// exactly then, so the ring rests on it unless a toolbar control has
     /// been given the keyboard.
     pub input_focused: bool,
+    /// The caption on the top edge — and the title row under the input when
+    /// there is no toolbar — as runs in the shell's names.
+    pub title: Vec<Run>,
+    /// The plugin's footer row, as runs; `footer` says whether it shows.
+    pub footer_runs: Vec<Run>,
+    /// The input row's content: the message, the query and its caret.
+    pub input: super::prompt_line::PromptRow,
+    /// The plugin's search status, at the right of the input row.
+    pub status: String,
+    /// `(selected + 1, total)` while there are suggestions, shown after the
+    /// status.
+    pub count: Option<(usize, usize)>,
+}
+
+/// A plugin's styled text as runs: every colour a name the shell grammar
+/// reads, so the fold resolves it like any other run's. A segment with no
+/// style paints in the node's own theme; a theme key names the entry, a
+/// literal colour is a literal, and the attributes ride along.
+pub fn styled_runs(
+    segs: &[fresh_core::api::StyledText],
+    default_fg: &str,
+    default_bg: &str,
+) -> Vec<Run> {
+    use fresh_core::api::OverlayColorSpec;
+    use std::borrow::Cow;
+    let paint = |spec: Option<&OverlayColorSpec>, default: &str| -> Paint {
+        match spec {
+            None => Paint::Key(Cow::Owned(default.to_string())),
+            Some(OverlayColorSpec::Rgb(r, g, b)) => {
+                Paint::Lit(ratatui::style::Color::Rgb(*r, *g, *b))
+            }
+            Some(OverlayColorSpec::ThemeKey(k)) => {
+                match crate::view::theme::named_color_from_str(k) {
+                    Some(c) => Paint::Lit(c),
+                    None => Paint::Key(Cow::Owned(k.clone())),
+                }
+            }
+        }
+    };
+    segs.iter()
+        .map(|s| {
+            let Some(o) = &s.style else {
+                return Run::plain(&s.text);
+            };
+            let mut words: Vec<&str> = Vec::new();
+            if o.bold {
+                words.push("bold");
+            }
+            if o.italic {
+                words.push("italic");
+            }
+            if o.underline {
+                words.push("underline");
+            }
+            let ink = Ink {
+                fg: paint(o.fg.as_ref(), default_fg),
+                bg: paint(o.bg.as_ref(), default_bg),
+                attrs: Attrs::all_named(words),
+            };
+            Run::themed(&s.text, ink.to_string())
+        })
+        .collect()
 }
 
 impl Card {
@@ -122,8 +190,40 @@ pub fn card_key() -> fresh_ui::Key {
     CARD_KEY.with(|k| k.clone())
 }
 
-fn region(r: CardRegion) -> Node<UiMsg> {
-    host(super::frame::card_host_id(r)).key(region_key(r))
+/// A band that only holds a rectangle: the results band, which the
+/// suggestion list's own layer anchors to and paints.
+fn band(r: CardRegion) -> Node<UiMsg> {
+    row().key(region_key(r))
+}
+
+/// The preview pane: the one band of the card that is still cells — a
+/// buffer rendered by the text pipeline into the rectangle layout gives it,
+/// the way a pane's content is (`HostTarget::Card(CardRegion::Preview)`).
+fn preview_host() -> Node<UiMsg> {
+    host(super::frame::card_host_id(CardRegion::Preview)).key(region_key(CardRegion::Preview))
+}
+
+/// The card's ring and ground, and the title on its top edge.
+fn ring() -> String {
+    pair("ui.popup_border_fg", "ui.suggestion_bg")
+}
+
+fn caption_ink() -> String {
+    attrs("ui.prompt_fg", "ui.suggestion_bg", &["bold"])
+}
+
+/// The title, on the top border: `Block::title` started one cell in from the
+/// corner. Transparent to the pointer, as `modal::title_strip` explains.
+fn caption(c: &Card) -> Node<UiMsg> {
+    let clear = |n: Node<UiMsg>| n.pointer_mode(PointerMode::Transparent);
+    row()
+        .h(Sizing::Cells(1))
+        .pointer_mode(PointerMode::Transparent)
+        .children([
+            clear(row().w(Sizing::Cells(1))),
+            clear(text_runs(c.title.clone()).theme(caption_ink())),
+            clear(row().flex(1)),
+        ])
 }
 
 /// The card, as a layer over the chrome column.
@@ -132,46 +232,44 @@ fn region(r: CardRegion) -> Node<UiMsg> {
 /// same shape [`super::prompt::Place::Inside`] uses, and for the same reason:
 /// the rectangle is somebody else's answer and this only occupies it.
 ///
-/// **The card states where its bands are; it does not paint them.** Every band
-/// but the results list is still `render_overlay_prompt`'s — the frame, the
-/// ground inside it, the input row, the toolbar, the separator and the footer
-/// are all drawn by that painter, which runs *between* the two fold bands. A
-/// layer is in the overlay band, so anything this drew would land on top of
-/// the painter's work and erase it: a ring over its ring, a ground over its
-/// content. So the ring here is a one-cell inset rather than a border, and no
-/// node in the card names a theme. The one thing that does paint from the tree
-/// is the suggestion list, which is a layer of its own anchored to the results
-/// band — and it paints there precisely because it is the band that *has*
-/// moved.
+/// **The card is the tree's, ring and all.** The ring, the ground, the caption
+/// on the top edge, the input row with its caret, the title row, the
+/// separator and the footer are nodes; the suggestion list is a layer of its
+/// own anchored to the results band; the preview is the one band still made
+/// of cells — a buffer the text pipeline renders into the rectangle layout
+/// gives it, as a pane's content is. `render_overlay_prompt`, which drew the
+/// rest between the two fold bands, is deleted.
 pub fn card(c: &Card) -> Node<UiMsg> {
     use fresh_ui::{layer, Anchor, Place};
     layer()
         .key(CARD_KEY.with(|k| k.clone()))
         .anchor(Anchor::Point(c.at.x.max(0) as u16, c.at.y.max(0) as u16))
         .place(Place::Over)
+        // Everything behind the card recedes — the painter's
+        // `apply_dimming_excluding(frame, overlay_rect)`, as the fold's own
+        // dim (the settings dialog's rule, §3.6).
+        .scrim(Some(Scrim::Dim))
         .child(
             // Absorbing outside the sizing, because a gesture is not a box and
-            // the inset belongs to the box.
+            // the ring belongs to the box.
             absorb(
-                body(c)
+                stack()
+                    .theme(ring())
                     .w(Sizing::Cells(c.at.w))
                     .h(Sizing::Cells(c.at.h))
-                    // What `border()` would inset by, without the ring it
-                    // would also draw — the painter's `Block` is still the
-                    // ring, and the bands have to land inside it.
-                    .pad(1, 1)
-                    .clip(true),
+                    .children([col().border().clip(true).child(body(c)), caption(c)]),
             ),
         )
 }
 
 /// The card's bands, top to bottom.
 fn body(c: &Card) -> Node<UiMsg> {
-    // The separator closing the header band: a row of the card's height
-    // budget, and nothing more. `render_overlay_prompt` still writes the
-    // `"─".repeat(inner.width)` into it; what the description owes is the row
-    // it occupies, because the bands below start after it.
-    let separator = row().h(Sizing::Cells(1));
+    // The separator closing the header band: a rule across the card, in the
+    // ring's ink.
+    let separator = layout_reader(|info: LayoutInfo| {
+        text("─".repeat(usize::from(info.constraints.max_w))).theme(ring())
+    })
+    .h(Sizing::Cells(1));
     let middle = match c.preview() {
         // Half and half — but *which* half gets the odd column is not a
         // detail. `body.width / 2` truncates, so the painter's results pane
@@ -181,23 +279,76 @@ fn body(c: &Card) -> Node<UiMsg> {
         // truncates the same way the division did, and the preview takes what
         // is left.
         true => row().flex(1).children([
-            region(CardRegion::Results).w(Sizing::Pct(50)),
-            preview(region(CardRegion::Preview).flex(1)),
+            band(CardRegion::Results).w(Sizing::Pct(50)),
+            preview_pane().flex(1),
         ]),
         // The preview is still in the tree taking nothing, so it has a
         // rectangle to report and the results' own is unaffected — the rule
         // `frame_tree` states for a hidden region.
         false => row().flex(1).children([
-            region(CardRegion::Results).flex(1),
-            preview(region(CardRegion::Preview).w(Sizing::Cells(0))),
+            band(CardRegion::Results).flex(1),
+            preview_pane().w(Sizing::Cells(0)),
         ]),
     };
-    col().children([
-        input_band(c),
-        toolbar_band(c),
-        separator,
-        middle,
-        region(CardRegion::Footer).h(Sizing::Cells(c.footer as u16)),
+    let footer = text_runs(c.footer_runs.clone())
+        .theme(pair("ui.suggestion_fg", "ui.suggestion_bg"))
+        .key(region_key(CardRegion::Footer))
+        .h(Sizing::Cells(c.footer as u16));
+    col().children([input_band(c), toolbar_band(c), separator, middle, footer])
+}
+
+/// The preview pane: the rule on its left edge — the painter's
+/// `Borders::LEFT` — and the buffer's host beside it, which is what the
+/// `Preview` band names.
+fn preview_pane() -> Node<UiMsg> {
+    let rule = layout_reader(|info: LayoutInfo| {
+        col().children(
+            (0..info.constraints.max_h)
+                .map(|_| text("│").theme(ring()))
+                .collect::<Vec<_>>(),
+        )
+    })
+    .w(Sizing::Cells(1));
+    row().children([rule, preview(preview_host().flex(1))])
+}
+
+/// The input row's content: the message in the card's ink, the query in the
+/// editor's with the caret stated inside it, and the plugin's status and the
+/// selection count against the right edge — the painter's row, as runs.
+fn input_row(c: &Card) -> Node<UiMsg> {
+    let c = Rc::new(c.clone());
+    layout_reader(move |info: LayoutInfo| input_row_at(&c, info.constraints.max_w))
+        .h(Sizing::Cells(1))
+}
+
+fn input_row_at(c: &Card, width: u16) -> Node<UiMsg> {
+    let message_w = str_width(&c.input.message).min(usize::from(width)) as u16;
+    let count = c
+        .count
+        .map(|(sel, total)| format!("{sel} / {total}"))
+        .unwrap_or_default();
+    let count_w = str_width(&count);
+    // One trailing column, so the count does not sit flush against the ring.
+    let right_gap = usize::from(count_w > 0);
+    let status_w = str_width(&c.status);
+    let status_gap = if status_w > 0 && count_w > 0 { 2 } else { 0 };
+    let cluster_w =
+        (status_w + status_gap + count_w + right_gap).min(usize::from(width - message_w)) as u16;
+    let input_cols = width - message_w - cluster_w;
+    let dim = pair("ui.popup_border_fg", "editor.bg");
+    let cluster = text_runs([
+        Run::themed(&c.status, dim.clone()),
+        Run::plain(" ".repeat(status_gap)),
+        Run::themed(&count, dim),
+        Run::plain(" ".repeat(right_gap)),
+    ]);
+    row().theme(pair("editor.fg", "editor.bg")).children([
+        text_runs([Run::plain(&c.input.message)])
+            .theme(pair("ui.suggestion_fg", "ui.suggestion_bg"))
+            .w(Sizing::Cells(message_w)),
+        super::prompt_line::input_window(&c.input, input_cols, c.input_focused)
+            .w(Sizing::Cells(input_cols)),
+        cluster.w(Sizing::Cells(cluster_w)),
     ])
 }
 
@@ -212,7 +363,7 @@ fn body(c: &Card) -> Node<UiMsg> {
 /// (`UiFact::CardInputFocus`).
 fn input_band(c: &Card) -> Node<UiMsg> {
     let ring = c.toolbar.is_some();
-    let n = fresh_ui::focusable(region(CardRegion::Input).h(Sizing::Cells(1)))
+    let n = fresh_ui::focusable(input_row(c).key(region_key(CardRegion::Input)))
         .h(Sizing::Cells(1))
         .key(super::prompt::keys_key(c.search))
         .on_key(move |e: &Event| {
@@ -257,7 +408,21 @@ fn input_band(c: &Card) -> Node<UiMsg> {
 /// `handle_overlay_toolbar_key` walked by hand, said on the node.
 fn toolbar_band(c: &Card) -> Node<UiMsg> {
     let Some(i) = c.toolbar.clone() else {
-        return region(CardRegion::Toolbar).h(Sizing::Cells(c.title_row as u16));
+        // Without a toolbar the band holds the title row, when there is a
+        // title: the caption's runs again, under the input.
+        //
+        // **A hidden row holds no runs, not runs in a rectangle of no rows.**
+        // The band keeps its key either way, because a region always reports a
+        // rectangle (`frame_tree`'s rule) — but a `Draw::Lines` in a
+        // zero-height rect is an item in the display list that paints nothing
+        // and reads as the caption to anything scanning for the title's text.
+        return text_runs(match c.title_row {
+            true => c.title.clone(),
+            false => Vec::new(),
+        })
+        .theme(caption_ink())
+        .key(region_key(CardRegion::Toolbar))
+        .h(Sizing::Cells(c.title_row as u16));
     };
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         let inner_w = info.constraints.max_w.max(1);
@@ -448,6 +613,7 @@ mod tests {
             footer,
             search: false,
             input_focused: true,
+            ..Card::default()
         }
     }
 
@@ -518,10 +684,19 @@ mod tests {
             at(&wide, CardRegion::Preview).width > 0,
             "wide enough for a preview"
         );
+        // Half and half, less the rule between them: the preview's band is
+        // the host beside its left-edge rule, so the column the rule occupies
+        // comes off the preview's side (`preview_pane`).
+        let body_w = PREVIEW_MIN_COLS + 10 - 2;
         assert_eq!(
             at(&wide, CardRegion::Results).width,
+            body_w / 2,
+            "the results take half the body"
+        );
+        assert_eq!(
             at(&wide, CardRegion::Preview).width,
-            "half and half"
+            body_w - body_w / 2 - 1,
+            "and the preview the rest, less its rule"
         );
         assert_eq!(at(&narrow, CardRegion::Preview).width, 0);
         assert_eq!(
@@ -586,10 +761,12 @@ mod tests {
                             "results for {w}x{h} toolbar={toolbar_rows} footer={footer}"
                         );
                         if show_preview {
+                            // The band is the pane inside its rule: one
+                            // column in from the painter's outer area.
                             let want_preview = ratatui::layout::Rect {
-                                x: body.x + body.width / 2,
+                                x: body.x + body.width / 2 + 1,
                                 y: body.y,
-                                width: body.width - body.width / 2,
+                                width: (body.width - body.width / 2).saturating_sub(1),
                                 height: body.height,
                             };
                             assert_eq!(
@@ -602,6 +779,135 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// **The card paints its own ring and caption.** The border is the box's,
+    /// in the card's ink, at the card's rectangle; the caption's runs sit one
+    /// cell in from the corner on the top edge.
+    #[test]
+    fn the_card_paints_its_ring_and_its_caption() {
+        use fresh_ui::Draw;
+        let c = Card {
+            title: vec![Run::plain("Hints")],
+            ..card_of(Rect::new(10, 4, 150, 40), 0, false)
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(col().child(card(&c)), Size::new(200, 60));
+        let spec = ui.spec();
+        assert!(
+            spec.items
+                .iter()
+                .any(|i| matches!(i.draw, Draw::Border(_)) && i.rect == Rect::new(10, 4, 150, 40)),
+            "the ring at the card's rectangle"
+        );
+        let caption = spec
+            .items
+            .iter()
+            .find(|i| matches!(&i.draw, Draw::Lines(l) if l.join("") == "Hints"))
+            .expect("the caption is painted");
+        assert_eq!((caption.rect.x, caption.rect.y), (11, 4), "on the top edge");
+        assert!(
+            spec.items
+                .iter()
+                .any(|i| matches!(i.draw, Draw::Scrim(Scrim::Dim))),
+            "and everything behind it recedes"
+        );
+    }
+
+    /// **The input row carries the caret.** The message, then the query with
+    /// the caret stated inside it, so the display list's cursor is the cell
+    /// after the typed text — and none when a toolbar control has the
+    /// keyboard.
+    #[test]
+    fn the_input_row_places_the_caret_after_the_query() {
+        let mut c = Card {
+            input: super::super::prompt_line::PromptRow {
+                message: "Grep: ".into(),
+                input: "abc".into(),
+                cursor: 3,
+                selection: None,
+                dir: None,
+            },
+            status: "Searching…".into(),
+            count: Some((1, 9)),
+            ..card_of(Rect::new(10, 4, 150, 40), 0, false)
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(col().child(card(&c)), Size::new(200, 60));
+        assert_eq!(
+            ui.spec().cursor.map(|k| (k.pos.x, k.pos.y)),
+            Some((11 + 6 + 3, 5)),
+            "after the message and the query, inside the ring"
+        );
+        let text = |ui: &Ui<UiMsg>| -> String {
+            let mut cells: Vec<(i32, String)> = ui
+                .spec()
+                .items
+                .iter()
+                .filter(|i| i.rect.y == 5)
+                .filter_map(|i| match &i.draw {
+                    fresh_ui::Draw::Lines(l) => Some((i.rect.x, l.join(""))),
+                    _ => None,
+                })
+                .collect();
+            cells.sort_by_key(|(x, _)| *x);
+            cells.into_iter().map(|(_, s)| s).collect()
+        };
+        let row = text(&ui);
+        assert!(row.starts_with("Grep: abc"), "{row:?}");
+        assert!(row.trim_end().ends_with("Searching…  1 / 9"), "{row:?}");
+
+        c.input_focused = false;
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(col().child(card(&c)), Size::new(200, 60));
+        assert_eq!(ui.spec().cursor, None, "a toolbar control has the keyboard");
+    }
+
+    /// A plugin's styled text becomes runs the shell grammar reads: a theme
+    /// key names the entry, a literal colour is a literal, attributes ride
+    /// along, and an unstyled segment paints in the node's own ink.
+    #[test]
+    fn styled_text_becomes_runs_in_the_shells_names() {
+        use fresh_core::api::{OverlayColorSpec, OverlayOptions, StyledText};
+        let segs = vec![
+            StyledText {
+                text: "plain".into(),
+                style: None,
+            },
+            StyledText {
+                text: "key".into(),
+                style: Some(OverlayOptions {
+                    fg: Some(OverlayColorSpec::ThemeKey("ui.help_key_fg".into())),
+                    bold: true,
+                    ..OverlayOptions::default()
+                }),
+            },
+            StyledText {
+                text: "lit".into(),
+                style: Some(OverlayOptions {
+                    fg: Some(OverlayColorSpec::Rgb(1, 2, 3)),
+                    ..OverlayOptions::default()
+                }),
+            },
+        ];
+        let runs = styled_runs(&segs, "ui.prompt_fg", "ui.suggestion_bg");
+        assert_eq!(runs[0], Run::plain("plain"));
+        let key = runs[1]
+            .theme
+            .as_ref()
+            .map(|t| t.as_str().to_string())
+            .unwrap();
+        assert!(
+            key.contains("ui.help_key_fg") && key.contains("ui.suggestion_bg"),
+            "{key}"
+        );
+        assert!(key.contains("bold"), "{key}");
+        let lit = runs[2]
+            .theme
+            .as_ref()
+            .map(|t| t.as_str().to_string())
+            .unwrap();
+        assert!(!lit.contains("ui.prompt_fg"), "{lit}");
     }
 
     /// **Every band sits inside the ring.** The painter took `block.inner(..)`

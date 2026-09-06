@@ -23,10 +23,11 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, host, layout_reader, row, stack, Axis, Event, GestureKind, Key, LayoutInfo,
+    col, gesture, layout_reader, row, stack, text, Axis, Event, GestureKind, Key, LayoutInfo,
     MouseButton, Node, PointerMode, Sizing,
 };
 
+use crate::app::shell_host::shell_theme::pair;
 use crate::app::types::HoverTarget;
 use crate::model::event::{ContainerId, LeafId, SplitDirection};
 use crate::view::split::{split_rect_ext, SplitNode};
@@ -173,7 +174,7 @@ mod tests {
     /// Every pane the fold reaches, and the rectangle it is handed — the
     /// paint half's answer to [`tree_rects`]'s.
     fn panes_folded(s: &Splits, at: Rect) -> Vec<(LeafId, Rect)> {
-        use crate::view::shell::fold::{fold_band, Band, Caret, HostPainter, Paints};
+        use crate::view::shell::fold::{fold_band, Band, HostPainter, Paints};
         use crate::view::shell::frame::HostTarget;
 
         #[derive(Default)]
@@ -184,7 +185,6 @@ mod tests {
                 target: HostTarget,
                 rect: Rect,
                 _buf: &mut ratatui::buffer::Buffer,
-                _caret: &mut Caret,
             ) {
                 if let HostTarget::Pane(leaf) = target {
                     self.0.push((leaf, rect));
@@ -373,6 +373,10 @@ mod tests {
             controls: Default::default(),
             groups: [(host, group.clone())].into_iter().collect(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         let (w, h) = (80u16, 24u16);
         let mut ui: Ui<UiMsg> = Ui::new();
@@ -424,6 +428,10 @@ mod tests {
                     controls: Default::default(),
                     groups: Default::default(),
                     interiors: Default::default(),
+                    strips: Default::default(),
+                    hover: None,
+                    drop_zone: None,
+                    hosts: Default::default(),
                 };
                 let want: Vec<(LeafId, Rect)> = root
                     .reference_leaves_with_rects(at)
@@ -451,17 +459,23 @@ mod tests {
             controls: Default::default(),
             groups: Default::default(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         assert_eq!(panes_folded(&s, at), vec![(LeafId(SplitId(1)), at)]);
     }
 
-    /// **A group's panels are hosts of their own, inside their pane's.**
+    /// **A group's panels are the hosts; the pane showing the group has
+    /// none.**
     ///
     /// `expand_visible_buffers` lays a group out in its pane's *content*
     /// rectangle — past the strip and the scrollbar column — and paints one
-    /// entry per inner leaf. Those entries are these hosts, and the pane's own
-    /// still comes first: it is their ancestor, and it is the one that paints
-    /// the group tab.
+    /// entry per inner leaf. Those entries are these leaves, each at its own
+    /// content slot. The outer pane paints nothing of its own any more: its
+    /// strip is nodes and its content is the group's grid, so there is no
+    /// host for it to be.
     #[test]
     fn a_groups_panels_are_hosts_inside_their_panes() {
         use crate::view::ui::split_rendering::layout::split_layout;
@@ -487,16 +501,19 @@ mod tests {
             controls: Default::default(),
             groups: [(host_leaf, group)].into_iter().collect(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
 
         let content = split_layout(host_leaf, at, chrome).content_rect;
-        let mut want = vec![(host_leaf, at)];
-        want.extend(
-            inner
-                .reference_leaves_with_rects(content)
-                .into_iter()
-                .map(|(id, _, r)| (id, r)),
-        );
+        // An inner leaf with no chrome of its own is all content.
+        let want: Vec<(LeafId, Rect)> = inner
+            .reference_leaves_with_rects(content)
+            .into_iter()
+            .map(|(id, _, r)| (id, r))
+            .collect();
         assert_eq!(panes_folded(&s, at), want);
     }
 
@@ -537,6 +554,10 @@ mod tests {
                     controls,
                     groups: Default::default(),
                     interiors: Default::default(),
+                    strips: Default::default(),
+                    hover: None,
+                    drop_zone: None,
+                    hosts: Default::default(),
                 };
                 let mut ui: Ui<UiMsg> = Ui::new();
                 ui.frame(overlay(&s), Size::new(at.width, at.height));
@@ -570,20 +591,12 @@ mod tests {
 
     /// **A pane's host id can never be mistaken for a region's.**
     ///
-    /// Regions are the seven fixed slots, numbered 1..=7; `LeafId`s come from
-    /// a dense counter that starts at the same place, so the two id spaces
-    /// would overlap on the very first pane. The tag is what keeps the fold's
-    /// "this id names nothing" assertion able to mean it.
+    /// A pane's host id carries its tag: `LeafId`s are dense small integers,
+    /// and an untagged small integer names no leaf — the fold's "this id
+    /// names nothing" assertion means it.
     #[test]
-    fn a_panes_host_id_is_never_a_regions() {
-        use crate::view::shell::frame::{pane_host_id, HostRegion, HostTarget};
-        for r in HostRegion::ALL {
-            assert_eq!(
-                HostTarget::from_host_id(r.into()),
-                Some(HostTarget::Region(r)),
-                "{r:?} still resolves to itself"
-            );
-        }
+    fn a_panes_host_id_round_trips_and_a_bare_number_names_nothing() {
+        use crate::view::shell::frame::{pane_host_id, HostTarget};
         for n in [0usize, 1, 4, 7, 63, 4096] {
             let leaf = LeafId(SplitId(n));
             assert_eq!(
@@ -591,28 +604,110 @@ mod tests {
                 Some(HostTarget::Pane(leaf)),
                 "pane {n} round-trips"
             );
-            assert!(
-                HostRegion::from_host_id(pane_host_id(leaf)).is_none(),
-                "pane {n} is not a region"
+            assert_eq!(
+                HostTarget::from_host_id(fresh_ui::HostId(n as u64)),
+                None,
+                "{n} bare is nobody's"
             );
         }
     }
 
-    /// **A press on a pane's strip names that pane, because it is that pane's.**
+    /// **A drop zone is a wash over the target pane's content, and the leaf
+    /// under it is the same element.** A tab dragged to a pane's right edge
+    /// washes the near half of its content in the drop zone's keys, bordered;
+    /// the content slot is a stack of its own whether or not a zone is over
+    /// it, so the leaf that took the drag's capture is the leaf the next
+    /// frame mounts.
+    #[test]
+    fn a_drop_zone_washes_half_the_content_and_keeps_the_leaf() {
+        use crate::app::types::TabDropZone;
+        let leaf = LeafId(SplitId(1));
+        let with = |zone: Option<TabDropZone>| Splits {
+            root: SplitNode::leaf(BufferId(1), SplitId(1)),
+            maximized: None,
+            active: Some(leaf),
+            chrome: Default::default(),
+            controls: PaneControls {
+                maximize: false,
+                close: false,
+            },
+            groups: Default::default(),
+            interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: zone,
+            hosts: Default::default(),
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(overlay(&with(None)), Size::new(40, 10));
+        let content = ui.find_by_key(&content_key(leaf)).expect("the content");
+        let spec = ui.frame(
+            overlay(&with(Some(TabDropZone::SplitRight(leaf)))),
+            Size::new(40, 10),
+        );
+        let washes: Vec<_> = spec
+            .items
+            .iter()
+            .filter(|i| i.draw == fresh_ui::Draw::Wash)
+            .map(|i| (i.rect, i.theme.as_str().to_string()))
+            .collect();
+        assert_eq!(
+            washes,
+            vec![(
+                fresh_ui::Rect::new(20, 0, 20, 10),
+                crate::app::shell_host::shell_theme::attrs(
+                    "ui.tab_drop_zone_border",
+                    "ui.tab_drop_zone_bg",
+                    &["bold"]
+                )
+            )],
+            "the right half, in the zone's keys"
+        );
+        assert!(
+            spec.items
+                .iter()
+                .any(|i| matches!(i.draw, fresh_ui::Draw::Border(_))
+                    && i.rect == fresh_ui::Rect::new(20, 0, 20, 10)),
+            "bordered"
+        );
+        assert_eq!(
+            ui.find_by_key(&content_key(leaf)),
+            Some(content),
+            "the leaf is the same element under the zone"
+        );
+    }
+
+    /// **A press on a pane's tab names that pane, because it is that pane's.**
     ///
     /// Two `LayoutBox`es covered the tab row — the strip at z 60 and the split
     /// controls at 70 — and both recovered the pane by comparing the cell
-    /// against every recorded `bar_area` in turn (`tab_bar_split_at`). A node
-    /// knows which pane it belongs to; what is left to hit-test is the strip's
-    /// *interior*, which is the tab renderer's layout and stays there.
+    /// against every recorded `bar_area` in turn (`tab_bar_split_at`), then
+    /// the tab against the tab renderer's record. A tab is a node that knows
+    /// its pane and its target; the press names both.
     #[test]
-    fn a_press_on_a_strip_names_the_pane_it_belongs_to() {
+    fn a_press_on_a_tab_names_the_pane_it_belongs_to() {
+        use crate::view::shell::tabs::{tab_key, Strip, Tab};
+        use crate::view::split::TabTarget;
         use fresh_ui::{Input, Mods, Point};
         let root = split(SplitDirection::Vertical, leaf(0), leaf(1), 0.5, 10);
         let with_tabs = PaneChrome {
             tabs: true,
             vscroll: false,
             hscroll: false,
+        };
+        let strip = |n: usize| Strip {
+            tabs: vec![Tab {
+                target: TabTarget::Buffer(BufferId(n)),
+                name: format!("file_{n}.rs"),
+                modified: false,
+                preview: false,
+                binary: false,
+            }],
+            active: Some(TabTarget::Buffer(BufferId(n))),
+            active_pane: n == 0,
+            hover: None,
+            offset: 0,
+            preview_label: String::new(),
         };
         let s = Splits {
             root: root.clone(),
@@ -627,6 +722,15 @@ mod tests {
             controls: Default::default(),
             groups: Default::default(),
             interiors: Default::default(),
+            strips: [
+                (LeafId(SplitId(0)), strip(0)),
+                (LeafId(SplitId(1)), strip(1)),
+            ]
+            .into_iter()
+            .collect(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(overlay(&s), Size::new(80, 24));
@@ -639,6 +743,14 @@ mod tests {
                 (r.x, r.y, r.h),
                 (want_x as i32, 0, 1),
                 "{leaf_id:?}'s strip is its top row"
+            );
+            let tab = ui.rect_of(
+                ui.find_by_key(&tab_key(leaf_id, TabTarget::Buffer(BufferId(leaf_id.0 .0))))
+                    .expect("its tab"),
+            );
+            assert_eq!(
+                tab.x, want_x as i32,
+                "the first tab starts at the strip's left edge"
             );
         }
 
@@ -658,18 +770,26 @@ mod tests {
         };
         assert_eq!(
             press(&mut ui, 5),
-            vec![UiFact::PaneTabsPress {
+            vec![UiFact::PaneTabPress {
                 pane: LeafId(SplitId(0)),
+                target: TabTarget::Buffer(BufferId(0)),
                 x: 5,
                 y: 0
             }],
             "the left strip"
         );
+        // The release ends the press's capture before the next press.
+        ui.dispatch(Input::release(
+            Point::new(5, 0),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
         assert_eq!(
-            press(&mut ui, 60),
-            vec![UiFact::PaneTabsPress {
+            press(&mut ui, 45),
+            vec![UiFact::PaneTabPress {
                 pane: LeafId(SplitId(1)),
-                x: 60,
+                target: TabTarget::Buffer(BufferId(1)),
+                x: 45,
                 y: 0
             }],
             "and the right one"
@@ -691,6 +811,10 @@ mod tests {
             controls: Default::default(),
             groups: Default::default(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(overlay(&s), Size::new(80, 24));
@@ -716,6 +840,8 @@ mod tests {
             said,
             vec![UiFact::PaneContentPress {
                 pane: LeafId(SplitId(0)),
+                // A fresh leaf with no rows settled answers its top.
+                byte: Some(0),
                 x: 5,
                 y: 0,
                 clicks: 1,
@@ -929,7 +1055,7 @@ pub struct Splits {
     pub maximized: Option<LeafId>,
     /// The pane the keyboard belongs to when no panel or overlay holds it:
     /// its content is the base's marked focus holder (see
-    /// [`content_surface`]).
+    /// [`content_leaf`]).
     pub active: Option<LeafId>,
     /// Which chrome each visible pane has. Resolved once, by the editor, and
     /// read by both halves of the frame — the description below and the
@@ -958,6 +1084,23 @@ pub struct Splits {
     /// pass through. The painter is told the same thing, so a pane described
     /// here is a pane whose text pass does not run.
     pub interiors: std::collections::HashMap<LeafId, super::panel::Interior>,
+    /// Each pane's tab strip, as content: its tabs, which is active, how far
+    /// it is scrolled. A pane with a strip row and no entry here lays out an
+    /// empty strip. See `shell::tabs`.
+    pub strips: std::collections::HashMap<LeafId, super::tabs::Strip>,
+    /// The shell's hover, for the strip's cluster: `□` and `×` read it to
+    /// light up, as every other described button does.
+    pub hover: Option<HoverTarget>,
+    /// Where a dragged tab would land, while one is being dragged past the
+    /// threshold: the target pane's content, or half of it, wears a wash and
+    /// a border over the text (`drop_zone_node`).
+    pub drop_zone: Option<crate::app::types::TabDropZone>,
+    /// Each pane's leaf, by the pane: the handle the window keeps for as
+    /// long as the pane exists, so every frame mounts the same object
+    /// (`buffer_host::PaneHandle`). A pane with no handle here — an
+    /// offscreen grid, a test — gets a fresh one, which is a leaf that
+    /// answers no byte.
+    pub hosts: std::collections::HashMap<LeafId, super::buffer_host::PaneHandle>,
 }
 
 /// The grid mounted over the body's `Host` leaf: geometry and the dividers'
@@ -1018,24 +1161,23 @@ fn pane_inert<M: 'static>() -> Node<M> {
     stack().pointer_mode(PointerMode::Transparent)
 }
 
-/// One pane: the painter's `Host` leaf, with the pane's own geometry over it.
+/// One pane: its interior, with the pane's content leaf in the content slot.
 ///
-/// **A pane is its own host.** The body used to be a single `Host` that the
-/// split renderer filled with every pane at once, laying them out a second
-/// time from `SplitManager` — so the rectangle a pane was *painted* at and the
-/// rectangle it was *clicked* at came from two engines that merely agreed.
-/// Now the fold reaches one pane at a time and hands each the rectangle layout
-/// gave it, and there is one answer to where a pane is.
-///
-/// The `Host` is under the interior rather than over it because the interior
-/// paints nothing: it is the strip's gestures, the scrollbars' and the
-/// content's, over cells that are still the painter's.
+/// **A pane is its own host, and the host is its content.** The body used to
+/// be a single `Host` that the split renderer filled with every pane at once,
+/// laying them out a second time from `SplitManager` — so the rectangle a
+/// pane was *painted* at and the rectangle it was *clicked* at came from two
+/// engines that merely agreed. Then each pane carried a plain `Host` under
+/// its interior, spanning strip, content and bars alike. Now the leaf is the
+/// content slot itself (`buffer_host::BufferHost`): the fold hands the text
+/// pipeline the content rectangle layout gave the leaf, the leaf answers the
+/// byte under a cell, and the strip and the bars beside it are nodes of
+/// their own.
 fn live_pane(id: LeafId, s: &Rc<Splits>) -> Node<UiMsg> {
     let chrome = s.chrome.get(&id).copied().unwrap_or_default();
-    pane_inert::<UiMsg>().key(leaf_key(id)).children([
-        host(super::frame::pane_host_id(id)),
-        live_interior(id, chrome, s),
-    ])
+    pane_inert::<UiMsg>()
+        .key(leaf_key(id))
+        .child(live_interior(id, chrome, s))
 }
 
 /// `s` is shared rather than cloned: a `layout_reader` outlives the build, so
@@ -1066,7 +1208,11 @@ fn dressed(n: &SplitNode, s: &Rc<Splits>) -> Node<UiMsg> {
                 );
                 let (ra, rb) = split_rect_ext(whole, dir, ratio, ff, fs);
                 let (first, second) = (dressed(&a, &s), dressed(&b, &s));
-                let div = divider(id, dir);
+                let lit = matches!(
+                    s.hover,
+                    Some(HoverTarget::SplitSeparator(c, d)) if c == id && d == dir
+                );
+                let div = divider(id, dir, lit);
                 match dir {
                     SplitDirection::Vertical => {
                         row().pointer_mode(PointerMode::Transparent).children([
@@ -1088,16 +1234,39 @@ fn dressed(n: &SplitNode, s: &Rc<Splits>) -> Node<UiMsg> {
     }
 }
 
-/// One divider: it takes the pointer for the whole drag, and it says when it
-/// is hovered.
+/// One divider: its line, in the separator's colour or the hover colour
+/// while the pointer is on it; it takes the pointer for the whole drag, and
+/// it says when it is hovered.
 ///
-/// It paints nothing — the split renderer still draws the separator glyph and
-/// its hover highlight, from `separator_areas`, which is itself a read of this
-/// same layout.
-fn divider(id: ContainerId, dir: SplitDirection) -> Node<UiMsg> {
+/// **The line is the node's.** The split renderer used to draw the glyphs
+/// and the editor repainted them in the hover colour from a record of where
+/// the nodes were (`separator_areas`); the node draws its own line, and the
+/// hover is a theme the description chooses, so there is nothing to record
+/// and nothing to repaint.
+fn divider(id: ContainerId, dir: SplitDirection, lit: bool) -> Node<UiMsg> {
+    let ink = pair(
+        if lit {
+            "ui.split_separator_hover_fg"
+        } else {
+            "ui.split_separator_fg"
+        },
+        "editor.bg",
+    );
+    let line: Node<UiMsg> = match dir {
+        SplitDirection::Horizontal => layout_reader(move |info: LayoutInfo| {
+            text("─".repeat(usize::from(info.constraints.max_w))).theme(ink.clone())
+        }),
+        SplitDirection::Vertical => layout_reader(move |info: LayoutInfo| {
+            col().children(
+                (0..info.constraints.max_h)
+                    .map(|_| text("│").theme(ink.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        }),
+    };
     super::grip::draggable(
         super::msg::Grip::Separator,
-        row(),
+        line,
         Rc::new(move |e: &Event| {
             Some(UiMsg::Ui(UiFact::SeparatorPress {
                 container: id,
@@ -1158,11 +1327,22 @@ pub fn separator_rects(
     s: &Splits,
     size: ratatui::layout::Rect,
 ) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
+    separator_rects_of(ui, &s.root, s.groups.values(), size)
+}
+
+/// [`separator_rects`] from the grid's model facts rather than a
+/// description: the root and the active groups' grids.
+pub fn separator_rects_of<'a>(
+    ui: &fresh_ui::Ui<UiMsg>,
+    root: &SplitNode,
+    groups: impl IntoIterator<Item = &'a SplitNode>,
+    size: ratatui::layout::Rect,
+) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
     let mut ids = Vec::new();
-    container_ids(&s.root, &mut ids);
+    container_ids(root, &mut ids);
     // A pane showing a buffer group holds that group's own grid, whose
     // containers are nodes here like any other.
-    for g in s.groups.values() {
+    for g in groups {
         container_ids(g, &mut ids);
     }
     ids.into_iter()
@@ -1191,68 +1371,46 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
     // the migration's standing boundary: the group's panels and dividers lived
     // in a side map, so their separators stayed recorded rectangles while the
     // main tree's became nodes. Nested here, they are the same nodes.
+    // The pane's handle: its content leaf and its bars' leaves, kept by the
+    // window for as long as the pane exists. A pane with none — an offscreen
+    // grid, a test — gets a fresh one, whose leaves answer no byte and paint
+    // no bar.
+    let handle = s
+        .hosts
+        .get(&id)
+        .cloned()
+        .unwrap_or_else(|| super::buffer_host::PaneHandle::new(id));
     let content = match (s.groups.get(&id), s.interiors.get(&id)) {
-        (Some(g), _) => dressed(g, s),
+        (Some(g), _) => dressed(g, s).key(content_key(id)),
         // **A described mounted panel replaces the content surface, it does
         // not sit on top of one.** The surface's whole job is to say which
         // pane was pressed and where, so a click can be turned into a caret
         // position through the view pipeline; a panel has no caret to place
         // and no byte to map to, and every one of its rows answers for itself.
         (None, Some(i)) => panel_content(id, i.clone(), s.active == Some(id)),
-        (None, None) => content_surface(id, s.active == Some(id)),
+        (None, None) => content_leaf(id, handle.clone(), s.active == Some(id)),
     };
+    // The content slot is a stack of its own — always, so the leaf's element
+    // is the same whether or not something is over it — and a tab drag's
+    // drop zone is the one thing over it.
+    let zone = s
+        .drop_zone
+        .filter(|z| z.split_id() == id)
+        .map(drop_zone_node);
+    let content = stack().children(Some(content).into_iter().chain(zone));
     pane_interior(
         id,
         c,
         PaneSlots {
-            tabs: tab_strip(id),
-            controls: live_controls(id, s.controls),
+            tabs: tab_strip(id, s),
+            // The cluster is laid out with the tabs, inside the strip's own
+            // reader — it needs to know whether the tabs overflow to show
+            // its `>`, and only the strip's layout knows.
+            controls: row().w(Sizing::Cells(0)),
             content,
-            vscroll: scrollbar(id, Axis::Vertical),
-            hscroll: scrollbar(id, Axis::Horizontal),
+            vscroll: scrollbar(id, Axis::Vertical, &handle, &s.hover),
+            hscroll: scrollbar(id, Axis::Horizontal, &handle, &s.hover),
         },
-    )
-}
-
-/// The control cluster with its two buttons answering for themselves.
-///
-/// Each button is a node that knows its pane, so the press carries no
-/// coordinates at all — `handle_click_split_controls` opened by comparing the
-/// cell against every pane's two recorded rectangles to recover exactly this.
-/// The hover is the buttons' own too: `on_enter` / `on_leave` rather than a
-/// third scan of the same lists.
-fn live_controls(id: LeafId, c: PaneControls) -> Node<UiMsg> {
-    let button = |n: Node<UiMsg>, target: HoverTarget, fact: UiFact| {
-        let pressed = fact.clone();
-        gesture(n)
-            .on(
-                GestureKind::Press,
-                Rc::new(move |e: &Event| {
-                    if e.button != MouseButton::Left {
-                        return None;
-                    }
-                    e.stop();
-                    Some(UiMsg::Ui(pressed.clone()))
-                }),
-            )
-            .on_enter(Rc::new(move |_: &Event| {
-                Some(UiMsg::Ui(UiFact::Hover(Some(target.clone()))))
-            }))
-            .on_leave(Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::Hover(None)))))
-    };
-    controls(
-        id,
-        c,
-        button(
-            row(),
-            HoverTarget::MaximizeSplitButton(id),
-            UiFact::PaneMaximize(id),
-        ),
-        button(
-            row(),
-            HoverTarget::CloseSplitButton(id),
-            UiFact::PaneClose(id),
-        ),
     )
 }
 
@@ -1345,13 +1503,13 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     // log clickable in the sense that the hit arrived, and dead in the sense
     // that nothing happened.
     //
-    // So this is `content_surface`'s press verbatim: the caret it places is
+    // So this is `content_leaf`'s press verbatim: the caret it places is
     // invisible now — the text pass does not run and the hardware caret comes
     // from the description's own marker — and that is exactly right. The
     // mirror is where a plugin reads a click's *line* from, and it goes on
     // being that.
     //
-    // The **wheel** is deliberately not taken, where `content_surface` takes
+    // The **wheel** is deliberately not taken, where `content_leaf` takes
     // it: the panel's lists are viewports, and `fresh-ui` chains a notch into
     // one only when nothing claimed it. The dock learned this the same way.
     //
@@ -1366,6 +1524,8 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
             e.stop();
             Some(UiMsg::Ui(UiFact::PaneContentPress {
                 pane: id,
+                // A panel has no byte to place a caret at.
+                byte: None,
                 x: e.pos.x.max(0) as u16,
                 y: e.pos.y.max(0) as u16,
                 clicks: e.clicks,
@@ -1392,29 +1552,24 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     )
 }
 
-/// A pane's content: where the text is, and where a click places the caret.
+/// The pane's content: the buffer's leaf, with the gestures a pane's
+/// content answers and the focus the base rests on.
 ///
-/// **The cells stay the painter's.** What the node supplies is which pane was
-/// clicked and where, so the handlers behind it stop scanning every recorded
-/// content rectangle to answer that. What they still take is the rectangle
-/// itself, because click-to-byte is a projection through the view pipeline —
-/// and that rectangle is this node's own, read back from the tree.
+/// **A press names the byte, not the cell.** The leaf answers
+/// `text_byte_at` from the rows its last text pass drew, so the press
+/// carries the byte the caret goes to (`Event::text_byte`), and the press
+/// captures the pointer: a selection drag is this gesture's own moves
+/// (`PaneContentDrag`) and its release (`PaneContentRelease`), wherever the
+/// pointer goes — the same mechanism a scrollbar thumb and a tab use, in
+/// place of a drag flag the legacy walk ranked against nine others. The
+/// cell still rides along for what is not the buffer's: a live terminal
+/// grid's forwarding, the plugin hook, the gutter's fold toggle.
 ///
-/// A **right** press is deliberately not claimed: it belongs to the base
-/// surface's dismissal of the tab context menu, which is the only thing left
-/// on the legacy walk that a right-click over a pane should reach.
-/// **The base's own focus holder.** Focus is never nowhere: when no panel,
-/// prompt, popup or menu holds the keyboard, the tree's focus rests on the
-/// active pane's content — marked `autofocus` so a mark leaving a blurred
-/// panel has somewhere to go, and `skip_traversal` so it is no Tab stop.
-/// It observes every key (`Flow::Observe`): the base's keys are the editor's
-/// own pipeline until the buffer host's keymap rides on the tree (L3), so
-/// the tree decides nothing for them. `frame::key_context_of` names nothing
-/// for its key, which is how a focus chain ending here reads as the base's
-/// own context.
-fn content_surface(id: LeafId, active: bool) -> Node<UiMsg> {
+/// The leaf is the base's marked focus holder when this is the active pane
+/// (`autofocus`): where the tree's focus rests when no chrome scope is up.
+fn content_leaf(id: LeafId, handle: super::buffer_host::PaneHandle, active: bool) -> Node<UiMsg> {
     let at = |e: &Event| (e.pos.x.max(0) as u16, e.pos.y.max(0) as u16);
-    let surface = gesture(row())
+    let surface = gesture(handle.node())
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -1422,14 +1577,38 @@ fn content_surface(id: LeafId, active: bool) -> Node<UiMsg> {
                     return None;
                 }
                 let (x, y) = at(e);
+                e.capture_pointer();
                 e.stop();
                 Some(UiMsg::Ui(UiFact::PaneContentPress {
                     pane: id,
+                    byte: e.text_byte,
                     x,
                     y,
                     clicks: e.clicks,
                     mods: e.mods,
                 }))
+            }),
+        )
+        .on(
+            GestureKind::Move,
+            Rc::new(move |e: &Event| {
+                // A move is the drag only while the leaf holds the pointer
+                // its press took; bare motion across the text changes
+                // nothing anybody draws and says nothing.
+                if !e.captured {
+                    return None;
+                }
+                let (x, y) = at(e);
+                Some(UiMsg::Ui(UiFact::PaneContentDrag { pane: id, x, y }))
+            }),
+        )
+        .on(
+            GestureKind::Release,
+            Rc::new(move |e: &Event| {
+                if e.button != MouseButton::Left {
+                    return None;
+                }
+                Some(UiMsg::Ui(UiFact::PaneContentRelease { pane: id }))
             }),
         )
         .on(
@@ -1440,65 +1619,59 @@ fn content_surface(id: LeafId, active: bool) -> Node<UiMsg> {
                 Some(UiMsg::Ui(pane_wheel(id, x, y, e.delta, e.axis)))
             }),
         );
+    // **The leaf's keyboard.** Every key that reaches the content while it
+    // holds focus is the editor's — Tab included, which is the buffer's
+    // indent and never the ring's traversal — and the leaf claims it so no
+    // pipeline behind the tree has to be the default owner of a key nobody
+    // took (design §3.7.5).
     let n = fresh_ui::focusable(surface)
         .key(content_key(id))
         .skip_traversal()
-        .on_key(|e: &Event| {
-            e.observe();
-            None
+        .on_key(move |e: &Event| {
+            e.stop();
+            Some(UiMsg::Ui(UiFact::PaneKey { pane: id }))
         });
+    // **The pane's context is the leaf's settled fact.** A terminal taking
+    // the keyboard raw and a composite buffer resolve their keys in their own
+    // sections; the chain names the pane's content, and `get_key_context`
+    // asks the pane's handle which (`PaneHandle::context`), as the PTY gate
+    // asks it for raw input. Not a node above the leaf: the leaf's element
+    // must be the same whatever mode it is in, so a drag that parks a live
+    // terminal in scroll-back keeps the capture it took.
     match active {
         true => n.autofocus(),
         false => n,
     }
 }
 
-/// The right-hand control cluster of a pane's strip: `[gap] > [□] [×] [trail]`.
+/// One of a pane's scrollbars: the bar's leaf, with the gestures a bar
+/// answers.
 ///
-/// **Message-agnostic, like the rest of the interior.** The cells are the tab
-/// renderer's; what the nodes carry is where each button is and which pane it
-/// belongs to. `close_split_areas` and `maximize_split_areas` were those two
-/// facts recorded as rectangles and compared against a cell.
-/// The two buttons are slots, on the same terms as [`PaneSlots`]: the model
-/// asks for the shape with bare `row()`s to get the rectangles, and the shell
-/// puts gestures in. The keys are applied here either way.
-pub fn controls<M: 'static>(
+/// **The bar is the tree's, thumb and all.** The leaf paints an ordinary
+/// `Draw::Scrollbar` from the facts the editor settled before the frame
+/// (`Editor::settle_pane_bars`), sized to the track layout gives it — where
+/// the painter used to draw the bar into the pane's cells and file the
+/// thumb's extent for the press to read back. A press reads the thumb from
+/// the same facts and the same arithmetic (`Draw::scrollbar_thumb`), so the
+/// two cannot disagree. The thumb lights under the pointer through the
+/// bar's theme; a track cell under it is a mark on the facts.
+fn scrollbar(
     id: LeafId,
-    c: PaneControls,
-    maximize: Node<M>,
-    close: Node<M>,
-) -> Node<M> {
-    if c.reserve() == 0 {
-        return row().w(Sizing::Cells(0));
-    }
-    let one = Sizing::Cells(1);
-    let mut cells: Vec<Node<M>> = vec![
-        // The gap, then the `>` overflow slot — reserved whether or not the
-        // tabs overflow, so the cluster does not shift as they scroll.
-        row().w(one),
-        row().w(one),
-    ];
-    if c.maximize {
-        cells.push(maximize.key(maximize_key(id)).w(one));
-    }
-    if c.close {
-        cells.push(close.key(close_key(id)).w(one));
-    }
-    // The trailing blank the painter leaves.
-    cells.push(row().w(one));
-    row().children(cells)
-}
-
-/// One of a pane's scrollbars.
-///
-/// **The pane is the node's; the bar's geometry stays recorded.** Where the
-/// thumb is, and how wide the content is, are reads of the scroll state at
-/// paint time — genuinely recorded. Which pane the pointer is over was *also*
-/// recovered from a recorded rectangle, by asking every pane's bar in turn
-/// whether it contained the point, and that is what the key replaces.
-fn scrollbar(id: LeafId, axis: Axis) -> Node<UiMsg> {
+    axis: Axis,
+    handle: &super::buffer_host::PaneHandle,
+    hover: &Option<HoverTarget>,
+) -> Node<UiMsg> {
     let at = |e: &Event| (e.pos.x.max(0) as u16, e.pos.y.max(0) as u16);
-    let bar = gesture(row())
+    let thumb_lit = matches!(hover, Some(HoverTarget::ScrollbarThumb(p)) if *p == id);
+    let theme = pair(
+        if thumb_lit {
+            "ui.scrollbar_thumb_hover_fg"
+        } else {
+            "ui.scrollbar_thumb_fg"
+        },
+        "ui.scrollbar_track_fg",
+    );
+    let bar = gesture(handle.bar_node(axis).theme(theme))
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -1586,48 +1759,36 @@ fn pane_wheel(id: LeafId, x: u16, y: u16, delta: i32, axis: Axis) -> UiFact {
     }
 }
 
-/// The tab strip, as one node per pane.
+/// The tab strip, as one node per pane: its tabs, described
+/// (`shell::tabs`), under the strip's own wheel.
 ///
-/// **The strip is the node; its interior is still the painter's.** The tabs,
-/// the close buttons, the "+" and the scroll arrows are laid out by the tab
-/// renderer and hit-tested against what it recorded, so what moves here is
-/// *which pane's strip the pointer is on* — which the node knows because it is
-/// that pane's — and the ordering that two `LayoutBox`es used to express by
-/// their `z`: the split controls are drawn on top of the tab row, so they are
-/// asked first.
-fn tab_strip(id: LeafId) -> Node<UiMsg> {
+/// The tabs, their close buttons, the `+`, the arrows and the cluster are
+/// each a node that answers its own press and reports its own hover. What
+/// the strip itself answers is the wheel — a notch anywhere on the row pans
+/// the tabs — and a press on its ground, which stops here so that the buffer
+/// beneath never sees a click aimed at the bar between two tabs.
+fn tab_strip(id: LeafId, s: &Rc<Splits>) -> Node<UiMsg> {
     let at = |e: &Event| (e.pos.x.max(0) as u16, e.pos.y.max(0) as u16);
-    gesture(row())
+    let strip = s.strips.get(&id).cloned().unwrap_or_default();
+    let cluster = super::tabs::Cluster {
+        controls: s.controls,
+        maximized: s.maximized.is_some(),
+        hover_maximize: s.hover == Some(HoverTarget::MaximizeSplitButton(id)),
+        hover_close: s.hover == Some(HoverTarget::CloseSplitButton(id)),
+    };
+    gesture(super::tabs::strip(id, &strip, cluster))
         .on(
             GestureKind::Press,
-            Rc::new(move |e: &Event| {
-                let (x, y) = at(e);
-                e.stop();
-                Some(UiMsg::Ui(match e.button {
-                    MouseButton::Left => UiFact::PaneTabsPress { pane: id, x, y },
-                    // Right-click on a tab raises its context menu. The clear
-                    // half — a right-click anywhere else dismisses it — stays
-                    // on the legacy walk's base surface, which this claim
-                    // keeps out of the way of.
-                    MouseButton::Right => UiFact::PaneTabsSecondary { pane: id, x, y },
-                    _ => return None,
-                }))
+            Rc::new(|e: &Event| {
+                // The ground between the tabs: a left press is spent here,
+                // and a right one raises no menu and stays available to the
+                // base surface's clear.
+                if e.button == MouseButton::Left {
+                    e.stop();
+                }
+                None
             }),
         )
-        .on(
-            GestureKind::Move,
-            Rc::new(move |e: &Event| {
-                let (x, y) = at(e);
-                Some(UiMsg::Ui(UiFact::PaneTabsHover(Some((id, x, y)))))
-            }),
-        )
-        .on_enter(Rc::new(move |e: &Event| {
-            let (x, y) = at(e);
-            Some(UiMsg::Ui(UiFact::PaneTabsHover(Some((id, x, y)))))
-        }))
-        .on_leave(Rc::new(move |_: &Event| {
-            Some(UiMsg::Ui(UiFact::PaneTabsHover(None)))
-        }))
         .on(
             GestureKind::Wheel,
             Rc::new(move |e: &Event| {
@@ -1699,8 +1860,47 @@ pub fn maximize_key(id: LeafId) -> Key {
 pub fn close_key(id: LeafId) -> Key {
     Key::Pair("pane_close".into(), id.0 .0 as u64)
 }
+/// Where a dragged tab would land, over the target pane's content: the
+/// whole content for a strip or centre drop, the near half for an edge drop
+/// — the same halves the painter carved, with the same floors — as a
+/// bordered box whose ground is a wash, so the text under it stays readable
+/// through the highlight.
+fn drop_zone_node(zone: crate::app::types::TabDropZone) -> Node<UiMsg> {
+    use crate::app::shell_host::shell_theme::attrs;
+    use crate::app::types::TabDropZone as Z;
+    let zone_box = || {
+        col()
+            .theme(attrs(
+                "ui.tab_drop_zone_border",
+                "ui.tab_drop_zone_bg",
+                &["bold"],
+            ))
+            .wash()
+            .border()
+    };
+    match zone {
+        Z::TabBar(..) | Z::SplitCenter(_) => zone_box(),
+        Z::SplitLeft(_) => row().children([zone_box().w(Sizing::Pct(50)).min_w(3), row().flex(1)]),
+        Z::SplitRight(_) => row().children([row().flex(1), zone_box().w(Sizing::Pct(50)).min_w(3)]),
+        Z::SplitTop(_) => col().children([zone_box().h(Sizing::Pct(50)).min_h(2), col().flex(1)]),
+        Z::SplitBottom(_) => {
+            col().children([col().flex(1), zone_box().h(Sizing::Pct(50)).min_h(2)])
+        }
+    }
+}
+
 pub fn content_key(id: LeafId) -> Key {
     Key::Pair("pane_content".into(), id.0 .0 as u64)
+}
+
+/// The pane a content key names, if `k` is one.
+pub fn pane_of_content_key(k: &Key) -> Option<LeafId> {
+    match k {
+        Key::Pair(name, n) if &**name == "pane_content" => {
+            Some(LeafId(fresh_core::SplitId(*n as usize)))
+        }
+        _ => None,
+    }
 }
 pub fn vscroll_key(id: LeafId) -> Key {
     Key::Pair("pane_vscroll".into(), id.0 .0 as u64)
@@ -1788,7 +1988,10 @@ pub fn pane_interior<M: 'static>(id: LeafId, c: PaneChrome, s: PaneSlots<M>) -> 
             .h(cells(c.tabs))
             .children([s.tabs.flex(1), s.controls]),
         row().flex(1).children([
-            s.content.key(content_key(id)).flex(1),
+            // The content names itself (`content_key`): a leaf's context
+            // is a keyed node *above* it on the chain (`content_leaf`), and
+            // a key applied here would sit on that node and take its name.
+            s.content.flex(1),
             s.vscroll.key(vscroll_key(id)).w(cells(c.vscroll)),
         ]),
         row().h(cells(c.hscroll)).children([
@@ -1803,8 +2006,11 @@ pub fn pane_interior<M: 'static>(id: LeafId, c: PaneChrome, s: PaneSlots<M>) -> 
 ///
 /// `row()` everywhere is the bare shape: only the rectangles are wanted, which
 /// is how the model asks this description for them. The shell puts nodes with
-/// gestures and children in instead. The keys are applied by `pane_interior`
-/// either way, so a caller cannot forget one.
+/// gestures and children in instead. The strip's and the bars' keys are
+/// applied by `pane_interior` either way, so a caller cannot forget one; the
+/// content carries its own (`content_key`), because what a caller puts there
+/// may be a keyed chain — a pane's context above its leaf — and one key on
+/// the slot would rename its top.
 pub struct PaneSlots<M> {
     pub tabs: Node<M>,
     /// The right-hand control cluster, *inside* the strip. Its children carry
@@ -1815,12 +2021,16 @@ pub struct PaneSlots<M> {
     pub hscroll: Node<M>,
 }
 
-impl<M: 'static> Default for PaneSlots<M> {
-    fn default() -> Self {
+impl<M: 'static> PaneSlots<M> {
+    /// The bare shape: rectangles only, for the model that lays a pane out
+    /// to read them back. The content row is keyed here because the content
+    /// names itself in the shell's tree, and the model's must answer to the
+    /// same name.
+    pub fn bare(id: LeafId) -> Self {
         Self {
             tabs: row(),
             controls: row(),
-            content: row(),
+            content: row().key(content_key(id)),
             vscroll: row(),
             hscroll: row(),
         }

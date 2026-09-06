@@ -1,22 +1,18 @@
 //! Layout & geometry helpers for split panes.
 //!
 //! Everything in this module deals with rectangles, view anchors, viewport
-//! bounds, view preferences, and per-split tab configuration. Nothing here
+//! bounds and view preferences. Nothing here
 //! depends on any shared render-time "mega struct".
 
 use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
-use crate::model::event::{BufferId, LeafId, SplitDirection};
+use crate::model::event::LeafId;
 use crate::state::{EditorState, ViewMode};
 use crate::view::shell::splits::PaneChrome;
-use crate::view::split::{SplitViewState, TabTarget};
-use crate::view::theme::Theme;
+use crate::view::split::SplitViewState;
 use crate::view::ui::view_pipeline::ViewLine;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::widgets::Paragraph;
-use ratatui::widgets::Widget;
 use std::collections::HashMap;
 
 /// Anchor describing where to start rendering within a slice of view lines.
@@ -26,14 +22,17 @@ pub(super) struct ViewAnchor {
 
 /// Layout for compose (centered page) mode: the effective render area and
 /// the side paddings.
-pub(super) struct ComposeLayout {
+pub(crate) struct ComposeLayout {
     pub render_area: Rect,
     pub left_pad: u16,
     pub right_pad: u16,
 }
 
 /// Rectangle partitioning for one split: tabs, content, vertical scrollbar,
-/// horizontal scrollbar.
+/// horizontal scrollbar — the model's answer, read for its content rect by
+/// the painter and whole by the parity tests in `view::shell::splits`, which
+/// pin the description to it.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct SplitLayout {
     pub tabs_rect: Rect,
     pub content_rect: Rect,
@@ -65,11 +64,11 @@ pub(super) struct ViewPreferences {
 /// hangs off these rectangles can become nodes against the same description.
 pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> SplitLayout {
     use crate::view::shell::splits::{
-        content_key, hscroll_key, pane_interior, tabs_key, vscroll_key,
+        content_key, hscroll_key, pane_interior, tabs_key, vscroll_key, PaneSlots,
     };
     let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
     ui.frame(
-        pane_interior::<()>(id, chrome, Default::default()),
+        pane_interior::<()>(id, chrome, PaneSlots::bare(id)),
         fresh_ui::Size::new(split_area.width, split_area.height),
     );
     let at = |k: fresh_ui::Key| -> Rect {
@@ -141,23 +140,6 @@ pub(crate) fn reference_split_layout(
         scrollbar_rect,
         horizontal_scrollbar_rect,
     }
-}
-
-/// Return the open-buffer list and tab scroll offset for a split.
-pub(super) fn split_buffers_for_tabs(
-    split_view_states: Option<&HashMap<LeafId, SplitViewState>>,
-    split_id: LeafId,
-    buffer_id: BufferId,
-) -> (Vec<TabTarget>, usize) {
-    if let Some(view_states) = split_view_states {
-        if let Some(view_state) = view_states.get(&split_id) {
-            return (
-                view_state.open_buffers.clone(),
-                view_state.tab_scroll_offset,
-            );
-        }
-    }
-    (vec![TabTarget::Buffer(buffer_id)], 0)
 }
 
 /// Sync viewport width/height to `content_rect`, and ensure the primary
@@ -399,33 +381,4 @@ pub(super) fn visible_source_span(rows: &[ViewLine]) -> Option<(usize, usize)> {
         }
     }
     span
-}
-
-/// Draw the separator line between two splits.
-pub(super) fn render_separator(
-    buf: &mut ratatui::buffer::Buffer,
-    direction: SplitDirection,
-    x: u16,
-    y: u16,
-    length: u16,
-    theme: &Theme,
-) {
-    let style = Style::default()
-        .fg(theme.split_separator_fg)
-        .bg(theme.editor_bg);
-    match direction {
-        SplitDirection::Horizontal => {
-            let line_area = Rect::new(x, y, length, 1);
-            let line_text = "─".repeat(length as usize);
-            let paragraph = Paragraph::new(line_text).style(style);
-            paragraph.render(line_area, buf);
-        }
-        SplitDirection::Vertical => {
-            for offset in 0..length {
-                let cell_area = Rect::new(x, y + offset, 1, 1);
-                let paragraph = Paragraph::new("│").style(style);
-                paragraph.render(cell_area, buf);
-            }
-        }
-    }
 }

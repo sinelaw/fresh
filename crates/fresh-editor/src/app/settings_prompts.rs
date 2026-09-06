@@ -56,7 +56,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Line ending: ".to_string(),
             PromptType::SetLineEnding,
             suggestions,
@@ -102,7 +102,7 @@ impl Editor {
             .position(|enc| *enc == current_encoding)
             .unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Encoding: ".to_string(),
             PromptType::SetEncoding,
             suggestions,
@@ -181,7 +181,7 @@ impl Editor {
             .position(|enc| *enc == current_encoding)
             .unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Reload with encoding: ".to_string(),
             PromptType::ReloadWithEncoding,
             suggestions,
@@ -303,7 +303,7 @@ impl Editor {
         // Find current language index
         let current_index = current_index_found.unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Language: ".to_string(),
             PromptType::SetLanguage,
             suggestions,
@@ -380,7 +380,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Select theme: ".to_string(),
             PromptType::SelectTheme {
                 original_theme: current_theme_key.to_string(),
@@ -646,7 +646,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Select keybinding map: ".to_string(),
             PromptType::SelectKeybindingMap,
             suggestions,
@@ -744,7 +744,7 @@ impl Editor {
             .position(|s| *s == current_style.as_str())
             .unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Select cursor style: ".to_string(),
             PromptType::SelectCursorStyle,
             suggestions,
@@ -832,7 +832,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             t!("rulers.remove_prompt").to_string(),
             PromptType::RemoveRuler,
             suggestions,
@@ -916,7 +916,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             t!("locale.select_prompt").to_string(),
             PromptType::SelectLocale,
             suggestions,

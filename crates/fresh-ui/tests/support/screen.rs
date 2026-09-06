@@ -150,6 +150,9 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
     let r = item.rect;
     match &item.draw {
         Draw::Fill => fill(s, r, fill_char(item.theme.as_str()).unwrap_or(' '), clip),
+        // A wash keeps the text under it; the screen model has no ground to
+        // recolour, so it paints nothing.
+        Draw::Wash => {}
         Draw::Scrim(Scrim::Opaque) => fill(s, frame, ' ', frame),
         Draw::Scrim(Scrim::Dim) => fill(s, frame, '·', frame),
         Draw::Border(bs) => border(s, r, clip, *bs),
@@ -173,16 +176,26 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
             offset,
             content,
             window,
+            axis,
+            marks,
         } => {
-            let track = r.h.max(1);
+            let track = match axis {
+                fresh_ui::Axis::Vertical => r.h.max(1),
+                fresh_ui::Axis::Horizontal => r.w.max(1),
+            };
             let (top, len) = Draw::scrollbar_thumb(*offset, *content, u32::from(*window), track);
             for i in 0..track {
-                let ch = if i >= top && i < top + len {
+                let ch = if marks.iter().any(|m| m.at == i) {
+                    '▌'
+                } else if i >= top && i < top + len {
                     '█'
                 } else {
                     '│'
                 };
-                s.put(r.x, r.y + i as i32, ch, clip);
+                match axis {
+                    fresh_ui::Axis::Vertical => s.put(r.x, r.y + i as i32, ch, clip),
+                    fresh_ui::Axis::Horizontal => s.put(r.x + i as i32, r.y, ch, clip),
+                }
             }
         }
         // A marker for a backend that supports selection; it draws nothing.

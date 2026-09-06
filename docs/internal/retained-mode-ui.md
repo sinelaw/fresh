@@ -146,7 +146,7 @@ counts** — `skip` says Tab does not stop there, not that focus may never
 rest there, and the base's own focus holder is exactly such an element.
 Which is the last piece: **focus is never nowhere.** The active pane's
 content is a keyed, skipped focusable the description marks whenever no
-panel holds the keyboard (`splits::content_surface`; a pane-mounted
+panel holds the keyboard (`splits::content_leaf`; a pane-mounted
 panel's wrapper, when none of its widgets does), and it observes every key
 (`Flow::Observe`) until the buffer host's keymap rides on the tree (L3). A
 blurred panel's widgets stop marking (`widgets::Ctx::keyboard`, the host's
@@ -228,10 +228,13 @@ for it. A yield priority on flex children, resolved in the same remainder
 distribution the design already specifies, is the concept the third
 occurrence proved missing.
 
-**L8 — Scrollbar markers.** `Draw::Scrollbar` carries no marks; the overview
+**L8 — Scrollbar markers.** `Draw::Scrollbar` carried no marks; the overview
 ruler (search hits, diagnostics, git hunks — see
 `plugin-scrollbar-markers-design.md`) needs them as part of the bar's own
-item rather than as a second overlay measured against it.
+item rather than as a second overlay measured against it. *Landed:*
+`Draw::Scrollbar { marks: Rc<[Mark]> }`, a mark being a track cell and a
+theme, painted as a half block over the bar's cell (or the whole cell), by
+the fold and by the web alike (§3.7.6).
 
 **L9 — The speculative-build purity check, and geometry validity in the
 type.** Both were deferred in the implementation plan's last register and
@@ -268,7 +271,10 @@ to be one pass is already there (`HostPainter` is the general form of the
 two-band fold's host arm, `view/shell/fold.rs:121`); what the *pane* needs
 is a run primitive that can say "inherit the background" so the four cell
 patches the text pipeline applies today become run styles. Small, and it is
-the last thing between the two-band fold and one pass.
+the last thing between the two-band fold and one pass. *Landed, the region
+form*: a box whose ground is a wash (`Node::wash`, `Draw::Wash`) recolours
+what is under it and keeps the text — the drop-zone highlight's primitive.
+The run form is open.
 
 **L13 — A host leaf answers the scroll-facts read.** The viewport publishes
 offset, content and window; a host leaf that scrolls its own content (the
@@ -299,6 +305,38 @@ the library's rule is what lets a menu dropdown and an anchored panel say
 dialog and the keybinding editor both place flex children under a loose
 measure today and read the maximum, so the rule lands with those surfaces
 sized by what they hold (S5), not before.
+
+**L16 — A frame has two halves.** `Ui::lay_out` reconciles, lays out and
+settles; `Ui::paint` produces the display list of the tree as it was left;
+`Ui::frame` is the two in turn. A host leaf's paint may depend on a pass
+the application runs over the *laid-out* geometry — a text pane formats
+its rows for the rectangle layout gave it, and its caret is an answer of
+that pass — and painting in the same call as layout would put that leaf's
+paint a frame behind its own geometry. *Landed*: the editor lays the tree
+out, reconciles and formats every pane, then paints, so the pane's leaf
+places this frame's caret in this frame's display list (§3.7.3).
+
+**L17 — A cursor under a layer is not on screen.** The terminal draws its
+one cursor over every cell, so a caret an in-flow surface placed would
+blink through whatever a layer paints over it. A layer painted after a
+cursor ends it when the layer scrims the frame or its own box holds the
+cursor's cell, and places its own if it has one, which then wins by being
+last. *Landed*; with it the editor keeps no list of overlays to decide
+whether the caret it committed would bleed through a popup
+(`cursor_obscured_by_overlay`, `cursor_suppressed_by_late_overlay` are
+deleted), and the display list's cursor is committed as it stands.
+
+**L18 — What a reader builds is in the focus tree on the frame that built
+it.** A `layout_reader` rebuilds its subtree during the layout pass, after
+the frame's full relink; the registrations it produces are linked under
+the nearest focusable above it, and when there is none — a split grid's
+panes, built by the grid's own reader, under nothing but the body — they
+are focus *roots*, and the root scope's list is recomputed then, not at
+the next frame's relink. Without it a two-pane frame's first settle found
+no pane content in the root scope, followed the active pane's mark a frame
+late, and the first key into a restored session had no focus holder.
+*Landed*; `the_first_layout_focuses_the_active_pane_even_when_it_is_not_the_first`
+is the editor's statement of it.
 
 ### 1.3 What the library does not do, by decision
 
@@ -464,9 +502,20 @@ the tree follow the mark whenever it moves.
    `Layer`, `LayerKind`, `layer_rank`, `overlay_layers` and every
    `ChromeComponent::layers` are deleted; `app/chrome/` keeps the two hover
    reactions and the `Editor` methods the facts land in until §3.1 moves
-   them. The PTY gate on `raw_input()` proper waits for the terminal to be a
-   host leaf (S7); the base dispatcher's Normal-context resolution waits for
-   the buffer's (S7).
+   them. *Landed, the base dispatcher reached only through the tree*
+   (§3.7.5): the active pane's content claims every key that reaches it as
+   `UiFact::PaneKey`, the explorer's header — the focus holder its keys
+   layer names while the explorer has the keyboard, open or collapsed —
+   claims its keys as `UiFact::SidebarKey`, and both land in
+   `dispatch_base_key` through `hand_key_to_editor`, the same seam a
+   panel's or the prompt's declined key takes. `handle_key`'s pipeline tail
+   is deleted: a key the tree declines everywhere is nobody's, and a key
+   the tree has no vocabulary for is declined at translation. The library's
+   `Flow::Observe` — the disposition that let a subtree end propagation
+   without claiming, so the tail could act — is deleted with its only user.
+   *Landed, the PTY gate on `raw_input()`*: the live terminal's pane leaf
+   takes raw input and the tree's derived answer gates the forwarding
+   (§3.7.5, §3.7.8).
 9. **The dock's key policy is the plugin's.** `router.rs:222`'s dock branch
    hardcodes one plugin's widget-key conventions. Two generic pieces replace
    it: a **focus-trapped container answers its own navigation** (the kinds
@@ -533,10 +582,11 @@ is drained at the head of every dispatch (done, `shell_host.rs:1579`).
 ### 3.2 Pointer
 
 Every press, move, wheel and drag is the tree's. `PointerGrab`
-(`app/chrome/mod.rs:75`, five variants: widget text, widget scrollbar,
-terminal-select-pending, text selection, tab drag) becomes `capture_pointer`
-on the gesture that starts it — the tab strip's tab (§3.7), the scrollbar
-thumb, a described text field. Text selection *inside the buffer host* is
+(`app/chrome/mod.rs`, one variant left: a described text widget's
+selection drag; the tab drag is the tab's own capture, §3.7.9, and the
+buffer's text selection and a live terminal grid's selection intent are
+the content leaf's, §3.7.4) becomes `capture_pointer`
+on the gesture that starts it — a described text field. Text selection *inside the buffer host* is
 the host's own, delivered through `HostLeaf::hit`; text selection inside a
 described popup (`PopupTextSelection`) is the host's too, over a region the
 tree names with `Draw::Selectable` — a decision, not a leftover.
@@ -557,11 +607,41 @@ defect that `render_panels_and_modals` paints after the caret commits all go.
 Frame-buffer animations are an effect the backend applies to the final cell
 buffer after the fold, declared as such; they are not tree state.
 
+*Landed, the one paint.* `render` folds once (`fold::fold_all`: both bands,
+one host painter, one provenance sink). Nothing paints between the in-flow
+content and the layers any more: a live terminal's PTY grid and the fade at
+a text pane's scrolled edges are the pane's own paint
+(`BodyPainter::pane`, after the text pass drew the mirror — for the frame's
+panes and an embed's alike); the placeholder page a dormant or
+still-building window shows is described (`Frame::placeholder`, a centred
+column on the editor's ground that is the pane's focus holder and hands its
+keys on as that pane's); a centred floating panel dims what is behind it
+with its layer's scrim; and the popups anchored to the caret are placed
+before the tree paints, since the content pass settled the caret already.
+`render_panels_and_modals`, `render_floating_widget_panel`, the placeholder
+painters, `shade_scroll_edges`, `render_terminal_splits`, `EmbedHosts` and
+the write-only `PaneAreas` are deleted. What runs after the fold is an
+effect over the finished cells — the software cursor, the keyboard-capture
+dimming, the animations, the colour fallback — and nothing else: the tab
+drag's drop-zone highlight, the last painter, is a node over the target
+pane's content whose ground is a *wash* (`Node::wash` → `Draw::Wash`: a
+fill that keeps the text it covers, L12's inherit rule for a region),
+bordered, in the drop zone's own keys; the content slot is a stack of its
+own so the leaf's element is the same with or without something over it,
+and the drag move that changes where the tab would land is the one that
+marks the description stale. `Paints::HostsOnly` and
+`suppress_chrome_cells` stay until the web consumes the display list
+(§3.9, S9).
+
 **One caret.** `LayoutSpec.cursor` is the only cursor source; the pane host
 reports its caret through the leaf; the described caret is a zero-width
-marker the fold reads through `cell_of`. The recorded disagreement about a
-Background-band caret is settled by a test that asserts the caret *reaches*
-`LayoutSpec.cursor`, not by prose.
+marker run that carries the cursor itself when its surface owns the
+keyboard. *Landed* (§3.7.3): the leaf places the cursor from the caret its
+content pass settled, the prompt row's and the explorer's runs place
+theirs, and nothing reads a marker's cell back to commit a caret. The
+recorded disagreement about a Background-band caret is settled by the
+library: the last cursor placed wins, and a layer painted over one ends it
+(L17).
 
 **Total provenance.** Every cell's theme key comes from the fold's
 `ProvenanceSink` (done for described surfaces). `Paint::Lit` — the one
@@ -601,7 +681,16 @@ and the tree measures them. What is left:
   rule is `Fit::FLIP`'s, pinned by `a_submenu_flips_left_at_the_right_edge`.
 - **The prompt line is the last host region among the chrome**
   (`frame.rs:30`, `PromptLine`). Its input row is a `TextField` over the
-  editor's one `TextEdit` engine, which deletes `text_click.rs`. *Landed*:
+  editor's one `TextEdit` engine, which deletes `text_click.rs`. *Landed*,
+  as runs rather than the `TextField` widget: `view/shell/prompt_line.rs`
+  describes the label and the query as one styled run with the caret
+  stated as a byte, windowed to the row's width the way the painter
+  scrolled it, the file-open prompts' directory colourised and truncated
+  before it; a press on the query places the caret
+  (`UiFact::PromptInputPress`). The engine is still the prompt's own
+  `TextEdit`, reached through its accessors; `render_prompt_line`,
+  `StatusBarRenderer::render_prompt` and `render_file_open_prompt` are
+  deleted, and no chrome region is a `Host` any more. *Landed* earlier:
   its overlay toolbar is described through the same adapter as every
   panel. The toolbar is the plugin's panel `PROMPT_TOOLBAR_PANEL_ID` in the
   registry (`Slot::PromptToolbar`), described in the card's header band as
@@ -617,6 +706,18 @@ and the tree measures them. What is left:
   `prompt_toolbar_boxes`, `Prompt.toolbar_focus`, `Prompt.toolbar_widget`,
   `CardToolbarPress` and `render_spec_no_autofocus` are deleted;
   `toggleOverlayToolbarWidget` runs the control's kind against the panel.
+  *Landed, the card itself*: the overlay prompt's card is the tree's, ring
+  and all — the ring and ground, the caption on the top edge, the input
+  row with its caret stated as a byte (the bottom row's own query window,
+  `prompt_line::input_window`), the title row, the separator and the
+  plugin's footer are nodes; a plugin's `StyledText` becomes runs in the
+  shell's names (`overlay_prompt::styled_runs`); the card's layer carries
+  `Scrim::Dim` for what the painter dimmed by hand; and the preview pane
+  is the card's one host — a buffer the text pipeline renders into the
+  band layout gives it, as a pane's content is, beside the rule the band
+  names its edge with. `render_overlay_prompt`, `resolve_overlay_style`
+  and the chrome cache's `prompt_results_area`/`prompt_preview_area` are
+  deleted; the web reads the bands off the tree.
 - **The editor scrollbar column.** A popup clamps to the frame, not to the
   frame minus the split's scrollbar; that inset is stated by the chrome
   column node once the split grid is a region with its own rectangle (§3.7).
@@ -844,19 +945,24 @@ primitive has and no others (`crates/fresh-ui/src/render/object.rs:323`),
 which takes its rectangle from layout, its position from paint order, and
 records nothing.
 
-Today a pane is the weaker of the two forms the library offers:
-`HostSpec::Plain` (`desc.rs:885`), a `PlainHost` that answers layout with
-"whatever I am given" and paints one `Draw::Host(id)` item that the fold's
-`HostPainter` (`app/shell_host.rs:475`) resolves back to the pane and paints
-through the text pipeline. It answers nothing else: no hit, no byte under a
-cell, no focus registration, no scroll facts. Everything the tree cannot ask
-it is answered beside it — `view_line_mappings` and the click-to-byte scan
-in the editor's mouse path, the caret handed to the painter by `&mut`, the
-scrollbar thumb from `WindowLayoutCache`. `view/shell/content.rs` is the
-other idea, written and never called: the pane's rows as `text_runs`
-supplied to a `layout_reader`. **That is not the design and is deleted.**
-Its own invariant — a pane's item count is a function of its rows — is
-right, and the host form keeps it with no per-row items at all.
+Until S7's second slice a pane was the weaker of the two forms the
+library offers: `HostSpec::Plain`, a `PlainHost` that answers layout with
+"whatever I am given" and paints one `Draw::Host(id)` item the fold's
+`HostPainter` resolves back to the pane, and answers nothing else — no
+byte under a cell, no focus registration, no scroll facts — so everything
+the tree could not ask it was answered beside it: `view_line_mappings` and
+the click-to-byte scan in the editor's mouse path, the caret handed to the
+painter by `&mut`, the scrollbar thumb from `WindowLayoutCache`. Now the
+pane's content is `BufferHost` (`view/shell/buffer_host.rs`, §3.7.1 and
+§3.7.4 landed): the leaf is the content slot, it answers `text_byte_at`
+from the rows its last text pass settled on the `PaneView` it shares with
+the window's `PaneHandle`, and a press carries the byte. What is still
+answered beside it is the caret (handed to the painter by `&mut`) and the
+scroll facts (§3.7.3, §3.7.6). `view/shell/content.rs` — the other idea,
+the pane's rows as `text_runs` supplied to a `layout_reader`, written and
+never called — was not the design and is deleted; its own invariant, that a
+pane's item count is a function of its rows, is right, and the host form
+keeps it with no per-row items at all (`a_pane_is_one_item`).
 
 #### 3.7.1 The node
 
@@ -896,6 +1002,30 @@ pipeline applies after the fact (selection, current line, matching bracket,
 the four the old plans list) become run styles that inherit the background
 (L12), and the pipeline stops rewriting cells the fold has written.
 
+*Landed, the caret.* The frame is L16's two halves: `render` lays the
+tree out, reconciles every pane's viewport at the rectangle layout gave
+it, runs the plugin hooks, and then the **content pass**
+(`orchestration::content_pass`) formats every text pane's rows and
+resolves its caret's cell once (`caret_cell`, the one derivation), settled
+on the pane's `PaneView`; only then does the tree paint, so `BufferHost`'s
+`paint` pushes its `Draw::Host` and sets the display list's cursor at the
+caret *this* frame's pass settled, and the fold draws the rows from the
+same layout (`draw_buffer_in_split`). The caret reaches the terminal the
+way every native field's does — `LayoutSpec::cursor`, committed as it
+stands — and `HostPainter` paints cells and nothing else: its caret
+out-parameter, `pending_hardware_cursor` through the whole pipeline,
+`render_buffer_in_split` and `compute_content_layout` (the geometry pass
+runs the same reconcile and content pass) are deleted. The popup anchored
+to the caret reads the view's caret rather than projecting the viewport a
+second time. Whether the active pane shows a caret at all is decided once
+per frame (`Editor::hide_cursor`: another surface owns the keyboard, or a
+modal is up) and read by the pass — a caret that is not shown keeps its
+cell on the view, which is what the popup anchored to it reads, and a
+pane the pass did not settle this frame has no caret at all
+(`Window::clear_carets_except`); what covers a shown caret is the
+library's question (L17). Still open here: the pipeline's cell patches as runs
+(L12).
+
 #### 3.7.4 Pointer
 
 `hit` claims the whole rect; `text_byte_at(local)` answers the byte under a
@@ -907,6 +1037,21 @@ selection drag is `capture_pointer` on that gesture, and the wheel is a
 message the leaf raises with the notch and its own row window. No mouse
 path in the editor scans rectangles to find a pane, and `handle_editor_click`
 receives a byte, not a cell.
+
+Landed: the map is the `PaneView` the leaf shares with the window's
+`PaneHandle` (with one library rule: a press ends a capture whose release
+never came and is routed by the pointer, so a host that reports presses
+without releases cannot leave every later press with the first captor) (`WindowLayoutCache::hosts`; the keyboard's visual-line motion
+reads the same view), `UiFact::PaneContentPress` carries `Event::text_byte`,
+the press captures the pointer so the selection drag and a live terminal
+grid's selection intent are `PaneContentDrag`/`PaneContentRelease`
+(`Editor::drag_pane_content`; a move is the drag only when
+`Event::captured` says the pointer came by capture, so a bare motion
+across the text says nothing and asks for no frame), and
+`PointerGrab::{TextSelection, TerminalSelectPending}` are deleted. The cell still rides on the press for
+what is not the buffer's — a live grid's forwarding, the `mouse_click`
+hook, the gutter's fold toggle — and the virtual-space overshoot is the
+same projection asked once more of the same view.
 
 #### 3.7.5 Keyboard and focus
 
@@ -920,6 +1065,54 @@ the buffer is not a PTY. `Modality::Focus` chrome above it (dock, prompt,
 sidebar) confines traversal and lets unbound keys fall to this leaf, which
 is the property `Focus` exists for.
 
+*Landed, the handler.* The leaf is the base's marked focus holder
+(`autofocus` when the pane is active) and claims every key that reaches it
+— Tab included, which is the buffer's indent — as `UiFact::PaneKey`; the
+applier is the base key dispatcher, reached through no other door. The
+resolver is consulted there rather than as a shortcut table on the node:
+a chord's pending state, a plugin mode's text input and a composite's
+routing all need the editor in hand, and one dispatcher with the context
+read off the focus chain (`Editor::get_key_context`) is the L3 property
+without a second resolution site. The explorer holds focus the same way
+while it has the keyboard (`sidebar::explorer_header_key`, read as
+`KeyContext::FileExplorer` by `frame::key_context_of`). With no pipeline
+behind the tree, the tree has to exist whenever the editor does: a
+description that has never been laid out is stale from construction, and
+the first input lays it out at the editor's own size when no frame has
+given the tree one — a daemon's client types before its terminal reports
+a size, and that key is routed, not dropped
+(`a_key_before_the_first_frame_reaches_the_buffer`); and the tree's focus
+is settled over what a frame's readers built (L18), so the first frame of
+a restored two-pane session holds the keyboard on its active pane. A
+surface that closes on a key it was not in the way of — the completion
+list on Enter — hands the key on as a step it claims the key with
+(`PopupKey::Through`: close, then the key is routed in the pane's
+context), since a key the tree declines everywhere is nobody's now.
+*Landed, the context and the PTY.* The pane's context is its leaf's
+settled fact: the frame states each pane's (the active pane's is
+`Terminal` while its live terminal takes the keyboard, a composite
+buffer's is `CompositeBuffer`) on the pane's handle
+(`PaneHandle::set_context`, beside its raw input), and `get_key_context`
+walks the focus chain like every other surface's — a chain naming a
+pane's content asks that pane's handle, a chain that names no surface is
+the plain content, and the window's stored mode is asked for nothing. It
+is a fact of the leaf rather than a node above it because the leaf's
+element must be the same in every mode: a drag on a live terminal parks
+it in scroll-back mid-gesture, and a leaf re-created around a wrapper
+that came or went would lose the capture the drag took.
+The terminal's raw input is the leaf's: `BufferHost::takes_raw_input` is
+the pane's settled fact, `Ui::raw_input` derives whether such a leaf is
+reachable this frame — nothing exclusive above it, and the keyboard its
+own: focus on its *focus holder* or inside it, the holder being the
+nearest element at or above the leaf that registers for focus (the
+pane's leaf sits inside its `focusable`, so focus on that wrapper is the
+leaf's), since a popup or a panel that holds the keyboard takes the keys
+the terminal would have taken raw — and that is the PTY gate — the
+terminal dispatch
+left `handle_key`'s pre-band for the base dispatcher, reached only when
+the leaf naming `Terminal` holds the keyboard; `presents_blocking_overlay`
+is deleted.
+
 #### 3.7.6 Scroll
 
 The editor owns the pane's scroll, as a rule (§8). The leaf does not use a
@@ -931,6 +1124,31 @@ scrollbar is an ordinary `Draw::Scrollbar` node beside the leaf, with L8's
 markers for the overview ruler, whose press and drag raise scroll messages
 the editor applies. `Ui::window(key)` answers for a pane exactly as for a
 list.
+
+Landed, with one adjustment: the facts are not published through the
+viewport's scroll read — the editor owns the scroll, and a bar that
+declared a window to the framework would have the framework clamp and
+chain against it — but settled on the pane's handle before the frame is
+described (`Editor::settle_pane_bars` → `BarFacts`), and the bar is a
+leaf beside the content (`buffer_host::BarHost`) that paints one
+`Draw::Scrollbar` from them. The window is a rule the leaf applies to the
+track layout gives it (`BarWindow`), so the thumb is never drawn for a
+height the pane no longer has; the marks are resolved to rows by the
+editor (`resolve_scrollbar_marks`, kept by the marker, content and save
+versions — the one memo the bars have; the bucketing is done on every
+paint, since it is arithmetic and a memo of it was one more key to get
+wrong) and bucketed onto the track by the leaf, so a resize never shows a
+mark projected for another height. A press reads the thumb from the same facts and the same
+arithmetic (`Editor::bar_thumb`), so the press and the picture cannot
+disagree; the painter's thumb records (`split_areas`,
+`horizontal_scrollbar_areas`, `record_scrollbar_theme_runs`) and its
+hover repaint are deleted, and the painter draws a bar only for an
+embedded window (§3.7.8). A reconcile that moves a viewport under the
+rectangle layout gave it asks for the frame that shows the move
+(`Editor::frame_requested`). `Draw::Scrollbar` carries an `axis` and its
+`marks` now (L8 is landed): a horizontal bar's track runs across its
+rectangle, and a mark is a half block in its own theme over the bar's
+cell, or the whole cell for a track cell lit under the pointer.
 
 #### 3.7.7 The invariants, asserted
 
@@ -950,25 +1168,79 @@ list.
 
 The terminal grid and a window embed are the same kind of node with
 different answers: the PTY leaf says `takes_raw_input` so a modal above it
-suppresses raw input by the tree's own `raw_input()` test (`schedule.rs:730`),
-and its scroll-back is its own scroll facts; an embed is a leaf whose paint
+suppresses raw input by the tree's own `raw_input()` test (`schedule.rs:730`)
+— *landed* on the pane's leaf, which is the terminal's node already
+(§3.7.5) — and its scroll-back is its own scroll facts; an embed is a leaf whose paint
 delegates to the embedded window's own pane leaves. `HostRegion`,
 `HostTarget` and the seven-slot enumeration go: the fold resolves a
 `Draw::Host(id)` to a leaf by id, and there is one painter callback.
 
+*Landed.* An embed is a `Host` leaf in the panel's description, and its
+paint is the embedded window's own grid: the same `shell::splits`
+description the frame builds for the active window — that window's
+strips, dividers and pane leaves on its own handles (`Window::panes`),
+without bars (noise in a small box) and without keyboard or plugin
+panels (nothing of it is interactive through the embed) — laid out in a
+tree of its own at the embed's box, run through the same reconcile and
+content pass (`reconcile_body`, `content_body`, parametrized by window),
+folded through the same `BodyPainter` into a buffer of that size, its
+PTYs sized to the panes and their live grids overlaid, then copied into
+the frame (`shell_host::paint_embed`). The overlay prompt's window preview
+is the same paint. `render_session_preview_into_rect`,
+`SplitRenderer::render_content`, the painter's strip
+(`TabsRenderer`/`TabLayout`), its scrollbars and separators, the
+`chrome_described`/`draw_tab_bar` facts and the track-keyed marker
+projection are deleted: the only cells the painter writes are a pane's
+content. No region is a `Host`: `HostTarget::Region` and the region host
+ids are gone, and an empty region is a keyed node with nothing in it. What
+`HostTarget` still is, is the id's decoding into the three leaf kinds —
+pane, embed, card preview — which is the one callback's argument.
+
 #### 3.7.9 The chrome around it
 
 Everything around the content is nodes: the split grid's rectangles and
-dividers (done, `view/shell/geometry.rs`), **the tab strip**
-(`view/ui/tabs.rs`, the last painter-recorded-rectangle hit test: tabs,
-close buttons, `+`, scroll arrows, tab drag as a captured gesture), the
-scrollbar (§3.7.6), the gutter (line numbers, folds, diagnostics as runs
-beside the leaf, with L12's inherit-background). Then `WindowLayoutCache`
-is deleted outright: `view_line_mappings` lives in the leaf, `split_areas`,
-`tab_layouts` and the thumb extents are `rect_of` reads (L6). The
+dividers (done, `view/shell/geometry.rs`), the tab strip (done,
+`view/shell/tabs.rs`: each pane's strip is a `layout_reader` that lays the
+tabs, close buttons, `+`, the scroll arrows and the pane controls out to
+the width it is given — the same window, elision and pinning the painter
+did — as keyed nodes answering their own press, hover and wheel with
+`UiFact::PaneTab*` facts; a tab drag is the tab's captured gesture, so
+`PointerGrab::TabDrag` is gone, and the drop zone reads every visible
+pane's tab rectangles back by key (`tabs::rects`); `tab_layouts`, the
+painter's `TabLayout::hit_test` and `handle_click_tab_bar` are deleted —
+`view/ui/tabs.rs` keeps the name resolution and the width arithmetic,
+and an embedded window's strip is these same nodes in the embed's own
+tree, §3.7.8), the scrollbar (§3.7.6), the gutter (line numbers, folds,
+diagnostics as runs beside the leaf, with L12's inherit-background). Then
+`WindowLayoutCache` is deleted outright: `view_line_mappings` lives in the
+leaf, `split_areas` and the thumb extents are `rect_of` reads (L6). The
 provenance gate (`cells_provenance`: which cells were fold-written, which
 painter-written) is the test that says the only painter-written cells left
-are inside host leaves.
+are inside host leaves. *Landed*: `Editor::cells_provenance` classifies
+the last frame's cells by the provenance the fold and the pane's pipeline
+record — the fold's (region `Chrome`) and the painter's, inside or outside
+every `Draw::Host` item's rectangle — and the e2e harness asserts on every
+frame it renders that no painter-written cell is outside one; a lib test
+says the same over a plain, a split and a prompting frame.
+
+*Landed, the dividers and the cache.* A split's divider paints its own
+line (`splits::divider`: a `layout_reader` of `─` or `│` runs in
+`ui.split_separator_fg`, or the hover colour when the divider is the
+hover target), so the body region is no longer a `Host` at all — it is
+the grid, named for the readers that ask where the body is, and the
+painter's separator pass and hover repaint are deleted. With every cell
+of the body owned by a leaf or a node, `WindowLayoutCache` is gone: the
+pane boxes are `Window::pane_rects` (retained from the frame's layout, or
+one offscreen layout for a window the frame does not show), the pane's
+rows and bars are its `PaneHandle` (`Window::panes`), the separators are
+`separator_rects` read off the tree by container key, and the body is
+`body_area`, the region's `rect_of`. `get_split_areas`,
+`get_separator_areas`, `active_layout` and the cache's every field are
+deleted with it; the callers that scanned it (the web scene, the test
+API's scrollbar geometry, the animation trail, the terminal splits) take
+the tree's answers. One rule the body region taught: a region name goes on
+a node of its own — with one pane the grid *is* the pane, and naming the
+pane directly replaces its key with the region's.
 
 ### 3.8 Plugin API
 
@@ -1051,11 +1323,15 @@ computed by ladder, `layer_rank`, `LayerKind`, `overlay_stack`,
 `app/chrome/`, `PointerGrab`, `shell_pointer_event`, `shell_hover`,
 `shell_frame_status_bar`, `is_mouse_over_transient_popup`, `popup_areas`,
 `global_popup_areas`, `DropdownLevel::{x, y, width}`, `fit_dropdown_area`,
-`menu_layout_now`, `view/ui/tabs.rs`'s hit test, `tab_layouts`,
+`menu_layout_now`, `view/ui/tabs.rs`'s painting of an embed's strip,
 `split_areas`, `Band`, `Paints::HostsOnly`, `suppress_chrome_cells`,
 `Paint::Lit`, `view/controls/`, `EntryDialogState`,
 `SettingsLayout`, `HostRegion`, `HostTarget`, `HostSpec::Plain` for a pane,
-`view/shell/content.rs`, `WindowLayoutCache`, `view/scene.rs` region views
+`view/shell/content.rs`, `WindowLayoutCache`, the fold's caret
+out-parameter and `pending_hardware_cursor`, `handle_key`'s pipeline tail
+and `Flow::Observe`, `render_prompt_line`,
+`StatusBarRenderer::render_prompt`, `described_pane_caret`,
+`cursor_obscured_by_overlay`, `view/scene.rs` region views
 other than pane cells, and the `webDockPanels` guard.
 
 **Asserted** (each a test that fails if the property is lost):
@@ -1111,7 +1387,8 @@ the dock's policy is the plugin's (§2.3(9)), and the claim is the tree's
 word alone (L2). Open in S2: the buffer host's own keymap on
 the tree — today the base's keys still cross `PanelKey` / the pane's
 content surface into `dispatch_base_key` — and the PTY gate on
-`raw_input()` (§3.1). **S3** has its first slice landed: no panel rides
+`raw_input()` (§3.1) — since landed with S7's seventh slice: the PTY gate
+is the tree's `raw_input()` over the pane leaf that takes it. **S3** has its first slice landed: no panel rides
 the buffer's scroll (§3.5) — a pane's panel answers its keys through the
 widget router, `git_log` and the package manager select through the
 List, and the welcome screen is a page in one host-owned viewport. The
@@ -1128,11 +1405,53 @@ is deleted, the file-open dialog is described — the last painted
 interior with a recorded-span hit test — so `FileBrowserRenderer` and
 `Window::file_browser_layout` are gone, and the modals are the tree's box
 and channel alike: `render_settings`, the modal pointer slot and
-`UiFact::ModalPointer` are deleted (§3.6). **S5 is landed.**
+`UiFact::ModalPointer` are deleted (§3.6). **S5 is landed.** **S7** has
+its first two slices landed: every pane's tab strip is nodes (§3.7.9) — the
+tab drag is a captured gesture, `PointerGrab::TabDrag`, `tab_layouts` and
+the painter's tab hit test are deleted — and the pane's content is the `BufferHost`
+leaf (§3.7.1, §3.7.4): the row map lives on the pane's view, a press
+carries the byte, the selection drag is the leaf's capture, and
+`view/shell/content.rs` is deleted. Its third slice too: the pane's
+scrollbars are leaves beside the content painting `Draw::Scrollbar` from
+facts settled before the frame, with L8's marks (§3.7.6); the painter's
+thumb records and hover repaint are gone. Its fourth: the dividers draw
+their own lines, the body region holds no `Host`, and `WindowLayoutCache`
+is deleted — pane boxes, rows, bars and separators are the tree's
+(§3.7.9). Its fifth: one caret — the frame is two halves (L16), the
+content pass formats every pane between them, the leaf places the display
+list's cursor from what it settled, the prompt row is runs, and the
+fold's caret out-parameter is gone with every guard that decided whether
+a committed caret would bleed through an overlay (L17; §3.7.3). Its
+sixth: the base key dispatcher is reached only through the tree — the
+pane's content and the explorer's header claim their keys as facts, the
+pipeline tail and `Flow::Observe` are deleted (§3.7.5, §2.3(8)). Its seventh: the
+pane's context is a settled fact of its leaf and the PTY gate is the
+tree's `raw_input()` over the terminal's own leaf (§3.7.5). The overlay prompt's
+card is the tree's, its preview the one host it keeps (§3.4). Its eighth:
+an embed is a leaf painted as the embedded window's own grid, the legacy
+grid painter and the painter's strip, bars and separators are deleted,
+and no region is a `Host` (§3.7.8). Its ninth: one paint (§3.3) — the
+terminal grid and the edge fade are the pane's, the placeholder page and
+the modal dimming are the tree's, and `render` folds once. Its tenth: the
+drop-zone highlight is a washed node (L12's region form), and no painter
+runs after the fold. Its eleventh: the provenance gate, on every frame the
+e2e corpus renders — and what its first full run found is its twelfth:
+the cell-theme record clipped to the painter's own area (a cell walked
+past the edge is not on the screen, and was being filed under the painter
+at a position the tree owns), one authority for a pane's chrome (an inner
+group leaf resolved its own from the config instead of reading the map the
+tree was built from, so `ContentPass::window_chrome` and
+`FrameFacts::scrollback_view_splits` are deleted), an embed that may name
+the window it is mounted in behind a cycle guard rather than an identity
+test (issue #2035's shape), the overlay card's preview settled before the
+paint rather than after it, and a popup key marking the description stale
+so the key a closing completion list hands on resolves in the pane's
+context and not in the departing list's. Open in S7: the pipeline's cell
+patches as runs (§3.7.3), the gutter as runs.
 Open in S3: the kinds' keys from the node, `painted`/`boxes` (the text
 projection still runs on the plugin's mount and update, and for the two
-exceptions `resolve_described_panel` names), `text_click.rs` and the
-anchored panel's `Auto` width.
+exceptions `resolve_described_panel` names) and the anchored panel's
+`Auto` width.
 
 **S1 is one PR** and closes sinelaw/fresh#3176. **S2 is its own PR** and
 the only one that changes what a key does over a shipped surface; it gets
@@ -1162,8 +1481,8 @@ can express it", `widget_focus_key`'s reference to the deleted function,
   drive commit selection, `j`/`k`, click, and search in the log by hand.
 - **S6's placement** has one known eleven-cell divergence; decide it in a
   test before the description is written.
-- **S7's tab drag** is the last `PointerGrab`; drive drag between panes and
-  across the dock edge.
+- **S7's tab drag** is the tab's captured gesture (landed); drive drag
+  between panes and across the dock edge.
 - **S9** is where a wrong payload is a silently wrong plugin event; the
   parity test is "for every panel shape, the DOM fold's hit identity equals
   the TUI's".

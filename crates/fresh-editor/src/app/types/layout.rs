@@ -1,7 +1,7 @@
 use super::theme::CellThemeInfo;
-use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
+use crate::model::event::BufferId;
 use ratatui::layout::Rect;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// Mapping from visual row to buffer positions for mouse click handling
 /// Each entry represents one visual row with byte position info for click handling
@@ -108,9 +108,9 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 
 /// Editor-chrome layout cache: full-frame and chrome-region rects
 /// (status bar, menu bar, prompt overlay, popups) plus the screen-
-/// indexed cell-theme map. Per-window layout (split-leaf rects, tab
-/// rects, file-explorer rects, view-line mappings) lives on
-/// [`WindowLayoutCache`] instead.
+/// indexed cell-theme map. Per-window geometry is the retained tree's:
+/// pane boxes on `Window::pane_rects`, tab rectangles by key
+/// (`tabs::rects`), each pane's rows on its `PaneHandle`.
 ///
 /// ## THE paint-recorded (`screen_space`-class) roster — CLOSED LIST
 ///
@@ -121,9 +121,8 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 /// standing debug parity or documented rationale at its site:
 ///
 ///   - `popup_areas` / `global_popup_areas` (info/message popups)
-///   - `suggestions_area` / `suggestions_outer_area` /
-///     `prompt_preview_area` (the prompt's suggestion list, both
-///     forms, and the overlay preview)
+///   - `suggestions_area` / `suggestions_outer_area` (the prompt's
+///     suggestion list, both forms)
 ///   - `prompt_toolbar_boxes` (overlay toolbar box tree, in the
 ///     toolbar band's own coordinates — the tree gesture reports the
 ///     press in that space, so no origin travels with it)
@@ -151,16 +150,6 @@ pub(crate) struct ChromeLayout {
     /// Used to absorb clicks on the popup chrome so they don't reach the
     /// buffer below while the prompt is open.
     pub suggestions_outer_area: Option<Rect>,
-    /// Screen rect of the floating-overlay prompt's results list (issue
-    /// #2119). `None` when no overlay is open. The mouse-wheel handler reads
-    /// this to scroll the result list (without moving the selection) when the
-    /// pointer is over it.
-    pub prompt_results_area: Option<Rect>,
-    /// Screen rect of the floating-overlay prompt's preview pane (issue
-    /// #2119). `None` when no overlay is open or the overlay is too narrow to
-    /// show a preview. The mouse-wheel handler reads this to scroll the
-    /// preview (rather than the result list) when the pointer is over it.
-    pub prompt_preview_area: Option<Rect>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.
@@ -198,237 +187,6 @@ impl ChromeLayout {
     pub fn apply_theme_runs(&mut self, runs: &[super::theme::ThemeRun]) {
         let width = self.last_frame.width;
         super::theme::apply_theme_runs(&mut self.cell_theme_map, width, runs);
-    }
-}
-
-/// Per-window layout cache: hit-test rects for content scoped to a
-/// single window (split panes, tabs, the file explorer, separators,
-/// scrollbars) plus the per-leaf visual-row→source-byte mappings used
-/// by mouse positioning and visual-line motion. Lives on `Window`;
-/// editor-chrome rects live on [`ChromeLayout`].
-#[derive(Debug, Clone, Default)]
-pub(crate) struct WindowLayoutCache {
-    /// Where the body was **last painted**, excluding the file explorer.
-    ///
-    /// Distinct from `Window::editor_content_area()`, which computes the same
-    /// rectangle from state. Both are correct and they are not
-    /// interchangeable: `apply_layout` asks *after* setting a new size and
-    /// *before* the frame that would record this, so a caller that needs the
-    /// answer for the size the editor has now must compute it, and a caller
-    /// that needs the cells something was actually drawn into must read this.
-    pub last_editor_content_area: Option<Rect>,
-    /// Individual split areas with their scrollbar areas and thumb positions
-    /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
-    pub split_areas: Vec<(LeafId, BufferId, usize, usize)>,
-    /// Horizontal scrollbar areas per split
-    /// (split_id, buffer_id, horizontal_scrollbar_rect, max_content_width, thumb_start_col, thumb_end_col)
-    pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, usize, usize, usize)>,
-    /// Split separator positions for drag resize
-    /// (container_id, direction, x, y, length)
-    pub separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
-    /// Tab layouts per split for mouse interaction
-    pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-    /// View line mappings for accurate mouse click positioning per split
-    /// Maps visual row index to character position mappings
-    /// Used to translate screen coordinates to buffer byte positions
-    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
-}
-
-impl WindowLayoutCache {
-    /// Find which visual row contains the given byte position for a split
-    pub fn find_visual_row(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
-        let mappings = self.view_line_mappings.get(&split_id)?;
-        if let Some(idx) = mappings.iter().position(|m| m.contains_byte(byte_pos)) {
-            return Some(idx);
-        }
-        // No row drew this byte. It can still be the position just past some
-        // row's last character — a compose-mode soft break consumes the space
-        // it fell on, so that position is carried by no cell even though the
-        // row owns it (see `ViewLineMapping::end_exclusive`). Asked only after
-        // the rows that do draw the byte have had their say, so a row never
-        // takes a byte the row below actually starts with: that is the ordinary
-        // wrapped row, where the next row draws the byte and `Down` steps onto
-        // it.
-        mappings
-            .iter()
-            .position(|m| m.end_exclusive == Some(byte_pos))
-    }
-
-    /// Get the visual column of a byte position within its visual row
-    pub fn byte_to_visual_column(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
-        let mappings = self.view_line_mappings.get(&split_id)?;
-        let row_idx = self.find_visual_row(split_id, byte_pos)?;
-        let row = mappings.get(row_idx)?;
-
-        // Find the visual column that maps to this byte position
-        for (visual_col, &char_idx) in row.visual_to_char.iter().enumerate() {
-            if let Some(source_byte) = row.char_source_bytes.get(char_idx).and_then(|b| *b) {
-                if source_byte == byte_pos {
-                    return Some(visual_col);
-                }
-                // If we've passed the byte position, return previous column
-                if source_byte > byte_pos {
-                    return Some(visual_col.saturating_sub(1));
-                }
-            }
-        }
-        // Byte is at or past end of row - return the column just after the last
-        // *source-backed* cell. Trailing cells that map to no source byte are
-        // purely visual (e.g. indentation guides synthesised on a blank line
-        // inside an indented block); counting them would push the cursor's
-        // column right by one per guide, so a Down onto the next line would
-        // land one column too far (issue #2564). On a normal line every cell is
-        // source-backed, so this still returns the end-of-line column.
-        let last_real_col = row
-            .visual_to_char
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, &char_idx)| {
-                row.char_source_bytes
-                    .get(char_idx)
-                    .is_some_and(|b| b.is_some())
-            })
-            .map(|(visual_col, _)| visual_col + 1)
-            .unwrap_or(0);
-        Some(last_real_col)
-    }
-
-    /// Move by visual line using the cached mappings
-    /// Returns (new_position, new_visual_column) or None if at boundary
-    pub fn move_visual_line(
-        &self,
-        split_id: LeafId,
-        current_pos: usize,
-        goal_visual_col: usize,
-        direction: i8, // -1 = up, 1 = down
-    ) -> Option<(usize, usize)> {
-        let mappings = self.view_line_mappings.get(&split_id)?;
-        let current_row = self.find_visual_row(split_id, current_pos)?;
-
-        // Walk past purely-virtual rows (e.g. markdown_compose table top/
-        // bottom borders and inter-row separators, live-diff deletion
-        // virtual lines).  Those rows are plugin-injected and their
-        // `line_end_byte` is inherited from the adjacent content row.
-        // If MoveDown/MoveUp stopped on them the cursor would land on a
-        // byte that's already at the row above's end, which in turn
-        // causes Down-after-table to teleport back to an earlier
-        // position (regression exposed by markdown_compose's table
-        // border feature) or strands the cursor at the previous line's
-        // EOL when a live-diff deletion hunk starts with a blank line
-        // (regression exposed by the live-diff plugin).
-        //
-        // A row is "navigable" iff at least one of its visual columns
-        // maps to a real source byte.  Skip entirely-virtual rows in
-        // the move direction until we hit a navigable one or run off
-        // the edge.
-        let mut target_row = current_row;
-        let navigable = |idx: usize| -> bool {
-            mappings
-                .get(idx)
-                .map(|m| m.char_source_bytes.iter().any(|b| b.is_some()))
-                .unwrap_or(false)
-        };
-        loop {
-            target_row = if direction < 0 {
-                target_row.checked_sub(1)?
-            } else {
-                let next = target_row + 1;
-                if next >= mappings.len() {
-                    return None;
-                }
-                next
-            };
-            // Either the next row has real source content, or we've reached
-            // a legitimate non-source row that the rest of the editor
-            // already treats as a cursor stop (trailing empty line at EOF,
-            // implicit blank final line, empty source line between
-            // paragraphs).  In either case stop walking.
-            if navigable(target_row) {
-                break;
-            }
-            let mapping = mappings.get(target_row)?;
-            if mapping.is_plugin_virtual {
-                // Plugin-injected virtual row (live-diff deletion lines,
-                // markdown_compose table borders, …).  Its
-                // `line_end_byte` is inherited from the previous row, so
-                // stopping here would strand the cursor at the previous
-                // source line's EOL.  Keep walking.
-                continue;
-            }
-            // Empty mapping that isn't plugin-virtual: a real empty
-            // source line (paragraph separator), the trailing empty
-            // EOF row, or the implicit blank final line.  These are
-            // legitimate cursor stops.
-            break;
-        }
-
-        let target_mapping = mappings.get(target_row)?;
-
-        // Try to get byte at goal visual column.  If the goal column is past
-        // the end of visible content, land at line_end_byte (the newline or
-        // end of buffer).  If the column exists but has no source byte (e.g.
-        // padding on a wrapped continuation line), search outward for the
-        // nearest valid source byte at minimal visual distance.
-        let new_pos = if goal_visual_col >= target_mapping.visual_to_char.len() {
-            target_mapping.line_end_byte
-        } else {
-            target_mapping
-                .source_byte_at_visual_col(goal_visual_col)
-                .or_else(|| target_mapping.nearest_source_byte(goal_visual_col))
-                .unwrap_or(target_mapping.line_end_byte)
-        };
-
-        Some((new_pos, goal_visual_col))
-    }
-
-    /// Get the start byte position of the visual row containing the given byte position.
-    /// If the cursor is already at the visual row start and this is a wrapped continuation,
-    /// moves to the previous visual row's start (within the same logical line).
-    /// Get the start byte position of the visual row containing the given byte position.
-    /// When `allow_advance` is true and the cursor is already at the row start,
-    /// moves to the previous visual row's start.
-    pub fn visual_line_start(
-        &self,
-        split_id: LeafId,
-        byte_pos: usize,
-        allow_advance: bool,
-    ) -> Option<usize> {
-        let mappings = self.view_line_mappings.get(&split_id)?;
-        let row_idx = self.find_visual_row(split_id, byte_pos)?;
-        let row = mappings.get(row_idx)?;
-        let row_start = row.first_source_byte()?;
-
-        if allow_advance && byte_pos == row_start && row_idx > 0 {
-            let prev_row = mappings.get(row_idx - 1)?;
-            prev_row.first_source_byte()
-        } else {
-            Some(row_start)
-        }
-    }
-
-    /// Get the end byte position of the visual row containing the given byte position.
-    /// If the cursor is already at the visual row end and the next row is a wrapped continuation,
-    /// moves to the next visual row's end (within the same logical line).
-    /// Get the end byte position of the visual row containing the given byte position.
-    /// When `allow_advance` is true and the cursor is already at the row end,
-    /// advances to the next visual row's end.
-    pub fn visual_line_end(
-        &self,
-        split_id: LeafId,
-        byte_pos: usize,
-        allow_advance: bool,
-    ) -> Option<usize> {
-        let mappings = self.view_line_mappings.get(&split_id)?;
-        let row_idx = self.find_visual_row(split_id, byte_pos)?;
-        let row = mappings.get(row_idx)?;
-
-        if allow_advance && byte_pos == row.line_end_byte && row_idx + 1 < mappings.len() {
-            let next_row = mappings.get(row_idx + 1)?;
-            Some(next_row.line_end_byte)
-        } else {
-            Some(row.line_end_byte)
-        }
     }
 }
 

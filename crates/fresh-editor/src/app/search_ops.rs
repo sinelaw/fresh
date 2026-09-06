@@ -1041,7 +1041,7 @@ impl Editor {
         self.move_cursor_to_match(first_match_pos);
 
         // Show the query-replace prompt
-        self.active_window_mut().prompt = Some(Prompt::new(
+        self.set_prompt(Prompt::new(
             "Replace? (y)es (n)o (a)ll (c)ancel: ".to_string(),
             PromptType::QueryReplaceConfirm,
         ));

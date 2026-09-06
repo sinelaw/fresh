@@ -2683,8 +2683,8 @@ impl Editor {
 
     // ==================== Project Grep ====================
 
-    /// Retry deferred virtual-buffer animations now that split_areas has
-    /// been recomputed. Called from render() after layout but before
+    /// Retry deferred virtual-buffer animations now that the frame's
+    /// layout has placed the panes. Called from render() after layout but before
     /// animations.apply_all so the first frame of the effect lands in
     /// the same render pass.
     pub(crate) fn drain_pending_vb_animations(&mut self) {
@@ -3192,7 +3192,6 @@ mod tests {
             Some(crate::view::shell::splits::content_key(active)),
             "the active pane's content is where focus rests"
         );
-        assert!(!editor.presents_blocking_overlay());
         assert!(editor.editor_base_owns_keyboard());
 
         // And a frame that changes nothing leaves it there.

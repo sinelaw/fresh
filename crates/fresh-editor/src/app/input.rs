@@ -200,13 +200,11 @@ impl Editor {
             return Ok(());
         }
 
-        // Try terminal input dispatch first (handles terminal mode and re-entry).
-        // Note: `dispatch_terminal_input` short-circuits to None when a floating
-        // widget panel is mounted, so picker / form keys reach the panel below
-        // instead of being forwarded to the PTY child of the underlying terminal.
-        if self.dispatch_terminal_input(&key_event).is_some() {
-            return Ok(());
-        }
+        // The terminal's raw input is no pre-band stage: a live terminal's
+        // pane leaf holds the keyboard and claims its keys like any pane's,
+        // and the base dispatcher forwards them to the PTY in the
+        // `Terminal` context the leaf names (`chrome::base`). A key that a
+        // panel, a prompt or a popup holds never reaches it.
 
         // If a plugin is awaiting the next keypress (`editor.getNextKey()`),
         // hand this key to the front-most pending callback and consume it.
@@ -296,43 +294,42 @@ impl Editor {
         // message at all, and inferring claim from "said something" would let
         // those keys straight through.
         self.shell_key_event = Some(key_event);
+        // **The tree is the whole keyboard.** Every surface that can hold the
+        // keyboard is in it — the modals, the prompt, the menu, the popups, a
+        // panel, the explorer's header, and the active pane's content as the
+        // base's own focus holder — and the one that holds focus answers the
+        // key or hands it to the editor as a fact (`PaneKey`, `SidebarKey`,
+        // `PanelKey`, `PromptKey`), which is the only way into
+        // `chrome::base::dispatch_base_key`. There is no pipeline tail: a key
+        // the tree declines everywhere is nobody's. A key the tree has no
+        // vocabulary for (a media key, a bare modifier) is declined here for
+        // the same reason — nothing could have been bound to it.
         match crate::view::shell::input::key(&fresh_input_parser::KeyPress::new(key_event)) {
             Some(input) => {
-                if self.shell_dispatch(input).claimed {
-                    return Ok(());
-                }
+                let d = self.shell_dispatch(input);
+                tracing::debug!(
+                    target: "fresh::keys",
+                    ?code,
+                    ?modifiers,
+                    claimed = d.claimed,
+                    focus = ?self.shell_focus_key(),
+                    "key routed by the tree"
+                );
             }
-            // **A key the tree has no vocabulary for still cannot walk past a
-            // surface that owns the keyboard.** Declining to translate it
-            // costs the key its *routing*; letting it fall to the walk below
-            // would cost a modal its containment, and the media key would
-            // reach whatever the modal is covering. `keyboard_owned` is the
-            // same containment question the claim above answers.
-            None if self.shell_ui.as_ref().is_some_and(|ui| ui.keyboard_owned()) => {
-                return Ok(());
-            }
-            None => {}
+            None => tracing::debug!(
+                target: "fresh::keys",
+                ?code,
+                ?modifiers,
+                "key the tree has no vocabulary for"
+            ),
         }
-
-        // **The pipeline tail.** Everything that used to be offered the key
-        // ahead of this — the capture-all modals, the workspace-trust prompt,
-        // the menu, the popups, the prompt, a focused dock or plugin panel —
-        // is a layer in the shell tree now and claimed above if it wanted the
-        // key. What is left is the editor content's own keyboard: mode
-        // bindings, composite routing, the unfocused-popup interception and
-        // chord/keybinding resolution, in `chrome::base`.
-        //
-        // This was `dispatch_layer_keyboard`, a walk down an owner-stamped
-        // `overlay_stack()` offering each layer's component an `on_layer_key`.
-        // The stack is still derived and still read, but nothing dispatches
-        // through it any more, so the walk is a call and the owner stamp that
-        // addressed the dispatch is gone with it. Two readers still need it
-        // ORDERED — `get_key_context` and the unfocused-popup guard below;
-        // the rest (the PTY gate, the LSP-hover suppressor, the caret
-        // suppression) ask only whether a layer is present and read
-        // `Editor::overlay_layer_set`.
-        self.dispatch_base_key(code, modifiers)?;
         Ok(())
+    }
+
+    /// The key of the element holding the tree's focus, for the trace.
+    fn shell_focus_key(&self) -> Option<fresh_ui::Key> {
+        let ui = self.shell_ui.as_ref()?;
+        ui.key_of(ui.focused()?)
     }
 
     /// Mode-binding stage of the pipeline: while the editor buffer has

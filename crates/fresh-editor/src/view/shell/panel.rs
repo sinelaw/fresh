@@ -11,13 +11,10 @@
 //! signature defect — geometry computed by a painter, recorded, and hit-tested
 //! later — and it is what this module removes.
 //!
-//! **What stays with the painter, deliberately.** The dimming pass. A scrim is
-//! the tree's answer and this layer could carry one, but the dock's own panel
-//! is painted *after* the tree's overlay band, so a scrim declared here would
-//! be overpainted by the dock and the frame would read half-dimmed. The dock's
-//! content is C.5b; the scrim goes when it does, and until then the painter's
-//! two `apply_dimming` calls stay where they can still see the dock. Recorded
-//! here rather than left to be rediscovered.
+//! The dimming is the layer's scrim (`layer_for`): with the dock and every
+//! other surface the tree's, nothing paints after the fold that a scrim could
+//! be overpainted by, so a centred panel dims what is behind it the way a
+//! settings dialog does.
 
 use std::rc::Rc;
 
@@ -543,6 +540,10 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
             };
             l.anchor(Anchor::Screen(Align::Center))
                 .place(Place::Over)
+                // A centred panel is modal: what is behind it recedes. The
+                // painter's two `apply_dimming` calls — the chrome beside the
+                // dock, then the dock — were this scrim, drawn by hand.
+                .scrim(Some(fresh_ui::Scrim::Dim))
                 .child(
                     frame_box(p)
                         .w(Sizing::Pct(*width_pct))

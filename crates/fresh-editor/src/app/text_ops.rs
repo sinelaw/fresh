@@ -127,7 +127,7 @@ impl Editor {
         use super::smart_home::{smart_home_target, SmartHomeTarget};
 
         let visual_start = self
-            .active_layout()
+            .active_window()
             .visual_line_start(split_id, cursor_pos, false)?;
 
         // Determine the physical line start to tell first-row from continuation.
@@ -155,7 +155,7 @@ impl Editor {
         // compute it eagerly anyway so the pure helper stays unconditional.
         let first_non_ws = if is_first_visual_row {
             let visual_end = self
-                .active_layout()
+                .active_window()
                 .visual_line_end(split_id, cursor_pos, false)
                 .unwrap_or(visual_start);
             let visual_len = visual_end.saturating_sub(visual_start);
@@ -173,7 +173,7 @@ impl Editor {
         match smart_home_target(cursor_pos, visual_start, is_first_visual_row, first_non_ws) {
             SmartHomeTarget::At(pos) => Some(pos),
             SmartHomeTarget::PreviousVisualRowStart => self
-                .active_layout()
+                .active_window()
                 .visual_line_start(split_id, cursor_pos, true),
         }
     }

@@ -400,33 +400,36 @@ impl Editor {
     /// Semantic tab bar for a pane (leaf). Single derivation of tab labels /
     /// active / modified shared by the TUI tab renderer and the web bridge.
     pub fn tab_bar_view(&self, leaf: LeafId) -> TabBarView {
+        // Both halves off the retained tree: the strip's row by its key, and
+        // each tab's rectangles and label by the tab's — the same nodes the
+        // TUI's clicks land on, so a native tab and a painted one cannot
+        // disagree about where a tab is or what it says.
+        let f = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+        let bar = self.shell_ui.as_ref().and_then(|ui| {
+            crate::view::shell::rect_of(ui, &crate::view::shell::splits::tabs_key(leaf), size)
+        });
+        let Some(bar) = bar else {
+            return TabBarView::default();
+        };
         let active = self.active_buffer();
-        let layout = self.active_layout();
-        match layout.tab_layouts.get(&leaf) {
-            None => TabBarView::default(),
-            Some(tl) => TabBarView {
-                bar: Some(RectView::from(tl.bar_area)),
-                tabs: tl
-                    .tabs
-                    .iter()
-                    .map(|tab| {
-                        let bid = tab.target.as_buffer();
-                        TabView {
-                            buffer_id: bid.map(|b| b.0),
-                            // The label the renderer resolved for this tab — the
-                            // disambiguated filename (or group name), matching the
-                            // TUI and the width the tab was laid out for. Reading
-                            // the buffer's metadata display name here instead would
-                            // leak the full workspace-relative path into the tab.
-                            label: tab.label.clone(),
-                            active: bid == Some(active),
-                            modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
-                            rect: RectView::from(tab.tab_area),
-                            close_rect: RectView::from(tab.close_area),
-                        }
-                    })
-                    .collect(),
-            },
+        TabBarView {
+            bar: Some(RectView::from(bar)),
+            tabs: self
+                .tab_rects(leaf)
+                .into_iter()
+                .map(|t| {
+                    let bid = t.target.as_buffer();
+                    TabView {
+                        buffer_id: bid.map(|b| b.0),
+                        label: t.label,
+                        active: bid == Some(active),
+                        modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
+                        rect: RectView::from(t.name),
+                        close_rect: RectView::from(t.close),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -478,8 +481,21 @@ impl Editor {
         let chrome = self.active_chrome();
         let sugg_outer = chrome.suggestions_outer_area;
         let sugg_area = chrome.suggestions_area;
-        let prompt_results = chrome.prompt_results_area;
         let p = self.active_window().prompt.as_ref()?;
+        // The overlay card's bands, read off the tree that placed them.
+        let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
+            self.shell_ui.as_ref().and_then(|ui| {
+                crate::view::shell::overlay_prompt::regions_of(ui)
+                    .into_iter()
+                    .find(|(k, _)| *k == r)
+                    .map(|(_, rect)| rect)
+                    .filter(|rect| rect.width > 0 && rect.height > 0)
+            })
+        };
+        let prompt_results = p
+            .overlay
+            .then(|| card_band(crate::view::shell::overlay_prompt::CardRegion::Results))
+            .flatten();
         // EVERY active prompt projects. A picker list (non-empty suggestions)
         // or a floating overlay projects its full geometry; everything else —
         // plain input prompts (Add Ruler's column, goto-line, …) and prompts
@@ -540,19 +556,14 @@ impl Editor {
                 .map(|(r, _, _, _)| r)
                 .or(prompt_results)
                 .map(RectView::from),
-            // Inner content of the preview pane: the stored area minus its
-            // single left border column (matches `Block::borders(LEFT)` in
-            // render_overlay_prompt). Only meaningful for overlay prompts.
-            preview_rect: chrome.prompt_preview_area.and_then(|r| {
-                (r.width > 1 && r.height > 0).then(|| {
-                    RectView::from(Rect::new(
-                        r.x.saturating_add(1),
-                        r.y,
-                        r.width.saturating_sub(1),
-                        r.height,
-                    ))
-                })
-            }),
+            // The preview pane's content: the band names the pane inside its
+            // rule, so this is the rectangle as the tree placed it. Only
+            // meaningful for overlay prompts.
+            preview_rect: p
+                .overlay
+                .then(|| card_band(crate::view::shell::overlay_prompt::CardRegion::Preview))
+                .flatten()
+                .map(RectView::from),
             suggestions: p
                 .suggestions
                 .iter()
@@ -1191,10 +1202,27 @@ pub struct TreeItemView {
     /// The border's corner style, for `border`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub border: Option<String>,
-    /// `[top, len]` of the thumb in track rows, for `scrollbar` — the same
+    /// `[top, len]` of the thumb in track cells, for `scrollbar` — the same
     /// arithmetic every backend uses (`Draw::scrollbar_thumb`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thumb: Option<[u16; 2]>,
+    /// For `scrollbar`: the track runs across rather than down.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub horizontal: bool,
+    /// For `scrollbar`: the marks on the track, each `[cell, colour]` with
+    /// the colour resolved, and whether the mark takes the whole cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marks: Option<Vec<MarkView>>,
+}
+
+/// One mark on a `scrollbar` item's track, for the web.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkView {
+    pub at: u16,
+    pub color: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub full: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1364,8 +1392,10 @@ impl Editor {
             }
             let style = palette.style(&item.theme);
             let m = style.add_modifier;
+            let (mut horizontal, mut marks) = (false, None);
             let (kind, lines, border, thumb, dim) = match &item.draw {
                 Draw::Fill => ("fill", None, None, None, false),
+                Draw::Wash => ("wash", None, None, None, false),
                 Draw::Border(bs) => (
                     "border",
                     None,
@@ -1386,10 +1416,31 @@ impl Editor {
                     offset,
                     content,
                     window,
+                    axis,
+                    marks: ms,
                 } => {
-                    let track = item.rect.h.max(1);
+                    horizontal = *axis == fresh_ui::Axis::Horizontal;
+                    let track = match axis {
+                        fresh_ui::Axis::Vertical => item.rect.h.max(1),
+                        fresh_ui::Axis::Horizontal => item.rect.w.max(1),
+                    };
                     let (top, len) =
                         Draw::scrollbar_thumb(*offset, *content, u32::from(*window), track);
+                    if !ms.is_empty() {
+                        marks = Some(
+                            ms.iter()
+                                .filter_map(|m| {
+                                    let st = palette.style(&m.theme);
+                                    let c = if m.full { st.bg.or(st.fg) } else { st.fg };
+                                    Some(MarkView {
+                                        at: m.at,
+                                        color: c.and_then(css_color)?,
+                                        full: m.full,
+                                    })
+                                })
+                                .collect(),
+                        );
+                    }
                     ("scrollbar", None, None, Some([top, len]), false)
                 }
                 Draw::Selectable => ("selectable", None, None, None, false),
@@ -1415,6 +1466,8 @@ impl Editor {
                 lines,
                 border,
                 thumb,
+                horizontal,
+                marks,
             });
         }
         let cursor = spec.cursor.as_ref().filter(|c| c.visible).and_then(|c| {

@@ -1414,6 +1414,7 @@ fn a_card_lists_bar_measures_the_window_in_items() {
                 offset,
                 content,
                 window,
+                ..
             } => Some((offset, content, window)),
             _ => None,
         })
