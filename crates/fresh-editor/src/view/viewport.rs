@@ -1,5 +1,6 @@
 use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursor;
+use crate::primitives::line_iterator::MAX_LINE_BYTES;
 use crate::primitives::line_wrapping::WrapConfig;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 /// The first visible row, as a buffer byte.
@@ -366,6 +367,131 @@ impl Viewport {
             ((gutter_estimate as f64).log10().floor() as usize) + 1
         };
         1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+    }
+
+    /// Smallest read budget [`row_budget_bytes`](Self::row_budget_bytes) will
+    /// hand out. Below a few KB the bounded read stops paying for itself.
+    const MIN_ROW_BUDGET_BYTES: usize = 4096;
+
+    /// Bytes-per-column headroom in [`row_budget_bytes`](Self::row_budget_bytes).
+    ///
+    /// A row holds at most `width` columns, so `cap * width` *columns* is
+    /// exactly `cap` rows' worth of text. The densest UTF-8 spends four bytes
+    /// on a one-column character, so four is the factor that turns a column
+    /// budget into a byte budget; doubling it again leaves the prefix
+    /// comfortably past `cap` rows even on such text, instead of landing on
+    /// the boundary and sending the caller down the whole-line path.
+    const ROW_BUDGET_BYTES_PER_COLUMN: usize = 8;
+
+    /// How many bytes of a logical line are worth reading to decide whether it
+    /// wraps past `cap` visual rows.
+    ///
+    /// Hard-capped at [`MAX_LINE_BYTES`], and that ceiling is load-bearing
+    /// twice over. `cap` is not always bounded by the screen: two of the
+    /// callers add `top_view_line_offset`, which grows without limit as you
+    /// page *into* a single enormous line, so an uncapped `cap * width * 8`
+    /// would ask for tens of megabytes a keystroke — worse than the whole-line
+    /// read it replaces, because the saturating count is deliberately not
+    /// cached. And `LineIterator` decodes each `MAX_LINE_BYTES` piece
+    /// separately, so a budget spanning several pieces would take a lossy cut
+    /// at every boundary rather than the single one
+    /// [`next_line_visual_rows_capped`](Self::next_line_visual_rows_capped)
+    /// budgets a row of slack for.
+    ///
+    /// Under the ceiling this is still a budget, not a proof: a `cap` too
+    /// large for 100 KB to settle — or content that is pathologically narrow
+    /// (long runs of zero-width marks) — falls through to reading the whole
+    /// line, which is what this code did before the cap existed and is still
+    /// cached, so that case is no worse than it was.
+    fn row_budget_bytes(cap: usize, wrap_config: &WrapConfig) -> usize {
+        let width = wrap_config
+            .grid_cols
+            .unwrap_or_else(|| {
+                wrap_config
+                    .first_line_width
+                    .saturating_add(wrap_config.gutter_width)
+            })
+            .max(1);
+        cap.saturating_mul(width)
+            .saturating_mul(Self::ROW_BUDGET_BYTES_PER_COLUMN)
+            .clamp(Self::MIN_ROW_BUDGET_BYTES, MAX_LINE_BYTES)
+    }
+
+    /// Visual rows of the next logical line, saturating at `cap`.
+    ///
+    /// Returns `(line_start, rows, line_end)`. When `line_end` is `Some`,
+    /// `rows` is the line's exact row count and `iter` sits on the next line,
+    /// exactly as if the caller had used `next_logical_line` itself. When it
+    /// is `None` the line was shown to reach `cap` rows from a bounded prefix:
+    /// `rows` is reported as `cap`, and `iter` is parked mid-line and must not
+    /// be advanced again — every caller has its answer at that point and
+    /// returns.
+    ///
+    /// Scroll math never needs more than a viewport's worth of rows out of any
+    /// single line, and this is what keeps it from paying for more. Counting a
+    /// line's rows means running the renderer's wrap machine over its text, so
+    /// on a file that is one 53 MB line the old unconditional count wrapped all
+    /// 53 MB — several times — before the first frame could be drawn (issue
+    /// #1806).
+    fn next_line_visual_rows_capped(
+        iter: &mut crate::primitives::line_iterator::LineIterator<'_>,
+        cap: usize,
+        wrap_config: &WrapConfig,
+        soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
+        cache: Option<(&mut crate::view::line_wrap_cache::RowCountCache, u64)>,
+    ) -> Option<(usize, usize, Option<usize>)> {
+        let cap = cap.max(1);
+        let budget = Self::row_budget_bytes(cap, wrap_config);
+        let (line_start, mut content, complete) = iter.next_logical_line_budgeted(budget)?;
+
+        if !complete {
+            // The prefix is a lower bound on the whole line's row count —
+            // word wrap is greedy left to right, so appending text never
+            // removes a wrap — which makes "the prefix already fills `cap`
+            // rows" a sound answer for the whole line. Deliberately not
+            // cached: the count is a floor, not the line's true height.
+            //
+            // One row of slack, because the prefix is cut at a byte offset:
+            // a multi-byte character split across the cut comes back as
+            // replacement characters, which can be a column or two wider than
+            // what it replaced and so add a row the real line does not have.
+            // Exactly one such cut, because `row_budget_bytes` never exceeds
+            // the size of a single `LineIterator` piece.
+            //
+            // The prefix ends where the *reader* stopped, not where the
+            // decoded string ends: invalid bytes decode to a wider U+FFFD, so
+            // `content.len()` would reach past the prefix and pull soft breaks
+            // and plugin virtual lines from beyond it into its row count.
+            let prefix_end = iter.current_position();
+            let rows = Self::count_visual_rows_for_line(
+                line_start,
+                prefix_end,
+                content.trim_end_matches(['\n', '\r']),
+                wrap_config,
+                soft_breaks,
+                virtual_lines,
+                None,
+            );
+            if rows > cap {
+                return Some((line_start, cap, None));
+            }
+            // Narrow enough that the budget didn't settle it — pay for the
+            // whole line, as this code always used to.
+            iter.finish_logical_line(&mut content);
+        }
+
+        let line_end = iter.current_position();
+        let rows = Self::count_visual_rows_for_line(
+            line_start,
+            line_end,
+            content.trim_end_matches(['\n', '\r']),
+            wrap_config,
+            soft_breaks,
+            virtual_lines,
+            cache,
+        );
+        Some((line_start, rows, Some(line_end)))
     }
 
     /// Count visual rows for a single logical line, accounting for plugin soft
@@ -894,27 +1020,25 @@ impl Viewport {
         let mut iter = buffer.line_iterator(current_top, 80);
 
         // First, handle any existing top_view_line_offset
-        // Get current line's visual row count to see how many rows are left in it
-        let (current_line_end, current_line_content) =
-            if let Some((_, content)) = iter.next_logical_line() {
-                let end = iter.current_position();
-                let c = content.trim_end_matches(['\n', '\r']).to_string();
-                // Reset iterator to start of this line for later use
-                iter = buffer.line_iterator(current_top, 80);
-                (end, c)
-            } else {
-                (current_top, String::new())
-            };
-
-        let current_visual_rows = Self::count_visual_rows_for_line(
-            current_top,
-            current_line_end,
-            &current_line_content,
+        // Get current line's visual row count to see how many rows are left in
+        // it. Only `top_view_line_offset + rows_remaining + 1` rows can change
+        // the outcome below, so the count stops there — a line taller than that
+        // absorbs the whole scroll wherever its real bottom is.
+        let current_visual_rows = match Self::next_line_visual_rows_capped(
+            &mut iter,
+            self.top_view_line_offset() + rows_remaining + 1,
             &wrap_config,
             soft_breaks,
             virtual_lines,
             Some((&mut self.wrap_row_cache, buffer_version)),
-        );
+        ) {
+            Some((_, rows, _)) => rows,
+            // Past the end of the buffer: no line to count, which the row
+            // counter has always reported as the one row an empty line draws.
+            None => 1,
+        };
+        // Reset iterator to start of this line for later use
+        iter = buffer.line_iterator(current_top, 80);
         let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset());
 
         if rows_remaining < rows_left_in_current {
@@ -953,24 +1077,18 @@ impl Viewport {
                 return;
             }
 
-            let (line_end, line_content) = if let Some((_, content)) = iter.next_logical_line() {
-                let end = iter.current_position();
-                (end, content.trim_end_matches(['\n', '\r']).to_string())
-            } else {
-                // End of buffer
-                self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, line_start);
-                return;
-            };
-
-            let visual_rows_in_line = Self::count_visual_rows_for_line(
-                line_start,
-                line_end,
-                &line_content,
+            let Some((_, visual_rows_in_line, _)) = Self::next_line_visual_rows_capped(
+                &mut iter,
+                rows_remaining + 1,
                 &wrap_config,
                 soft_breaks,
                 virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
-            );
+            ) else {
+                // End of buffer
+                self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, line_start);
+                return;
+            };
 
             if rows_remaining < visual_rows_in_line {
                 // This line has enough visual rows to satisfy the scroll
@@ -1015,40 +1133,47 @@ impl Viewport {
         // Count visual rows from current position to end of buffer
         let mut visual_rows_remaining = 0;
         let mut iter = buffer.line_iterator(self.top_byte(), 80);
+        let top_offset = self.top_view_line_offset();
 
-        // First, count rows in current line (from top_view_line_offset to end)
-        if let Some((line_start, content)) = iter.next_logical_line() {
-            let line_end = iter.current_position();
-            let line_content = content.trim_end_matches(['\n', '\r']).to_string();
-            let line_visual_rows = Self::count_visual_rows_for_line(
-                line_start,
-                line_end,
-                &line_content,
-                wrap_config,
-                soft_breaks,
-                virtual_lines,
-                Some((&mut self.wrap_row_cache, buffer_version)),
-            );
-            visual_rows_remaining += line_visual_rows.saturating_sub(self.top_view_line_offset());
+        // First, count rows in current line (from top_view_line_offset to end).
+        // The rows above the offset are scrolled off, so this line has to
+        // reach `viewport_height + top_offset` before it can fill the viewport
+        // on its own.
+        if let Some((_, rows, line_end)) = Self::next_line_visual_rows_capped(
+            &mut iter,
+            viewport_height + top_offset,
+            wrap_config,
+            soft_breaks,
+            virtual_lines,
+            Some((&mut self.wrap_row_cache, buffer_version)),
+        ) {
+            visual_rows_remaining += rows.saturating_sub(top_offset);
+            if line_end.is_none() {
+                // Saturated: this line alone fills the viewport.
+                return;
+            }
         }
 
         // Count rows in subsequent lines
-        while let Some((line_start, content)) = iter.next_logical_line() {
-            let line_end = iter.current_position();
-            let line_content = content.trim_end_matches(['\n', '\r']).to_string();
-            visual_rows_remaining += Self::count_visual_rows_for_line(
-                line_start,
-                line_end,
-                &line_content,
+        while visual_rows_remaining < viewport_height {
+            let Some((_, rows, line_end)) = Self::next_line_visual_rows_capped(
+                &mut iter,
+                viewport_height - visual_rows_remaining,
                 wrap_config,
                 soft_breaks,
                 virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
-            );
+            ) else {
+                break;
+            };
+            visual_rows_remaining += rows;
 
             // Early exit if we have enough rows
             if visual_rows_remaining >= viewport_height {
                 return; // No need to adjust
+            }
+            if line_end.is_none() {
+                break;
             }
         }
 
@@ -1651,21 +1776,24 @@ impl Viewport {
         let mut iter = buffer.line_iterator(proposed_top_byte, 80);
         let mut visual_rows = 0;
 
-        while let Some((line_start, content)) = iter.next_logical_line() {
-            let line_end = iter.current_position();
-            let line_text = content.trim_end_matches(['\n', '\r']);
-            visual_rows += Self::count_visual_rows_for_line(
-                line_start,
-                line_end,
-                line_text,
-                &wrap_config,
-                soft_breaks,
-                virtual_lines,
-                Some((&mut self.wrap_row_cache, buffer_version)),
-            );
+        while let Some((_, rows, line_end)) = Self::next_line_visual_rows_capped(
+            &mut iter,
+            viewport_height - visual_rows,
+            &wrap_config,
+            soft_breaks,
+            virtual_lines,
+            Some((&mut self.wrap_row_cache, buffer_version)),
+        ) {
+            visual_rows += rows;
             if visual_rows >= viewport_height {
                 self.set_top_byte(proposed_top_byte);
                 return;
+            }
+            // Only a saturating count parks the iterator mid-line, and that
+            // count would have satisfied the test above.
+            debug_assert!(line_end.is_some());
+            if line_end.is_none() {
+                break;
             }
         }
 
@@ -2594,6 +2722,161 @@ mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
     use crate::model::cursor::Cursor;
+
+    /// The capped count agrees with the plain one whenever it does not
+    /// saturate — the guarantee that lets scroll math use it everywhere.
+    #[test]
+    fn capped_row_count_matches_the_plain_count() {
+        let content = format!(
+            "short\n{}\nanother short line\n",
+            "word ".repeat(400) // ~2 KB: wraps to many rows, still under budget
+        );
+        let mut buffer = Buffer::from_str_test(&content);
+        let wrap_config = WrapConfig::new(80, 5, true, false);
+
+        let mut plain = Vec::new();
+        {
+            let mut iter = buffer.line_iterator(0, 80);
+            while let Some((line_start, text)) = iter.next_logical_line() {
+                let line_end = iter.current_position();
+                plain.push(Viewport::count_visual_rows_for_line(
+                    line_start,
+                    line_end,
+                    text.trim_end_matches(['\n', '\r']),
+                    &wrap_config,
+                    &[],
+                    &[],
+                    None,
+                ));
+            }
+        }
+
+        let mut capped = Vec::new();
+        {
+            let mut iter = buffer.line_iterator(0, 80);
+            // A cap far above any of these lines' row counts: nothing saturates.
+            while let Some((_, rows, line_end)) = Viewport::next_line_visual_rows_capped(
+                &mut iter,
+                10_000,
+                &wrap_config,
+                &[],
+                &[],
+                None,
+            ) {
+                assert!(line_end.is_some(), "no line here should saturate");
+                capped.push(rows);
+            }
+        }
+
+        assert_eq!(plain, capped);
+        assert!(plain.iter().any(|&r| r > 1), "the middle line must wrap");
+    }
+
+    /// The read budget never exceeds one `LineIterator` piece, however large a
+    /// `cap` it is asked for. Two callers add `top_view_line_offset` to their
+    /// cap, and that grows without bound as you page into a single enormous
+    /// line — an uncapped budget would then ask for tens of megabytes a
+    /// keystroke, and would also take a lossy cut at every 100 KB boundary
+    /// instead of the single one the row of slack accounts for.
+    #[test]
+    fn row_budget_never_exceeds_one_read_piece() {
+        let wrap_config = WrapConfig::new(200, 5, true, false);
+
+        // A viewport-sized cap stays well inside the ceiling...
+        assert!(Viewport::row_budget_bytes(40, &wrap_config) < MAX_LINE_BYTES);
+        // ...and an offset-inflated one is clamped rather than believed.
+        for cap in [1_000, 30_000, usize::MAX] {
+            assert_eq!(
+                Viewport::row_budget_bytes(cap, &wrap_config),
+                MAX_LINE_BYTES,
+                "cap {cap} escaped the budget ceiling"
+            );
+        }
+    }
+
+    /// Issue #1806: a line far taller than the viewport is answered from a
+    /// bounded prefix. The count saturates at the cap, the line end is
+    /// withheld (the read stopped mid-line), and — the whole point — the
+    /// iterator never walked the megabytes behind it.
+    #[test]
+    fn capped_row_count_saturates_on_a_huge_line() {
+        let content = format!("{}\n", "word ".repeat(400_000)); // ~2 MB, one line
+        let mut buffer = Buffer::from_str_test(&content);
+        let wrap_config = WrapConfig::new(80, 5, true, false);
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let (line_start, rows, line_end) =
+            Viewport::next_line_visual_rows_capped(&mut iter, 30, &wrap_config, &[], &[], None)
+                .expect("a line");
+
+        assert_eq!(line_start, 0);
+        assert_eq!(rows, 30, "reported as exactly the cap");
+        assert!(line_end.is_none(), "a saturating count parks mid-line");
+        assert!(
+            iter.current_position() < 100_000,
+            "read {} bytes of a 2 MB line to lay out 30 rows",
+            iter.current_position()
+        );
+    }
+
+    /// A short line is still returned whole and exactly, even under a cap it
+    /// could never reach.
+    #[test]
+    fn capped_row_count_is_exact_below_the_cap() {
+        let mut buffer = Buffer::from_str_test("alpha\nbeta\n");
+        let wrap_config = WrapConfig::new(80, 5, true, false);
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let (line_start, rows, line_end) =
+            Viewport::next_line_visual_rows_capped(&mut iter, 30, &wrap_config, &[], &[], None)
+                .expect("a line");
+        assert_eq!((line_start, rows), (0, 1));
+        assert_eq!(line_end, Some(6), "iterator sits on the next line");
+    }
+
+    /// Clamping the top byte on a one-huge-line buffer is the path that made
+    /// opening a 53 MB single-line file take ~19 s: it asked for the line's
+    /// full row count when it only needed to know the line fills the screen.
+    /// The result is unchanged — the proposed top stands — and it is now
+    /// reached without computing that count.
+    ///
+    /// Asserted on work rather than on the clock: a line's full row count is
+    /// only ever computed through the row-count cache, so an empty cache after
+    /// the clamp *is* the statement that the whole line was never wrapped, and
+    /// it says so on a loaded CI box exactly as it does on an idle one.
+    #[test]
+    fn clamping_a_huge_line_does_not_count_the_whole_line() {
+        let content = format!("{}\n", "word ".repeat(200_000)); // ~1 MB, one line
+        let mut buffer = Buffer::from_str_test(&content);
+        let mut vp = Viewport::new(80, 24);
+        vp.line_wrap_enabled = true;
+
+        vp.set_top_byte_with_limit(&mut buffer, &[], &[], 0);
+
+        assert_eq!(vp.top_byte(), 0, "the proposed top still stands");
+        assert!(
+            vp.wrap_row_cache.is_empty(),
+            "the clamp computed and cached a full row count for the huge line"
+        );
+    }
+
+    /// The control for the test above: on ordinary lines the clamp does count
+    /// them, and caches what it counted. Without this, an empty cache could
+    /// mean the capped path worked or that the clamp never ran at all.
+    #[test]
+    fn clamping_ordinary_lines_does_count_them() {
+        let content = "a short line\n".repeat(200);
+        let mut buffer = Buffer::from_str_test(&content);
+        let mut vp = Viewport::new(80, 24);
+        vp.line_wrap_enabled = true;
+
+        vp.set_top_byte_with_limit(&mut buffer, &[], &[], 0);
+
+        assert!(
+            !vp.wrap_row_cache.is_empty(),
+            "the clamp should count ordinary lines exactly, and cache them"
+        );
+    }
 
     #[test]
     fn test_viewport_new() {

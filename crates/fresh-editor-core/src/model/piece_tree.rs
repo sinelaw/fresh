@@ -86,6 +86,15 @@ impl StringBuffer {
         matches!(self.data, BufferData::Loaded { .. })
     }
 
+    /// Bytes this buffer currently holds in memory: its data if it is loaded,
+    /// zero while it is still a reference to a file region.
+    pub fn resident_bytes(&self) -> usize {
+        match &self.data {
+            BufferData::Loaded { data, .. } => data.len(),
+            BufferData::Unloaded { .. } => 0,
+        }
+    }
+
     /// Returns the total byte count of an unloaded buffer, or `None` if loaded.
     pub fn unloaded_bytes(&self) -> Option<usize> {
         match &self.data {

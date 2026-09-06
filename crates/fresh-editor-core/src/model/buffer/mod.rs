@@ -948,6 +948,18 @@ impl TextBuffer {
         self.piece_tree.total_bytes()
     }
 
+    /// Bytes of this buffer's content currently held in memory.
+    ///
+    /// For a lazily loaded file this is the chunks something has actually
+    /// asked for, not the file's size — the gap between the two is the whole
+    /// point of the lazy path, and the only direct way to observe it. Zero
+    /// right after a large file is opened; it grows as the viewport reaches
+    /// into the file, and equals [`total_bytes`](Self::total_bytes) for a
+    /// buffer that was read eagerly.
+    pub fn resident_bytes(&self) -> usize {
+        self.buffers.iter().map(|b| b.resident_bytes()).sum()
+    }
+
     /// Get the total number of lines in the document
     /// Uses the piece tree's integrated line tracking
     /// Returns None if line count is unknown (e.g., for large files without line indexing)
