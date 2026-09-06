@@ -1425,8 +1425,9 @@ function buildStreamContent(): TextPropertyEntry[] {
     };
 
     let lastCategory: string | undefined;
-    for (let fi = 0; fi < state.files.length; fi++) {
-        const file = state.files[fi];
+    const ordered = filesInDisplayOrder();
+    for (let fi = 0; fi < ordered.length; fi++) {
+        const file = ordered[fi];
 
         // Honor the active `/` filter — skip non-matching files entirely so
         // the center matches the sidebar.
@@ -1823,13 +1824,23 @@ let toolbarPanel: WidgetPanel | null = null;
 let filesPanel: WidgetPanel | null = null;
 let commentsPanel: WidgetPanel | null = null;
 
-/** Width in columns of a side panel: the host's last reported viewport
- *  width for it, or the share of the screen `REVIEW_LAYOUT` gives it
- *  until the first `viewport_changed` for that panel arrives. */
+/** Width in columns of a side panel: the host's reported width for it, or
+ *  the share `REVIEW_LAYOUT` gives it — only for paints issued before that
+ *  report arrives.
+ *
+ *  The share is of the *group's* width (the toolbar spans it) rather than
+ *  of `state.viewportWidth`, which is seeded from `getViewport()` — the
+ *  focused split, and so a few dozen columns when the review is opened
+ *  from a narrow pane. */
 function panelWidthOf(panel: 'files' | 'comments'): number {
     const known = state.panelWidths[panel];
     if (known && known > 0) return known;
-    return Math.max(12, Math.floor(state.viewportWidth * (panel === 'files' ? FILES_PANEL_RATIO : 0.15)));
+    const group = state.panelWidths["toolbar"];
+    const basis = group && group > 0 ? group : state.viewportWidth;
+    const share = Math.floor(basis * (panel === 'files' ? FILES_PANEL_RATIO : 0.15));
+    // Overshooting is the direction that hurts: rows built wider than the
+    // panel are clipped by the host, `…` and status letter included.
+    return Math.min(Math.max(12, share), Math.max(4, basis));
 }
 
 /** `text` clipped to `width` columns, dropping characters from the left
@@ -1977,6 +1988,8 @@ const FILES_TREE_INDENT = 1;
 interface FilesTree {
     nodes: TreeNode[];
     keys: string[];
+    /** The files, in the order their rows appear top to bottom. */
+    orderedFiles: FileEntry[];
     /** Node key → file key, for the file rows only. */
     fileByNodeKey: Record<string, string>;
     /** Index in `nodes` of each file row, so the selection can be
@@ -2068,7 +2081,7 @@ function compressDirChains(node: DirNode): void {
 
 function buildFilesTree(): FilesTree {
     const out: FilesTree = {
-        nodes: [], keys: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
+        nodes: [], keys: [], orderedFiles: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
     };
     const commentCounts: Record<string, number> = {};
     for (const c of state.comments) commentCounts[c.file] = (commentCounts[c.file] || 0) + 1;
@@ -2111,6 +2124,7 @@ function buildFilesTree(): FilesTree {
 
     const pushFile = (file: FileEntry, depth: number): void => {
         const key = fileKey(file);
+        out.orderedFiles.push(file);
         const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
         const nodeKey = `file:${key}`;
         out.fileByNodeKey[nodeKey] = key;
@@ -2172,6 +2186,17 @@ function buildFilesTree(): FilesTree {
     return out;
 }
 
+/** The changed files in the order the sidebar lists them: by category,
+ *  then the directory tree depth-first, subdirectories before the files
+ *  beside them. The unified stream lays its files out in this order too,
+ *  so the sidebar's top-to-bottom order and the stream's are the same
+ *  sequence — scrolling the diff walks the sidebar. The tree is what
+ *  decides it, so there is one traversal rather than two that can drift.
+ *  Honours the `/` filter, since the tree does. */
+function filesInDisplayOrder(): FileEntry[] {
+    return buildFilesTree().orderedFiles;
+}
+
 /** The node the sidebar tree has selected — `file:…`, `dir:…` or
  *  `cat:…`. Mirrored from the host's `select` events so Enter knows what
  *  it is acting on. */
@@ -2180,18 +2205,18 @@ let filesSelectedNodeKey = "";
 /** The sidebar tree as last built — the map from a `select` event's node
  *  key back to a file. */
 let filesTree: FilesTree = {
-    nodes: [], keys: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
+    nodes: [], keys: [], orderedFiles: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
 };
 
 /** The FILES panel spec: header, the filter field while `/` is open, and
  *  the file tree. */
 function buildFilesPanelSpec(): WidgetSpec {
     filesTree = buildFilesTree();
-    // The spec's `selectedIndex` is authoritative on every render, so it
-    // has to agree with where the host's own navigation left the
-    // selection — otherwise each repaint drags the selection back to the
-    // current file and folding a directory (which selects a directory
-    // row first) never gets to happen.
+    // A seed: the host's stored selection wins once anything has set one.
+    // It still has to agree with where the host's own navigation left the
+    // selection, or a freshly mounted tree starts on the current file and
+    // folding a directory (which selects a directory row first) never gets
+    // to happen.
     const fileNodeKey = state.filesCurrentKey !== null ? `file:${state.filesCurrentKey}` : "";
     const trackedKey = filesSelectedNodeKey.startsWith("file:")
         ? fileNodeKey                       // a file row: the review's current file wins
@@ -2263,9 +2288,11 @@ interface CommentsList {
 
 /** Comments in stream order: by file, then by line. */
 function commentsInStreamOrder(): ReviewComment[] {
+    // Down the stream, which is the sidebar's order (`filesInDisplayOrder`).
+    const ordered = filesInDisplayOrder();
     const fileIndex = (file: string): number => {
-        for (let i = 0; i < state.files.length; i++) {
-            if (state.files[i].path === file) return i;
+        for (let i = 0; i < ordered.length; i++) {
+            if (ordered[i].path === file) return i;
         }
         return Number.MAX_SAFE_INTEGER;
     };
@@ -2383,14 +2410,13 @@ function renderFilesPanel(): void {
 
 /** Move the sidebar's selection onto the review's current file.
  *
- *  A tree's selected row is host state after its first render — the
- *  `selectedIndex` in a rebuilt spec is a seed the host ignores — so
- *  repainting the panel with a new current file left the highlight
- *  wherever the sidebar's own navigation had last put it. Reading down
- *  the stream then walked the cursor through file after file with the
- *  sidebar still pointing at the one you started in. This is the
- *  host-side setter, so the selection actually moves (and scrolls itself
- *  into view).
+ *  A tree's selected row is host state once anything has set it, and the
+ *  `selectedIndex` in a rebuilt spec is a seed the host ignores from then
+ *  on — so repainting alone left the highlight where the sidebar's own
+ *  navigation had put it, and reading down the stream walked the cursor
+ *  through file after file with the sidebar still on the first. This is
+ *  the host-side setter, so the row actually moves (and scrolls into
+ *  view).
  *
  *  A directory or section row the user selected stays put: those are the
  *  sidebar's own navigation, and folding one is a gesture the diff cursor
@@ -2400,10 +2426,15 @@ function pointSidebarAtCurrentFile(): void {
     if (state.filesCurrentKey === null) return;
     if (filesSelectedNodeKey.startsWith("dir:") || filesSelectedNodeKey.startsWith("cat:")) return;
     const nodeKey = `file:${state.filesCurrentKey}`;
-    if (nodeKey === filesSelectedNodeKey) return;
     const idx = filesTree.keys.indexOf(nodeKey);
     if (idx < 0) return;
     filesSelectedNodeKey = nodeKey;
+    // Unconditionally, because the host stores an *absolute* index into a
+    // node list this tree rebuilds whenever the changeset moves: a file
+    // appearing above the current one would slide the highlight onto its
+    // neighbour. It also puts the band back after the host clears a blurred
+    // tree's selection (`Tree::on_focus_change`), which clicking the filter
+    // field does. Re-pinning an unchanged index preserves a user scroll.
     filesPanel.setSelectedIndex(FILES_TREE_KEY, idx);
 }
 
@@ -2461,6 +2492,23 @@ function review_toggle_comments_panel(): void {
 }
 registerHandler("review_toggle_comments_panel", review_toggle_comments_panel);
 
+/** The pointer put the keys in `panel`. A click that lands on a widget is
+ *  routed straight to it: no `mouse_click` for the panel's buffer and no
+ *  `buffer_activated`, so a widget event is the only word the plugin gets
+ *  that focus moved. Without adopting it the plugin went on routing arrows
+ *  to the panel it last knew about — they did nothing, and Enter toggled a
+ *  fold in the diff instead of opening the file that was clicked.
+ *
+ *  Widget focus is the host's and is left alone: it already sits on
+ *  whatever the click landed on. */
+function adoptPanelFocusFromWidget(panel: 'files' | 'comments'): void {
+    if (state.groupId === null || state.focusPanel === panel) return;
+    if (!panelVisible(panel)) return;
+    state.focusPanel = panel;
+    editor.focusBufferGroupPanel(state.groupId, panel);
+    refreshFocusIndicators();
+}
+
 /** Buttons in the toolbar and in the two panel headers. The host does the
  *  hit-testing and hands us the widget key. */
 editor.on("widget_event", (data) => {
@@ -2472,15 +2520,21 @@ editor.on("widget_event", (data) => {
         // panel's command keys.
         if (data.event_type === "focus") {
             leaveFilterMode();
+            adoptPanelFocusFromWidget('files');
             return;
         }
         const nodeKey = String((data.payload as Record<string, unknown>)?.["key"] ?? "");
         if (data.event_type === "select") {
+            // The event first, the focus after: adopting repaints the
+            // panel, and a repaint before the selection is known re-pins
+            // the highlight to the file the review was on.
             onFilesTreeSelect(nodeKey);
+            adoptPanelFocusFromWidget('files');
             return;
         }
         if (data.event_type === "activate") {
-            // Double-click on a file row: same as Enter — go to it.
+            // Double-click on a file row: same as Enter — go to it, and
+            // the keys go with it.
             if (nodeKey.startsWith("file:")) {
                 filesSelectedNodeKey = nodeKey;
                 onFilesTreeSelect(nodeKey);
@@ -2488,11 +2542,13 @@ editor.on("widget_event", (data) => {
             }
             return;
         }
-        return; // `expand` is host-owned; nothing to mirror.
+        adoptPanelFocusFromWidget('files');
+        return; // `expand` is host-owned; nothing else to mirror.
     }
     if (data.widget_key === FILES_FILTER_KEY) {
         if (data.event_type === "focus") {
             enterFilterMode();
+            adoptPanelFocusFromWidget('files');
             return;
         }
         if (data.event_type === "change") {
@@ -2510,6 +2566,7 @@ editor.on("widget_event", (data) => {
     }
     // --- COMMENTS list --------------------------------------------------
     if (data.widget_key === COMMENTS_LIST_KEY) {
+        adoptPanelFocusFromWidget('comments');
         const itemKey = String((data.payload as Record<string, unknown>)?.["key"] ?? "");
         const commentId = itemKey.startsWith("c:") ? itemKey.slice(2).split("#")[0] : "";
         if (!commentId) return;
@@ -3068,6 +3125,13 @@ registerHandler("review_relayout_diff", review_relayout_diff);
 
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
+    // The toolbar spans the group, so its width is the group's — the basis
+    // `panelWidthOf` takes a share of for a panel not yet reported. Nothing
+    // else to do with it: the host lays the toolbar's own row out.
+    if (data.buffer_id === state.panelBuffers["toolbar"]) {
+        state.panelWidths["toolbar"] = data.width;
+        return;
+    }
     // Side panels: remember how wide the host actually made them, and
     // repaint once when that changes so the header's `✕` lands on the
     // right edge instead of a guessed column.
@@ -3296,8 +3360,9 @@ registerHandler("review_toggle_file_collapse", review_toggle_file_collapse);
  * linear scan of state.files for every comment in the sort comparator.
  */
 function commentsInPanelOrder(): ReviewComment[] {
+    const ordered = filesInDisplayOrder();
     const fileIdx: Record<string, number> = {};
-    for (let i = 0; i < state.files.length; i++) fileIdx[state.files[i].path] = i;
+    for (let i = 0; i < ordered.length; i++) fileIdx[ordered[i].path] = i;
     return [...state.comments].sort((a, b) => {
         const fa = fileIdx[a.file] ?? Number.MAX_SAFE_INTEGER;
         const fb = fileIdx[b.file] ?? Number.MAX_SAFE_INTEGER;
@@ -5795,10 +5860,9 @@ function fileMatchesFilter(file: FileEntry): boolean {
 
 /** Files visible under the active filter, in display order. */
 function visibleFiles(): FileEntry[] {
-    // Flatten the shared grouping so navigation order == the rendered order.
-    const out: FileEntry[] = [];
-    for (const g of fileGroups()) for (const f of g.files) out.push(f);
-    return out;
+    // The sidebar's order, which is also the stream's — so `,` / `.` step
+    // down the list the reader is looking at rather than a second one.
+    return filesInDisplayOrder();
 }
 
 /** Nearest diff row (add/remove/context) to the cursor, or null if the
@@ -7403,6 +7467,10 @@ function stop_review_diff() {
         state.panelBuffers = {};
     }
     state.reviewBufferId = null;
+    // Keyed by panel name, so the next session would inherit these — its
+    // panels are different buffers in a differently sized group.
+    state.panelWidths = {};
+    state.panelHeights = {};
     stopWatchPoll();
     reviewWatchEnabled = true;
     lastDataSignature = null;

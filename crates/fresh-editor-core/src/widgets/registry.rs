@@ -576,13 +576,20 @@ impl WidgetPanelState {
     /// selection move no longer has to know they exist — and cannot
     /// reset them by forgetting to copy one.
     pub fn set_selected_index(&mut self, widget_key: &str, index: i32) {
-        let new_state = match self.instance_states.get(widget_key) {
-            Some(WidgetInstanceState::Tree {
-                selected_index,
-                expanded_keys,
-                user_scrolled,
-            }) => WidgetInstanceState::Tree {
-                expanded_keys: expanded_keys.clone(),
+        // **The widget's kind decides which state this records, not what
+        // happens to be in the map.** An untouched `Tree` has no entry at
+        // all, and `tree::resolve` ignores a `List` one — so writing `List`
+        // here left the selection reading back as the spec's seed, i.e. the
+        // write silently did nothing.
+        let tree_spec = crate::widgets::find_widget_by_key(&self.spec, widget_key)
+            .filter(|spec| matches!(spec, WidgetSpec::Tree { .. }));
+        if let Some(spec) = tree_spec {
+            // Resolved, not defaulted: a first write must inherit the spec's
+            // `expanded_keys` seed rather than record an empty set.
+            let current =
+                crate::widgets::kinds::tree::resolve(spec, widget_key, &self.instance_states);
+            let new_state = WidgetInstanceState::Tree {
+                expanded_keys: current.expanded,
                 // Re-pinning the *same* index (which the orchestrator
                 // dock's `refreshOpenDialog` does on every probe-poll
                 // repaint) must preserve a user scroll — otherwise the
@@ -590,6 +597,22 @@ impl WidgetPanelState {
                 // beat after a mouse scroll. Only an actual selection
                 // change re-arms scroll-follows-selection. Mirrors the
                 // List branch below.
+                user_scrolled: current.user_scrolled && index == current.selected,
+                selected_index: index,
+            };
+            self.instance_states
+                .insert(widget_key.to_string(), new_state);
+            return;
+        }
+        let new_state = match self.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::Tree {
+                selected_index,
+                expanded_keys,
+                user_scrolled,
+            }) => WidgetInstanceState::Tree {
+                expanded_keys: expanded_keys.clone(),
+                // A key with no spec mounted here: nothing to resolve
+                // against, so the stored shape is all there is.
                 user_scrolled: *user_scrolled && index == *selected_index,
                 selected_index: index,
             },
