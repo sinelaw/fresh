@@ -595,10 +595,33 @@ impl crate::app::window::Window {
             // `find_view_line_for_byte` resolves back to the SAME row — so
             // pressing Down from an empty separator line on a CRLF file
             // appears to jump the cursor to the wrong visual row (issue
-            // #1574, Windows-CRLF variant).  When `cur_row_line_end` isn't a
-            // newline the current row is a wrapped continuation and the
-            // next visual row starts at the same byte position.
-            let target_pos = step_past_line_break(buffer, cur_row_line_end, buffer_len);
+            // #1574, Windows-CRLF variant).
+            //
+            // Past a line ending that step is the whole story. On a wrapped
+            // continuation row it is not: `line_end_byte` is the last byte the
+            // row *drew*, not one past it, so leaving it be lands the cursor on
+            // the end of the row it is already on. From there every further
+            // Down resolves to that same row and returns the same byte, and the
+            // cursor never advances — `Down` simply stops, a few rows short of
+            // the bottom of the screen, and the viewport never scrolls because
+            // the cursor it follows never leaves. That is what pinned `Down` on
+            // a file that is one enormous wrapped line (issue #1806): the row
+            // pass keeps a margin of built rows below the cursor and so never
+            // reaches this fallback, but a lazily-loaded buffer has no wrap
+            // index, and its cursor walks off the last row it does have.
+            //
+            // The row below starts one character further on, whether the wrap
+            // split a run (the row's last byte is content) or broke on the
+            // space it consumed (the row's last byte is that space).
+            let stepped = step_past_line_break(buffer, cur_row_line_end, buffer_len);
+            let target_pos = if stepped != cur_row_line_end {
+                stepped
+            } else {
+                match char_at(buffer, cur_row_line_end) {
+                    Some(ch) => cur_row_line_end + ch.len_utf8(),
+                    None => return None,
+                }
+            };
             if target_pos > buffer_len {
                 return None;
             }

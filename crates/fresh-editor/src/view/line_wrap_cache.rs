@@ -403,6 +403,48 @@ fn layout_for_plain_text_under(
 /// If `layout` is empty, returns `(0, 0)`.  If the position is past
 /// the end of the last row, returns the last row with the last
 /// visual column of that row.
+/// The visual row of `byte_in_line` within a laid-out logical line, and the
+/// visual column it sits at.
+///
+/// The byte-oriented counterpart of [`char_position_in_layout`]. That one walks
+/// *drawn* source characters, and a wrap that breaks on a space consumes it —
+/// the space is drawn by no row, so the running count falls one behind the
+/// source for every wrapped row. Its callers hand it a byte offset from the
+/// line start, which is a character index only for single-byte text that never
+/// wraps on whitespace; for anything else the two diverge, by one row per
+/// hundred-odd wrapped rows, and deep inside one enormous line that is the
+/// difference between the viewport agreeing with what was drawn and not
+/// (issue #1806). Rows carry real byte offsets, so ask them instead.
+///
+/// A byte inside a run the wrap consumed belongs to the row that consumed it,
+/// which is the row the renderer's own `contains_byte` gives it.
+pub fn byte_position_in_layout(layout: &[ViewLine], byte_in_line: usize) -> (usize, usize) {
+    if layout.is_empty() {
+        return (0, 0);
+    }
+    // Rows ascend, so the row is the last one that starts at or before the
+    // byte. Rows drawing no source of their own (a wrap's own padding) carry
+    // no opinion and leave the answer with the row above.
+    let mut row_idx = 0;
+    for (i, row) in layout.iter().enumerate() {
+        match row.char_source_bytes.iter().find_map(|b| *b) {
+            Some(first) if first <= byte_in_line => row_idx = i,
+            Some(_) => break,
+            None => {}
+        }
+    }
+    let row = &layout[row_idx];
+    let mut col = 0;
+    for (char_idx, source) in row.char_source_bytes.iter().enumerate() {
+        match source {
+            Some(b) if *b <= byte_in_line => col = row.visual_col_at_char(char_idx),
+            Some(_) => break,
+            None => {}
+        }
+    }
+    (row_idx, col)
+}
+
 pub fn char_position_in_layout(layout: &[ViewLine], char_pos_in_line: usize) -> (usize, usize) {
     if layout.is_empty() {
         return (0, 0);

@@ -52,7 +52,7 @@ use ratatui::layout::Rect;
 /// single-line JSON files). Lines exceeding this width are wrapped into multiple visual lines,
 /// each bounded to this width. 10,000 columns is far wider than any monitor while keeping
 /// memory usage reasonable (~80KB per ViewLine instead of hundreds of MB).
-const MAX_SAFE_LINE_WIDTH: usize = 10_000;
+pub(crate) const MAX_SAFE_LINE_WIDTH: usize = 10_000;
 
 /// Immutable editor render settings for one frame.
 ///
