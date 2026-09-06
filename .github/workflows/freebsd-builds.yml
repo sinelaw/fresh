@@ -62,7 +62,7 @@ jobs:
             tar -tJf "${ARCHIVE_NAME}.tar.xz" | grep -E '(fresh|README)' | head -5
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-x86_64-unknown-freebsd
           path: |

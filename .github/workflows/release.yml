@@ -243,7 +243,7 @@ jobs:
           Set-Content -Path "$ARCHIVE_NAME.zip.sha256" -Encoding ascii -NoNewline -Value "$hash  $ARCHIVE_NAME.zip`n"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-${{ matrix.target }}
           path: |
@@ -349,7 +349,7 @@ jobs:
           cd ..
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-npm-package
           path: fresh-editor-npm-package.tar.gz
@@ -439,7 +439,7 @@ jobs:
           cat fresh.rb
 
       - name: Upload Homebrew formula
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-homebrew-formula
           path: fresh.rb

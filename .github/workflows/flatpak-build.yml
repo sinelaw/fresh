@@ -72,7 +72,7 @@ jobs:
           sha256sum fresh-editor-${VERSION}-x86_64.flatpak > fresh-editor-${VERSION}-x86_64.flatpak.sha256
 
       - name: Upload Flatpak bundle
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-flatpak
           path: |

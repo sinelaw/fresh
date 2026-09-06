@@ -219,7 +219,7 @@ jobs:
       # ── Upload artifacts ─────────────────────────────────────────────
       - name: Upload GUI artifacts (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-gui-${{ matrix.target }}
           path: |
@@ -228,7 +228,7 @@ jobs:
 
       - name: Upload GUI artifacts (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-gui-${{ matrix.target }}
           path: |
@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload GUI artifacts (Linux)
         if: contains(matrix.target, 'linux')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-gui-${{ matrix.target }}
           path: |

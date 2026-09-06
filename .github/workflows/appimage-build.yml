@@ -69,7 +69,7 @@ jobs:
           ./crates/fresh-editor/scripts/build-appimage.sh binary "$VERSION" "${{ matrix.arch }}"
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts-appimage-${{ matrix.arch }}
           path: |
