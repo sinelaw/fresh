@@ -15,11 +15,11 @@ use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 /// `char_budget` is a second, independent stop condition: tokenising ends once
 /// this many characters have been emitted, whatever `lines_seen` says. The
 /// line budget alone is not enough on a file whose logical lines are far wider
-/// than the screen — `lines_seen` only advances once per
-/// [`MAX_SAFE_LINE_WIDTH`] characters inside a single line, so a 50-row
-/// viewport would ask for 54 "lines" and tokenise 540,000 characters to fill
-/// rows that hold a few thousand. Callers that know the width a row wraps at
-/// pass roughly `rows × width`; pass `None` to bound by source lines only.
+/// than the screen — `lines_seen` advances once per line the reader yields, and
+/// it yields a long line in [`MAX_LINE_BYTES`] pieces, so a 50-row viewport
+/// would ask for 54 "lines" and tokenise megabytes to fill rows that hold a few
+/// thousand characters. Callers that know the width a row wraps at pass roughly
+/// `rows × width`; pass `None` to bound by source lines only.
 ///
 /// `start_mid_line` means `top_byte` is a *visual row* start rather than a
 /// logical line start — the caller obtained it from the wrap index — so the read
@@ -118,7 +118,6 @@ pub(crate) fn build_base_tokens(
             let mut byte_offset = 0usize;
             let content_bytes = line_content.as_bytes();
             let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
-            let mut chars_this_line = 0usize; // Track chars to enforce MAX_SAFE_LINE_WIDTH
             for ch in line_content.chars() {
                 // Stop once the viewport's rows are covered. Unlike the
                 // `lines_seen` bound this fires inside a single long line,
@@ -127,21 +126,6 @@ pub(crate) fn build_base_tokens(
                     break 'segments;
                 }
                 chars_seen += 1;
-                // Limit characters per line to prevent memory exhaustion from huge lines.
-                // Insert a Break token to force wrapping at safe intervals.
-                if chars_this_line >= MAX_SAFE_LINE_WIDTH {
-                    tokens.push(ViewTokenWire {
-                        source_offset: None,
-                        kind: ViewTokenWireKind::Break,
-                        style: None,
-                    });
-                    chars_this_line = 0;
-                    lines_seen += 1;
-                    if lines_seen >= max_lines {
-                        break;
-                    }
-                }
-                chars_this_line += 1;
 
                 let ch_len = ch.len_utf8();
                 let source_offset = Some(line_start + byte_offset);
@@ -404,9 +388,8 @@ mod tests {
     }
 
     /// The line budget alone cannot bound a file that is one enormous line:
-    /// `lines_seen` advances once per `MAX_SAFE_LINE_WIDTH` characters, so a
-    /// 50-row viewport pulls in 540,000 characters. The character budget is
-    /// what actually stops the read.
+    /// `lines_seen` advances once per read piece, so a 50-row viewport pulls in
+    /// megabytes. The character budget is what actually stops the read.
     #[test]
     fn char_budget_bounds_a_single_enormous_line() {
         let content = "x".repeat(500_000);
@@ -593,12 +576,10 @@ pub(crate) fn build_line_tokens_from(
     // scrollbar reading that maps the whole track onto the prefix.
     //
     // `build_base_tokens`'s budget counts *units*, and a single long line
-    // spends two kinds. `LineIterator` yields it in `MAX_LINE_BYTES` pieces
-    // and each piece costs one; independently, the forced-break counter inside
-    // the character loop costs one per `MAX_SAFE_LINE_WIDTH` characters — the
-    // smaller of the two by 10×, and the one this used to overlook. Bytes are
-    // an upper bound on characters, so deriving both from byte length can only
-    // over-ask.
+    // spends one per `MAX_LINE_BYTES` piece the reader yields. The second term
+    // is left over from a forced break the character loop used to inject every
+    // `MAX_SAFE_LINE_WIDTH` characters; it stays because over-asking is free
+    // here and under-asking truncates a line the index is about to measure.
     let start = from_byte.filter(|b| *b > line_start && *b < line_end);
     let read_from = start.unwrap_or(line_start);
     let line_bytes = line_end.saturating_sub(read_from);

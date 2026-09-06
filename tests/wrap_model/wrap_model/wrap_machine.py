@@ -1,10 +1,10 @@
 """The one wrap rule.
 
-Today the same row-boundary decision is re-implemented in at least seven
+Today the same row-boundary decision is re-implemented in at least six
 places (`apply_wrapping_transform`, `apply_grid_wrapping_transform`,
 `wrap_str_to_width`, `count_visual_rows_for_text`,
 `count_visual_rows_for_text_with_soft_breaks`, `count_visual_rows_for_text_grid`
-/ `for_each_grid_row_start`, `wrap_segment_source_bytes`) and kept in agreement
+/ `for_each_grid_row_start`) and kept in agreement
 by convention plus a couple of cross-checking tests. This module is the
 end-state replacement: *one* machine that decides where rows end, with two
 drivers reading its output —

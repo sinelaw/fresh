@@ -280,10 +280,27 @@ pub(crate) fn compute_buffer_layout(
                 }),
             "compute_buffer_layout ran without a reconciled wrap index for its geometry"
         );
-        state
-            .wrap_indices
-            .get(&geometry)
-            .and_then(|index| resolve_build_anchor(index, state, viewport, &cursor_positions))
+        if state.wrap_indices.get(&geometry).is_none()
+            && crate::view::row_walk::addresses_rows_by_byte(&state.buffer, line_wrap)
+        {
+            // No index covers this buffer, so the top *is* the first visible
+            // row and building from it draws the screen and nothing else.
+            // Falling through to no anchor would build from the logical line —
+            // every row from byte 0 on a one-line file, all but a screenful
+            // discarded.
+            let byte = viewport.top_byte();
+            let carry = crate::view::row_walk::carry_at(&mut state.buffer, byte, geometry.rule);
+            Some(BuildAnchor {
+                byte,
+                carry,
+                skip: 0,
+            })
+        } else {
+            state
+                .wrap_indices
+                .get(&geometry)
+                .and_then(|index| resolve_build_anchor(index, state, viewport, &cursor_positions))
+        }
     };
 
     let view_data = {
