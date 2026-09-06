@@ -1824,12 +1824,21 @@ let filesPanel: WidgetPanel | null = null;
 let commentsPanel: WidgetPanel | null = null;
 
 /** Width in columns of a side panel: the host's last reported viewport
- *  width for it, or the share of the screen `REVIEW_LAYOUT` gives it
- *  until the first `viewport_changed` for that panel arrives. */
+ *  width for it, or the share of the review `REVIEW_LAYOUT` gives it
+ *  until the first `viewport_changed` for that panel arrives.
+ *
+ *  The share is taken from the *group's* width (the toolbar spans it), not
+ *  from `state.viewportWidth`: that one is seeded from `getViewport()`,
+ *  which reports whichever split holds focus. Opening a review from a
+ *  narrow pane — a file explorer, or the FILES sidebar of the review being
+ *  replaced — therefore seeded it with a few dozen columns, and every row
+ *  in a 40-column sidebar came out elided to the 12-column floor below. */
 function panelWidthOf(panel: 'files' | 'comments'): number {
     const known = state.panelWidths[panel];
     if (known && known > 0) return known;
-    return Math.max(12, Math.floor(state.viewportWidth * (panel === 'files' ? FILES_PANEL_RATIO : 0.15)));
+    const group = state.panelWidths["toolbar"];
+    const basis = group && group > 0 ? group : state.viewportWidth;
+    return Math.max(12, Math.floor(basis * (panel === 'files' ? FILES_PANEL_RATIO : 0.15)));
 }
 
 /** `text` clipped to `width` columns, dropping characters from the left
@@ -3068,6 +3077,16 @@ registerHandler("review_relayout_diff", review_relayout_diff);
 
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
+    // The toolbar spans the group, so its width is the group's width —
+    // what `panelWidthOf` takes its ratio of for a panel the host has not
+    // reported yet. Recorded (and nothing else: the toolbar's own row is
+    // laid out by the host) so that share is taken from the review's real
+    // width rather than from whichever split happened to hold focus when
+    // the review opened.
+    if (data.buffer_id === state.panelBuffers["toolbar"]) {
+        state.panelWidths["toolbar"] = data.width;
+        return;
+    }
     // Side panels: remember how wide the host actually made them, and
     // repaint once when that changes so the header's `✕` lands on the
     // right edge instead of a guessed column.
@@ -7403,6 +7422,11 @@ function stop_review_diff() {
         state.panelBuffers = {};
     }
     state.reviewBufferId = null;
+    // Panel geometry is keyed by panel name, and the next session's panels
+    // are different buffers in a differently sized group. Carrying it over
+    // would lay the new session's first paint out to the old one's widths.
+    state.panelWidths = {};
+    state.panelHeights = {};
     stopWatchPoll();
     reviewWatchEnabled = true;
     lastDataSignature = null;

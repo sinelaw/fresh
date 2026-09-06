@@ -1044,14 +1044,21 @@ impl Editor {
                     view_state.viewport.width,
                     view_state.viewport.height,
                 );
-                // Compare against previous frame's state
-                // Skip new splits (None case) - only fire hooks for established splits
-                // This matches the original behavior where hooks only fire for splits
-                // that existed at the start of render
+                // Compare against previous frame's state. A split seen for
+                // the first time reports too: its birth geometry is a change
+                // from "no geometry at all", and it is the only chance a
+                // plugin gets to hear it. Skipping it (the old behaviour)
+                // swallowed exactly the frame a panel appears on — a buffer
+                // group's side panel is laid out for the first time when it
+                // is *shown*, and after that its size never changes on its
+                // own, so a plugin that lays its own rows out to the panel
+                // width was left guessing until the user happened to drag
+                // the divider. The review diff's FILES sidebar elided every
+                // filename to a guessed width for exactly that reason.
                 let (changed, previous) =
                     match self.active_window().previous_viewports.get(split_id) {
                         Some(previous) => (*previous != current, Some(*previous)),
-                        None => (false, None), // Skip new splits until they're established
+                        None => (true, None),
                     };
                 tracing::trace!(
                     "viewport_changed check: split={:?} current={:?} previous={:?} changed={}",
