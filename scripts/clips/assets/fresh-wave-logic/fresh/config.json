@@ -23,5 +23,17 @@
     "markdown_compose": {
       "enabled": false
     }
-  }
+  },
+  "keybindings": [
+    {
+      "keys": [
+        {
+          "key": "F9",
+          "modifiers": []
+        }
+      ],
+      "action": "trigger_wave_animation",
+      "when": "normal"
+    }
+  ]
 }

@@ -1095,10 +1095,64 @@ check('Winamp: chrome palette layered inline (navy selection + LCD-green accent)
     return r.getPropertyValue('--sel').trim() === '#313c90' && r.getPropertyValue('--accent').trim() === '#4ef07f';
   }) && (await svgFamily()) === cosmosBufFont);
 await page.screenshot({ path: `${SHOTS}/33b-theme-winamp.png` });
-// The floating switcher: clicking the pill opens a 3-row menu; a row switches.
+// → Word: the other SHELL theme — the bezel is one Word 6.0 application window
+// (caption, menu bar, a single toolbar row, a ruler), and its palette is the
+// Windows 3.1 system one: #C0C0C0 face, #000080 selection, square corners.
+await page.evaluate(() => window.fresh.setWebTheme('word'));
+await page.waitForTimeout(400);
+check('Word: theme class set, shell bezel ON, window furniture built', await page.evaluate(() =>
+  document.body.classList.contains('theme-word') && document.getElementById('device').classList.contains('on') &&
+  !!document.querySelector('#device .wd-title .wd-title-text') &&
+  !!document.querySelector('#device .wd-menuband') &&
+  !!document.querySelector('#device .wd-toolbar .wd-btn') &&
+  !!document.querySelector('#device .wd-ruler')));
+// The bezel's bands stack in Word's order, top to bottom, and add up to the
+// --bezel-top the shell layout is driven from.
+check('Word: caption, menu band, toolbar and ruler stack in that order inside the bezel',
+  await page.evaluate(() => {
+    const dev = document.getElementById('device').getBoundingClientRect();
+    const y = s => document.querySelector('#device ' + s).getBoundingClientRect().top - dev.top;
+    const bezel = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bezel-top'));
+    return y('.wd-title') < y('.wd-menuband') && y('.wd-menuband') < y('.wd-toolbar') &&
+      y('.wd-toolbar') < y('.wd-ruler') && y('.wd-ruler') < bezel;
+  }));
+// The menu bar is fresh's REAL element (its .menu spans still route clicks),
+// translated up out of the grid onto that band — so it sits between the
+// caption and the toolbar, above where the grid itself starts.
+check('Word: the real menu bar is lifted onto the band, between caption and toolbar',
+  await page.evaluate(() => {
+    const bar = document.querySelector('#app .region.menubar');
+    if (!bar || !bar.querySelector('.menu')) return false;
+    const b = bar.getBoundingClientRect();
+    const band = document.querySelector('#device .wd-menuband').getBoundingClientRect();
+    const cap = document.querySelector('#device .wd-title').getBoundingClientRect();
+    const tb = document.querySelector('#device .wd-toolbar').getBoundingClientRect();
+    const app = document.getElementById('app').getBoundingClientRect();
+    // Lifted clear of the grid, and landed on the band between the two. Only
+    // the bar's TOP is pinned: it is one cell tall, and the cell height moves
+    // with the font, so its bottom edge is not a fixed distance from the band's.
+    return b.top < app.top - 1 && b.top >= cap.bottom - 1 && b.top < tb.top &&
+      Math.abs(b.top - band.top) <= 1;
+  }));
+// Clicking File still opens the editor's own dropdown from the lifted bar:
+// the lift is CSS only, so the element kept every handler it had.
+await page.locator('.menubar .menu', { hasText: 'File' }).first().click();
+await page.waitForTimeout(200);
+check('Word: the lifted menu bar still opens the real File menu',
+  (await page.locator('.mitem').count()) >= 4);
+await page.keyboard.press('Escape');
+await page.waitForTimeout(200);
+check('Word: Windows 3.1 palette layered inline (navy selection, square corners), buffer stays monospace',
+  await page.evaluate(() => {
+    const r = document.documentElement.style;
+    return r.getPropertyValue('--sel').trim() === '#000080' &&
+           r.getPropertyValue('--r-md').trim() === '0px';
+  }) && (await svgFamily()) === cosmosBufFont);
+await page.screenshot({ path: `${SHOTS}/33c-theme-word.png` });
+// The floating switcher: clicking the pill opens a row per theme; a row switches.
 await page.locator('#themebtn').click();
 await page.waitForTimeout(150);
-check('theme switcher menu opens with all five themes', (await page.locator('#thememenu.open .ts-row').count()) === 5);
+check('theme switcher menu opens with every theme', (await page.locator('#thememenu.open .ts-row').count()) === 6);
 await page.locator('#thememenu .ts-row', { hasText: 'Cosmos' }).first().click();
 await page.waitForTimeout(400);
 check('picking Cosmos from the menu restores the bezel shell', await page.evaluate(() =>
