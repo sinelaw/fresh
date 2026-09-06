@@ -93,6 +93,18 @@ impl Editor {
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {
+        // As `handle_key`: routed over a tree laid out from the facts as they
+        // stand, and stale once handled.
+        self.lay_out_shell_if_stale();
+        let r = self.handle_mouse_routed(mouse_event);
+        self.shell_description_stale = true;
+        r
+    }
+
+    fn handle_mouse_routed(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
         self.handle_mouse_impl(mouse_event)
     }
 

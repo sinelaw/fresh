@@ -194,7 +194,7 @@ pub struct LayerGeom {
 /// Read at mount and again on every description change, so a registration that
 /// changes shape reaches the tree without the framework knowing what produced
 /// it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct FocusReg {
     pub ordinal: Option<i32>,
     pub skip: bool,
@@ -203,6 +203,9 @@ pub struct FocusReg {
     pub focus_within: bool,
     /// Take focus when the enclosing scope opens.
     pub autofocus: bool,
+    /// This subtree is a *group* that traversal enters at the stop this key
+    /// names. See [`crate::Node::enters_at`].
+    pub entry: Option<crate::key::Key>,
 }
 
 /// Computed, retained geometry and the behaviour that produces it.

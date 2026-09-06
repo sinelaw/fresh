@@ -2056,6 +2056,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "panes": panes,
         "separators": separators,
         "popups": popups,
+        // The plugin panels, as the display list the tree produced for them
+        // (`Editor::tree_view`); the web folds it into DOM.
+        "tree": serde_json::to_value(editor.tree_view()).unwrap_or_else(|_| json!({})),
         "palette": palette,
         "trustDialog": trust_dialog,
         "contextMenu": context_menu,

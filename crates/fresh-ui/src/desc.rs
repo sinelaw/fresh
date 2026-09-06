@@ -436,6 +436,8 @@ pub struct FocusProps<M> {
     pub on_focus_change: Option<Handler<M>>,
     /// Rebuild this element when focus enters or leaves its subtree.
     pub focus_within: bool,
+    /// The stop traversal enters this subtree at. See [`Node::enters_at`].
+    pub entry: Option<crate::key::Key>,
 }
 
 impl<M> Default for FocusProps<M> {
@@ -451,6 +453,7 @@ impl<M> Default for FocusProps<M> {
             actions: Vec::new(),
             on_focus_change: None,
             focus_within: false,
+            entry: None,
         }
     }
 }
@@ -583,10 +586,12 @@ pub enum Modality {
     /// is what makes an open menu a dead end for a stray key, and a prompt is
     /// the opposite of a dead end.
     ///
-    /// Only meaningful for a surface whose interior lives outside the tree —
-    /// a `Host` leaf, or a host-side dispatcher the layer's `on_key` hands
-    /// the key to. A surface described all the way down has no keys left over
-    /// to fall through: what its nodes decline was never its own.
+    /// Not a migration-shaped variant: a surface described all the way down
+    /// can still have keys that are the host's. A plugin panel's keys are
+    /// bound by the plugin's own mode, outside anything its nodes declare,
+    /// and the buffer behind a non-modal panel is the host's too — so
+    /// "confined, and what is declined carries on" is a permanent need, not
+    /// a property of a surface whose interior lives outside the tree.
     Focus,
     /// **The keyboard only.** Traversal cannot leave and an unhandled key
     /// stops here, while the pointer passes through untouched.
@@ -979,6 +984,7 @@ impl<M> Clone for FocusProps<M> {
             actions: self.actions.clone(),
             on_focus_change: self.on_focus_change.clone(),
             focus_within: self.focus_within,
+            entry: self.entry.clone(),
         }
     }
 }
@@ -1672,6 +1678,20 @@ impl<M> Node<M> {
         self
     }
 
+    /// Traversal *entering* this subtree from outside lands on the stop
+    /// `key` names, rather than on the first stop in its direction of travel.
+    ///
+    /// A group with a cursor — a card list whose selected card is the one
+    /// the arrows move, a radio group, a tab strip — is entered at the cursor
+    /// from either side, and stepped through in reading order once inside.
+    /// The key names an element inside the subtree that is on the ring; if
+    /// it names nothing, or nothing on the ring, traversal enters where it
+    /// would have.
+    pub fn enters_at(mut self, key: crate::key::Key) -> Self {
+        self.focus_props().entry = Some(key);
+        self
+    }
+
     /// Rebuild when focus enters or leaves this subtree.
     pub fn focus_within(mut self) -> Self {
         self.focus_props().focus_within = true;
@@ -1921,8 +1941,13 @@ impl<M: 'static> Desc<M> {
                     scope: f.scope,
                     focus_within: f.focus_within,
                     autofocus: f.autofocus,
+                    entry: f.entry.clone(),
                 };
-                sync(obj, || FocusRender { reg }, |o| o.reg = reg)
+                sync(
+                    obj,
+                    || FocusRender { reg: reg.clone() },
+                    |o| o.reg = reg.clone(),
+                )
             }
             Desc::Layer(l) => sync(
                 obj,

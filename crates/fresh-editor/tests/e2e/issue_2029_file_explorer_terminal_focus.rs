@@ -94,7 +94,7 @@ fn toggle_file_explorer_clears_terminal_mode() {
          the file explorer (issue #2029)"
     );
     assert_eq!(
-        harness.editor().get_key_context(),
+        harness.editor_mut().get_key_context(),
         KeyContext::FileExplorer,
         "toggle_file_explorer must hand keyboard focus to the explorer"
     );

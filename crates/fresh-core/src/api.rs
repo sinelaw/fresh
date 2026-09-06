@@ -5687,6 +5687,14 @@ pub enum PluginCommand {
         /// Default `false`: mounting focuses the panel, as always.
         #[serde(default)]
         start_blurred: bool,
+        /// The plugin mode (`defineMode`) whose bindings this panel's keys
+        /// resolve against first — the panel's own keymap, ahead of the
+        /// widget that holds focus. A dock declares its chords here rather
+        /// than through the window's editor mode, which is the buffer's
+        /// and would shadow or be shadowed by it. `None` keeps the
+        /// window's editor mode as the panel's keymap, as before.
+        #[serde(default)]
+        mode: Option<String>,
     },
 
     /// Mount a declarative widget panel as a **sidebar section**: a

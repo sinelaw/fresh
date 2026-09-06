@@ -89,12 +89,48 @@ pub struct Panel {
     pub interior: Option<Interior>,
 }
 
+/// **A plugin panel's keymap, on the tree.** The mode a panel's plugin
+/// defined (`defineMode`) and the resolver its bindings live in; the
+/// panel's interior captures a key the mode explicitly binds ahead of the
+/// widget that holds focus, and the key arrives as the bound action
+/// (`UiMsg::Action`).
+///
+/// This is where the router's "an explicit mode binding for the key wins
+/// over the panel's smart-key defaults" used to be decided, one key at a
+/// time, after the tree had already declined the key: now it is a property
+/// of the panel's node, resolved on the capture leg, and a panel in a slot
+/// whose keys are not a mode's — a sidebar section — simply declares none.
+#[derive(Clone)]
+pub struct Keymap {
+    pub mode: String,
+    pub resolver: std::sync::Arc<std::sync::RwLock<crate::input::keybindings::KeybindingResolver>>,
+}
+
+impl std::fmt::Debug for Keymap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Keymap")
+            .field("mode", &self.mode)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Keymap {
+    /// The action `mode` explicitly binds `k` to, if any.
+    fn action(&self, k: fresh_ui::KeyPress) -> Option<crate::input::keybindings::Action> {
+        let ev = super::input::crossterm_key_event(k)?;
+        let ctx = crate::input::keybindings::KeyContext::Mode(self.mode.clone());
+        self.resolver.read().ok()?.explicit_binding(&ev, &ctx)
+    }
+}
+
 /// A described interior: the spec, and the host state it reads.
 #[derive(Clone, Debug)]
 pub struct Interior {
     pub spec: std::rc::Rc<fresh_core::api::WidgetSpec>,
     pub states: std::rc::Rc<std::collections::HashMap<String, crate::widgets::WidgetInstanceState>>,
     pub focus_key: String,
+    /// See [`super::widgets::Ctx::keyboard`].
+    pub keyboard: bool,
     pub hovered_key: Option<String>,
     pub hovered_item_key: String,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
@@ -112,13 +148,9 @@ pub struct Interior {
     pub avail_height: Option<u32>,
     /// See [`super::widgets::Ctx::scrollbar_reveal`].
     pub scrollbar_reveal: Option<bool>,
-    /// Whether this panel's plugin mode binds Tab.
-    ///
-    /// See [`interior`]: Tab is the one key the tree now resolves, so it is
-    /// the one place a plugin's `defineMode` binding could be taken away by
-    /// this change. When the plugin bound it, the fallback claims it and the
-    /// router hands it to the plugin exactly as before.
-    pub claims_tab: bool,
+    /// The plugin mode whose bindings this panel's keys resolve against
+    /// first, if any. See [`Keymap`] and [`interior`].
+    pub keymap: Option<Keymap>,
     /// The host resources a `markdown: true` `Text` widget renders through.
     ///
     /// See [`super::widgets::Ctx::markdown`]. Owned handles rather than the
@@ -304,6 +336,13 @@ pub fn keys_layer(slot: super::widgets::Slot, scope: Option<Key>) -> Node<UiMsg>
         .place(Place::Fill)
         .pointer_mode(PointerMode::Ignore)
         .modality(Modality::Focus);
+    // A pane's layer is the base's, not an overlay's: the gates that ask
+    // "is something layered over the content" (`Editor::focus_in_a_layer`)
+    // tell it apart by this key. See [`is_base_layer`].
+    let l = match slot {
+        super::widgets::Slot::Pane(leaf) => l.key(pane_keys_key(leaf)),
+        _ => l,
+    };
     match scope {
         Some(k) => l.scope_at(k),
         // No described interior — an empty dock, or a panel the adapter could
@@ -312,25 +351,68 @@ pub fn keys_layer(slot: super::widgets::Slot, scope: Option<Key>) -> Node<UiMsg>
         // containment questions, and claims every key for the runtime.
         None => l.child(
             fresh_ui::focusable(row())
+                .key(sink_key(slot))
                 .pointer_mode(PointerMode::Ignore)
                 .autofocus()
-                .on_key(move |_| Some(UiMsg::Ui(UiFact::PanelKey(slot)))),
+                .on_key(move |e: &fresh_ui::Event| {
+                    e.stop();
+                    Some(UiMsg::Ui(UiFact::PanelKey(slot)))
+                }),
         ),
     }
 }
 
+/// The key of a pane-mounted panel's keyboard layer.
+///
+/// The only keyboard layer that carries one, because it is the only one
+/// that is not an overlay: it confines the ring to the panel in the pane
+/// while the pane is active, exactly as the dock's does for the dock, but
+/// nothing is layered *over* the content by it — so a paste still belongs
+/// to the panel and a terminal in another pane is not gated by it.
+pub fn pane_keys_key(leaf: crate::model::event::LeafId) -> Key {
+    Key::Pair("keys_layer:pane".into(), leaf.0 .0 as u64)
+}
+
+/// Whether `k` names a keyboard layer that is the base's rather than an
+/// overlay's. See [`pane_keys_key`].
+pub fn is_base_layer(k: &Key) -> bool {
+    matches!(k, Key::Pair(name, _) if &**name == "keys_layer:pane")
+}
+
 /// The key [`keys_layer`] names as its focus scope, per slot.
 ///
-/// Only the two panels with a keyboard layer have one; `Slot` also spells the
-/// settings surfaces and a pane-mounted panel, which get their keyboards from
-/// elsewhere and are not scopes.
+/// Every described interior carries one, whether or not a keyboard layer
+/// names it as a scope: the ring a panel's focus advances along is read off
+/// the interior by this key (`Ui::next_in`), and a pane-mounted panel has a
+/// ring to advance along even though its keyboard is the buffer's.
+/// The key of a panel's keyboard sink — the focusable that holds focus
+/// when the panel's layer names no scope. With the interior's key
+/// ([`interior_key`]) it is how `frame::key_context_of` reads that a
+/// panel in this slot has the keyboard.
+pub fn sink_key(slot: super::widgets::Slot) -> Key {
+    match slot {
+        super::widgets::Slot::Dock => Key::Str("keys:dock".into()),
+        super::widgets::Slot::Floating => Key::Str("keys:floating_panel".into()),
+        super::widgets::Slot::Sidebar(i) => Key::Pair("keys:sidebar".into(), i as u64),
+        super::widgets::Slot::Pane(leaf) => Key::Pair("keys:pane".into(), leaf.0 .0 as u64),
+        super::widgets::Slot::Settings | super::widgets::Slot::SettingsEntry => {
+            Key::Str("keys:settings".into())
+        }
+    }
+}
+
 pub fn interior_key(slot: super::widgets::Slot) -> Key {
     let n = match slot {
         super::widgets::Slot::Dock => 0,
         super::widgets::Slot::Floating => 1,
         super::widgets::Slot::Settings => 2,
         super::widgets::Slot::SettingsEntry => 3,
-        super::widgets::Slot::Pane(_) => 4,
+        // One per pane: several panes may each mount a panel, and a ring is
+        // read off one panel's interior at a time. The pane's content slot
+        // *is* the panel's interior when a panel is mounted there
+        // (`splits::panel_content`), and the slot carries the pane's own
+        // content key, so that key names the interior.
+        super::widgets::Slot::Pane(leaf) => return super::splits::content_key(leaf),
         // Past the fixed slots, one per section.
         super::widgets::Slot::Sidebar(i) => 16 + i as u64,
     };
@@ -346,14 +428,15 @@ pub fn interior_key(slot: super::widgets::Slot) -> Key {
 /// is the same requirement. Splitting them would be two nodes with one
 /// invariant between them.
 ///
-/// `claims_tab` is the one precedence question this creates. Every other key
-/// still reaches the runtime through `PanelKey` exactly as before, because a
-/// described widget attaches no key handler of its own — the kinds' key
-/// handling is host-side, so nothing in the tree competes for `Enter` or the
-/// arrows and no ordering changes for them. Tab is different: declining it is
-/// how the tree's ring moves focus, and a plugin that bound Tab through
-/// `defineMode` would lose it. So the host says whether this panel's mode
-/// binds Tab, and when it does the fallback claims it like any other key.
+/// **The panel's keymap rides on it** (`keymap`): a key the panel's plugin
+/// mode explicitly binds is taken on the capture leg — before the widget
+/// that holds focus, and before the traversal that would otherwise resolve
+/// Tab — and arrives as the bound action. Every other key still reaches the
+/// runtime through `PanelKey`, because a described widget attaches no key
+/// handler of its own — the kinds' key handling is host-side, so nothing in
+/// the tree competes for `Enter` or the arrows. Tab is different: declining
+/// it is how the tree's ring moves focus, and it is declined here for every
+/// panel, because a mode that binds Tab has already taken it above.
 ///
 /// **Declining a key it might need back is safe here because of the layer's
 /// modality, not because of anything this node does.** A declined Tab the ring
@@ -366,27 +449,50 @@ pub fn interior_key(slot: super::widgets::Slot) -> Key {
 /// move and no host. `fresh-ui`'s
 /// `a_key_the_ring_cannot_serve_is_handed_back_only_by_a_focus_layer` pins the
 /// asymmetry.
-pub fn interior(slot: super::widgets::Slot, claims_tab: bool, body: Node<UiMsg>) -> Node<UiMsg> {
+pub fn interior(
+    slot: super::widgets::Slot,
+    keymap: Option<Keymap>,
+    rests_empty: bool,
+    body: Node<UiMsg>,
+) -> Node<UiMsg> {
     let (w, h) = (body.w, body.h);
-    fresh_ui::focusable(body)
+    let n = fresh_ui::focusable(body)
         .w(w)
         .h(h)
         .key(interior_key(slot))
-        .skip_traversal()
-        .on_key(move |e: &fresh_ui::Event| {
-            let tab = e.key.is_some_and(|k| {
-                matches!(k.code, fresh_ui::KeyCode::Tab | fresh_ui::KeyCode::BackTab)
-            });
-            if tab && !claims_tab {
-                // Declined, and deliberately not stopped: `propagate_key`
-                // returns false, the key resolves to an intent, and
-                // `default_for_intent` moves focus inside this scope. That is
-                // the tree's ring doing what the box arena's ring did.
-                return None;
-            }
+        .skip_traversal();
+    let n = match keymap {
+        Some(km) => n.on_key_capture(move |e: &fresh_ui::Event| {
+            let action = km.action(e.key?)?;
             e.stop();
-            Some(UiMsg::Ui(UiFact::PanelKey(slot)))
-        })
+            Some(UiMsg::Action(action))
+        }),
+        None => n,
+    };
+    // **"Nothing focused" is a state the description says.** A panel whose
+    // focus key is empty — one that declared `autoFocusFirst: false` and has
+    // not been given a focus — marks its own scope, so the tree rests focus
+    // on the interior rather than landing on the first control and telling
+    // the registry, through the `WidgetFocus` echo, about a focus the panel
+    // never chose. Tab from here starts from outside the ring.
+    let n = match rests_empty {
+        true => n.autofocus(),
+        false => n,
+    };
+    n.on_key(move |e: &fresh_ui::Event| {
+        let tab = e
+            .key
+            .is_some_and(|k| matches!(k.code, fresh_ui::KeyCode::Tab | fresh_ui::KeyCode::BackTab));
+        if tab {
+            // Declined, and deliberately not stopped: `propagate_key`
+            // returns false, the key resolves to an intent, and
+            // `default_for_intent` moves focus inside this scope. That is
+            // the tree's ring doing what the box arena's ring did.
+            return None;
+        }
+        e.stop();
+        Some(UiMsg::Ui(UiFact::PanelKey(slot)))
+    })
 }
 
 pub fn layer_for(p: &Panel) -> Node<UiMsg> {
@@ -577,7 +683,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // an indefinite constraint, so the frame would collapse to its border.
     // Width still fills: the cross axis of the enclosing column, stretched.
     let area = row().w(Sizing::Flex(1)).key(body_key());
-    let (has_focus_targets, claims_tab) = (i.has_focus_targets(), i.claims_tab);
+    let (has_focus_targets, keymap) = (i.has_focus_targets(), i.keymap.clone());
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
     // knows the content width until the box has been measured — and the
@@ -585,6 +691,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // what `layout_reader` is for: build the subtree from the constraints the
     // node was given. The alternative is the caller computing the percentage
     // itself, which is the second layout this migration exists to remove.
+    let rests_empty = i.keyboard && i.focus_key.is_empty();
     let inner = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         super::widgets::node(
             &i.spec,
@@ -593,6 +700,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 slot: super::widgets::Slot::Floating,
                 states: &i.states,
                 focus_key: i.focus_key.clone(),
+                keyboard: i.keyboard,
                 hovered_key: i.hovered_key.clone(),
                 marker_gutter: i.marker_gutter,
                 hovered_item_key: i.hovered_item_key.clone(),
@@ -608,7 +716,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // widgets decline — see `interior`, and `Interior::has_focus_targets` for
     // why a panel with nothing to focus keeps the sink instead.
     let inner = match has_focus_targets {
-        true => interior(super::widgets::Slot::Floating, claims_tab, inner),
+        true => interior(super::widgets::Slot::Floating, keymap, rests_empty, inner),
         false => inner,
     };
     area.child(inner)
@@ -802,6 +910,100 @@ mod tests {
             .collect()
     }
 
+    /// **The panel's keymap takes a key its mode binds before the widget
+    /// that holds focus sees it, and the key arrives as the action.** A
+    /// panel with no keymap hands the same key to its fallback, which names
+    /// the panel for the router.
+    #[test]
+    fn a_key_the_panels_mode_binds_arrives_as_its_action() {
+        use crate::input::keybindings::{Action, KeybindingResolver};
+        use fresh_core::api::WidgetSpec;
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "enter".to_string(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:form".to_string()),
+        });
+        let resolver =
+            std::sync::Arc::new(std::sync::RwLock::new(KeybindingResolver::new(&config)));
+        let interior = |keymap: Option<Keymap>| Interior {
+            spec: std::rc::Rc::new(WidgetSpec::Col {
+                children: vec![WidgetSpec::Button {
+                    label: "ok".into(),
+                    focused: false,
+                    intent: Default::default(),
+                    key: Some("ok".into()),
+                    disabled: false,
+                    focusable: true,
+                    bare: false,
+                    full_width: false,
+                    hover_style: None,
+                    style: None,
+                }],
+                key: None,
+            }),
+            states: Default::default(),
+            focus_key: "ok".into(),
+            keyboard: true,
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+            keymap,
+            markdown: None,
+        };
+        let framed = |keymap: Option<Keymap>| {
+            let mut p = panel(Spot::Centered {
+                width_pct: 60,
+                content_rows: 4,
+            });
+            p.interior = Some(interior(keymap));
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(
+                frame_tree(Frame {
+                    panel_keys: true,
+                    panel: Some(p),
+                    modal: Some(super::super::modal::Slot::FloatingPanel),
+                    ..Frame::default()
+                }),
+                Size::new(FRAME.width, FRAME.height),
+            );
+            let _ = ui.take_messages();
+            ui
+        };
+        let enter = Input::Key(fresh_ui::KeyPress::with(
+            fresh_ui::KeyCode::Enter,
+            Mods::NONE,
+        ));
+
+        let mut ui = framed(Some(Keymap {
+            mode: "form".into(),
+            resolver: resolver.clone(),
+        }));
+        let got = ui.dispatch(enter);
+        assert!(got.claimed, "the keymap claims what it binds");
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Action(Action::Save))),
+            "and the key arrives as the bound action: {:?}",
+            got.msgs
+        );
+
+        let mut ui = framed(None);
+        let got = ui.dispatch(enter);
+        assert_eq!(
+            facts(got),
+            vec![UiFact::PanelKey(super::super::widgets::Slot::Floating)],
+            "without a keymap the fallback names the panel"
+        );
+    }
+
     /// **The button answers its own press, and it wins.** The panel's whole
     /// channel is claimed by the modal layer underneath; this is the one cell
     /// that is not the interior's, and the ordering that used to be a comment
@@ -912,13 +1114,14 @@ mod tests {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
             focus_key: String::new(),
+            keyboard: true,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            claims_tab: false,
+            keymap: None,
             markdown: None,
         });
         let described = rect(&laid_out(Some(p.clone())), &key()).expect("a described box");
@@ -961,13 +1164,14 @@ mod tests {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
             focus_key: String::new(),
+            keyboard: true,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            claims_tab: false,
+            keymap: None,
             markdown: None,
         });
         let ui = laid_out(Some(p));
@@ -1023,13 +1227,14 @@ mod tests {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
             focus_key: String::new(),
+            keyboard: true,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            claims_tab: false,
+            keymap: None,
             markdown: None,
         });
         let mut ui = laid_out(Some(p));
@@ -1075,13 +1280,14 @@ mod tests {
             }),
             states: Default::default(),
             focus_key: String::new(),
+            keyboard: true,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            claims_tab: false,
+            keymap: None,
             markdown: None,
         });
         let mut ui = laid_out(Some(p));

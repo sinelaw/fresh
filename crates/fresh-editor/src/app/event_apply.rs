@@ -224,14 +224,6 @@ impl Editor {
         // clamped on the way in — and every one of those differences was
         // a hole while this matched on the event's shape instead.
         //
-        // Before the plugin hooks: a `cursor_moved` handler that asks the
-        // host what has focus should be told the truth. Cheap for every
-        // other buffer in the editor — `sync_widget_focus_to_cursor`
-        // answers a bool before it touches anything.
-        let buffer_id = self.active_buffer();
-        let caret = self.active_cursors().primary().position;
-        self.sync_widget_focus_to_cursor(buffer_id, caret);
-
         // 4. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
 

@@ -89,10 +89,27 @@ pub enum KeySlot {
 /// not a shim: the surface keeps whatever it has taken over, and this catches
 /// the rest.
 pub fn keys(slot: KeySlot, content: Node<UiMsg>) -> Node<UiMsg> {
-    fresh_ui::focusable(content).autofocus().on_key(move |e| {
-        e.stop();
-        Some(UiMsg::Ui(UiFact::ModalKey(slot)))
-    })
+    fresh_ui::focusable(content)
+        .key(keys_key(slot))
+        .autofocus()
+        .on_key(move |e| {
+            e.stop();
+            Some(UiMsg::Ui(UiFact::ModalKey(slot)))
+        })
+}
+
+/// The seam's key, which is how the host reads *whose* keyboard focus sits
+/// in: `frame::key_context_of` maps it to the surface's `KeyContext`.
+pub fn keys_key(slot: KeySlot) -> Key {
+    Key::Str(
+        match slot {
+            KeySlot::Settings => "keys:settings",
+            KeySlot::KeybindingEditor => "keys:keybinding_editor",
+            KeySlot::Calibration => "keys:calibration",
+            KeySlot::WorkspaceTrust => "keys:workspace_trust",
+        }
+        .into(),
+    )
 }
 
 /// The modal as a layer: the whole frame, exclusive, painting nothing.

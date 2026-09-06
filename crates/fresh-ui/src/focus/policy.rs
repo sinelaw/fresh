@@ -26,6 +26,10 @@ pub struct FocusEntry {
     pub id: FocusTarget,
     pub ordinal: Option<i32>,
     pub rect: Rect,
+    /// The innermost group this stop is in — the element that declared the
+    /// group, and the stop it is entered at (`Node::enters_at`) — or `None`
+    /// for a stop in no group.
+    pub group: Option<(ElementId, Option<FocusTarget>)>,
 }
 
 /// The focusables traversal may reach, in tree order.
@@ -37,6 +41,30 @@ pub struct FocusScope {
 impl FocusScope {
     pub fn index_of(&self, id: FocusTarget) -> Option<usize> {
         self.nodes.iter().position(|n| n.id == id)
+    }
+
+    fn group_of(&self, id: FocusTarget) -> Option<(ElementId, Option<FocusTarget>)> {
+        self.nodes.iter().find(|n| n.id == id)?.group
+    }
+
+    /// Where a step that would land on `to`, coming from `from`, actually
+    /// lands: a group entered from outside is entered at its own entry stop,
+    /// when that stop is on the ring. A step within a group, or into a group
+    /// with no usable entry, lands where it would have.
+    pub fn entered_at(&self, from: Option<FocusTarget>, to: FocusTarget) -> FocusTarget {
+        let Some((g, entry)) = self.group_of(to) else {
+            return to;
+        };
+        let already_inside = from
+            .and_then(|f| self.group_of(f))
+            .is_some_and(|(fg, _)| fg == g);
+        if already_inside {
+            return to;
+        }
+        match entry {
+            Some(e) if self.index_of(e).is_some() => e,
+            _ => to,
+        }
     }
 
     /// Reading order, with explicit ordinals taking precedence over position.
@@ -74,18 +102,20 @@ impl TraversalPolicy for ReadingOrder {
         }
         let forward = matches!(dir, FocusDir::Next | FocusDir::Down | FocusDir::Right);
         let Some(cur) = from.and_then(|f| order.iter().position(|x| *x == f)) else {
-            return Some(if forward {
+            let edge = if forward {
                 order[0]
             } else {
                 order[order.len() - 1]
-            });
+            };
+            return Some(scope.entered_at(None, edge));
         };
         let n = order.len();
-        Some(if forward {
+        let to = if forward {
             order[(cur + 1) % n]
         } else {
             order[(cur + n - 1) % n]
-        })
+        };
+        Some(scope.entered_at(from, to))
     }
 }
 

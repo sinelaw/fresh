@@ -52,7 +52,10 @@ pub fn default_shortcuts() -> Vec<Shortcut> {
         Shortcut::new(KeyPress::new(Enter), Intent::Confirm),
         Shortcut::new(KeyPress::new(Tab), Intent::Next),
         Shortcut::new(KeyPress::with(Tab, Mods::SHIFT), Intent::Prev),
+        // A terminal reports Shift+Tab as `BackTab`, and most keep the Shift
+        // on it; both spellings are the one intent.
         Shortcut::new(KeyPress::new(BackTab), Intent::Prev),
+        Shortcut::new(KeyPress::with(BackTab, Mods::SHIFT), Intent::Prev),
         Shortcut::new(KeyPress::new(Up), Intent::Up),
         Shortcut::new(KeyPress::new(Down), Intent::Down),
         Shortcut::new(KeyPress::new(Left), Intent::Left),

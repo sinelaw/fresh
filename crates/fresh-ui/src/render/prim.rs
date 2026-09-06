@@ -1647,7 +1647,7 @@ impl RenderObject for FocusRender {
     }
 
     fn focus_reg(&self) -> Option<FocusReg> {
-        Some(self.reg)
+        Some(self.reg.clone())
     }
 
     fn render_name(&self) -> &'static str {
@@ -1704,12 +1704,13 @@ impl RenderObject for LayerRender {
     /// no scope: it never claimed the keyboard, and grouping focusables under
     /// it would confine traversal to a layer that has no business holding it.
     fn focus_reg(&self) -> Option<FocusReg> {
-        self.geom.modality.owns_keyboard().then_some(FocusReg {
+        self.geom.modality.owns_keyboard().then(|| FocusReg {
             ordinal: None,
             skip: true,
             scope: true,
             focus_within: false,
             autofocus: false,
+            entry: None,
         })
     }
 

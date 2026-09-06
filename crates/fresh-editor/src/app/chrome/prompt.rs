@@ -2,59 +2,15 @@
 //!
 //! Everything positional has gone into the shell tree — the suggestion list in
 //! both its forms, its scrollbar, the overlay card's modal scrim, its preview
-//! pane and its toolbar. What is left is `dispatch_prompt_key`, the layer rank
-//! that says who owns the keyboard while a prompt is up, and the few `Editor`
+//! pane and its toolbar — and so has who owns the keyboard while a prompt is
+//! up (`view::shell::prompt::keys_layer`, whose sink names the prompt's key
+//! section). What is left is `dispatch_prompt_key` and the few `Editor`
 //! methods a `UiFact` calls into.
 
 use crate::input::keybindings::Action;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, Editor};
-
-pub(crate) struct Prompt;
-
-impl ChromeComponent for Prompt {
-    // No pointer or wheel arms. Every box they matched on is gone: the card
-    // absorbs what its bands do not claim, the toolbar and the preview report
-    // their own events, and the suggestion list has been the tree's since the
-    // click rail came out. What is left below is the keyboard.
-
-    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
-        use crate::app::overlay::{Layer, LayerKind};
-        use crate::input::keybindings::KeyContext;
-        if ed.is_prompting() {
-            // Find/replace prompts resolve in the narrower
-            // `SearchPrompt` context, which owns the match-mode
-            // toggles and otherwise falls through to `Prompt` — so the
-            // toggle keys (Alt+W etc.) never fire outside a search.
-            let key_context = if ed.active_prompt_has_search_options() {
-                KeyContext::SearchPrompt
-            } else {
-                KeyContext::Prompt
-            };
-            out.push((
-                super::layer_rank::PROMPT,
-                Layer {
-                    kind: LayerKind::Prompt,
-                    owns_keyboard: true,
-                    key_context: Some(key_context),
-                    blocks_terminal_input: true,
-                },
-            ));
-        }
-    }
-
-    // **No `on_layer_key`.** The prompt's keys are the tree's now
-    // (`view::shell::prompt::keys_layer`): a `Modality::Focus` layer confines
-    // the keyboard to the prompt without swallowing what it declines, and its
-    // `on_key` names the surface the way `modal::keys` does for the four
-    // capture-all modals. The layer below still exists — `get_key_context`
-    // and the PTY gate read it — but nothing offers this component a key.
-    //
-    // What that layer's *rank* used to say is the order the frame declares
-    // its layers in: `keys_layer` is declared over the popups and under the
-    // menu dropdowns, which is `MENU > PROMPT > POPUP` without the integers.
-}
+use super::Editor;
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).
@@ -172,7 +128,7 @@ impl Editor {
     /// the key might resolve to is left to the normal walk, so this can only
     /// ever change which of the *prompt's own* operations a key performs.
     fn prompt_action_binding(
-        &self,
+        &mut self,
         event: &crossterm::event::KeyEvent,
     ) -> Option<crate::input::keybindings::Action> {
         use crate::input::keybindings::Action;

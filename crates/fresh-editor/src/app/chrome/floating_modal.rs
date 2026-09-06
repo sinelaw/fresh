@@ -2,48 +2,7 @@
 
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, Editor};
-
-pub(crate) struct FloatingModal;
-
-/// ONE activity predicate, consulted by both `layers()` here and
-/// `Editor::modal_slot`, which decides whose layer claims the pointer — see
-/// `modals.rs` for why the pairing must be a single fn.
-fn panel_up(ed: &Editor) -> bool {
-    ed.floating_widget_panel.is_some()
-}
-
-impl ChromeComponent for FloatingModal {
-    // **No `on_layer_key`.** As the dock's: a focused centred panel's keys
-    // arrive through `view::shell::panel::keys_layer`, a `Modality::Focus`
-    // layer that confines the keyboard and hands back what
-    // `dispatch_floating_widget_key` declines. Declared over the dock's and
-    // under the popups', which is `POPUP > FLOATING_MODAL > DOCK` without the
-    // integers.
-
-    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
-        use crate::app::overlay::{Layer, LayerKind};
-        // Owns the keyboard when focused; resolves as `Normal`
-        // regardless of the underlying buffer's (possibly stale)
-        // context so mode-keybinding lookups still fire for the
-        // panel's own chords. Blocks PTY routing whenever present —
-        // it sits on top of (and obscures) the active terminal.
-        if !panel_up(ed) {
-            return;
-        }
-        if let Some(f) = ed.floating_widget_panel.as_ref() {
-            out.push((
-                super::layer_rank::FLOATING_MODAL,
-                Layer {
-                    kind: LayerKind::FloatingModal,
-                    owns_keyboard: f.focused,
-                    key_context: Some(crate::input::keybindings::KeyContext::Normal),
-                    blocks_terminal_input: true,
-                },
-            ));
-        }
-    }
-}
+use super::Editor;
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).

@@ -1067,6 +1067,328 @@ impl Editor {
 // other surface is unaffected — this deletes one region of the scene, not the
 // bridge.
 
+// ─────────────────────────── the tree: plugin panels as the display list ───────────────────────────
+//
+// **The web consumes the display list.** A plugin panel is nodes in the same
+// tree the terminal folds into cells, so the web is handed the *items* that
+// tree produced for the panel subtrees — rectangle, clip, resolved colours,
+// and what to draw — and folds them into DOM the way the terminal folds them
+// into cells. There is no plugin-specific projection: no spec shipped for the
+// browser to lay out itself, no recorded hit list, no index to echo back. A
+// press comes back as a cell through the ordinary mouse path and is routed
+// over the tree like a terminal click; a text press reaches the field through
+// `text_byte` like any other. See `docs/internal/retained-mode-ui.md` §3.9.
+//
+// What is shipped is the panel subtrees only — the dock column, the floating
+// panel's frame, and each sidebar section a plugin mounted — plus every layer
+// those subtrees raised (a dropdown's pop-over, a modal's scrim), found by
+// element ancestry rather than by key range, because a layer paints in the
+// display list's tail and not inside its parent's range. The rest of the
+// chrome the web still draws natively from its own region views; they retire
+// onto this projection surface by surface.
+
+/// One of the panel subtrees the web draws from the display list.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeSurfaceView {
+    /// `"dock"`, `"floating"` or `"sidebar"`.
+    pub kind: &'static str,
+    pub x: i32,
+    pub y: i32,
+    pub w: u16,
+    pub h: u16,
+    /// A floating panel raised as an anchored popup (a context menu) rather
+    /// than a centered modal. Meaningful for `"floating"` only.
+    pub anchored: bool,
+    /// The sidebar section index, for `"sidebar"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<usize>,
+}
+
+/// One display-list item, resolved for a backend that does not hold the
+/// theme: the colours are the fold's answer, not the key.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeItemView {
+    /// The index into `surfaces` of the subtree this item belongs to.
+    pub surface: usize,
+    /// Painted by a layer the subtree raised — a pop-over, a scrim — rather
+    /// than by the subtree's own flow. Layers paint after everything in flow.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub layer: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// `"fill"`, `"border"`, `"lines"`, `"scrollbar"`, `"scrim"`,
+    /// `"selectable"` or `"host"`.
+    pub kind: &'static str,
+    /// The visible rectangle: the item's own, cut by every enclosing clip.
+    pub x: i32,
+    pub y: i32,
+    pub w: u16,
+    pub h: u16,
+    /// Where the item's own rectangle begins, which for `lines` is where
+    /// column zero of each row sits — left of `x` when the clip cut it.
+    pub ox: i32,
+    pub oy: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    /// A `scrim` that dims rather than covers.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub dim: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<String>>,
+    /// The border's corner style, for `border`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+    /// `[top, len]` of the thumb in track rows, for `scrollbar` — the same
+    /// arithmetic every backend uses (`Draw::scrollbar_thumb`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumb: Option<[u16; 2]>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeView {
+    pub surfaces: Vec<TreeSurfaceView>,
+    pub items: Vec<TreeItemView>,
+    /// The hardware caret, when the display list places it inside one of the
+    /// surfaces: a text field in a panel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<[i32; 2]>,
+}
+
+fn css_color(c: ratatui::style::Color) -> Option<String> {
+    use ratatui::style::Color;
+    // The xterm 256-colour cube and ramp, so an indexed colour a theme names
+    // reads the same in a browser as in a terminal.
+    fn indexed(i: u8) -> (u8, u8, u8) {
+        const BASE: [(u8, u8, u8); 16] = [
+            (0, 0, 0),
+            (205, 0, 0),
+            (0, 205, 0),
+            (205, 205, 0),
+            (0, 0, 238),
+            (205, 0, 205),
+            (0, 205, 205),
+            (229, 229, 229),
+            (127, 127, 127),
+            (255, 0, 0),
+            (0, 255, 0),
+            (255, 255, 0),
+            (92, 92, 255),
+            (255, 0, 255),
+            (0, 255, 255),
+            (255, 255, 255),
+        ];
+        match i {
+            0..=15 => BASE[i as usize],
+            16..=231 => {
+                let i = i - 16;
+                let step = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
+                (step(i / 36), step((i / 6) % 6), step(i % 6))
+            }
+            232..=255 => {
+                let v = 8 + (i - 232) * 10;
+                (v, v, v)
+            }
+        }
+    }
+    let (r, g, b) = match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Indexed(i) => indexed(i),
+        Color::Black => indexed(0),
+        Color::Red => indexed(1),
+        Color::Green => indexed(2),
+        Color::Yellow => indexed(3),
+        Color::Blue => indexed(4),
+        Color::Magenta => indexed(5),
+        Color::Cyan => indexed(6),
+        Color::Gray => indexed(7),
+        Color::DarkGray => indexed(8),
+        Color::LightRed => indexed(9),
+        Color::LightGreen => indexed(10),
+        Color::LightYellow => indexed(11),
+        Color::LightBlue => indexed(12),
+        Color::LightMagenta => indexed(13),
+        Color::LightCyan => indexed(14),
+        Color::White => indexed(15),
+        Color::Reset => return None,
+    };
+    Some(format!("#{r:02x}{g:02x}{b:02x}"))
+}
+
+impl Editor {
+    /// The plugin panels, as the display list the tree produced for them.
+    /// Empty when no panel is mounted in any of the three slots.
+    pub fn tree_view(&self) -> TreeView {
+        use crate::view::shell::fold::Palette;
+        use crate::view::shell::widgets::Slot;
+        use fresh_ui::{Draw, Scrim};
+        let Some(ui) = self.shell_ui.as_ref() else {
+            return TreeView::default();
+        };
+        let mut surfaces = Vec::new();
+        let mut roots = Vec::new();
+        // `whole_layer`: the surface's rectangle is the keyed element's, but
+        // the items belong to the layer *around* it — a floating panel's
+        // scrim is the layer's own item, and the layer is the frame's parent.
+        let mut push = |kind: &'static str,
+                        key: fresh_ui::Key,
+                        anchored: bool,
+                        section: Option<usize>,
+                        whole_layer: bool| {
+            if let Some(el) = ui.find_by_key(&key) {
+                let r = ui.rect_of(el);
+                if r.w > 0 && r.h > 0 {
+                    surfaces.push(TreeSurfaceView {
+                        kind,
+                        x: r.x,
+                        y: r.y,
+                        w: r.w,
+                        h: r.h,
+                        anchored,
+                        section,
+                    });
+                    let root = match whole_layer {
+                        true => ui.parent(el).unwrap_or(el),
+                        false => el,
+                    };
+                    roots.push(root);
+                }
+            }
+        };
+        if self.dock.is_some() {
+            push(
+                "dock",
+                crate::view::shell::dock::column_key(),
+                false,
+                None,
+                false,
+            );
+        }
+        if let Some(f) = self.floating_widget_panel.as_ref() {
+            let anchored = matches!(f.placement, crate::app::PanelPlacement::Anchored { .. });
+            push(
+                "floating",
+                crate::view::shell::panel::key(),
+                anchored,
+                None,
+                true,
+            );
+        }
+        for (i, s) in self.sidebar_sections.iter().enumerate() {
+            if s.panel.is_some() {
+                push(
+                    "sidebar",
+                    crate::view::shell::panel::interior_key(Slot::Sidebar(i)),
+                    false,
+                    Some(i),
+                    false,
+                );
+            }
+        }
+        if roots.is_empty() {
+            return TreeView::default();
+        }
+        let palette = self.shell_palette();
+        let spec = ui.spec();
+        let mut items = Vec::new();
+        for (index, item) in spec.items.iter().enumerate() {
+            let Some(surface) = roots.iter().position(|r| ui.contains(*r, item.id)) else {
+                continue;
+            };
+            // A scrim is a statement about the whole frame, and its rect says
+            // so; everything else is cut to what is visible.
+            let vis = match item.draw {
+                Draw::Scrim(_) => fresh_ui::Rect {
+                    x: 0,
+                    y: 0,
+                    w: spec.frame.w,
+                    h: spec.frame.h,
+                },
+                _ => item.visible_rect(),
+            };
+            if vis.w == 0 || vis.h == 0 {
+                continue;
+            }
+            let style = palette.style(&item.theme);
+            let m = style.add_modifier;
+            let (kind, lines, border, thumb, dim) = match &item.draw {
+                Draw::Fill => ("fill", None, None, None, false),
+                Draw::Border(bs) => (
+                    "border",
+                    None,
+                    Some(format!("{bs:?}").to_lowercase()),
+                    None,
+                    false,
+                ),
+                Draw::Scrim(Scrim::Opaque) => ("scrim", None, None, None, false),
+                Draw::Scrim(Scrim::Dim) => ("scrim", None, None, None, true),
+                Draw::Lines(ls) => (
+                    "lines",
+                    Some(ls.iter().map(|l| l.to_string()).collect()),
+                    None,
+                    None,
+                    false,
+                ),
+                Draw::Scrollbar {
+                    offset,
+                    content,
+                    window,
+                } => {
+                    let track = item.rect.h.max(1);
+                    let (top, len) =
+                        Draw::scrollbar_thumb(*offset, *content, u32::from(*window), track);
+                    ("scrollbar", None, None, Some([top, len]), false)
+                }
+                Draw::Selectable => ("selectable", None, None, None, false),
+                Draw::Host(_) => ("host", None, None, None, false),
+            };
+            items.push(TreeItemView {
+                surface,
+                layer: index >= spec.layers_from,
+                key: item.key.as_ref().map(|k| k.to_string()),
+                kind,
+                x: vis.x,
+                y: vis.y,
+                w: vis.w,
+                h: vis.h,
+                ox: item.rect.x,
+                oy: item.rect.y,
+                fg: style.fg.and_then(css_color),
+                bg: style.bg.and_then(css_color),
+                bold: m.contains(ratatui::style::Modifier::BOLD),
+                italic: m.contains(ratatui::style::Modifier::ITALIC),
+                underline: m.contains(ratatui::style::Modifier::UNDERLINED),
+                dim,
+                lines,
+                border,
+                thumb,
+            });
+        }
+        let cursor = spec.cursor.as_ref().filter(|c| c.visible).and_then(|c| {
+            let (x, y) = (c.pos.x, c.pos.y);
+            let inside = surfaces.iter().any(|s| {
+                x >= s.x && x < s.x + i32::from(s.w) && y >= s.y && y < s.y + i32::from(s.h)
+            });
+            inside.then_some([x, y])
+        });
+        TreeView {
+            surfaces,
+            items,
+            cursor,
+        }
+    }
+}
+
 // ─────────────────────────── context menus (right-click / new-tab) ───────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -1751,10 +2073,10 @@ impl Editor {
 
         Some(SettingsView {
             title: "Settings".to_string(),
-            focus: match st.focus.current() {
-                Some(FocusPanel::Settings) => "settings",
-                Some(FocusPanel::Footer) => "footer",
-                _ => "categories",
+            focus: match st.focus_panel() {
+                FocusPanel::Settings => "settings",
+                FocusPanel::Footer => "footer",
+                FocusPanel::Categories => "categories",
             },
             target_layer: format!("{:?}", st.target_layer),
             categories,

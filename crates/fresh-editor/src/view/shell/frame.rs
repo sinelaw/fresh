@@ -191,12 +191,20 @@ pub struct Frame {
     /// draws no row and still owns the keyboard. See
     /// [`super::prompt::keys_layer`].
     pub prompt_keys: bool,
+    /// The prompt is a search prompt: its keyboard owns the match-mode
+    /// toggles on top of the prompt's own keys. See [`key_context_of`].
+    pub search_prompt: bool,
     /// Whether the dock has keyboard focus, and so whether its layer is the
     /// keyboard's owner. `chrome::Dock::layers`' `owns_keyboard`, said where
     /// the precedence is now derived. See [`super::panel::keys_layer`].
     pub dock_keys: bool,
     /// The same for the centred plugin panel.
     pub panel_keys: bool,
+    /// The active pane, when the panel mounted in it is described: its
+    /// keyboard layer confines the ring to that panel while nothing above
+    /// it holds the keyboard. Declared first among the keyboard layers, so
+    /// every other one outranks it. See [`super::panel::pane_keys_key`].
+    pub pane_keys: Option<crate::model::event::LeafId>,
     /// Column width, already resolved against the frame width.
     pub dock: Option<u16>,
     /// The dock's content as a description, when the adapter covers every
@@ -329,8 +337,10 @@ impl Default for Frame {
             status_bar_items: None,
             prompt_line: false,
             prompt_keys: false,
+            search_prompt: false,
             dock_keys: false,
             panel_keys: false,
+            pane_keys: None,
             dock: None,
             dock_interior: None,
             dock_grip_hovered: false,
@@ -545,6 +555,21 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         i.filter(|i| i.has_focus_targets())
             .map(|_| super::panel::interior_key(slot))
     };
+    // **The active pane's panel, first: the floor under every other keyboard
+    // layer.** It is the base's own keyboard said as a layer — the ring
+    // inside a mounted panel is confined to it the way the dock's is, and a
+    // focused dock, a prompt or a modal declared after it takes the keyboard
+    // away from it by declaration order alone.
+    let chrome = match f.pane_keys {
+        Some(leaf) => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Pane(leaf),
+            scope_of(
+                f.splits.as_ref().and_then(|s| s.interiors.get(&leaf)),
+                super::widgets::Slot::Pane(leaf),
+            ),
+        )),
+        None => chrome,
+    };
     let chrome = match f.dock_keys {
         true => chrome.child(super::panel::keys_layer(
             super::widgets::Slot::Dock,
@@ -618,7 +643,7 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // *is* the precedence. It paints nothing — the prompt's row, card and
     // suggestion list are described above and elsewhere.
     let chrome = match f.prompt_keys {
-        true => chrome.child(super::prompt::keys_layer()),
+        true => chrome.child(super::prompt::keys_layer(f.search_prompt)),
         false => chrome,
     };
     let chrome = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
@@ -865,6 +890,7 @@ mod tests {
             splits: Some(Splits {
                 root: SplitNode::leaf(BufferId(1), SplitId(1)),
                 maximized: None,
+                active: None,
                 chrome: Default::default(),
                 controls: PaneControls {
                     maximize: false,
@@ -1143,13 +1169,14 @@ mod tests {
             spec: std::rc::Rc::new(spec),
             states: Default::default(),
             focus_key: "create".into(),
+            keyboard: true,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            claims_tab: false,
+            keymap: None,
             markdown: None,
         });
         let mut ui: Ui<UiMsg> = Ui::new();
@@ -1196,5 +1223,73 @@ mod tests {
             got.claimed,
             "the seam stops as it emits, so the tree reports the claim;              it is the host's `Option<bool>` verdict that overrides it"
         );
+    }
+}
+
+/// **Which keyboard vocabulary a focused element is under**, read off a
+/// key on its focus chain.
+///
+/// Every surface with a key section of its own puts a key on the node that
+/// holds focus while it has the keyboard — the settings box, a modal's seam,
+/// a popup's keyboard seam, the prompt's sink, a panel's interior or sink —
+/// and this is the one table from those keys to the `KeyContext` the keymap
+/// resolves against. `Editor::get_key_context` walks the chain from the
+/// focused element outward and takes the first answer; a chain with none is
+/// the editor's own content, whose context is the window's.
+///
+/// This replaced a ranked stack of layer declarations (`app::overlay`'s
+/// `Layer`, `LayerKind` and `chrome::layer_rank`) that each surface had to
+/// keep in step with the tree by hand: which surface has the keyboard is
+/// where focus is, and the tree already knows.
+///
+/// A surface with a custom dispatcher — the keybinding editor, the
+/// calibration wizard, the workspace-trust prompt, event debug — answers
+/// nothing and the walk continues outward, exactly as its `key_context:
+/// None` layer was skipped. A pane-mounted panel is the buffer's, and
+/// answers nothing for the same reason its keys are the buffer's mode's.
+pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::KeyContext> {
+    use crate::input::keybindings::KeyContext as C;
+    use fresh_ui::Key;
+    let named = |s: &str| match s {
+        "keys:settings" => Some(C::Settings),
+        "keys:prompt" => Some(C::Prompt),
+        "keys:search_prompt" => Some(C::SearchPrompt),
+        "keys:popup" => Some(C::Popup),
+        "keys:completion" => Some(C::Completion),
+        "keys:dock" => Some(C::Dock),
+        "keys:floating_panel" => Some(C::Normal),
+        _ => None,
+    };
+    match k {
+        Key::Str(s) => {
+            if let Some(c) = named(s) {
+                return Some(c);
+            }
+            if *k == super::settings::key() || *k == super::settings::dialog_key() {
+                return Some(C::Settings);
+            }
+            None
+        }
+        Key::Pair(name, _) => match &**name {
+            "settings_entry" => Some(C::Settings),
+            "menu_dropdown" => Some(C::Menu),
+            "keys:sidebar" | "sidebar_header" => Some(C::Dock),
+            "panel_interior" => {
+                if *k == super::panel::interior_key(super::widgets::Slot::Dock) {
+                    Some(C::Dock)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Floating) {
+                    Some(C::Normal)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Settings)
+                    || *k == super::panel::interior_key(super::widgets::Slot::SettingsEntry)
+                {
+                    Some(C::Settings)
+                } else {
+                    // A sidebar section's interior.
+                    Some(C::Dock)
+                }
+            }
+            _ => None,
+        },
+        Key::Int(_) => None,
     }
 }

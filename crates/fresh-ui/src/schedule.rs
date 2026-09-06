@@ -289,6 +289,7 @@ impl<'a, M: 'static> InitCx<'a, M> {
                 scope: f.scope,
                 focus_within: f.focus_within,
                 autofocus: f.autofocus,
+                entry: f.entry.clone(),
             },
         ));
         self.register(f)
@@ -497,6 +498,16 @@ pub struct Ui<M> {
     pub(crate) focus_selection: crate::event::SelectionOnFocus,
     /// Where focus was before a modal took it.
     pub(crate) focus_restore: Option<ElementId>,
+    /// Per scope, what its `autofocus` mark named the last time a settle
+    /// looked. See [`Ui::apply_autofocus`]: a mark that *moved* since then is
+    /// a decision the description made, and focus follows it; a mark that
+    /// merely disagrees with focus is the ring having moved on its own.
+    pub(crate) settled_marks: std::collections::HashMap<ElementId, Option<crate::focus::MarkId>>,
+    /// The confinement focus was inside at the last settle, if any. A
+    /// confinement that is gone on the next settle while focus is still
+    /// within its element has *released* that focus — see
+    /// `follow_moved_mark`.
+    pub(crate) settled_scope: Option<ElementId>,
     pub(crate) traversal: Box<dyn crate::focus::TraversalPolicy>,
     pub(crate) shortcuts: Vec<crate::focus::Shortcut>,
     /// Messages produced outside a dispatch call, delivered with the next one.
@@ -562,6 +573,8 @@ impl<M: 'static> Ui<M> {
             focus: None,
             focus_selection: crate::event::SelectionOnFocus::None,
             focus_restore: None,
+            settled_marks: std::collections::HashMap::new(),
+            settled_scope: None,
             traversal: Box::new(crate::focus::ReadingOrder),
             shortcuts: crate::focus::default_shortcuts(),
             pending_messages: Vec::new(),
@@ -625,10 +638,7 @@ impl<M: 'static> Ui<M> {
         // its own loop, and geometry read without draining it is the geometry
         // of the description *before* that build. Autofocus is the other half,
         // and is the reaction.
-        if self.sched.borrow().has_pending() || !self.layout_dirty.is_empty() {
-            self.run_flush(None);
-            self.flush_layout(size);
-        }
+        self.flush_layout_dirt(size);
         self.geometry_pass = was;
     }
 
@@ -1093,8 +1103,25 @@ impl<M: 'static> Ui<M> {
     /// and painted the subtree one frame behind the description it was built
     /// from: the editor's settings dialog kept the previous category selected
     /// until some later, unrelated event drew again.
+    ///
+    /// **And the dirt is flushed on both sides of the settle.** A builder that
+    /// runs during the layout pass raises its dirt after the drain has
+    /// finished its own loop, so before this runs there can be elements the
+    /// description has stated and the tree has not yet built — a footer row's
+    /// buttons inside a dialog's box, both of them readers. Settling focus
+    /// over that tree finds no mark where the description put one, rests
+    /// focus on the scope, and follows the mark a frame late. So what the
+    /// layout pass raised is built first, focus settles over the tree that
+    /// will be painted, and what settling itself dirtied is built after.
     fn settle(&mut self, size: Size) {
+        self.flush_layout_dirt(size);
         self.apply_autofocus();
+        self.flush_layout_dirt(size);
+    }
+
+    /// Build and measure what a layout-pass builder left pending — see
+    /// [`Self::settle`] and [`Self::layout_only`].
+    fn flush_layout_dirt(&mut self, size: Size) {
         if self.sched.borrow().has_pending() || !self.layout_dirty.is_empty() {
             self.run_flush(None);
             self.flush_layout(size);

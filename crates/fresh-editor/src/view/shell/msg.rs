@@ -597,13 +597,12 @@ pub enum UiFact {
     /// A key belongs to the prompt, whose interior owns what it means — and
     /// which may hand it back.
     ///
-    /// **The declining half of `ModalKey`.** A modal swallows what its
-    /// interior ignores, so the tree can claim during dispatch and be right.
-    /// The prompt cannot: an unhandled prompt key is still the editor's, and
-    /// whether `dispatch_prompt_key` took it is only known once it has run —
-    /// here, in the applier. So this fact's applier completes the claim
-    /// (`Editor::shell_interior_took_key`) and the prompt's layer is
-    /// `Modality::Focus`, which confines the keyboard without swallowing it.
+    /// **`ModalKey` for a surface that hands keys on.** A modal swallows what
+    /// its interior ignores; the prompt hands an unbound key on to the
+    /// editor's own keyboard instead (`Editor::hand_key_to_editor`, in this
+    /// fact's applier). Either way the tree claimed the key when it routed
+    /// it here — the surface answers what it means — and the prompt's layer
+    /// is `Modality::Focus`, which confines the keyboard without swallowing.
     PromptKey,
     /// A key belongs to a focused plugin panel, whose interior is the widget
     /// runtime's.
@@ -669,6 +668,12 @@ pub enum UiFact {
     /// The same, for the two keys that walk a running search's results.
     /// `true` is Down.
     SettingsSearchStep(bool),
+    /// **The tree's ring landed on one of the settings dialog's stops** — the
+    /// category tree, a card, a footer button — by a Tab or a press. One of
+    /// the deciders of the dialog's focus fact, written through
+    /// `SettingsState::focus_on` like every other; a landing the fact already
+    /// names is the echo of the tree following it, and is a no-op.
+    SettingsFocus(super::settings::Focus),
     /// A press on the settings panel header's `[Clear …]`. It was
     /// `layout.clear_category_button` — a rectangle the painter filed as it
     /// drew the button, for a chain of `point_in_rect` to find again.
@@ -739,21 +744,16 @@ pub enum UiFact {
         widget: String,
         delta: i32,
     },
-    /// **Focus moved onto a plugin widget, and the runtime is being told.**
+    /// **The tree's ring landed on a plugin widget, and the runtime is being
+    /// told.**
     ///
-    /// A panel's focused widget is one string in the widget registry, resolved
-    /// by the runtime across the whole spec and read back by the description as
-    /// `widgets::Ctx::focus_key`. That made it the *authority*: Tab was
-    /// interpreted host-side, the tree's own ring was declined
-    /// (`focusable(false)`), and which control was live could only be answered
-    /// by the party that was not laying it out.
-    ///
-    /// With the widgets on the tree's ring, the tree answers it — a press asks
-    /// for focus, traversal moves it — and this fact demotes the registry's
-    /// string to a *mirror*: written only from here, read by everything that
-    /// already reads it (the plugin's `focus` event, the kinds' key handlers,
-    /// `router::WidgetPanelView::focus_key`). One authority, which is the same
-    /// move Phase 2.1 made for the scroll folds.
+    /// A panel's focused widget is one string in the widget registry
+    /// (`WidgetPanelState::focus_key`), with one writer function
+    /// (`WidgetRegistry::decide_focus`) and many deciders: the host's own
+    /// moves, the plugin's `setFocusKey`, click-to-focus, and this — the
+    /// tree's traversal landing somewhere by a Tab or a press. The
+    /// description marks the widget the fact names, so the tree follows every
+    /// other decider's write; this fact is how the fact follows the tree's.
     ///
     /// Only a *gain* is reported. Focus is never nowhere while a panel is up —
     /// it moves from one control to the next — so a loss paired with a gain

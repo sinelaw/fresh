@@ -274,6 +274,20 @@ pub fn popup_key(i: usize) -> Key {
     Key::Pair("popup".into(), i as u64)
 }
 
+/// The key of a popup's keyboard seam — the focusable that holds focus
+/// while the popup owns the keyboard — which names the popup's key
+/// section: `frame::key_context_of` reads `KeyContext::Completion` or
+/// `KeyContext::Popup` off it.
+pub fn keys_key(kind: crate::view::popup::PopupKind) -> Key {
+    Key::Str(
+        match kind {
+            crate::view::popup::PopupKind::Completion => "keys:completion",
+            _ => "keys:popup",
+        }
+        .into(),
+    )
+}
+
 /// Each popup as a layer holding its body.
 ///
 /// The doc here used to say the layer "occupies its rectangle and paints
@@ -322,7 +336,9 @@ fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
     use fresh_ui::{Dismiss, Intent, KeyCode, Modality, Mods};
 
     let step = |s: PopupKey| move |_: &fresh_ui::Event| UiMsg::Ui(UiFact::PopupKey(s));
-    let mut f = fresh_ui::focusable(content).autofocus();
+    let mut f = fresh_ui::focusable(content)
+        .key(keys_key(k.kind))
+        .autofocus();
 
     // Shared by every kind, in front of all four handlers as it always was.
     f = f

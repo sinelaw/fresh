@@ -1398,9 +1398,9 @@ impl Editor {
 /// taken the web's path with them.
 impl Editor {
     pub(crate) fn settings_select_category(&mut self, idx: usize) {
-        use crate::view::settings::state::FocusPanel;
+        use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
-            s.focus.set(FocusPanel::Categories);
+            s.focus_on(FocusTarget::Categories);
             s.selected_category = idx;
             s.selected_item = 0;
             s.body_anchor.scroll_to(fresh_ui::Point::ZERO);
@@ -1414,13 +1414,13 @@ impl Editor {
     }
 
     pub(crate) fn settings_jump_to_section(&mut self, cat: usize, section: usize) {
-        use crate::view::settings::state::FocusPanel;
+        use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
             s.jump_to_section(cat, section);
             // `jump_to_section` also serves search and the keyboard, where
             // moving focus to the body is right; a click in the tree keeps
             // the tree focused.
-            s.focus.set(FocusPanel::Categories);
+            s.focus_on(FocusTarget::Categories);
         }
     }
 
@@ -1463,6 +1463,14 @@ impl Editor {
         // mirror). What `dispatch` itself queues is still drained below and
         // applied with the messages it routed.
         self.apply_settled_shell_messages();
+        // **And the tree is brought up to the facts before the input is
+        // routed over it.** A panel write since the last frame — a focus the
+        // host decided, a spec a plugin pushed — is carried to the tree by a
+        // frame, and a key that arrives before that frame would otherwise be
+        // resolved from where focus *was*. See
+        // `Editor::shell_description_stale`.
+        self.lay_out_shell_if_stale();
+        self.apply_settled_shell_messages();
         let Some(mut ui) = self.shell_ui.take() else {
             return Dispatched::default();
         };
@@ -1474,9 +1482,6 @@ impl Editor {
                 .map(|p| (p.x.max(0) as u16, p.y.max(0) as u16))
                 .unwrap_or_default(),
         };
-        // Cleared before the interiors run, never by whoever reads it: a
-        // stale `true` from the previous keystroke would claim this one.
-        self.shell_interior_took_key = None;
         let result = ui.dispatch(input);
         // **What this dispatch itself queued, drained before `needs_frame` is
         // asked.**
@@ -1539,24 +1544,26 @@ impl Editor {
         let mut msgs = result.msgs;
         msgs.extend(settled);
         self.apply_shell_messages(msgs, facts);
-        // **The claim's second half, and the interior really does answer last.**
-        // A `Modality::Focus` surface confines the keyboard without swallowing
-        // it, so whether the key was taken is its interior's answer — and the
-        // interior ran in an applier above, after `dispatch` had already
-        // reported what the *tree* claimed.
-        //
-        // This was `claimed || took`, which cannot express a decline: `||` only
-        // ever adds, so the tree's claim won whenever it said `true` and the
-        // host's `false` was unreachable. The panel's fallback `stop()`s every
-        // non-Tab key as it emits `PanelKey` (`panel::interior`), which sets
-        // `Dispatch.claimed` — so `dispatch_base_key` was skipped and a
-        // plugin's `defineMode` binding never ran. Escape stopped closing a
-        // plugin's floating panel; the same line also cost a dock chord its
-        // first press and the New-Session form its Enter.
-        //
-        // `None` means no interior answered, so the tree's word stands.
-        let claimed = self.shell_interior_took_key.unwrap_or(claimed);
+        // **The claim is the tree's word, and only the tree's.** A seam that
+        // hands a key to a host interior — the prompt's, a focused panel's —
+        // `stop()`s it, because the key *is* that surface's: what the surface
+        // does with a key it does not bind is its own business, and for
+        // both that business is handing it on to the editor's own keyboard
+        // (`Editor::hand_key_to_editor`, from the applier). There is no
+        // second verdict folded in after the fact; the `Option<bool>` that
+        // used to carry one is gone (L2).
         Dispatched { claimed, changed }
+    }
+
+    /// A key a surface holding the keyboard does not bind is still the
+    /// editor's: the file browser's `Alt+H` and quick-open's `Ctrl+P` reach
+    /// their bindings from inside the prompt, and a shortcut a plugin panel
+    /// does not bind blurs the dock and falls through. The surface's seam
+    /// claimed the key in the tree; this is what the surface does with it.
+    pub(crate) fn hand_key_to_editor(&mut self, ev: crossterm::event::KeyEvent) {
+        if let Err(e) = self.dispatch_base_key(ev.code, ev.modifiers) {
+            tracing::warn!("key handed on from a keyboard seam failed: {e}");
+        }
     }
 
     /// Apply what the tree decided on its own since the last input: the
@@ -1601,6 +1608,12 @@ impl Editor {
         msgs: Vec<crate::view::shell::msg::UiMsg>,
         facts: EventFacts,
     ) {
+        // A message is a change to something the description reads — that
+        // is what a `UiFact` is for — so the description is stale once one
+        // has been applied, and the next reader lays it out again.
+        if !msgs.is_empty() {
+            self.shell_description_stale = true;
+        }
         for msg in msgs {
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
@@ -1773,16 +1786,19 @@ impl Editor {
             // it is next built, and the row renderers take the highlight from
             // there — where `update_widget_hover` had to ask the plugin to
             // re-render before the painter could show it.
-            // **The registry's focus key becomes a mirror of the tree's.**
+            // **The tree's ring reporting a landing: one of the deciders of
+            // the panel's focus fact, through the same door as every other.**
             //
-            // It was the authority: the runtime resolved one focused key
-            // across a panel's whole spec, the description read it back, and
-            // the tree's own ring was declined. Now the ring is the tree's and
-            // this writes what it decided — so the plugin's `focus` event and
-            // the kinds' key handlers keep reading the field they already
-            // read, and it has one writer. (The web projection was the third
-            // reader; it is deleted, and `router::WidgetPanelView::focus_key`
-            // is the one left that genuinely needs a string.)
+            // The registry's key is the fact — one writer function
+            // (`WidgetRegistry::decide_focus`), reached here for a landing the
+            // tree's own traversal made (a Tab, a click), by
+            // `set_panel_focus_and_notify` for the host's decisions, and by
+            // the plugin's `SetFocusKey`. The tree is the fact's projection:
+            // the description marks the widget the fact names, and the
+            // library re-settles onto a mark that moved. So a landing the
+            // fact already names is the echo of the tree following it, and
+            // is a no-op here; a landing it does not name is the ring having
+            // moved, and the fact follows.
             //
             // The plugin is told, exactly as `deliver_widget_hit`'s
             // click-to-focus told it, because a plugin that mirrors focus
@@ -2562,14 +2578,32 @@ impl Editor {
             // **The tree's own keys, arriving as what they mean.** The eight
             // arms behind this are the eight `handle_categories_input` still
             // has: one implementation (`SettingsState::tree_key`), reached
-            // either from the node that holds focus or from the dispatcher
-            // when it does not. The second entry point is not redundancy —
-            // nothing in the tree can move focus to the settings body or the
-            // query field, because neither is a node, so a seam can be left
-            // holding focus for a panel that no longer has the keyboard.
+            // from the node that holds focus, or from the dispatcher for a
+            // key that arrives without the tree in front of it.
             UiFact::SettingsTree(k) => {
                 if let Some(s) = self.settings_state.as_mut() {
                     s.tree_key(k);
+                }
+            }
+            // **The tree's ring reporting a landing on one of the dialog's
+            // stops: one decider of the dialog's focus fact, through the same
+            // door as every other.** A landing the fact already names is the
+            // echo of the tree following the description's mark, and is a
+            // no-op; one it does not name is the ring having moved — a Tab,
+            // a press — and the fact follows.
+            UiFact::SettingsFocus(f) => {
+                use crate::view::settings::state::FocusTarget;
+                use crate::view::shell::settings::Focus;
+                let target = match f {
+                    Focus::Categories => FocusTarget::Categories,
+                    Focus::Card(i) => FocusTarget::Card(i),
+                    Focus::Button(b) => FocusTarget::Footer(b.index()),
+                };
+                if let Some(s) = self.settings_state.as_mut() {
+                    if s.focus_target() != target {
+                        s.focus_on(target);
+                        self.shell_description_stale = true;
+                    }
                 }
             }
             UiFact::SettingsSearchStep(forward) => {
@@ -2684,7 +2718,14 @@ impl Editor {
                     return;
                 };
                 match slot {
-                    KeySlot::Settings => self.dispatch_settings_key(&ev),
+                    // A key the dialog's dispatcher answered may have moved
+                    // its focus fact; the tree learns of it on the next
+                    // layout, which the stale mark brings forward for a key
+                    // that follows in the same batch.
+                    KeySlot::Settings => {
+                        self.dispatch_settings_key(&ev);
+                        self.shell_description_stale = true;
+                    }
                     KeySlot::KeybindingEditor => {
                         let _ = self.handle_keybinding_editor_input(&ev);
                     }
@@ -2712,12 +2753,12 @@ impl Editor {
                 let Some(ev) = self.shell_key_event else {
                     return;
                 };
-                // Only a take is recorded here, deliberately: the prompt's
-                // seam does not `stop()` (see `prompt::keys_layer`), so the
-                // tree never claims for it and a decline has nothing to undo.
-                // The panel's seam is the one that needed a decline to travel.
-                if self.dispatch_prompt_key(&ev).is_some() {
-                    self.shell_interior_took_key = Some(true);
+                // `None` is the prompt declining, and a declined key is the
+                // editor's — resolved in the `Prompt` context the focus chain
+                // still names, which is how the file browser's toggles reach
+                // their bindings.
+                if self.dispatch_prompt_key(&ev).is_none() {
+                    self.hand_key_to_editor(ev);
                 }
             }
             // **A focused plugin panel: the same declining seam.** Its
@@ -2735,10 +2776,16 @@ impl Editor {
                     Slot::Floating => crate::app::PanelSlot::Floating,
                     Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
                     // The settings surfaces reuse the widget vocabulary but
-                    // are not panels and never raise this layer. Neither does
-                    // a pane-mounted panel: its keys are the buffer's, and the
-                    // pane already owns the keyboard when it is focused.
-                    Slot::Settings | Slot::SettingsEntry | Slot::Pane(_) => return,
+                    // are not panels and never raise this layer.
+                    Slot::Settings | Slot::SettingsEntry => return,
+                    // A pane-mounted panel's key the mode did not bind (the
+                    // keymap on its interior answered those) and its widgets
+                    // did not take: the buffer's own route — the mode's text
+                    // input, chords, keybinding resolution — as it always was.
+                    Slot::Pane(_) => {
+                        self.hand_key_to_editor(ev);
+                        return;
+                    }
                 };
                 // **A panel that does not own the keyboard answers for
                 // nothing.**
@@ -2762,7 +2809,7 @@ impl Editor {
                 // editor's own pipeline exactly as it did before the panel was
                 // described.
                 if !self.panel(slot).is_some_and(|p| p.focused) {
-                    self.shell_interior_took_key = Some(false);
+                    self.hand_key_to_editor(ev);
                     return;
                 }
                 // **The focus toggle is resolved ahead of the panel.** A
@@ -2784,7 +2831,6 @@ impl Editor {
                         {
                             tracing::warn!("dock focus toggle failed: {e}");
                         }
-                        self.shell_interior_took_key = Some(true);
                         return;
                     }
                 }
@@ -2799,17 +2845,17 @@ impl Editor {
                         Some(crate::input::keybindings::Action::FocusNextSidebarSection)
                     ) {
                         self.focus_next_sidebar_section();
-                        self.shell_interior_took_key = Some(true);
                         return;
                     }
                 }
-                // **Recorded either way.** A `false` here is the interior
-                // declining — `FallThrough` or `BlurUnconsumed` from the
-                // router — and it has to reach the fold above, or the key dies
-                // on the tree's claim instead of continuing to the mode
-                // bindings the plugin declared.
-                let took = self.dispatch_floating_widget_key(slot, ev.code, ev.modifiers);
-                self.shell_interior_took_key = Some(took);
+                // A `false` here is the interior declining —
+                // `BlurUnconsumed` from the router, which has just blurred
+                // the panel — and a declined key is the editor's: it goes on
+                // to the editor's own resolution, over a tree that now says
+                // the pane behind the panel has the keyboard.
+                if !self.dispatch_floating_widget_key(slot, ev.code, ev.modifiers) {
+                    self.hand_key_to_editor(ev);
+                }
             }
             UiFact::ModalPointer(slot) => {
                 use crate::view::shell::modal::Slot;

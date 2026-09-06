@@ -130,6 +130,22 @@ pub enum Slot {
     Sidebar(usize),
 }
 
+impl Slot {
+    /// Whether the surface's focusable widgets are stops on the tree's ring.
+    ///
+    /// A plugin panel's are: the tree's Tab walks them, and a landing is the
+    /// panel's focus fact (`UiFact::WidgetFocus`). The settings dialogs' are
+    /// not — there the unit of navigation is the card (or the entry dialog's
+    /// row) around the control, which is the stop, and the control becomes
+    /// live by the host's decision (Enter) under the edit-mode model
+    /// `view/settings` still keeps. Wrapping the control too would put two
+    /// stops on the ring for one card. §3.6 of the design makes the control
+    /// the stop when that model goes.
+    pub fn widgets_on_ring(self) -> bool {
+        !matches!(self, Slot::Settings | Slot::SettingsEntry)
+    }
+}
+
 /// What a panel's widgets need beyond their spec.
 ///
 /// All of it is host state the runtime read off a `RenderContext`: which
@@ -151,6 +167,13 @@ pub struct Ctx<'a> {
     pub states: &'a std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
     /// The panel's focused widget key, or empty.
     pub focus_key: String,
+    /// Whether the panel holds the keyboard — the host's focus fact for the
+    /// slot (`FloatingWidgetState::focused`; the active pane, for a
+    /// pane-mounted panel). `focus_key` names the widget the panel *would*
+    /// hand the keyboard to and paints the marker either way; only a panel
+    /// that holds it marks that widget `autofocus`, so a blurred panel's
+    /// widgets never pull the tree's focus back in.
+    pub keyboard: bool,
     /// The widget key the pointer is over, if any.
     pub hovered_key: Option<String>,
     /// Whether focusable controls reserve the `▸ ` gutter.
@@ -230,6 +253,7 @@ impl Ctx<'static> {
             slot,
             states: no_state(),
             focus_key: String::new(),
+            keyboard: false,
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
@@ -573,19 +597,38 @@ pub fn any_on_the_ring(spec: &WidgetSpec) -> bool {
     crate::widgets::kinds::focusable_key(spec).is_some() || spec.children().any(any_on_the_ring)
 }
 
+/// Whether `focus_key` names a focusable widget in `spec` — that is, whether
+/// a description of it with the keyboard marks a widget inside.
+pub fn marks(spec: &WidgetSpec, focus_key: &str) -> bool {
+    !focus_key.is_empty()
+        && (crate::widgets::kinds::focusable_key(spec).is_some_and(|k| k == focus_key)
+            || spec.children().any(|c| marks(c, focus_key)))
+}
+
 /// The key the tree's focusable wrapper for plugin widget `k` carries.
 ///
 /// Written on one side and read on the other, so it is named once:
-/// [`on_the_ring`] puts it on the wrapper it builds, and
-/// `Editor::focus_panel_widget_in_tree` looks that wrapper up by it to move
-/// the tree's focus to where the host has just decided the panel's focus is.
-/// Two copies of the format string would be two answers to "which element is
-/// this widget", which is the shape the focus mirror exists to remove.
+/// [`on_the_ring`] puts it on the wrapper it builds, the tree names the
+/// wrapper by it when it reports a landing, and `Editor::handle_widget_focus_advance`
+/// reads the panel's ring off the wrappers that carry it. Two copies of the
+/// format string would be two answers to "which element is this widget",
+/// which is the shape the focus mirror exists to remove.
 pub fn widget_focus_key(k: &str) -> fresh_ui::Key {
     fresh_ui::Key::Str(format!("widget_focus:{k}").into())
 }
 
+/// The inverse of [`widget_focus_key`]: the widget a wrapper's key names.
+pub fn widget_key_of(k: &fresh_ui::Key) -> Option<&str> {
+    match k {
+        fresh_ui::Key::Str(s) => s.strip_prefix("widget_focus:"),
+        _ => None,
+    }
+}
+
 fn on_the_ring(spec: &WidgetSpec, cx: &Ctx<'_>, n: Node<UiMsg>) -> Node<UiMsg> {
+    if !cx.slot.widgets_on_ring() {
+        return n;
+    }
     let Some(k) = crate::widgets::kinds::focusable_key(spec) else {
         return n;
     };
@@ -612,31 +655,25 @@ fn on_the_ring(spec: &WidgetSpec, cx: &Ctx<'_>, n: Node<UiMsg>) -> Node<UiMsg> {
     // wrapped to Cancel, because the tree was on the Launch-in dropdown.
     //
     // Marking it here rather than seeding the tree from the registry is what
-    // makes the *landing* a property of the description: focus entering the
-    // panel goes where the panel already says it is. A focus move made while
-    // the panel is already focused is the other moment, and no description can
-    // express it — `apply_autofocus` leaves focus alone once it is inside the
-    // scope — so that one is an imperative write,
-    // `Editor::focus_panel_widget_in_tree`.
-    let n = match cx.is_focused(Some(&k)) {
+    // makes focus a property of the description: focus entering the panel
+    // goes where the panel already says it is, and a focus move made while
+    // the panel is already focused — a plugin's `setFocusKey`, the dock's `/`
+    // landing on its filter — is the mark *moving*, which `fresh_ui`
+    // re-settles onto on the frame that carries it. The registry's key is the
+    // one fact; every decision writes it and the tree follows.
+    let n = match cx.keyboard && cx.is_focused(Some(&k)) {
         true => n.autofocus(),
         false => n,
     };
-    // **A pane-mounted panel is off the tree's ring, because it has no ring
-    // here.** Its keys arrive by the buffer's route, its Tab is its plugin's
-    // `defineMode` binding, and `Editor::advance_panel_focus_in_tree` declines
-    // it for exactly that reason — the box arena is its ring. Left traversable,
-    // the two disagreed in the worst possible direction: the tree resolved Tab
-    // to `move_focus` and *claimed* it, so the plugin's own Tab handler never
-    // ran at all and Search & Replace could not move off its search field.
-    //
-    // `skip_traversal` and not "no wrapper": the node is still where a focus
-    // gain would be reported from, and dropping it would change the panel's
-    // node shape for no gain.
-    let n = match cx.slot {
-        Slot::Pane(_) => n.skip_traversal(),
-        _ => n,
-    };
+    // **A pane-mounted panel's widgets are on the ring too.** Its plugin's
+    // `defineMode` bindings are a keymap on its interior (`panel::Keymap`),
+    // so a Tab the mode binds is the plugin's before the ring sees it and a
+    // Tab it does not bind is the tree's, confined to the panel by the
+    // pane's keyboard layer. The ring the host's advance walks
+    // (`Editor::handle_widget_focus_advance`, through `Ui::next_in`) is read
+    // off these wrappers, which is why they are not `skip_traversal`: a
+    // skipped node is off every ring, the host's included, and Search &
+    // Replace could not move off its search field.
     n.on_focus_change(move |e: &fresh_ui::Event| {
         match e.kind == fresh_ui::GestureKind::FocusGained {
             // A loss is not reported: focus is never nowhere while a panel
@@ -3634,6 +3671,7 @@ mod tests {
             slot: Slot::Floating,
             states: no_state(),
             focus_key: String::new(),
+            keyboard: true,
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
@@ -6900,13 +6938,14 @@ mod tests {
             spec: spec.clone(),
             states: Default::default(),
             focus_key: String::new(),
+            keyboard: true,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            claims_tab: false,
+            keymap: None,
             markdown: None,
         };
         assert!(

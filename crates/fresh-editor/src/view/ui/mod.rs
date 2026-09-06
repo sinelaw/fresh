@@ -12,7 +12,6 @@
 //! - `file_browser` - File open dialog popup
 
 // WASM-compatible modules (pure rendering, no runtime deps)
-pub mod focus;
 pub mod layout;
 pub mod scroll_panel;
 pub mod scrollbar;
@@ -51,7 +50,6 @@ pub use file_browser::{
 };
 #[cfg(feature = "runtime")]
 pub use file_explorer::FileExplorerRenderer;
-pub use focus::FocusManager;
 pub use layout::point_in_rect;
 pub(crate) use menu::MenuRowStyle;
 #[cfg(feature = "runtime")]

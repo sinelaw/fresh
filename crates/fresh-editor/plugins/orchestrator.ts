@@ -550,6 +550,16 @@ let formPanel: FloatingWidgetPanel | null = null;
 type RunAgentTarget = "current" | "new";
 
 const NEW_SESSION_MODE = "orchestrator-new-form";
+// The dock's own keymap: the mode its panel is mounted with, whose bindings
+// the host resolves on the dock's node ahead of the focused widget. Bound
+// here rather than through the window's editor mode, which is the buffer's.
+const DOCK_MODE = "orchestrator-dock";
+// The dock's two dropdown lists, by widget key: the project scope menu and
+// the transient "New Task…" / "Move to folder…" menu. Each is a `list`, so
+// ↑/↓ and Enter are the list's own and the plugin hears `select` and
+// `activate`; Esc is the dock mode's, and closes whichever is open.
+const PROJECT_MENU_KEY = "project-pick";
+const DOCK_MENU_KEY = "menu-pick";
 
 // The "New Folder" dialog — a small centered floating panel with a name
 // field, an "organize the current session under it" checkbox, and
@@ -732,9 +742,9 @@ interface OpenDialogState {
   // hidden, leaving just the "New Task…" dropdown and the search input.
   filtersExpanded: boolean;
   // Dock-only: a transient toolbar dropdown (the "New Task…" create menu
-  // or a session's "Move to folder…" menu), or null when none is open.
-  // Keyboard-navigated via the shared `dock_menu_*` events (the host
-  // routes them here while focus sits on a `menu-pick:` option button).
+  // or a session's "Move to folder…" menu), or null when none is open. A
+  // `list` the keyboard drives itself; the plugin hears `select` and
+  // `activate` on `DOCK_MENU_KEY`, and the dock mode's Esc closes it.
   dockMenu: DockDropdown | null;
   // Dock-only: the item key (`folder:<id>` / `session:<id>`) of the
   // currently-highlighted tree node. The tree is host-owned; this mirror
@@ -4093,6 +4103,7 @@ function openControlRoom(
       widthPct: 100,
       heightPct: 100,
       asDock: true,
+      mode: DOCK_MODE,
       // "Stay put" callers (autoOpenDock, placeholder rows) must never
       // put the keyboard in the dock, not even for the tick between a
       // focused mount and a follow-up blur command.
@@ -4293,49 +4304,42 @@ function dockTitleRow(): WidgetSpec {
 // Option keys for the dock's project dropdown, in display order. Index 0
 // is always "All projects" (the empty-string key); the rest are the
 // projects with a session in the worktree/trivial-filtered set. The
-// project menu's keyboard cursor (`projectMenuIndex`) and the
-// `dock_menu_*` nav handlers index into this list, so it's the single
+// project menu's keyboard cursor (`projectMenuIndex`) and the list's
+// `select`/`activate` handlers index into this list, so it's the single
 // source of truth for both render and navigation.
 function projectMenuKeys(): string[] {
   return ["", ...dockProjectOptions()];
 }
 
-// The `project-pick:<key>` widget key for a menu row — the host reads
-// this focus key to recognise that the dropdown (not the session list)
-// owns the keyboard, and to route ↑/↓/Enter/Esc to the `dock_menu_*`
-// events. Empty suffix = "All projects".
-function projectPickKey(optionKey: string): string {
-  return `project-pick:${optionKey}`;
-}
-
-// Floating menu for the dock's project dropdown: "All projects" plus
-// every project with a session in the worktree/trivial-filtered set.
-// Anchored just under the toolbar via `overlay`, so it paints over the
-// rows below without reflowing them. Each option is a button whose key
-// (`project-pick:<key>`, empty suffix = all) the widget_event handler
-// decodes. The `●` marks the *applied* filter; the `primary` intent
-// marks the keyboard *cursor* (`projectMenuIndex`) — two separate
-// signals so ↑/↓ can move the cursor over options without yet applying
-// them, the way a standard dropdown behaves.
+// The dock's project dropdown as a list: "All projects" plus every project
+// with a session in the worktree/trivial-filtered set, anchored just under
+// the toolbar via `overlay` so it paints over the rows below without
+// reflowing them. The `●` marks the *applied* filter; the list's selection
+// is the keyboard cursor (`projectMenuIndex`) — two separate signals so ↑/↓
+// can move the cursor over options without yet applying them, the way a
+// standard dropdown behaves. Rows are keyed by option so a click on one
+// names it.
 function dockProjectMenu(): WidgetSpec {
   const cur = openDialog?.projectFilter ?? null;
   const keys = projectMenuKeys();
   const cursor = clampMenuIndex(openDialog?.projectMenuIndex ?? 0, keys.length);
-  const rows = menuRows(
-    keys.map((key, i) => {
-      const applied = key === "" ? cur === null : key === cur;
-      const label = key === "" ? editor.t("dock.all_projects") : projectLabel(key);
-      return {
-        label: (applied ? "● " : "  ") + label,
-        key: projectPickKey(key),
-        intent: i === cursor ? ("primary" as const) : undefined,
-      };
+  const items = keys.map((key) => {
+    const applied = key === "" ? cur === null : key === cur;
+    const label = key === "" ? editor.t("dock.all_projects") : projectLabel(key);
+    return { text: (applied ? "● " : "  ") + label };
+  });
+  return overlay(
+    labeledSection({
+      label: editor.t("dock.menu_label"),
+      child: list({
+        items,
+        itemKeys: keys.map((key) => `${PROJECT_MENU_KEY}:${key}`),
+        selectedIndex: cursor,
+        visibleRows: Math.max(1, keys.length),
+        key: PROJECT_MENU_KEY,
+      }),
     }),
-    // Lives inside the dock panel, so the section pads each row to the
-    // dock width — the band has to follow (see `menuRows`).
-    { fill: true },
   );
-  return overlay(labeledSection({ label: editor.t("dock.menu_label"), child: col(...rows) }));
 }
 
 // Clamp a menu cursor into `[0, len)`, tolerating an empty list.
@@ -4358,11 +4362,11 @@ function openProjectMenu(): void {
   openDialog.filtersExpanded = true;
   openDialog.projectMenuOpen = true;
   openDialog.projectMenuIndex = clampMenuIndex(idx, keys.length);
-  // Render the menu first so its buttons exist in the spec, *then* move
-  // focus onto the cursor row — otherwise the host re-clamps an unknown
-  // focus key back to the first tabbable.
+  // Render the menu first so its list exists in the spec, *then* move
+  // focus onto it — otherwise the host re-clamps an unknown focus key
+  // back to the first tabbable.
   openPanel.update(buildDockSpec());
-  openPanel.setFocusKey(projectPickKey(keys[openDialog.projectMenuIndex]));
+  focusDockControl(PROJECT_MENU_KEY);
 }
 
 // Close the dropdown and return the keyboard to the session list.
@@ -4370,26 +4374,24 @@ function closeProjectMenu(): void {
   if (!openDialog || !openPanel) return;
   openDialog.projectMenuOpen = false;
   openPanel.update(buildDockSpec());
-  openPanel.setFocusKey("sessions");
+  focusDockControl("sessions");
 }
 
-// Move the dropdown cursor by `delta` (clamped, no wrap) and keep panel
-// focus on the highlighted row so the host keeps routing nav keys here.
-function moveProjectMenu(delta: number): void {
-  if (!openDialog || !openPanel || !openDialog.projectMenuOpen) return;
+// The list's cursor moved (↑/↓, or a click on a row): mirror it, and a
+// click picks the row outright, the way a menu row answers a click.
+function projectMenuSelected(index: number, click: boolean): void {
+  if (!openDialog || !openDialog.projectMenuOpen) return;
   const keys = projectMenuKeys();
-  const next = clampMenuIndex(openDialog.projectMenuIndex + delta, keys.length);
-  openDialog.projectMenuIndex = next;
-  openPanel.update(buildDockSpec());
-  openPanel.setFocusKey(projectPickKey(keys[next]));
+  openDialog.projectMenuIndex = clampMenuIndex(index, keys.length);
+  if (click) pickProject(keys[openDialog.projectMenuIndex] ?? "");
 }
 
 // Commit the cursor's option as the active project filter and close.
-function acceptProjectMenu(): void {
+function acceptProjectMenu(index?: number): void {
   if (!openDialog || !openDialog.projectMenuOpen) return;
   const keys = projectMenuKeys();
-  const key = keys[clampMenuIndex(openDialog.projectMenuIndex, keys.length)] ?? "";
-  pickProject(key);
+  const at = clampMenuIndex(index ?? openDialog.projectMenuIndex, keys.length);
+  pickProject(keys[at] ?? "");
 }
 
 // Apply a project-dropdown option (empty = "All projects") as the dock's
@@ -4653,20 +4655,16 @@ function dockTreeExpandedKeys(t: DockTree): string[] {
 // ---------------------------------------------------------------------
 // Dock toolbar dropdowns — the "New Task…" create menu and a session's
 // "Move to folder…" menu. Both reuse the project dropdown's mechanics:
-// an `overlay(labeledSection(...))` of option buttons keyed `menu-pick:`,
-// keyboard-navigated via the shared `dock_menu_*` events (the host
-// routes them here while focus sits on a `menu-pick:` button). The `●`
-// marks the applied/current choice; `primary` intent marks the cursor.
+// an `overlay(labeledSection(...))` around a `list` keyed `DOCK_MENU_KEY`,
+// whose ↑/↓ and Enter are the list's own and reach the plugin as `select`
+// and `activate`; Esc is the dock mode's. The `●` marks the
+// applied/current choice; the list's selection is the cursor.
 // ---------------------------------------------------------------------
 
 interface MenuOption {
   key: string; // action key, e.g. "new:task" / "move:df3"
   label: string;
   marked?: boolean;
-}
-
-function menuPickKey(optKey: string): string {
-  return `menu-pick:${optKey}`;
 }
 
 // Options for the "New Task…" create dropdown.
@@ -4769,15 +4767,18 @@ function menuRows(
 }
 
 function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
-  const rows = menuRows(
-    opts.map((o, i) => ({
-      label: (o.marked ? "● " : "  ") + o.label,
-      key: menuPickKey(o.key),
-      intent: i === cursor ? ("primary" as const) : undefined,
-    })),
-    { fill: true },
+  return overlay(
+    labeledSection({
+      label,
+      child: list({
+        items: opts.map((o) => ({ text: (o.marked ? "● " : "  ") + o.label })),
+        itemKeys: opts.map((o) => `${DOCK_MENU_KEY}:${o.key}`),
+        selectedIndex: cursor,
+        visibleRows: Math.max(1, opts.length),
+        key: DOCK_MENU_KEY,
+      }),
+    }),
   );
-  return overlay(labeledSection({ label, child: col(...rows) }));
 }
 
 function dockNewMenu(): WidgetSpec {
@@ -4803,31 +4804,30 @@ function openDockMenu(menu: DockDropdown): void {
   if (openDialog.projectMenuOpen) closeProjectMenu();
   openDialog.dockMenu = menu;
   openPanel.update(buildDockSpec());
-  const opts = dockMenuOptions();
-  const idx = clampMenuIndex(menu.index, opts.length);
-  if (opts[idx]) openPanel.setFocusKey(menuPickKey(opts[idx].key));
+  focusDockControl(DOCK_MENU_KEY);
 }
 
 function closeDockMenu(): void {
   if (!openDialog || !openPanel) return;
   openDialog.dockMenu = null;
   openPanel.update(buildDockSpec());
-  openPanel.setFocusKey("sessions");
+  focusDockControl("sessions");
 }
 
-function moveDockMenu(delta: number): void {
-  if (!openDialog || !openPanel || !openDialog.dockMenu) return;
-  const opts = dockMenuOptions();
-  const next = clampMenuIndex(openDialog.dockMenu.index + delta, opts.length);
-  openDialog.dockMenu = { ...openDialog.dockMenu, index: next };
-  openPanel.update(buildDockSpec());
-  if (opts[next]) openPanel.setFocusKey(menuPickKey(opts[next].key));
-}
-
-function acceptDockMenu(): void {
+// The list's cursor moved (↑/↓, or a click on a row): mirror it, and a
+// click runs the row outright, the way a menu row answers a click.
+function dockMenuSelected(index: number, click: boolean): void {
   if (!openDialog || !openDialog.dockMenu) return;
   const opts = dockMenuOptions();
-  const opt = opts[clampMenuIndex(openDialog.dockMenu.index, opts.length)];
+  const at = clampMenuIndex(index, opts.length);
+  openDialog.dockMenu = { ...openDialog.dockMenu, index: at };
+  if (click && opts[at]) runDockMenuOption(opts[at].key);
+}
+
+function acceptDockMenu(index?: number): void {
+  if (!openDialog || !openDialog.dockMenu) return;
+  const opts = dockMenuOptions();
+  const opt = opts[clampMenuIndex(index ?? openDialog.dockMenu.index, opts.length)];
   if (opt) runDockMenuOption(opt.key);
 }
 
@@ -10895,6 +10895,189 @@ const FORM_MODE_BINDINGS: [string, string][] = [
 
 editor.defineMode(NEW_SESSION_MODE, FORM_MODE_BINDINGS, true, true);
 
+// Enter on the dock's session tree — the "dive in" gesture for a session,
+// or expand/collapse for a folder. A session row is already the active
+// window via the arrow/click live-switch (a discovered worktree was opened
+// on navigation too), so Enter just hands keyboard focus to the editor. If
+// the row is still discovered here (Enter pressed before the debounced
+// switch landed) attach it now, diving in to match the live path below.
+function dockActivate(): void {
+  if (!dockMode || !openPanel || !openDialog) return;
+  const node = dockSelectedNode();
+  if (node && node.kind === "folder") {
+    toggleDockFolderExpansion(folderNodeKey(node.folderId));
+    return;
+  }
+  const id = dockSelectedSessionId();
+  const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
+  // Enter on a workspace whose build failed or is paused: retry it —
+  // that is the only move that gets it anywhere. A windowless
+  // placeholder (a remote create) has nothing to dive into either, and
+  // must never blur to the editor: that would drop focus onto whatever
+  // buffer sits behind the phantom row. One that owns a window falls
+  // through and is entered like any workspace.
+  if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
+    if (pendingActionable(sel.pending)) retryPending(id as number);
+    return;
+  }
+  if (sel && sel.discovered) {
+    void attachToWorktree({
+      root: sel.root,
+      projectPath: sel.projectPath ?? sel.root,
+      label: sel.label,
+      branch: sel.branch,
+      discoveredId: sel.id,
+      dive: true,
+    });
+    return;
+  }
+  // Enter is the deliberate dive: if the highlighted session isn't the
+  // active window yet — a disconnected remote that `scheduleDockSwitch`
+  // intentionally did NOT auto-connect on arrow-nav — commit the switch
+  // now. For a dormant remote this lands in its "Connecting…" shell (the
+  // #2570 dive path); for a live/local row it's the switch arrow-nav would
+  // otherwise have made before the debounce landed.
+  if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
+    editor.setActiveWindow(id);
+  }
+  // Same as the row click: the filter that surfaced this row is kept
+  // across the dive (see `dockDiveBlur`).
+  dockDiveBlur = true;
+  dockBlurred = true;
+  editor.floatingPanelControl(openPanel.id(), "blur", 0);
+  editor.setEditorMode(null);
+  return;
+}
+
+// Whether a list widget event names `key`: keyboard events carry the
+// list's own key, a row click carries the row's key with the list's in
+// `payload.list_key`.
+function isListEvent(
+  e: { event_type: string; widget_key?: string; payload?: unknown },
+  key: string,
+): boolean {
+  if (e.event_type !== "select" && e.event_type !== "activate") return false;
+  if (e.widget_key === key) return true;
+  const payload = (e.payload ?? {}) as Record<string, unknown>;
+  return payload.list_key === key;
+}
+
+// The dock's keymap. The host resolves these on the dock's own node ahead
+// of the widget that holds focus, so each command decides what the key
+// means from the plugin's mirror of that focus (`pickerFocusKey`) and of
+// its open dropdown — the policy that used to be a branch of the host's
+// router, said where the dock is defined. Keys these leave alone reach the
+// widgets: ↑/↓ are the tree's or a dropdown list's, Tab is the ring's,
+// typing is the filter's.
+const DOCK_MODE_BINDINGS: [string, string][] = [
+  ["/", "orchestrator_dock_filter"],
+  ["Escape", "orchestrator_dock_escape"],
+  ["Enter", "orchestrator_dock_enter"],
+  ["Space", "orchestrator_dock_space"],
+  ["F2", "orchestrator_dock_context"],
+  ["Menu", "orchestrator_dock_context"],
+  ["M-t", "orchestrator_dock_toggle_worktrees"],
+  ["M-i", "orchestrator_dock_toggle_trivial"],
+  ["M-p", "orchestrator_dock_toggle_scope"],
+  ["M-n", "orchestrator_dock_new"],
+];
+editor.defineMode(DOCK_MODE, DOCK_MODE_BINDINGS, false, false);
+
+// Whichever dropdown is open, if one is.
+function dockOpenMenu(): "project" | "menu" | null {
+  if (!openDialog) return null;
+  if (openDialog.dockMenu) return "menu";
+  if (openDialog.projectMenuOpen) return "project";
+  return null;
+}
+
+function dockOnSessions(): boolean {
+  return pickerFocusKey === "sessions" || pickerFocusKey === "";
+}
+
+// Move the dock's focus to `key`, and say so now. The host's `focus`
+// event confirms it a round-trip later; the mirror the handlers below
+// read must not lag behind a decision the plugin itself just made, or
+// two keys in a row (Enter out of the filter, then Esc) would read the
+// first one's focus and act on the wrong control.
+function focusDockControl(key: string): void {
+  if (!openPanel) return;
+  pickerFocusKey = key;
+  openPanel.setFocusKey(key);
+}
+
+// `/` — to the filter, from anywhere in the dock.
+registerHandler("orchestrator_dock_filter", () => {
+  if (dockMode && openPanel) focusDockControl("filter");
+});
+
+// Esc — closes an open dropdown; otherwise returns from the filter to the
+// session list; otherwise leaves the dock, which stays visible.
+registerHandler("orchestrator_dock_escape", () => {
+  if (!dockMode || !openPanel) return;
+  const menu = dockOpenMenu();
+  if (menu === "menu") return closeDockMenu();
+  if (menu === "project") return closeProjectMenu();
+  if (pickerFocusKey === "filter") return focusDockControl("sessions");
+  editor.floatingPanelControl(openPanel.id(), "blur", 0);
+});
+
+// Enter — accepts an open dropdown's cursor; in the filter returns to the
+// list (the filter is a search, not a form field to submit); on the tree
+// dives; on any other control runs that control.
+registerHandler("orchestrator_dock_enter", () => {
+  if (!dockMode || !openPanel) return;
+  const menu = dockOpenMenu();
+  if (menu === "menu") return acceptDockMenu();
+  if (menu === "project") return acceptProjectMenu();
+  if (pickerFocusKey === "filter") return focusDockControl("sessions");
+  if (dockOnSessions()) return dockActivate();
+  openPanel.command({ kind: "activate" });
+});
+
+// Space — accepts an open dropdown's cursor; types into the filter; the
+// tree ignores it (bulk select is the modal picker's); any other control
+// runs.
+registerHandler("orchestrator_dock_space", () => {
+  if (!dockMode || !openPanel) return;
+  const menu = dockOpenMenu();
+  if (menu === "menu") return acceptDockMenu();
+  if (menu === "project") return acceptProjectMenu();
+  if (pickerFocusKey === "filter") {
+    openPanel.command({ kind: "textInputChar", text: " " });
+    return;
+  }
+  if (dockOnSessions()) return;
+  openPanel.command({ kind: "activate" });
+});
+
+// F2 / the Menu key on the tree — the highlighted node's context menu, the
+// same one a right-click anchors at the pointer.
+registerHandler("orchestrator_dock_context", () => {
+  if (dockMode && dockOnSessions()) openDockContextMenuFromKeyboard();
+});
+
+registerHandler("orchestrator_dock_toggle_worktrees", () => {
+  if (dockMode) toggleShowWorktrees();
+});
+registerHandler("orchestrator_dock_toggle_trivial", () => {
+  if (dockMode) toggleHideTrivial();
+});
+// Alt+P opens/closes the project dropdown. Opening hands the keyboard to
+// the menu; closing returns it to the session list.
+registerHandler("orchestrator_dock_toggle_scope", () => {
+  if (!dockMode || !openDialog) return;
+  if (openDialog.projectMenuOpen) closeProjectMenu();
+  else openProjectMenu();
+});
+// Alt+N — the new-session form. It is a centered modal in a separate slot,
+// so the dock stays visible.
+registerHandler("orchestrator_dock_new", () => {
+  if (!dockMode) return;
+  dockBlurred = true;
+  openForm({ fromPicker: true });
+});
+
 // The "New Folder" dialog only needs Enter to submit from anywhere —
 // everything else (typing, Backspace, Tab focus-cycle, Space on the
 // toggle/buttons, Esc to cancel) uses the floating panel's default
@@ -11647,6 +11830,19 @@ editor.on("widget_event", (e) => {
         pickerFocusKey = e.widget_key;
       }
       if (dockMode) {
+        // A dropdown is a menu: focus leaving its list (Tab, a click
+        // elsewhere) dismisses it, the way any menu goes away when you
+        // act elsewhere.
+        if (
+          openDialog.projectMenuOpen && e.widget_key !== PROJECT_MENU_KEY
+        ) {
+          openDialog.projectMenuOpen = false;
+          openPanel?.update(buildDockSpec());
+        }
+        if (openDialog.dockMenu !== null && e.widget_key !== DOCK_MENU_KEY) {
+          openDialog.dockMenu = null;
+          openPanel?.update(buildDockSpec());
+        }
         // A dive that never produced a `blur` (already blurred, say)
         // must not leave the flag armed for the next, unrelated one.
         dockDiveBlur = false;
@@ -11657,128 +11853,6 @@ editor.on("widget_event", (e) => {
         // focus again.
         if (wasBlurred) openPanel?.update(buildDockSpec());
       }
-      return;
-    }
-    if (e.event_type === "dock_space") {
-      // Space bulk-select is a modal-picker feature now; the dock
-      // ignores Space (no multi-select checkboxes here).
-      return;
-    }
-    if (e.event_type === "dock_new") {
-      // Host Alt+N on the dock → open the new-session form. The form is
-      // a centered modal in a separate slot, so the dock stays visible.
-      if (dockMode) {
-        dockBlurred = true;
-        openForm({ fromPicker: true });
-      }
-      return;
-    }
-    if (e.event_type === "dock_activate") {
-      // Host Enter on the dock's session tree — the "dive in" gesture for
-      // a session, or expand/collapse for a folder. A session row is
-      // already the active window via the arrow/click live-switch (a
-      // discovered worktree was opened on navigation too), so Enter just
-      // hands keyboard focus to the editor. If the row is still discovered
-      // here (Enter pressed before the debounced switch landed) attach it
-      // now, diving in to match the live path below.
-      if (!dockMode || !openPanel || !openDialog) return;
-      const node = dockSelectedNode();
-      if (node && node.kind === "folder") {
-        toggleDockFolderExpansion(folderNodeKey(node.folderId));
-        return;
-      }
-      const id = dockSelectedSessionId();
-      const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
-      // Enter on a workspace whose build failed or is paused: retry it —
-      // that is the only move that gets it anywhere. A windowless
-      // placeholder (a remote create) has nothing to dive into either, and
-      // must never blur to the editor: that would drop focus onto whatever
-      // buffer sits behind the phantom row. One that owns a window falls
-      // through and is entered like any workspace.
-      if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
-        if (pendingActionable(sel.pending)) retryPending(id as number);
-        return;
-      }
-      if (sel && sel.discovered) {
-        void attachToWorktree({
-          root: sel.root,
-          projectPath: sel.projectPath ?? sel.root,
-          label: sel.label,
-          branch: sel.branch,
-          discoveredId: sel.id,
-          dive: true,
-        });
-        return;
-      }
-      // Enter is the deliberate dive: if the highlighted session isn't the
-      // active window yet — a disconnected remote that `scheduleDockSwitch`
-      // intentionally did NOT auto-connect on arrow-nav — commit the switch
-      // now. For a dormant remote this lands in its "Connecting…" shell (the
-      // #2570 dive path); for a live/local row it's the switch arrow-nav would
-      // otherwise have made before the debounce landed.
-      if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
-        editor.setActiveWindow(id);
-      }
-      // Same as the row click: the filter that surfaced this row is kept
-      // across the dive (see `dockDiveBlur`).
-      dockDiveBlur = true;
-      dockBlurred = true;
-      editor.floatingPanelControl(openPanel.id(), "blur", 0);
-      editor.setEditorMode(null);
-      return;
-    }
-    if (e.event_type === "dock_context") {
-      // Host Menu key / Shift+F10 on the dock tree — open the
-      // highlighted node's context menu, the same one a right-click
-      // anchors at the pointer. Keyboard parity for Move to Folder…
-      // and the folder organise actions.
-      if (dockMode) openDockContextMenuFromKeyboard();
-      return;
-    }
-    if (e.event_type === "dock_toggle_worktrees") {
-      // Host Alt+T on the dock — the dialog's OPEN_MODE chord has no
-      // equivalent in the dock (no editor mode), so the host routes it
-      // here. Share the same flip the click/Alt+T-in-dialog use.
-      if (dockMode) toggleShowWorktrees();
-      return;
-    }
-    if (e.event_type === "dock_toggle_trivial") {
-      if (dockMode) toggleHideTrivial();
-      return;
-    }
-    if (e.event_type === "dock_toggle_scope") {
-      // The dock's scope control is now the project dropdown; Alt+P
-      // opens/closes it instead of flipping the old current/all scope.
-      // Opening hands the keyboard to the menu; closing returns it to
-      // the session list.
-      if (dockMode) {
-        if (openDialog.projectMenuOpen) closeProjectMenu();
-        else openProjectMenu();
-      }
-      return;
-    }
-    // Dock dropdown keyboard nav. The host fires these only while panel
-    // focus sits on a `project-pick:` / `menu-pick:` row (a dropdown is
-    // open and owns the keyboard), so ↑/↓/Enter/Esc drive whichever
-    // dropdown is up instead of leaking to the session tree underneath.
-    if (e.event_type === "dock_menu_prev") {
-      if (openDialog.dockMenu) moveDockMenu(-1);
-      else moveProjectMenu(-1);
-      return;
-    }
-    if (e.event_type === "dock_menu_next") {
-      if (openDialog.dockMenu) moveDockMenu(1);
-      else moveProjectMenu(1);
-      return;
-    }
-    if (e.event_type === "dock_menu_accept") {
-      if (openDialog.dockMenu) acceptDockMenu();
-      else acceptProjectMenu();
-      return;
-    }
-    if (e.event_type === "dock_menu_cancel") {
-      if (openDialog.dockMenu) closeDockMenu();
-      else closeProjectMenu();
       return;
     }
     if (e.event_type === "change" && e.widget_key === "filter") {
@@ -11962,13 +12036,16 @@ editor.on("widget_event", (e) => {
       openForm({ fromPicker: true });
       return;
     }
-    // A dock dropdown option button was clicked (New / Move menus).
-    if (
-      e.event_type === "activate" &&
-      typeof e.widget_key === "string" &&
-      e.widget_key.startsWith("menu-pick:")
-    ) {
-      runDockMenuOption(e.widget_key.slice("menu-pick:".length));
+    // The "New Task…" / "Move to folder…" dropdown list: ↑/↓ move its
+    // cursor, Enter runs the cursor's option, a click runs the clicked one.
+    if (isListEvent(e, DOCK_MENU_KEY)) {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const idx = typeof payload.index === "number" ? payload.index : -1;
+      if (e.event_type === "select" && idx >= 0) {
+        dockMenuSelected(idx, payload.via === "click");
+      } else if (e.event_type === "activate") {
+        acceptDockMenu(idx >= 0 ? idx : undefined);
+      }
       return;
     }
     // Title-bar `[ × ]` → hide the dock, the same teardown Esc and
@@ -12033,12 +12110,15 @@ editor.on("widget_event", (e) => {
       else openProjectMenu();
       return;
     }
-    if (
-      e.event_type === "activate" &&
-      typeof e.widget_key === "string" &&
-      e.widget_key.startsWith("project-pick:")
-    ) {
-      pickProject(e.widget_key.slice("project-pick:".length));
+    // The project dropdown list, the same way.
+    if (isListEvent(e, PROJECT_MENU_KEY)) {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const idx = typeof payload.index === "number" ? payload.index : -1;
+      if (e.event_type === "select" && idx >= 0) {
+        projectMenuSelected(idx, payload.via === "click");
+      } else if (e.event_type === "activate") {
+        acceptProjectMenu(idx >= 0 ? idx : undefined);
+      }
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "scope-toggle") {

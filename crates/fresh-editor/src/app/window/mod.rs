@@ -2737,6 +2737,8 @@ impl Window {
         let splits = Splits {
             root: mgr.root().clone(),
             maximized: mgr.maximized_split().map(LeafId),
+            // Geometry only: no focus is described here.
+            active: None,
             chrome: self.pane_chrome(PaneChrome {
                 tabs: self.tab_bar_visible,
                 vscroll: self.resources.config.editor.show_vertical_scrollbar,

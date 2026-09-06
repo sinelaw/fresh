@@ -2546,23 +2546,26 @@ impl KeybindingResolver {
     /// check used by `dispatch_floating_widget_key` to decide
     /// whether to let mode dispatch override its smart-key defaults.
     pub fn has_explicit_binding(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        self.explicit_binding(event, context).is_some()
+    }
+
+    /// The action `context` itself binds `event` to — user-customised,
+    /// built-in default, or plugin-default (from `defineMode`), in that
+    /// order — with no fall-back to the Global or Normal contexts.
+    ///
+    /// **A panel's keymap on the tree** reads a plugin mode's bindings
+    /// through this (`view::shell::panel::Keymap`): the panel's interior
+    /// captures a key the mode explicitly binds ahead of the widget that
+    /// holds focus, which is the precedence `defineMode` promises a panel.
+    pub fn explicit_binding(&self, event: &KeyEvent, context: &KeyContext) -> Option<Action> {
         let norm = normalize_key(event.code, event.modifiers);
-        if let Some(bindings) = self.bindings.get(context) {
-            if bindings.contains_key(&norm) {
-                return true;
-            }
-        }
-        if let Some(bindings) = self.default_bindings.get(context) {
-            if bindings.contains_key(&norm) {
-                return true;
-            }
-        }
-        if let Some(bindings) = self.plugin_defaults.get(context) {
-            if bindings.contains_key(&norm) {
-                return true;
-            }
-        }
-        false
+        [
+            &self.bindings,
+            &self.default_bindings,
+            &self.plugin_defaults,
+        ]
+        .into_iter()
+        .find_map(|table| table.get(context).and_then(|b| b.get(&norm)).cloned())
     }
 
     /// Resolve a key event to a UI action for terminal mode.

@@ -683,10 +683,9 @@ impl Editor {
                 ui.set_store(shell_store);
                 ui
             }),
-            pending_panel_tree_focus: None,
+            shell_description_stale: false,
             shell_pointer_event: None,
             shell_key_event: None,
-            shell_interior_took_key: None,
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.

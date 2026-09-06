@@ -368,6 +368,7 @@ mod tests {
         let s = Splits {
             root: leaf(0),
             maximized: None,
+            active: None,
             chrome: [(host, with_tabs)].into_iter().collect(),
             controls: Default::default(),
             groups: [(host, group.clone())].into_iter().collect(),
@@ -418,6 +419,7 @@ mod tests {
                 let s = Splits {
                     root: root.clone(),
                     maximized: None,
+                    active: None,
                     chrome: Default::default(),
                     controls: Default::default(),
                     groups: Default::default(),
@@ -444,6 +446,7 @@ mod tests {
         let s = Splits {
             root,
             maximized: Some(LeafId(SplitId(1))),
+            active: None,
             chrome: Default::default(),
             controls: Default::default(),
             groups: Default::default(),
@@ -479,6 +482,7 @@ mod tests {
         let s = Splits {
             root: leaf(0),
             maximized: None,
+            active: None,
             chrome: [(host_leaf, chrome)].into_iter().collect(),
             controls: Default::default(),
             groups: [(host_leaf, group)].into_iter().collect(),
@@ -528,6 +532,7 @@ mod tests {
                 let s = Splits {
                     root: leaf(0),
                     maximized: None,
+                    active: None,
                     chrome: [(pane, chrome)].into_iter().collect(),
                     controls,
                     groups: Default::default(),
@@ -612,6 +617,7 @@ mod tests {
         let s = Splits {
             root: root.clone(),
             maximized: None,
+            active: None,
             chrome: [
                 (LeafId(SplitId(0)), with_tabs),
                 (LeafId(SplitId(1)), with_tabs),
@@ -678,6 +684,7 @@ mod tests {
         let s = Splits {
             root: leaf(0),
             maximized: None,
+            active: None,
             chrome: [(LeafId(SplitId(0)), PaneChrome::default())]
                 .into_iter()
                 .collect(),
@@ -920,6 +927,10 @@ impl PaneControls {
 pub struct Splits {
     pub root: SplitNode,
     pub maximized: Option<LeafId>,
+    /// The pane the keyboard belongs to when no panel or overlay holds it:
+    /// its content is the base's marked focus holder (see
+    /// [`content_surface`]).
+    pub active: Option<LeafId>,
     /// Which chrome each visible pane has. Resolved once, by the editor, and
     /// read by both halves of the frame — the description below and the
     /// painter that fills the `Host` leaf under it — so a pane's strip cannot
@@ -1187,8 +1198,8 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
         // pane was pressed and where, so a click can be turned into a caret
         // position through the view pipeline; a panel has no caret to place
         // and no byte to map to, and every one of its rows answers for itself.
-        (None, Some(i)) => panel_content(id, i.clone()),
-        (None, None) => content_surface(id),
+        (None, Some(i)) => panel_content(id, i.clone(), s.active == Some(id)),
+        (None, None) => content_surface(id, s.active == Some(id)),
     };
     pane_interior(
         id,
@@ -1253,7 +1264,12 @@ fn live_controls(id: LeafId, c: PaneControls) -> Node<UiMsg> {
 /// floating panel know their inner height as state — it is the box they were
 /// placed in — so they hand it down on the `Interior`; a pane's arrives here,
 /// which is why [`super::panel::Interior::avail_height`] is `None` for one.
-fn panel_content(id: LeafId, i: super::panel::Interior) -> Node<UiMsg> {
+fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<UiMsg> {
+    // Where the tree's focus rests when this is the active pane and no
+    // widget of the panel holds it: on the panel itself, as the base's own
+    // surface does. A widget the registry names is marked by `widgets::node`
+    // (through `Ctx::keyboard`), and the innermost mark wins.
+    let rests_here = active && !super::widgets::marks(&i.spec, &i.focus_key);
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         // **The whole pane, not `widget_panel_width`'s.** The runtime lays a
         // mounted spec two columns short — "reserve 2 cols for gutter /
@@ -1277,6 +1293,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior) -> Node<UiMsg> {
                 slot: super::widgets::Slot::Pane(id),
                 states: &i.states,
                 focus_key: i.focus_key.clone(),
+                keyboard: active,
                 hovered_key: i.hovered_key.clone(),
                 marker_gutter: i.marker_gutter,
                 hovered_item_key: i.hovered_item_key.clone(),
@@ -1321,7 +1338,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior) -> Node<UiMsg> {
     //
     // A **right** press is left alone for the reason it was before: it belongs
     // to the base surface's dismissal of the tab context menu.
-    gesture(body).on(
+    let pressed = gesture(body).on(
         GestureKind::Press,
         Rc::new(move |e: &Event| {
             if e.button != MouseButton::Left {
@@ -1336,6 +1353,23 @@ fn panel_content(id: LeafId, i: super::panel::Interior) -> Node<UiMsg> {
                 mods: e.mods,
             }))
         }),
+    );
+    // **The panel's interior: its ring's root, its keymap, and the seam its
+    // keys cross.** The same [`super::panel::interior`] the dock's is: the
+    // content slot's key (`content_key`, which `interior_key(Slot::Pane)`
+    // resolves to) names it, so the ring the host's focus advance walks is
+    // read off the tree (`Ui::next_in`); the plugin's mode is a keymap on
+    // the capture leg, so a key the mode binds is its action before any
+    // widget sees it; Tab is declined to the tree's ring, confined to this
+    // panel by the pane's keyboard layer (`frame::frame_tree`, `pane_keys`)
+    // while the pane is active; and every other key is `PanelKey(Pane)`,
+    // which the host hands to the editor's own keyboard — the mode's text
+    // input and the rest of the buffer's route, as before.
+    super::panel::interior(
+        super::widgets::Slot::Pane(id),
+        i.keymap.clone(),
+        rests_here,
+        pressed,
     )
 }
 
@@ -1350,9 +1384,18 @@ fn panel_content(id: LeafId, i: super::panel::Interior) -> Node<UiMsg> {
 /// A **right** press is deliberately not claimed: it belongs to the base
 /// surface's dismissal of the tab context menu, which is the only thing left
 /// on the legacy walk that a right-click over a pane should reach.
-fn content_surface(id: LeafId) -> Node<UiMsg> {
+/// **The base's own focus holder.** Focus is never nowhere: when no panel,
+/// prompt, popup or menu holds the keyboard, the tree's focus rests on the
+/// active pane's content — marked `autofocus` so a mark leaving a blurred
+/// panel has somewhere to go, and `skip_traversal` so it is no Tab stop.
+/// It observes every key (`Flow::Observe`): the base's keys are the editor's
+/// own pipeline until the buffer host's keymap rides on the tree (L3), so
+/// the tree decides nothing for them. `frame::key_context_of` names nothing
+/// for its key, which is how a focus chain ending here reads as the base's
+/// own context.
+fn content_surface(id: LeafId, active: bool) -> Node<UiMsg> {
     let at = |e: &Event| (e.pos.x.max(0) as u16, e.pos.y.max(0) as u16);
-    gesture(row())
+    let surface = gesture(row())
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -1377,7 +1420,18 @@ fn content_surface(id: LeafId) -> Node<UiMsg> {
                 e.stop();
                 Some(UiMsg::Ui(pane_wheel(id, x, y, e.delta, e.axis)))
             }),
-        )
+        );
+    let n = fresh_ui::focusable(surface)
+        .key(content_key(id))
+        .skip_traversal()
+        .on_key(|e: &Event| {
+            e.observe();
+            None
+        });
+    match active {
+        true => n.autofocus(),
+        false => n,
+    }
 }
 
 /// The right-hand control cluster of a pane's strip: `[gap] > [□] [×] [trail]`.

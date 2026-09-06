@@ -35,11 +35,11 @@ pub use registry::{
 };
 pub use render::{
     apply_hover_band, clamp_number, dual_available_values, dual_label, dual_sanitize_included,
-    fill_button_label, focus_ring_scoped_in_spec, format_number_value, render_bare_button,
-    render_button, render_dropdown, render_hint_bar, render_number, render_spec,
-    render_spec_no_autofocus, render_spec_with_marker, render_spec_with_options, render_toggle,
-    render_toggle_form, render_tree_row, resolve_panel, wrap_index, EmbedRect, FocusCursor,
-    MarkdownCtx, NumberEdit, OverlayRow, PanelPopup, RenderContext, RenderOptions, RenderOutput,
-    RenderedTreeRow, ResolvedPanel, DROPDOWN_VISIBLE_OPTIONS,
+    fill_button_label, format_number_value, render_bare_button, render_button, render_dropdown,
+    render_hint_bar, render_number, render_spec, render_spec_no_autofocus, render_spec_with_marker,
+    render_spec_with_options, render_toggle, render_toggle_form, render_tree_row, resolve_panel,
+    wrap_index, EmbedRect, FocusCursor, MarkdownCtx, NumberEdit, OverlayRow, PanelPopup,
+    RenderContext, RenderOptions, RenderOutput, RenderedTreeRow, ResolvedPanel,
+    DROPDOWN_VISIBLE_OPTIONS,
 };
 pub use text_click::{row_byte_to_value_byte, value_byte_from_hit};

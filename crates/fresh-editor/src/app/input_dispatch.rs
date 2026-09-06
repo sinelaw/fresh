@@ -525,7 +525,6 @@ impl Editor {
             hits: Vec::new(),
             instance_states: std::collections::HashMap::new(),
             focus_key: key.to_string(),
-            tabbable: Vec::new(),
             painted: std::collections::HashMap::new(),
             boxes: Vec::new(),
             auto_focus_first: true,

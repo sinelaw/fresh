@@ -18,6 +18,18 @@ pub use policy::{
 };
 pub use tree::FocusId;
 
+/// What a scope's `autofocus` mark names, for telling one settle's mark from
+/// the next's.
+///
+/// By key when the marked element has one — an element rebuilt under the
+/// same key is the same intent, and a keyed wrapper is how a host says which
+/// control a panel's focus fact names — and by element otherwise.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum MarkId {
+    Key(crate::key::Key),
+    Elem(ElementId),
+}
+
 /// Focus registration as a behavior.
 ///
 /// A component that becomes focusable this way needs no `Focusable`
@@ -37,6 +49,7 @@ pub struct Focusable<M: 'static> {
     pub(crate) scope: bool,
     pub(crate) focus_within: bool,
     pub(crate) autofocus: bool,
+    pub(crate) entry: Option<crate::key::Key>,
 }
 
 impl<M: 'static> Focusable<M> {
@@ -60,6 +73,7 @@ impl<M: 'static> Focusable<M> {
             scope: false,
             focus_within: false,
             autofocus: false,
+            entry: None,
         }
     }
 
@@ -388,6 +402,84 @@ impl<M: 'static> Ui<M> {
         FocusScope { nodes }
     }
 
+    /// The focusables under `root`, in the order traversal walks them —
+    /// whether or not focus is inside `root`.
+    ///
+    /// A host that keeps a subtree's focused control as a fact of its own
+    /// model (a panel's focus key) advances that fact along the same ring the
+    /// user's Tab walks, so there is one order and one source for it. The
+    /// order is the installed policy's over the subtree's registrations;
+    /// modal confinement is not applied, because the question is about the
+    /// subtree and not about where the keyboard is.
+    pub fn traversal_order(&self, root: ElementId) -> Vec<ElementId> {
+        self.scope_under(root).ordered()
+    }
+
+    /// The element traversal reaches from `from` moving `dir` within `root`'s
+    /// subtree. `from` outside the subtree, or `None`, starts from the edge —
+    /// the first focusable going forward, the last going back.
+    pub fn next_in(
+        &self,
+        root: ElementId,
+        from: Option<ElementId>,
+        dir: FocusDir,
+    ) -> Option<ElementId> {
+        let scope = self.scope_under(root);
+        self.traversal.next(&scope, from, dir)
+    }
+
+    fn scope_under(&self, root: ElementId) -> FocusScope {
+        let mut nodes = Vec::new();
+        match self.arena.get(root).and_then(|e| e.focus) {
+            Some(f) => {
+                let kids = self
+                    .focus_tree
+                    .get(f)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default();
+                for c in kids {
+                    self.collect_focus(c, &mut nodes);
+                }
+                if self.focus_tree.get(f).is_some_and(|n| !n.reg.skip) {
+                    self.push_focus(f, &mut nodes);
+                }
+            }
+            // A root with no registration of its own: everything registered
+            // beneath it, found from the roots.
+            None => {
+                for r in self.focus_roots.clone() {
+                    self.collect_focus(r, &mut nodes);
+                }
+                nodes.retain(|n| self.is_within(n.id, root));
+            }
+        }
+        FocusScope { nodes }
+    }
+
+    /// The nearest element at or above `id` whose registration opens a focus
+    /// scope — the subtree a Tab from `id` is confined to short of a layer.
+    pub fn enclosing_focus_scope(&self, id: ElementId) -> Option<ElementId> {
+        let mut cur = Some(id);
+        while let Some(e) = cur {
+            let scoped = self
+                .arena
+                .get(e)
+                .and_then(|el| el.focus)
+                .and_then(|f| self.focus_tree.get(f))
+                .is_some_and(|n| n.reg.scope);
+            if scoped {
+                return Some(e);
+            }
+            cur = self.arena.get(e).and_then(|el| el.parent);
+        }
+        None
+    }
+
+    /// Whether `id` is `root` or lies beneath it.
+    pub fn contains(&self, root: ElementId, id: ElementId) -> bool {
+        self.is_within(id, root)
+    }
+
     /// The element that confines focus traversal right now.
     ///
     /// The topmost layer that owns the keyboard — **or the element that layer
@@ -453,17 +545,12 @@ impl<M: 'static> Ui<M> {
     }
 
     fn collect_focus(&self, f: crate::focus::FocusId, out: &mut Vec<FocusEntry>) {
-        let Some(n) = self.focus_tree.get(f) else {
-            return;
-        };
-        if !n.reg.skip {
-            self.push_focus(f, out);
-        }
-        for c in n.children.clone() {
-            self.collect_focus(c, out);
-        }
+        self.collect_focus_in(f, None, out);
     }
 
+    /// A scope's own registration, when it is reachable inside itself. It is
+    /// in no group: a group is entered from outside it, and the scope is
+    /// where traversal already is.
     fn push_focus(&self, f: crate::focus::FocusId, out: &mut Vec<FocusEntry>) {
         let Some(n) = self.focus_tree.get(f) else {
             return;
@@ -472,7 +559,37 @@ impl<M: 'static> Ui<M> {
             id: n.element,
             ordinal: n.reg.ordinal,
             rect: self.rect_of(n.element),
+            group: None,
         });
+    }
+
+    /// `group` is the innermost enclosing registration that names an entry
+    /// (`FocusReg::entry`), with the element that key resolves to — what
+    /// traversal lands on when it enters that subtree from outside.
+    fn collect_focus_in(
+        &self,
+        f: crate::focus::FocusId,
+        group: Option<(ElementId, Option<ElementId>)>,
+        out: &mut Vec<FocusEntry>,
+    ) {
+        let Some(n) = self.focus_tree.get(f) else {
+            return;
+        };
+        let group = match &n.reg.entry {
+            Some(k) => Some((n.element, self.find_by_key(k))),
+            None => group,
+        };
+        if !n.reg.skip {
+            out.push(FocusEntry {
+                id: n.element,
+                ordinal: n.reg.ordinal,
+                rect: self.rect_of(n.element),
+                group,
+            });
+        }
+        for c in n.children.clone() {
+            self.collect_focus_in(c, group, out);
+        }
     }
 
     /// Whether an element is inside the scope traversal is currently confined
@@ -523,12 +640,25 @@ impl<M: 'static> Ui<M> {
 
     /// Settle focus after a frame.
     ///
-    /// Three cases, in order: focus is already inside the active scope and
-    /// nothing happens; a scope has just opened and focus moves into it,
-    /// remembering where it was; the scope has closed and focus goes back.
+    /// Four cases, in order: focus is already inside the active scope, and
+    /// the scope's `autofocus` mark is where it was when this scope last
+    /// settled — nothing happens; focus is inside the scope and **the mark
+    /// moved** — focus follows it ([`Self::follow_moved_mark`]); a scope has
+    /// just opened and focus moves into it, remembering where it was; the
+    /// scope has closed and focus goes back.
+    ///
+    /// The second case is what lets a description *say* where focus is while
+    /// the tree's own ring is free to move it. A host that keeps the focused
+    /// control as a fact of its model marks that control `autofocus`; when
+    /// the fact changes the mark moves and the tree follows on the frame that
+    /// carries it — including a frame that builds the marked element for the
+    /// first time. When the tree's ring moves (a Tab), the mark has not, and
+    /// the description catching up a frame later changes nothing.
     pub(crate) fn apply_autofocus(&mut self) {
+        self.forget_dead_marks();
         let alive = self.focus.is_some_and(|f| self.arena.get(f).is_some());
         if alive && self.focus.is_some_and(|f| self.in_active_scope(f)) {
+            self.follow_moved_mark();
             return;
         }
         let modal = self.topmost_modal();
@@ -548,19 +678,15 @@ impl<M: 'static> Ui<M> {
         }
 
         let scope = self.focus_scope();
-        let wanted = scope
-            .nodes
-            .iter()
-            .find(|e| {
-                self.arena
-                    .get(e.id)
-                    .and_then(|x| x.focus)
-                    .and_then(|f| self.focus_tree.get(f))
-                    .is_some_and(|n| n.reg.autofocus)
-            })
-            // A scope with nothing marked still needs somewhere for traversal
-            // to start, or Tab inside a modal would do nothing.
-            .or_else(|| modal.and(scope.nodes.first()));
+        // The scope's mark, on the one rule: its own element when it marks
+        // itself, else the innermost marked registration inside it — skipped
+        // or not, because a mark on a `skip_traversal` element is exactly
+        // "focus rests here, Tab does not stop here". See
+        // [`Self::autofocus_mark`].
+        let mark = self.autofocus_mark();
+        // A scope with nothing marked still needs somewhere for traversal
+        // to start, or Tab inside a modal would do nothing.
+        let wanted = mark.or_else(|| modal.and(scope.nodes.first().map(|e| e.id)));
         // **A scope with nothing focusable in it still has to hold focus.**
         //
         // `skip_traversal` says Tab does not *stop* here; it does not say focus
@@ -577,7 +703,7 @@ impl<M: 'static> Ui<M> {
         // panel's interior is described but nothing in it takes focus, and the
         // symptom was a dialog that would not close: Escape never reached the
         // panel, so its scrim outlived it.
-        let wanted_id = wanted.map(|e| e.id).or_else(|| {
+        let wanted_id = wanted.or_else(|| {
             self.active_scope()
                 .filter(|_| modal.is_some())
                 .and_then(|f| self.focus_tree.get(f))
@@ -599,6 +725,197 @@ impl<M: 'static> Ui<M> {
             }
         }
         self.pending_messages.extend(out);
+        self.record_settled_mark();
+    }
+
+    /// The fourth case of [`Self::apply_autofocus`]: focus is inside the
+    /// active scope, and the scope's mark is not where it was when the scope
+    /// last settled.
+    ///
+    /// **Change-detected against the previous mark, never against focus.**
+    /// A scope the tree has never settled records its mark and moves
+    /// nothing: a mark that was already there when the scope came into view
+    /// is not a decision made since. A mark that moved onto an element lands
+    /// there. A mark that went away rests focus on the scope's own element —
+    /// what an empty scope already does below — so "nothing marked" is a
+    /// state the tree can hold rather than a disagreement it carries.
+    ///
+    /// The scope is the active confinement, or the whole tree when nothing
+    /// confines focus — the root is a scope like any other, and a mark that
+    /// moves between its subtrees is followed the same way. A confinement
+    /// that has *gone* while focus is still inside what it named releases
+    /// that focus to the enclosing scope's mark (see below).
+    fn follow_moved_mark(&mut self) {
+        let scope = self.confinement();
+        // **A layer that stops confining releases what it held.** The scope
+        // that confined focus at the last settle is still an element — a
+        // panel's interior outlives the keyboard layer that named it — and
+        // focus is still inside it, but nothing confines it any more. Focus
+        // was put there by the layer, not by the description that is left,
+        // so it goes to the mark of the scope it is in now; comparing that
+        // scope's mark to what it last settled at would say "unchanged" and
+        // leave the keyboard on a surface that has given it up.
+        let released = self
+            .settled_scope
+            .is_some_and(|p| Some(p) != scope && self.focus.is_some_and(|f| self.is_within(f, p)));
+        self.settled_scope = scope;
+        // Outside every confinement the whole tree is the scope, keyed by
+        // its root: a mark moving from one subtree to another out there —
+        // the keyboard handed from a panel back to the pane behind it — is
+        // as much a decision as one moving inside a dialog.
+        let Some(scope) = scope.or(self.root) else {
+            return;
+        };
+        let mark = self.autofocus_mark();
+        let id = mark.map(|e| self.mark_id(e));
+        let prev = self.settled_marks.insert(scope, id.clone());
+        match prev {
+            Some(p) if p == id && !released => return,
+            Some(_) => {}
+            // A confinement seen for the first time — the panel just took
+            // the keyboard around a focus that was already inside it. Its
+            // mark is where the description says focus is, and that is the
+            // entry landing this scope never got; a confinement that marks
+            // nothing leaves focus where it found it.
+            None if mark.is_none() && !released => return,
+            None => {}
+        }
+        let mut out = Vec::new();
+        match mark {
+            Some(e) => {
+                if self.focus != Some(e) {
+                    self.focus_element(e, SelectionOnFocus::SelectAll, &mut out);
+                }
+            }
+            // The scope's own element, when the scope is a registration that
+            // can hold focus; a bare modal layer cannot, and keeps what it has.
+            None => {
+                let root = self
+                    .active_scope()
+                    .and_then(|f| self.focus_tree.get(f))
+                    .map(|n| n.element);
+                if let Some(r) = root.filter(|r| self.focus != Some(*r)) {
+                    self.focus_element(r, SelectionOnFocus::Preserve, &mut out);
+                }
+            }
+        }
+        self.pending_messages.extend(out);
+    }
+
+    /// Remember what the confinement's mark names right now, so the next
+    /// settle can tell whether it moved.
+    fn record_settled_mark(&mut self) {
+        let scope = self.confinement();
+        self.settled_scope = scope;
+        if let Some(scope) = scope.or(self.root) {
+            let id = self.autofocus_mark().map(|e| self.mark_id(e));
+            self.settled_marks.insert(scope, id);
+        }
+    }
+
+    /// The element focus is confined to right now: the active scope's own
+    /// element when a registration names one, else the topmost
+    /// keyboard-owning layer. `None` when nothing confines it — and then
+    /// there is nothing for a mark to have moved *within*.
+    fn confinement(&self) -> Option<ElementId> {
+        if let Some(f) = self.active_scope() {
+            return self.focus_tree.get(f).map(|n| n.element);
+        }
+        self.topmost_modal()
+    }
+
+    /// Confinements that no longer exist take their recorded marks with them.
+    fn forget_dead_marks(&mut self) {
+        let dead: Vec<ElementId> = self
+            .settled_marks
+            .keys()
+            .filter(|e| self.arena.get(**e).is_none())
+            .copied()
+            .collect();
+        for e in dead {
+            self.settled_marks.remove(&e);
+        }
+    }
+
+    /// The element `autofocus`-marked among what traversal can reach —
+    /// exactly the set `apply_autofocus`'s landing reads.
+    ///
+    /// **The innermost mark wins.** A confinement can hold marks at more than
+    /// one depth — a dialog marks its own fallback, and a dialog it opens
+    /// inside itself marks *its* fallback — and the deeper one is the more
+    /// specific statement: the surface that opened last says where focus is.
+    /// Picking by depth rather than by tree order is what makes "the mark
+    /// moved" a decision rather than an accident of declaration order.
+    fn autofocus_mark(&self) -> Option<ElementId> {
+        // A scope that marks *itself* says "nothing inside is focused, and
+        // that is a resting state": focus sits on the scope, and Tab starts
+        // from outside the ring. Its registration is `skip`, so the scan
+        // below would not see it.
+        if let Some(root) = self.marked_scope_root() {
+            return Some(root);
+        }
+        // Every marked registration the scope holds, `skip_traversal` ones
+        // included: `skip` says Tab does not *stop* on an element, not that
+        // focus may never *rest* there, and a surface that takes the
+        // keyboard without being a Tab stop — a pane behind a panel — marks
+        // itself exactly so focus rests on it.
+        let mut marks = Vec::new();
+        match self.active_scope() {
+            Some(f) => {
+                let kids = self
+                    .focus_tree
+                    .get(f)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default();
+                for c in kids {
+                    self.collect_marks(c, &mut marks);
+                }
+            }
+            None => {
+                for r in self.focus_roots.clone() {
+                    self.collect_marks(r, &mut marks);
+                }
+            }
+        }
+        if let Some(m) = self.topmost_modal() {
+            marks.retain(|e| self.is_within(*e, m));
+        }
+        marks
+            .into_iter()
+            // `max_by_key` keeps the *last* of equal keys, so among marks at
+            // one depth the later in tree order wins — two marks at one
+            // depth is a description saying two things, and either is a
+            // choice.
+            .max_by_key(|id| self.arena.get(*id).map(|e| e.depth).unwrap_or(0))
+    }
+
+    /// The `autofocus`-marked registrations at and below `f`, in tree order.
+    fn collect_marks(&self, f: crate::focus::FocusId, out: &mut Vec<ElementId>) {
+        let Some(n) = self.focus_tree.get(f) else {
+            return;
+        };
+        if n.reg.autofocus {
+            out.push(n.element);
+        }
+        for c in n.children.clone() {
+            self.collect_marks(c, out);
+        }
+    }
+
+    /// The active scope's own element, when its registration carries the
+    /// `autofocus` mark.
+    fn marked_scope_root(&self) -> Option<ElementId> {
+        self.active_scope()
+            .and_then(|f| self.focus_tree.get(f))
+            .filter(|n| n.reg.autofocus)
+            .map(|n| n.element)
+    }
+
+    fn mark_id(&self, e: ElementId) -> MarkId {
+        match self.arena.get(e).and_then(|el| el.key.clone()) {
+            Some(k) => MarkId::Key(k),
+            None => MarkId::Elem(e),
+        }
     }
 
     fn is_within(&self, mut id: ElementId, root: ElementId) -> bool {
@@ -625,8 +942,12 @@ impl<M: 'static> Ui<M> {
             Some(f) => self.path_to(f),
             None => self.root.map(|r| vec![r]).unwrap_or_default(),
         };
-        if self.propagate_key(&chain, k, out) {
-            return true;
+        match self.propagate_key(&chain, k, out) {
+            Flow::Stop => return true,
+            // Observed: the tree resolves nothing more from this key, and it
+            // is the host's to act on. See `Flow::Observe`.
+            Flow::Observe => return false,
+            Flow::Continue => {}
         }
         if let Some(intent) = self.resolve_intent(&chain, k) {
             if self.run_action(&chain, intent, k, out) {
@@ -707,6 +1028,65 @@ impl<M: 'static> Ui<M> {
         self.focus_in_layer(crate::desc::Modality::owns_keyboard)
     }
 
+    /// The layers holding focus: every layer whose subtree contains the
+    /// focused element, and every layer whose named scope (`scope_at`)
+    /// contains it — innermost first, by the depth of the element that holds
+    /// the containment (the layer itself, or its scope's root).
+    ///
+    /// A host that keeps a keyboard vocabulary per surface reads which
+    /// surface has the keyboard off this, instead of ranking its surfaces in
+    /// a table of its own. Empty when nothing is focused, or focus sits
+    /// outside every layer.
+    pub fn layers_holding_focus(&self) -> Vec<ElementId> {
+        let Some(f) = self.focus else {
+            return Vec::new();
+        };
+        let mut held: Vec<(u32, ElementId)> = Vec::new();
+        for n in self.path_to(f) {
+            let Some(r) = self.render_for(n) else {
+                continue;
+            };
+            if self.layer_geom(r).is_none() {
+                continue;
+            }
+            let depth = self.arena.get(n).map_or(0, |e| e.depth);
+            held.push((depth, n));
+        }
+        for (r, _) in &self.pending_layers {
+            let Some(root) = self
+                .layer_geom(*r)
+                .and_then(|g| g.scope)
+                .and_then(|k| self.find_by_key(&k))
+            else {
+                continue;
+            };
+            if !self.is_within(f, root) {
+                continue;
+            }
+            let Some(l) = self.element_of(*r) else {
+                continue;
+            };
+            if held.iter().any(|(_, e)| *e == l) {
+                continue;
+            }
+            let depth = self.arena.get(root).map_or(0, |e| e.depth);
+            held.push((depth, l));
+        }
+        held.sort_by(|a, b| b.0.cmp(&a.0));
+        held.into_iter().map(|(_, e)| e).collect()
+    }
+
+    /// Whether a layer is up that takes a channel away from what is behind
+    /// it — one that swallows keys or blocks the pointer — whatever holds
+    /// focus. The host's "a modal surface covers the content" question: a
+    /// pointer over the content then maps to something the user cannot see.
+    pub fn modal_up(&self) -> bool {
+        self.pending_layers.iter().any(|(l, _)| {
+            self.layer_geom(*l)
+                .is_some_and(|g| g.modality.swallows_keys() || g.modality.blocks_pointer())
+        })
+    }
+
     /// The containment question both halves are asking, with the half as an
     /// argument: is any layer on the focused element's ancestor chain one this
     /// predicate accepts.
@@ -735,9 +1115,11 @@ impl<M: 'static> Ui<M> {
             })
     }
 
-    fn propagate_key(&mut self, chain: &[ElementId], k: KeyPress, out: &mut Vec<M>) -> bool {
+    /// How the key left the chain: claimed (`Stop`), observed, or declined
+    /// by everything on it (`Continue`).
+    fn propagate_key(&mut self, chain: &[ElementId], k: KeyPress, out: &mut Vec<M>) -> Flow {
         let Some(&target) = chain.last() else {
-            return false;
+            return Flow::Continue;
         };
         let ctl = Rc::new(Ctl::default());
         // **Down first, then up** — the same two legs the pointer has had since
@@ -775,18 +1157,19 @@ impl<M: 'static> Ui<M> {
                     if let Some(m) = h(&ev) {
                         out.push(m);
                     }
-                    if ctl.flow.get() == Flow::Stop {
+                    if ctl.flow.get() != Flow::Continue {
                         break;
                     }
                 }
-                if ctl.flow.get() == Flow::Stop {
+                let flow = ctl.flow.get();
+                if flow != Flow::Continue {
                     self.apply_focus_controls(&ctl, out);
-                    return true;
+                    return flow;
                 }
             }
         }
         self.apply_focus_controls(&ctl, out);
-        false
+        Flow::Continue
     }
 
     fn apply_focus_controls(&mut self, ctl: &Ctl, out: &mut Vec<M>) {
