@@ -989,9 +989,8 @@ pub struct Editor {
     // grouped_subtrees moved onto `Window` — each window owns its
     // own buffer-group subtrees (a window with a Live Grep panel
     // open doesn't share the panel state with sibling windows).
-    /// Background process abort handles for cancellation
-    /// Maps process_id to abort handle
-    background_process_handles: HashMap<u64, tokio::task::AbortHandle>,
+    /// Duplex handles for long-running plugin processes.
+    background_process_handles: HashMap<u64, BackgroundProcessHandle>,
 
     /// Cancellation senders for host-side processes spawned via
     /// `spawnHostProcess`. Firing the sender (or dropping it) triggers
@@ -1542,6 +1541,13 @@ pub(crate) struct WidgetTextDrag {
     pub panel: crate::widgets::PanelKey,
     pub widget: String,
     pub anchor_flat: usize,
+}
+
+/// Control plane for a long-running plugin child process.
+struct BackgroundProcessHandle {
+    abort: tokio::task::AbortHandle,
+    stdin: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    callback_id: u64,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the

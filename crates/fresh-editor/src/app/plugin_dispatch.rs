@@ -24,6 +24,125 @@ use crate::view::split::SplitViewState;
 use super::window::Window;
 use super::{Editor, FloatingWidgetState};
 
+/// Forward a child stream without imposing line boundaries.
+///
+/// DAP/LSP-style protocols use `Content-Length` byte framing, so `lines()` is
+/// not a valid transport: it rewrites newlines and withholds partial frames.
+/// Keep incomplete UTF-8 tails between reads to avoid replacing a code point
+/// when the OS splits it across two pipe reads.
+async fn forward_background_stream<R>(
+    mut stream: R,
+    sender: std::sync::mpsc::Sender<AsyncMessage>,
+    process_id: u64,
+    stderr: bool,
+) where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let mut read_buf = [0_u8; 4096];
+    let mut pending = Vec::new();
+    loop {
+        match stream.read(&mut read_buf).await {
+            Ok(0) => break,
+            Ok(n) => pending.extend_from_slice(&read_buf[..n]),
+            Err(error) => {
+                tracing::debug!(process_id, %error, "background process stream read failed");
+                break;
+            }
+        }
+
+        loop {
+            match std::str::from_utf8(&pending) {
+                Ok(text) => {
+                    if !text.is_empty() {
+                        send_background_chunk(&sender, process_id, stderr, text.to_owned());
+                    }
+                    pending.clear();
+                    break;
+                }
+                Err(error) => {
+                    let valid = error.valid_up_to();
+                    if valid > 0 {
+                        let text = String::from_utf8_lossy(&pending[..valid]).into_owned();
+                        send_background_chunk(&sender, process_id, stderr, text);
+                        pending.drain(..valid);
+                    }
+                    if let Some(invalid_len) = error.error_len() {
+                        send_background_chunk(&sender, process_id, stderr, "�".to_string());
+                        pending.drain(..invalid_len);
+                        continue;
+                    }
+                    // A valid code point was split across pipe reads.
+                    break;
+                }
+            }
+        }
+    }
+
+    if !pending.is_empty() {
+        send_background_chunk(
+            &sender,
+            process_id,
+            stderr,
+            String::from_utf8_lossy(&pending).into_owned(),
+        );
+    }
+}
+
+fn send_background_chunk(
+    sender: &std::sync::mpsc::Sender<AsyncMessage>,
+    process_id: u64,
+    stderr: bool,
+    data: String,
+) {
+    let message = if stderr {
+        fresh_core::api::PluginAsyncMessage::ProcessStderr { process_id, data }
+    } else {
+        fresh_core::api::PluginAsyncMessage::ProcessStdout { process_id, data }
+    };
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = sender.send(AsyncMessage::Plugin(message));
+}
+
+#[cfg(test)]
+mod background_stream_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn preserves_partial_frames_and_split_utf8_codepoints() {
+        use tokio::io::AsyncWriteExt;
+
+        // Capacity one forces the reader to observe small chunks, including
+        // splits inside the multi-byte characters below.
+        let (mut writer, reader) = tokio::io::duplex(1);
+        let bridge = crate::services::async_bridge::AsyncBridge::new();
+        let forwarding = tokio::spawn(forward_background_stream(reader, bridge.sender(), 7, false));
+        let bytes = "Content-Length: 8\r\n\r\n\"é🙂\"".as_bytes();
+        for byte in bytes {
+            writer.write_all(&[*byte]).await.unwrap();
+        }
+        writer.shutdown().await.unwrap();
+        forwarding.await.unwrap();
+
+        let joined: String = bridge
+            .try_recv_all()
+            .into_iter()
+            .filter_map(|message| match message {
+                AsyncMessage::Plugin(fresh_core::api::PluginAsyncMessage::ProcessStdout {
+                    process_id,
+                    data,
+                }) => {
+                    assert_eq!(process_id, 7);
+                    Some(data)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(joined, "Content-Length: 8\r\n\r\n\"é🙂\"");
+    }
+}
+
 /// Normalize a session path for the plugin API. Sessions reach `WindowInfo`
 /// from two sources — the canonicalized launch session and `create_window_at`'s
 /// raw `PathBuf` — so any byte-level path field (lex sort, equality, …) in a
@@ -1353,6 +1472,10 @@ impl Editor {
                 callback_id,
             } => {
                 self.handle_spawn_background_process(process_id, command, args, cwd, callback_id);
+            }
+
+            PluginCommand::WriteBackgroundProcess { process_id, data } => {
+                self.handle_write_background_process(process_id, data);
             }
 
             PluginCommand::KillBackgroundProcess { process_id } => {
@@ -3492,7 +3615,6 @@ impl Editor {
     ) {
         // Spawn background process with streaming output via tokio
         if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
-            use tokio::io::{AsyncBufReadExt, BufReader};
             use tokio::process::Command as TokioCommand;
 
             let effective_cwd = cwd.unwrap_or_else(|| {
@@ -3502,9 +3624,8 @@ impl Editor {
             });
 
             let sender = bridge.sender();
-            let sender_stdout = sender.clone();
-            let sender_stderr = sender.clone();
             let callback_id_u64 = callback_id.as_u64();
+            let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
 
             // Receiver may be dropped if editor is shutting down
             #[allow(clippy::let_underscore_must_use)]
@@ -3513,8 +3634,12 @@ impl Editor {
                 let mut child = match TokioCommand::new(&command)
                     .args(&args)
                     .current_dir(&effective_cwd)
+                    .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
+                    // Cancelling the plugin handle must not orphan a debugger,
+                    // watcher, or other long-running child.
+                    .kill_on_drop(true)
                     .hide_window()
                     .spawn()
                 {
@@ -3532,45 +3657,40 @@ impl Editor {
                     }
                 };
 
-                // Stream stdout
+                let stdin = child.stdin.take();
                 let stdout = child.stdout.take();
                 let stderr = child.stderr.take();
-                let pid = process_id;
 
-                // Spawn stdout reader
-                if let Some(stdout) = stdout {
-                    let sender = sender_stdout;
+                // Serialize writes through one task so protocol frames cannot
+                // interleave even when several plugin promises resolve at once.
+                if let Some(mut stdin) = stdin {
                     tokio::spawn(async move {
-                        let reader = BufReader::new(stdout);
-                        let mut lines = reader.lines();
-                        while let Ok(Some(line)) = lines.next_line().await {
-                            let _ =
-                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
-                                    fresh_core::api::PluginAsyncMessage::ProcessStdout {
-                                        process_id: pid,
-                                        data: line + "\n",
-                                    },
-                                ));
+                        use tokio::io::AsyncWriteExt;
+                        while let Some(data) = stdin_rx.recv().await {
+                            if stdin.write_all(&data).await.is_err() || stdin.flush().await.is_err()
+                            {
+                                break;
+                            }
                         }
                     });
                 }
 
-                // Spawn stderr reader
+                if let Some(stdout) = stdout {
+                    tokio::spawn(forward_background_stream(
+                        stdout,
+                        sender.clone(),
+                        process_id,
+                        false,
+                    ));
+                }
+
                 if let Some(stderr) = stderr {
-                    let sender = sender_stderr;
-                    tokio::spawn(async move {
-                        let reader = BufReader::new(stderr);
-                        let mut lines = reader.lines();
-                        while let Ok(Some(line)) = lines.next_line().await {
-                            let _ =
-                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
-                                    fresh_core::api::PluginAsyncMessage::ProcessStderr {
-                                        process_id: pid,
-                                        data: line + "\n",
-                                    },
-                                ));
-                        }
-                    });
+                    tokio::spawn(forward_background_stream(
+                        stderr,
+                        sender.clone(),
+                        process_id,
+                        true,
+                    ));
                 }
 
                 // Wait for process to complete
@@ -3589,14 +3709,30 @@ impl Editor {
             });
 
             // Store abort handle for potential kill
-            self.background_process_handles
-                .insert(process_id, handle.abort_handle());
+            self.background_process_handles.insert(
+                process_id,
+                super::BackgroundProcessHandle {
+                    abort: handle.abort_handle(),
+                    stdin: stdin_tx,
+                    callback_id: callback_id_u64,
+                },
+            );
         } else {
             // No runtime - reject immediately
             self.plugin_manager
                 .read()
                 .unwrap()
                 .reject_callback(callback_id, "Async runtime not available".to_string());
+        }
+    }
+
+    fn handle_write_background_process(&mut self, process_id: u64, data: String) {
+        let Some(handle) = self.background_process_handles.get(&process_id) else {
+            tracing::debug!(process_id, "write ignored for exited background process");
+            return;
+        };
+        if handle.stdin.send(data.into_bytes()).is_err() {
+            tracing::debug!(process_id, "background process stdin is closed");
         }
     }
 
@@ -5188,7 +5324,17 @@ impl Editor {
 
     fn handle_kill_background_process(&mut self, process_id: u64) {
         if let Some(handle) = self.background_process_handles.remove(&process_id) {
-            handle.abort();
+            handle.abort.abort();
+            if let Some(bridge) = &self.async_bridge {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = bridge.sender().send(AsyncMessage::Plugin(
+                    fresh_core::api::PluginAsyncMessage::ProcessExit {
+                        process_id,
+                        callback_id: handle.callback_id,
+                        exit_code: -1,
+                    },
+                ));
+            }
             tracing::debug!("Killed background process {}", process_id);
         }
     }

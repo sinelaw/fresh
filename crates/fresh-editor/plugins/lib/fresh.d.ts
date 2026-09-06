@@ -37,6 +37,10 @@ declare function registerHandler(name: string, fn: Function): void;
 interface ProcessHandle<T> extends PromiseLike<T> {
 	/** Promise that resolves to the result when complete */
 	readonly result: Promise<T>;
+	/** Immediate process id for long-running background processes. */
+	readonly processId?: number;
+	/** Write UTF-8 data to a long-running background process. */
+	write?(data: string): boolean;
 	/** Cancel/kill the operation. Returns true if cancelled, false if already completed */
 	kill(): Promise<boolean>;
 }
@@ -5129,6 +5133,8 @@ interface EditorAPI {
 	* Spawn a background process (async, returns request_id which is also process_id)
 	*/
 	spawnBackgroundProcess(command: string, args: string[], cwd?: string): ProcessHandle<BackgroundProcessResult>;
+	/** Write UTF-8 data to a running background process's stdin. */
+	writeBackgroundProcess(processId: number, data: string): boolean;
 	/**
 	* Kill a background process
 	*/

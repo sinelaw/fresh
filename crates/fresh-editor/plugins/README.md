@@ -12,6 +12,7 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 | `welcome.ts` | Plugin-API demo commands (say hello, insert time) |
 | `manual_help.ts` | Manual page and keyboard shortcuts display |
 | `diagnostics_panel.ts` | LSP diagnostics panel with navigation |
+| `dap.ts` | Debug Adapter Protocol client (launch, breakpoints, stepping) |
 | `lsp_help.ts` | Install instructions when a language server is missing (all languages whose helper only offers install help) |
 | `search_replace.ts` | Search and replace functionality |
 | `path_complete.ts` | Path completion in prompts |
@@ -73,3 +74,31 @@ For plugin development guides, see:
 - **Examples:** [`examples/README.md`](examples/README.md)
 - **Clangd Plugin:** [`clangd_support.md`](clangd_support.md)
 
+## Debug adapters
+
+The `dap.ts` plugin reads VS Code-compatible launch configurations from
+`.vscode/launch.json`. Configure the executable for each adapter type in
+`config.json`; the adapter itself must already be installed:
+
+```json
+{
+  "plugins": {
+    "dap": {
+      "settings": {
+        "adapters": [
+          {
+            "type": "python",
+            "command": "python",
+            "args": ["-m", "debugpy.adapter"]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Use the command palette actions beginning with `Debug:` to start or stop a
+session, toggle breakpoints, continue, pause, and step. Set
+`plugins.dap.settings.configuration` when `launch.json` contains more than one
+configuration; otherwise the first entry is used.

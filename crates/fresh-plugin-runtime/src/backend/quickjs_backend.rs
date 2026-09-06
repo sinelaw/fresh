@@ -8027,6 +8027,16 @@ impl JsEditorApi {
         id
     }
 
+    /// Write UTF-8 data to a running background process's stdin.
+    ///
+    /// Returns false when the command channel is closed. A true return means
+    /// the write was queued; the process may still exit before consuming it.
+    pub fn write_background_process(&self, process_id: u64, data: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::WriteBackgroundProcess { process_id, data })
+            .is_ok()
+    }
+
     /// Kill a background process
     pub fn kill_background_process(&self, process_id: u64) -> bool {
         self.command_sender
@@ -8686,7 +8696,34 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.createVirtualBufferInExistingSplit = _wrapAsync("_createVirtualBufferInExistingSplitStart", "createVirtualBufferInExistingSplit");
                 editor.createBufferGroup = _wrapAsync("_createBufferGroupStart", "createBufferGroup");
                 editor.sendLspRequest = _wrapAsync("_sendLspRequestStart", "sendLspRequest");
-                editor.spawnBackgroundProcess = _wrapAsyncThenable("_spawnBackgroundProcessStart", "spawnBackgroundProcess");
+                // Background processes are duplex protocol transports. Expose
+                // the callback id immediately so callers can route streaming
+                // output and write to stdin before the child exits.
+                editor.spawnBackgroundProcess = function(command, args, cwd) {
+                    if (typeof editor._spawnBackgroundProcessStart !== 'function') {
+                        throw new Error('editor.spawnBackgroundProcess is not implemented (missing _spawnBackgroundProcessStart)');
+                    }
+                    const processId = editor._spawnBackgroundProcessStart(command, args || [], cwd || "");
+                    const resultPromise = new Promise((resolve, reject) => {
+                        globalThis._pendingCallbacks.set(processId, { resolve, reject });
+                    });
+                    return {
+                        processId,
+                        get result() { return resultPromise; },
+                        write(data) {
+                            return editor.writeBackgroundProcess(processId, String(data));
+                        },
+                        kill() {
+                            return Promise.resolve(editor.killBackgroundProcess(processId));
+                        },
+                        then(onFulfilled, onRejected) {
+                            return resultPromise.then(onFulfilled, onRejected);
+                        },
+                        catch(onRejected) {
+                            return resultPromise.catch(onRejected);
+                        }
+                    };
+                };
                 editor.httpFetch = _wrapAsyncThenable("_httpFetchStart", "httpFetch");
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.watchPath = _wrapAsync("_watchPathStart", "watchPath");
@@ -12042,6 +12079,85 @@ mod tests {
     }
 
     // ==================== Buffer Operations Tests ====================
+
+    #[test]
+    fn background_process_handle_is_duplex_and_addressable_immediately() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const process = editor.spawnBackgroundProcess("fake-adapter", ["--stdio"], "/tmp");
+            globalThis._processId = process.processId;
+            globalThis._writeQueued = process.write("Content-Length: 2\r\n\r\n{}");
+            process.kill();
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        let spawn = rx.try_recv().unwrap();
+        let process_id = match spawn {
+            PluginCommand::SpawnBackgroundProcess {
+                process_id,
+                command,
+                args,
+                cwd,
+                ..
+            } => {
+                assert_eq!(command, "fake-adapter");
+                assert_eq!(args, ["--stdio"]);
+                assert_eq!(cwd.as_deref(), Some("/tmp"));
+                process_id
+            }
+            other => panic!("Expected SpawnBackgroundProcess, got {other:?}"),
+        };
+
+        match rx.try_recv().unwrap() {
+            PluginCommand::WriteBackgroundProcess {
+                process_id: written_to,
+                data,
+            } => {
+                assert_eq!(written_to, process_id);
+                assert_eq!(data, "Content-Length: 2\r\n\r\n{}");
+            }
+            other => panic!("Expected WriteBackgroundProcess, got {other:?}"),
+        }
+        match rx.try_recv().unwrap() {
+            PluginCommand::KillBackgroundProcess { process_id: killed } => {
+                assert_eq!(killed, process_id);
+            }
+            other => panic!("Expected KillBackgroundProcess, got {other:?}"),
+        }
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let globals = ctx.globals();
+                assert_eq!(globals.get::<_, u64>("_processId").unwrap(), process_id);
+                assert!(globals.get::<_, bool>("_writeQueued").unwrap());
+            });
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dap_plugin_loads_and_registers_stream_handlers() {
+        let (mut backend, _rx) = create_test_backend();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fresh-editor/plugins/dap.ts");
+
+        backend
+            .load_module_with_source(path.to_str().unwrap(), "")
+            .await
+            .unwrap();
+
+        assert!(backend.has_handlers("onProcessStdout"));
+        assert!(backend.has_handlers("onProcessStderr"));
+        assert!(backend.plugin_contexts.borrow().contains_key("dap"));
+    }
 
     #[test]
     fn test_api_close_buffer() {

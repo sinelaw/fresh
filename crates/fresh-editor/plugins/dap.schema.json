@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Debug Adapter Protocol",
+  "type": "object",
+  "properties": {
+    "launchJson": {
+      "type": "string",
+      "default": ".vscode/launch.json",
+      "description": "Workspace-relative path to a VS Code-compatible launch.json file."
+    },
+    "configuration": {
+      "type": "string",
+      "description": "Name of the launch configuration to use. The first configuration is used when omitted."
+    },
+    "adapters": {
+      "type": "array",
+      "description": "Commands used to start debug adapters, keyed by the launch configuration's type.",
+      "items": {
+        "type": "object",
+        "required": ["type", "command"],
+        "properties": {
+          "type": { "type": "string", "description": "launch.json type, for example python or lldb." },
+          "command": { "type": "string", "description": "Debug adapter executable." },
+          "args": { "type": "array", "items": { "type": "string" }, "default": [] },
+          "cwd": { "type": "string", "description": "Adapter working directory. Supports ${workspaceFolder} and ${file}." }
+        }
+      },
+      "default": []
+    }
+  }
+}

@@ -365,6 +365,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 > If a new mouse behavior gets in your way, disable it in the **Settings UI** (`Ctrl+P` → **Open Settings**) - see Terminal > "Mouse Drag Selects" and Terminal > "Mouse Forwarding".
 
+* **Debug Adapter Protocol (DAP)** - launch VS Code-compatible debug configurations, toggle persistent breakpoints, and continue, pause, or step from command-palette actions; stopped sessions navigate to and mark the active stack frame (#988, by @asukaminato0721).
 * **Indent rainbow** - color indentation guides by indent level via Editor > "Rainbow Indentation" and a six-color `indent_rainbow_1`-`indent_rainbow_6` theme palette; also fixes a literal `{level}` placeholder leaking into translated locale strings (#2632, requested by @akarinotomoshibi, by @asukaminato0721).
 * **Virtual space** - the cursor can move past a line's end, like Visual Studio or Vim's `virtualedit`. Enable with Editor > "Virtual Space" (`on` or `block`), toggle per buffer via **Toggle Virtual Space (Current Buffer)**.
 * **Theme text attributes** - syntax colors can now carry `bold`/`italic`/`underlined`/`dim`/`reversed` modifiers (#2638, by @asukaminato0721).

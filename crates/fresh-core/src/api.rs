@@ -3620,6 +3620,13 @@ pub enum PluginCommand {
         callback_id: JsCallbackId,
     },
 
+    /// Write data to a long-running background process's standard input.
+    ///
+    /// This is intentionally separate from `SpawnBackgroundProcess`: protocols
+    /// such as DAP keep a child alive and exchange multiple framed messages
+    /// over its stdin/stdout pair.
+    WriteBackgroundProcess { process_id: u64, data: String },
+
     /// Kill a background process by ID
     KillBackgroundProcess { process_id: u64 },
 
