@@ -11,7 +11,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 
 /// Whether a character is a space-like separator (regular space or NBSP).
-fn is_space(ch: char) -> bool {
+pub fn is_space(ch: char) -> bool {
     ch == ' ' || ch == '\u{00A0}'
 }
 

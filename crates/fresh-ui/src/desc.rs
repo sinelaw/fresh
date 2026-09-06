@@ -281,6 +281,19 @@ pub struct TextProps {
     /// inverse is what a press on the run reports as
     /// [`Event::text_byte`](crate::event::Event::text_byte).
     pub cursor: Option<usize>,
+    /// A selected range of the run's own logical string, and the theme its
+    /// ground is washed in — painted across every row the wrap put those bytes
+    /// on.
+    ///
+    /// **Bytes for the same reason the caret is bytes**, and rows for the same
+    /// reason: a selection is a fact about the string, and which cells of which
+    /// rows it covers is the wrap's answer, changing with the width. A caller
+    /// stating cells would have to shape the text to know them.
+    ///
+    /// The ground is a [`Draw::Wash`](crate::render::spec::Draw::Wash) — the
+    /// text stays and takes the theme's background — so a styled run keeps its
+    /// colours under a selection instead of being repainted in one.
+    pub selection: Option<(std::ops::Range<usize>, crate::render::spec::ThemeKey)>,
 }
 
 /// One piece of a text run, and the theme it paints in.
@@ -1120,6 +1133,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
         wrap: Wrap::None,
         elide: Elide::None,
         cursor: None,
+        selection: None,
     }))
 }
 
@@ -1140,6 +1154,7 @@ pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
         wrap: Wrap::None,
         elide: Elide::None,
         cursor: None,
+        selection: None,
     }))
 }
 
@@ -1587,6 +1602,33 @@ impl<M> Node<M> {
         match &mut self.desc {
             Desc::TextRun(p) => p.cursor = Some(byte),
             _ => panic!("cursor_byte() applies to TextRun nodes only"),
+        }
+        self
+    }
+
+    /// Select this byte range of the run's logical string, washing its ground
+    /// in `theme` across every row the wrap put those bytes on.
+    ///
+    /// The companion of [`cursor_byte`](Node::cursor_byte), and stated the same
+    /// way for the same reason: see [`TextProps::selection`]. An empty or
+    /// reversed range selects nothing.
+    ///
+    /// The theme is named here rather than inherited because a wash in the
+    /// run's own theme is a wash in the ground already under it, which is no
+    /// selection at all.
+    pub fn selection_bytes(
+        mut self,
+        bytes: std::ops::Range<usize>,
+        theme: impl AsRef<str>,
+    ) -> Self {
+        match &mut self.desc {
+            Desc::TextRun(p) => {
+                p.selection = Some((
+                    bytes,
+                    crate::render::spec::ThemeKey(Some(Rc::from(theme.as_ref()))),
+                ))
+            }
+            _ => panic!("selection_bytes() applies to TextRun nodes only"),
         }
         self
     }

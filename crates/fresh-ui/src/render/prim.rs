@@ -431,6 +431,43 @@ pub fn cell_of(rows: &[Row], whole: &str, byte: usize) -> (usize, u16) {
     (i, col.min(u16::MAX as usize) as u16)
 }
 
+/// The cells each row shows of the byte range `bytes`: `(row, columns)`.
+///
+/// Built from the same [`Row::src`] [`cell_of`] reads, so a selection and the
+/// caret that walks out of it cannot disagree about where the wrap put a byte.
+/// A row the range covers none of, or covers only bytes the wrap *dropped* —
+/// the whitespace a break ate — contributes nothing, which is why this yields
+/// spans rather than one rectangle per row.
+///
+/// An empty or reversed range selects nothing.
+pub(crate) fn selected_spans(
+    rows: &[Row],
+    whole: &str,
+    bytes: std::ops::Range<usize>,
+) -> Vec<(usize, std::ops::Range<u16>)> {
+    use unicode_width::UnicodeWidthStr;
+    let mut out = Vec::new();
+    if bytes.start >= bytes.end {
+        return out;
+    }
+    for (i, row) in rows.iter().enumerate() {
+        let lo = bytes.start.clamp(row.src.start, row.src.end);
+        let hi = bytes.end.clamp(row.src.start, row.src.end);
+        if lo >= hi {
+            continue;
+        }
+        let col = |at: usize| -> u16 {
+            (row.indent + UnicodeWidthStr::width(&whole[row.src.start..at])).min(u16::MAX as usize)
+                as u16
+        };
+        let (a, b) = (col(lo), col(hi));
+        if a < b {
+            out.push((i, a..b));
+        }
+    }
+    out
+}
+
 /// Which byte of the logical string the cell at `(row, col)` addresses.
 ///
 /// The inverse of [`cell_of`]. `None` when there is no such row.
@@ -1059,6 +1096,33 @@ impl TextRender {
 
     /// Whether [`Self::shaped`] is the unwrapped shaping of the pieces held
     /// now.
+    /// Which row of the shaping holds `byte` of the run's logical string.
+    ///
+    /// The reveal's half of [`cell_of`]: a caret is stated in bytes, and only
+    /// the shaping knows what row the wrap put one on. Reads the rows paint
+    /// draws, so a reveal and the caret it is chasing cannot disagree.
+    /// The rows this run was last shaped into, and the string they index.
+    ///
+    /// **The wrap's answer, at the width layout settled on** — which is the
+    /// point of reading it here rather than wrapping the text a second time.
+    /// A caller that re-wraps is guessing at that width (`§6.6`), and a caller
+    /// that reconstructs the string from its own runs indexes something the
+    /// ranges were never measured against; both are why [`Shaping::whole`] is
+    /// kept rather than recomputed.
+    ///
+    /// What it is *for* is the question neither a byte caret nor a byte press
+    /// answers: **"which byte is one rendered row below this one"**, asked from
+    /// a key handler that has no width and no tree. With the rows in hand it is
+    /// [`cell_of`] then [`byte_of`], the same two directions everything else
+    /// here reads.
+    pub fn shaped_rows(&self) -> (&str, &[Row]) {
+        (&self.shaped.whole, &self.shaped.rows)
+    }
+
+    pub(crate) fn row_of_byte(&self, byte: usize) -> usize {
+        cell_of(&self.shaped.rows, &self.shaped.whole, byte).0
+    }
+
     fn shaped_unwrapped_from_props(&self) -> bool {
         match &self.shaped_from {
             Some(from) => Rc::ptr_eq(from, &self.props.runs) || **from == *self.props.runs,
@@ -1196,6 +1260,21 @@ impl RenderObject for TextRender {
                     }
                     x += w as i32;
                 }
+            }
+        }
+        // A selection is a range of the run's own string, and these are the
+        // cells the wrap put those bytes on. Pushed after the text so the wash
+        // lies over it: the glyphs stay and take the selection's ground, which
+        // is what keeps a styled run's colours under a selection.
+        if let Some((bytes, theme)) = &self.props.selection {
+            for (row, span) in selected_spans(&shaping.rows, &shaping.whole, bytes.clone()) {
+                let rect = Rect::new(
+                    g.rect.x + span.start as i32,
+                    g.rect.y + row as i32,
+                    span.end - span.start,
+                    1,
+                );
+                out.push_themed(Draw::Wash, rect, g.clip, theme.clone());
             }
         }
         // The caret is a byte of the run's own string, and this is where the
@@ -1846,6 +1925,7 @@ mod measure_tests {
             wrap,
             elide: Elide::None,
             cursor: None,
+            selection: None,
         }
     }
 
@@ -1903,6 +1983,7 @@ mod measure_tests {
             wrap: Wrap::None,
             elide: Elide::None,
             cursor: None,
+            selection: None,
         });
         assert_eq!(t.layout(loose(), &mut Leaf), Size::new(7, 1));
         assert!(t
@@ -1950,6 +2031,7 @@ mod measure_tests {
             wrap: Wrap::Word,
             elide: Elide::None,
             cursor: None,
+            selection: None,
         });
         let narrow = Constraints {
             min_w: 0,

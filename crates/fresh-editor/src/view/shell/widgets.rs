@@ -2068,15 +2068,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         //    how render-time knowledge reaches it. `text_byte` answers at
         //    press time and `cursor_byte` at paint time; neither answers
         //    "which byte is one rendered row below this one" from a key
-        //    handler. Closing this needs a third thing — the row mapping
-        //    reachable as state, at a width the *layout* settled, not the
-        //    `width` this function is handed (which §6.6 is separately
-        //    retiring).
+        //    handler. `Ui::text_rows` is now that third thing — the rows
+        //    layout shaped, at the width *it* settled, not the `width` this
+        //    function is handed (which §6.6 is separately retiring) — so what
+        //    is left here is publishing them into the `WidgetPanelState` the
+        //    key path reads and deleting the shadow wrap, which is editor-side
+        //    work rather than a missing library piece.
         //
         // 3. **This text is deliberately not text `fresh-ui` may wrap.**
         //    `parse_markdown` preserves leading whitespace as NBSP so the
         //    markdown parser does not read an indented line as a code block
-        //    (`view/markdown.rs`, "Preserve leading whitespace (as NBSP)"),
+        //    (`fresh-editor-core/src/markdown.rs`, "Preserve leading
+        //    whitespace (as NBSP)"),
         //    and `wrap_styled_lines` then treats NBSP as space-like for both
         //    breaking and the hanging indent. `fresh-ui`'s wrap breaks on
         //    `' '` only — correctly, since NBSP exists to *prevent* a break —

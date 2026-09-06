@@ -734,6 +734,25 @@ impl<M: 'static> Ui<M> {
         Some((top, child.data.rect.h as i32))
     }
 
+    /// Which row of the keyed descendant's wrapped text holds `byte`.
+    ///
+    /// `None` when the key names nothing under this element, or names
+    /// something that is not a text run — the same "then nothing moves" a
+    /// `keyed_band` miss produces.
+    fn byte_row(&mut self, vp_el: ElementId, key: &crate::key::Key, byte: usize) -> Option<usize> {
+        let el = self.keyed_descendant(vp_el, key)?;
+        let r = self.render_for(el)?;
+        // The object is taken out to be asked and put straight back: a render
+        // object is owned by its node, and `layout` takes it the same way.
+        let mut obj = self.render.get_mut(r)?.obj.take()?;
+        let row = obj
+            .as_any_mut()
+            .downcast_ref::<crate::render::prim::TextRender>()
+            .map(|t| t.row_of_byte(byte));
+        self.render.get_mut(r).expect("live render node").obj = Some(obj);
+        row
+    }
+
     /// Returns whether anything moved.
     fn apply_anchors(&mut self) -> bool {
         use crate::behavior::anchor::Command;
@@ -819,6 +838,27 @@ impl<M: 'static> Ui<M> {
                             continue;
                         };
                         let want = top + (at as i32).min(h.saturating_sub(1).max(0));
+                        let y = if want < scroll.y {
+                            want
+                        } else if want >= scroll.y + rows {
+                            want - rows + 1
+                        } else {
+                            scroll.y
+                        };
+                        Point::new(scroll.x, y)
+                    }
+                    // A byte of a keyed wrapped run, whose row only the
+                    // shaping knows (L5). The band gives where the run starts
+                    // in content space; the run gives how far into itself the
+                    // byte fell, and the two add.
+                    Command::RevealByte(k, byte) => {
+                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at) else {
+                            continue;
+                        };
+                        let Some(row) = self.byte_row(id, &k, byte) else {
+                            continue;
+                        };
+                        let want = top + (row as i32).min(h.saturating_sub(1).max(0));
                         let y = if want < scroll.y {
                             want
                         } else if want >= scroll.y + rows {
