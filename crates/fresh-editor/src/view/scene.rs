@@ -1117,9 +1117,9 @@ impl Editor {
 // consuming the display list the TUI already folds, the way it consumes the
 // status bar, the settings dialog and the file browser.
 //
-// **The web's plugin panels do not render at all until that lands.** Every
-// other surface is unaffected — this deletes one region of the scene, not the
-// bridge.
+// That landed: the panel subtrees below are what the web draws from now.
+// Every other surface was unaffected throughout — this deleted one region of
+// the scene, not the bridge.
 
 // ─────────────────────────── the tree: plugin panels as the display list ───────────────────────────
 //
@@ -1133,13 +1133,16 @@ impl Editor {
 // over the tree like a terminal click; a text press reaches the field through
 // `text_byte` like any other. See `docs/internal/retained-mode-ui.md` §3.9.
 //
-// What is shipped is the panel subtrees only — the dock column, the floating
-// panel's frame, and each sidebar section a plugin mounted — plus every layer
-// those subtrees raised (a dropdown's pop-over, a modal's scrim), found by
-// element ancestry rather than by key range, because a layer paints in the
-// display list's tail and not inside its parent's range. The rest of the
-// chrome the web still draws natively from its own region views; they retire
-// onto this projection surface by surface.
+// What is shipped is the panel subtrees only — the dock, the floating panel's
+// frame, and each sidebar section a plugin mounted — plus every layer those
+// subtrees raised (a dropdown's pop-over, a modal's scrim), found by element
+// ancestry rather than by key range, because a layer paints in the display
+// list's tail and not inside its parent's range. A subtree is the whole of
+// what stands there, not the keyed element alone: the dock's wall is the
+// column's sibling, so the column by itself is a dock with no right edge and
+// no grip to drag (`items_from_parent`, below). The rest of the chrome the web
+// still draws natively from its own region views; they retire onto this
+// projection surface by surface.
 
 /// One of the panel subtrees the web draws from the display list.
 #[derive(Debug, Clone, Serialize)]
@@ -1308,14 +1311,20 @@ impl Editor {
         };
         let mut surfaces = Vec::new();
         let mut roots = Vec::new();
-        // `whole_layer`: the surface's rectangle is the keyed element's, but
-        // the items belong to the layer *around* it — a floating panel's
-        // scrim is the layer's own item, and the layer is the frame's parent.
+        // `items_from_parent`: the surface's rectangle is the keyed element's,
+        // but the items to collect are its *parent's* — the keyed element is
+        // one child of what actually stands there. Two surfaces need it, for
+        // the same reason. A floating panel's scrim is its layer's own item,
+        // and the layer is the panel's parent. And `dock::dock` stacks the
+        // column with `grip_strip`, which draws the divider in the column's
+        // last cell — so rooting the dock at `dock_column` shipped the web a
+        // dock with no wall down its edge and nothing to say the edge drags,
+        // while the terminal drew both.
         let mut push = |kind: &'static str,
                         key: fresh_ui::Key,
                         anchored: bool,
                         section: Option<usize>,
-                        whole_layer: bool| {
+                        items_from_parent: bool| {
             if let Some(el) = ui.find_by_key(&key) {
                 let r = ui.rect_of(el);
                 if r.w > 0 && r.h > 0 {
@@ -1328,7 +1337,7 @@ impl Editor {
                         anchored,
                         section,
                     });
-                    let root = match whole_layer {
+                    let root = match items_from_parent {
                         true => ui.parent(el).unwrap_or(el),
                         false => el,
                     };
@@ -1342,7 +1351,7 @@ impl Editor {
                 crate::view::shell::dock::column_key(),
                 false,
                 None,
-                false,
+                true,
             );
         }
         if let Some(f) = self.floating_widget_panel.as_ref() {

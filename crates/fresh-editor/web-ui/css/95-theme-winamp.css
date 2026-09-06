@@ -82,7 +82,7 @@
     repeating-linear-gradient(135deg,rgba(255,255,255,.016) 0 2px,transparent 2px 5px),
     linear-gradient(180deg,#1a1512,#0b0a09) #0b0a09}
   /* Same clip as COSMOS: the menubar row spans the whole grid, so the strip
-     behind the floating dock is carved out (--clip-left = dock width). */
+     the dock covers is carved out (--clip-left = dock width). */
   body.theme-winamp:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
 
   /* ==================== CODE STUDIO — the player window ================== */

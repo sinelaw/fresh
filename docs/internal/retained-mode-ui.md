@@ -1465,7 +1465,7 @@ document is checked with `--all-features`, because the web is a second
 caller.
 
 *Landed, for the plugin panels.* `Editor::tree_view` (`view/scene.rs`)
-ships `regions.tree`: the surfaces (dock column, floating layer, plugin
+ships `regions.tree`: the surfaces (dock, floating layer, plugin
 sidebar sections) and every display-list item those subtrees and their
 layers produced, with the fold's resolved colours; `web-ui/js/72-tree.js`
 folds them into DOM at their cell rectangles, and input needs nothing of its
@@ -1475,6 +1475,30 @@ its hit routing are deleted, the suite's dock sections read the tree, and
 the suite runs to its end again. Still native: the menu bar, status bar,
 explorer, popups, palette, settings and the modals — each retires onto this
 projection when its chrome crosses (§3.4, §3.6).
+
+Four things a second backend has to say for itself, each found by opening the
+dock in a browser and each a general fact rather than a dock fix; all four are
+asserted in the suite's dock section. **The surface is the subtree, not the
+keyed element**: the dock's wall is `grip_strip`, a sibling of `dock_column`
+under `dock::dock`, so rooting the surface at the column shipped a dock with
+no right edge and nothing to say the edge drags (`items_from_parent`). **The
+ground is the backend's**: the terminal clears the frame to the theme's
+background and folds over it, so a cell no item paints is that ground — the
+web has no such clear, and every cell the panel left blank showed the page
+through until each surface painted its own. **The grid's text is the grid's**:
+a `Draw::Lines` run is pinned to `--mono-family` at the measured size with the
+cell tracking, like `svg.cells` — left to inherit the page it followed a web
+theme's proportional chrome font and shrank out of the cells it was laid out
+in. **A vertical box-drawing glyph is a rule, not a glyph** (`VRULE`,
+`20-cells.js`): a wall folded a row at a time is dashed if the font's own
+glyph is.
+
+The same cell rectangles are why the Cosmos shell no longer starts its bezel
+to the right of the dock: a card the frontend could inset inside its cell rect
+was the old renderer's freedom, and a bezel rail claiming the dock's last
+columns is now simply painted over. The device wraps the whole grid
+(`layoutShell`), and the dock is a column inside it, as it is in the
+terminal.
 
 ### 3.10 Performance
 

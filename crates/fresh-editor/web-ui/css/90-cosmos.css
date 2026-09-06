@@ -4,13 +4,18 @@
      later files deliberately override earlier ones.) */
   /* ======================================================================
      COSMOS shell (target mock, 2026-07). The UI floats over an abstract
-     wallpaper: the orchestrator dock becomes a detached frosted-glass
-     sidebar on the left, and everything else sits inside a skeuomorphic
-     "COSMOS-991" hardware bezel — machined rim, corner screws, status
-     LEDs, silkscreened BUILD / DEPLOY chrome. Pure decoration: #device is
-     pointer-transparent and positioned by layoutShell(); the dock keeps
-     its cell rect (only its visual card is inset within it); every other
-     region is untouched. Desktop only — body.mobile switches it all off.
+     wallpaper inside a skeuomorphic "COSMOS-991" hardware bezel — machined
+     rim, corner screws, status LEDs, silkscreened BUILD / DEPLOY chrome.
+     Pure decoration: #device is pointer-transparent and positioned by
+     layoutShell() around the WHOLE grid; every region is untouched.
+     Desktop only — body.mobile switches it all off.
+
+     The mock's detached frosted-glass sidebar is gone with the renderer that
+     could draw it: the orchestrator dock is the display list's now, painted
+     at the cells the tree laid it out at (72-tree.js), so the frontend can
+     no longer inset a card inside its cell rect — and a bezel rail sharing
+     those pixels was simply painted over. The dock is a column of the grid,
+     inside the screen, like the terminal's.
      ====================================================================== */
 
   /* ---- wallpaper: vivid flowing colour fields over deep blue. The device
@@ -24,10 +29,11 @@
     radial-gradient(60rem 45rem at -8% 22%, rgba(64,140,230,.55), transparent 60%),
     radial-gradient(55rem 40rem at 55% 122%, rgba(255,130,90,.40), transparent 60%),
     linear-gradient(135deg,#12233f 0%,#1a2d4e 45%,#0c1930 100%) #0f1c33}
-  /* The pipeline's menubar row spans the FULL grid width (in the TUI the dock
-     paints over its left half); with the dock card inset, that leftover strip
-     would show in the sidebar↔device gap — clip it to the screen. layoutShell
-     keeps --clip-left at the dock's pixel width (0 when no dock). */
+  /* The pipeline's menubar row spans the FULL grid width and the dock paints
+     over its left half — in the TUI with cells, here with the opaque ground on
+     the dock's surface. The clip keeps that strip from showing through while
+     the dock slides in or out (the chrome FLIPs, the dock's items do not).
+     layoutShell keeps --clip-left at the dock's pixel width (0 when no dock). */
   body.theme-cosmos:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
 
   /* ---- the device ---- */
@@ -180,17 +186,18 @@
   /* ---- COSMOS shell motion. The editor's cell-level animations are forced
      off by the bridge (config.editor.animations = false); the frontend owns
      motion instead: a quick fade/pop for the palette + a uniform full-window
-     scrim, and the dock / file explorer slide in from the left while the
-     bezel (CSS-transitioned, repositioned by layoutShell) is pushed aside.
-     Exits animate a positioned clone (.fx-clone) since the region rebuild
-     removes the real node synchronously. ---- */
+     scrim, and the file explorer slides in from the left while every region
+     the new layout displaced FLIPs into place (30-render.js). Exits animate a
+     positioned clone (.fx-clone) since the region rebuild removes the real
+     node synchronously. The dock has no entrance or exit of its own: its
+     items are siblings of its surface marker on the display-list layer, so
+     the marker is a ground with nothing on it to animate. ---- */
   body:not(.mobile) .modal-scrim{position:fixed;inset:0}
   body:not(.mobile) #device{transition:left .28s cubic-bezier(.2,.8,.25,1),
     width .28s cubic-bezier(.2,.8,.25,1),top .28s cubic-bezier(.2,.8,.25,1),
     height .28s cubic-bezier(.2,.8,.25,1)}
   @keyframes fxFade{from{opacity:0}}
   @keyframes fxPop{from{opacity:0;transform:translate(-50%,-50%) scale(.96)}}
-  @keyframes fxSlideL{from{transform:translateX(calc(-100% - 80px))}}
   /* Masked slide for the file explorer: clip-path is applied in element
      space (before the transform moves it), so keeping inset-left == -offset
      at every progress point pins the visible edge to the element's ORIGINAL
@@ -204,10 +211,9 @@
   @keyframes fxOutWipe{from{transform:none;clip-path:inset(0 0 0 0)}
     to{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}}
   @keyframes fxOutFade{to{opacity:0}}
-  @keyframes fxOutL{to{transform:translateX(calc(-100% - 80px));opacity:.4}}
-  /* One shared duration + curve for every layout-motion piece (dock slide,
-     explorer wipe, bezel transition, content FLIP slides): mixed timings let
-     the bezel's rail cross the dock mid-flight. */
+  /* One shared duration + curve for every layout-motion piece (explorer wipe,
+     bezel transition, content FLIP slides): mixed timings let the pieces cross
+     each other mid-flight. */
   .modal-scrim.fx-in{animation:fxFade .14s ease-out}
   /* Palette: slide + fade. The centered card's keyframes must restate the
      base translate(-50%,-50%) centering or the animation would strip it. */
@@ -218,7 +224,6 @@
   .palette.fx-in{animation:fxPalInSheet .18s cubic-bezier(.2,.8,.25,1)}
   .palette.centered.fx-in{animation:fxPalIn .18s cubic-bezier(.2,.8,.25,1)}
   .fx-clone.fx-out-pal{animation:fxPalOut .16s ease-in forwards}
-  .widget-surface.w-dock.fx-in{animation:fxSlideL .28s cubic-bezier(.2,.8,.25,1)}
   .fileexplorer.fx-in{animation:fxSlideWipe .28s cubic-bezier(.2,.8,.25,1)}
   /* Quick fade cut on workspace switch: a screen-toned veil fading out. */
   @keyframes fxCutFade{from{opacity:.55}to{opacity:0}}
@@ -226,7 +231,6 @@
     border-radius:8px;animation:fxCutFade .16s ease-out forwards}
   .fx-clone{position:fixed;margin:0;pointer-events:none;z-index:99}
   .fx-clone.fx-out{animation:fxOutFade .1s ease-in forwards}
-  .fx-clone.fx-out-left{animation:fxOutL .28s cubic-bezier(.2,.8,.25,1) forwards}
   .fx-clone.fx-out-wipe{animation:fxOutWipe .28s cubic-bezier(.2,.8,.25,1) forwards}
   @media (prefers-reduced-motion:reduce){
     .fx-in,.fx-clone{animation:none!important}

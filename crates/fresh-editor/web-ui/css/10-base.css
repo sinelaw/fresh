@@ -39,12 +39,10 @@
        target design. applyTheme() re-derives it from the live theme bg. */
     --shell:color-mix(in srgb, var(--bg) 55%, #060b13);
     /* COSMOS shell geometry (desktop only; read back by JS as SHELL.*):
-       wallpaper margin around everything, the device bezel's bar/rail
-       thicknesses, and the gap between the floating dock card and the
-       device's left rail. resize()/layoutShell() derive the grid and the
-       bezel position from these, so this block is the single source. */
-    --shell-pad:44px;--bezel-top:48px;--bezel-bot:58px;--bezel-side:34px;
-    --dock-gap:28px}
+       the wallpaper margin around everything and the device bezel's bar/rail
+       thicknesses. resize()/layoutShell() derive the grid and the bezel
+       position from these, so this block is the single source. */
+    --shell-pad:44px;--bezel-top:48px;--bezel-bot:58px;--bezel-side:34px}
   /* Theme-derived design tokens: elevated surfaces and soft hairlines mixed from
      the live --bg/--fg, so chrome reads as depth on ANY theme instead of piping
      the terminal palette's hard borders (e.g. high-contrast's cyan) into the UI.
