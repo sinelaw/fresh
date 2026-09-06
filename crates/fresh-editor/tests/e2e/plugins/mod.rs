@@ -6,7 +6,6 @@ pub mod agent_dev_loop;
 pub mod asm_lsp_config;
 pub mod audit_mode;
 pub mod authority_snapshot;
-pub mod buffer_group_panel_geometry;
 pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
 pub mod config_changed_adoption;

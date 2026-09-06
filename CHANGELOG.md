@@ -50,7 +50,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **A conceal spanning a line break no longer crashes the editor** (#3139).
 * **A new file/folder name with slashes now creates its missing parent directories** (#2640, requested by @akarinotomoshibi).
 * **Review Diff's files sidebar scrolls properly** on large reviews (#3063).
-* **Review Diff's files sidebar shows whole filenames** when it opens, instead of eliding them to a few characters until the panel divider was dragged. A panel that opens hidden was never told the width it was given, so every plugin-drawn panel laid its rows out to a guess.
+* **Review Diff's files sidebar shows whole filenames** when it opens, instead of eliding them to a few characters until the panel divider was dragged. The geometry a pane is born with was never reported to plugins, and for a side panel that is the only announcement there is — so every plugin-drawn panel laid its rows out to a guess.
 * **Clicking a file in Review Diff's sidebar moves the sidebar's highlight to it**, not only the diff. A click on a tree row recorded the selection in a shape the tree ignored, so the highlight stayed put unless a repaint happened to follow — which is why side-by-side looked right and the unified stream did not.
 * **Search & Replace accepts a terminal paste**, a match row now windows onto the match instead of truncating it, and keybindings accept X11 keysym names like `asterisk` (#3154; #1128, reported by @michelpado; #1960, reported by @mandolyte; #1580).
 * **A daemon now speaks the locale configured in `config.json`** instead of falling back to the environment (#3149, reported by @kirinriki7777-sys).

@@ -1023,6 +1023,15 @@ impl Editor {
         // When the lock is busy the `previous_viewports` update below is
         // skipped too, so the same change is re-detected next frame rather
         // than being silently swallowed.
+        // **`previous_viewports` holds the panes that were on screen**, not
+        // every view state: a hidden buffer-group panel keeps its leaf and
+        // its `SplitViewState`, so snapshotting it too meant a panel shown
+        // again matched its own stale entry and reported nothing.
+        let on_screen: std::collections::HashSet<crate::model::event::LeafId> = self
+            .window_panes()
+            .into_iter()
+            .map(|(leaf, _)| leaf)
+            .collect();
         let mut viewport_hooks_deferred = false;
         let viewport_plugins_active = match self.plugin_manager.try_read() {
             Ok(pm) => pm.is_active(),
@@ -1039,22 +1048,19 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
             {
+                if !on_screen.contains(split_id) {
+                    continue;
+                }
                 let current = (
                     view_state.viewport.top_byte(),
                     view_state.viewport.width,
                     view_state.viewport.height,
                 );
-                // Compare against previous frame's state. A split seen for
-                // the first time reports too: its birth geometry is a change
-                // from "no geometry at all", and it is the only chance a
-                // plugin gets to hear it. Skipping it (the old behaviour)
-                // swallowed exactly the frame a panel appears on — a buffer
-                // group's side panel is laid out for the first time when it
-                // is *shown*, and after that its size never changes on its
-                // own, so a plugin that lays its own rows out to the panel
-                // width was left guessing until the user happened to drag
-                // the divider. The review diff's FILES sidebar elided every
-                // filename to a guessed width for exactly that reason.
+                // Arriving on screen is itself the change. Skipping it (the
+                // old behaviour) left a pane that then never resizes — a
+                // buffer group's side panel — with no announcement at all,
+                // so a plugin laying its own rows out to the panel width had
+                // only a guess to go on.
                 let (changed, previous) =
                     match self.active_window().previous_viewports.get(split_id) {
                         Some(previous) => (*previous != current, Some(*previous)),
@@ -1169,6 +1175,7 @@ impl Editor {
             .expect("active window must have a populated split layout");
         let snapshot: Vec<(LeafId, (usize, u16, u16))> = __vp_vs_map
             .iter()
+            .filter(|(split_id, _)| on_screen.contains(split_id))
             .map(|(split_id, view_state)| {
                 (
                     *split_id,

@@ -2993,19 +2993,12 @@ fn test_review_diff_numbers_rows_past_an_empty_context_line() {
 /// The FILES sidebar lays its rows out to the width the host gave the
 /// panel, not to a guess.
 ///
-/// The panel is laid out for the first time on the frame it is *shown*,
-/// and the host used to skip `viewport_changed` for a split it had not
-/// seen before — so the plugin never heard the panel's real width and went
-/// on eliding rows to a ratio of whatever viewport it had recorded (which
-/// is `getViewport()`'s: the *focused* split, and so a few dozen columns
-/// when the review was opened from a sidebar). Nothing corrected it until
-/// the user dragged the divider, which finally produced a width change the
-/// host would report.
-///
-/// A narrow terminal makes the difference plain, because the guess has a
-/// 12-column floor: rows built to 12 columns in a 10-column panel are
-/// clipped by the host, taking the `…` that says the name is cut and the
-/// status letter that says the file is modified with them.
+/// The panel's geometry was never reported — a pane arriving on screen was
+/// not treated as a change — so the plugin elided rows to a ratio of
+/// whatever viewport it had recorded, and nothing corrected it until a
+/// divider drag. A narrow terminal makes the difference visible: the guess
+/// has a 12-column floor, and rows built to 12 columns in a 10-column
+/// panel are clipped, `…` and status letter included.
 #[test]
 fn test_files_panel_rows_fit_a_narrow_panel() {
     init_tracing_from_env();
@@ -3022,9 +3015,8 @@ fn test_files_panel_rows_fit_a_narrow_panel() {
     open_review_diff(&mut harness);
     show_files_panel(&mut harness);
 
-    // The sidebar's own columns, read off the divider the panel is drawn
-    // against rather than assumed — the exact share of a 40-column screen
-    // is the host's to decide.
+    // Read off the divider rather than assumed: the share of a 40-column
+    // screen is the host's to decide.
     let sidebar_cols = |h: &EditorTestHarness| -> usize {
         h.screen_to_string()
             .lines()
@@ -3036,10 +3028,8 @@ fn test_files_panel_rows_fit_a_narrow_panel() {
         let rows = sidebar_file_rows(&h.screen_to_string(), sidebar_cols(h));
         !rows.is_empty() && rows.iter().all(|r| r.trim_end().ends_with(" M"))
     };
-    // The host reports the panel's width on the frame it appears and the
-    // plugin coalesces the repaint behind a short timer, so give that round
-    // trip a bounded chance to land instead of asserting on the frame the
-    // toggle itself painted.
+    // The repaint is coalesced behind a short timer, so the frame the
+    // toggle painted is not the one to assert on.
     for _ in 0..60 {
         if settled(&harness) {
             break;
@@ -3065,9 +3055,9 @@ fn test_files_panel_rows_fit_a_narrow_panel() {
     }
 }
 
-/// The sidebar row carrying the tree's selection band, read by the
+/// The sidebar row carrying the tree's selection band, found by the
 /// background a widget tree paints behind its selected node
-/// (`ui.popup_selection_bg`), restricted to the panel's own columns.
+/// (`ui.popup_selection_bg`) within the panel's own columns.
 fn selected_sidebar_row(harness: &EditorTestHarness) -> Option<String> {
     let selection_bg = harness.editor().theme().popup_selection_bg;
     let screen = harness.screen_to_string();
@@ -3094,16 +3084,14 @@ fn selected_sidebar_row(harness: &EditorTestHarness) -> Option<String> {
     })
 }
 
-/// Clicking a file in the sidebar moves the sidebar's highlight to it —
-/// including from the reading posture, with the keys on the diff.
+/// Clicking a file in the sidebar moves the highlight to it — including
+/// from the reading posture, with the keys on the diff.
 ///
-/// The click's selection write went through `set_selected_index`, which
-/// recorded a `List` state for a `Tree` that had no instance state yet.
-/// A tree resolves its selection from a `Tree` entry or from the spec's
-/// seed, so that write was invisible and the highlight stayed on whatever
-/// the plugin's last repaint had seeded. It looked right only when a
-/// repaint followed the click — which is why side-by-side (where picking a
-/// file rebuilds the panel) behaved differently from the unified stream.
+/// The click's write recorded a `List` state for a `Tree`, which the tree
+/// ignores in favour of the spec's seed, so the highlight only landed
+/// right when a repaint followed the click — as it does in side-by-side,
+/// where picking a file rebuilds the panel, and does not in the unified
+/// stream.
 #[test]
 fn test_clicking_a_file_moves_the_sidebar_highlight() {
     init_tracing_from_env();
@@ -3160,6 +3148,131 @@ fn test_clicking_a_file_moves_the_sidebar_highlight() {
             .is_some_and(|r| r.contains("mod_004.rs")),
         "clicking mod_004.rs should move the sidebar highlight onto it, \
          not leave it on {selected:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The highlight follows the *file*, not a row number. The host stores an
+/// absolute index into a node list the sidebar rebuilds whenever the
+/// changeset moves, so without re-pinning from the key the band slides
+/// onto the neighbouring file — and stays there, the current file never
+/// having changed.
+#[test]
+fn test_sidebar_highlight_survives_a_rebuild_above_it() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let row = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.chars()
+                .take(20)
+                .collect::<String>()
+                .contains("mod_004.rs")
+        })
+        .map(|(y, _)| y as u16)
+        .next()
+        .unwrap_or_else(|| panic!("the sidebar lists mod_004.rs. Screen:\n{screen}"));
+    harness.mouse_click(5, row).unwrap();
+    harness
+        .wait_until(|h| selected_sidebar_row(h).is_some_and(|r| r.contains("mod_004.rs")))
+        .unwrap();
+
+    // Sorts above every `mod_*`, and the review's watch poll picks it up:
+    // the node list grows a row above the selection.
+    fs::write(repo.path.join("src/lib.rs"), "pub struct Config {}\n").unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.chars().take(20).collect::<String>().contains("lib.rs"))
+        })
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    let selected = selected_sidebar_row(&harness);
+    assert!(
+        selected
+            .as_deref()
+            .is_some_and(|r| r.contains("mod_004.rs")),
+        "a file appearing above the selection must not slide the highlight \
+         onto its neighbour — it is on {selected:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The band says "the file you are reading", so it has to survive the tree
+/// losing keyboard focus. The host clears a blurred tree's selection, so
+/// clicking the panel's filter field takes the marker away unless the
+/// plugin puts it back.
+#[test]
+fn test_sidebar_highlight_survives_focusing_the_filter() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let file_row = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.chars()
+                .take(20)
+                .collect::<String>()
+                .contains("mod_004.rs")
+        })
+        .map(|(y, _)| y as u16)
+        .next()
+        .unwrap_or_else(|| panic!("the sidebar lists mod_004.rs. Screen:\n{screen}"));
+    harness.mouse_click(5, file_row).unwrap();
+    harness
+        .wait_until(|h| selected_sidebar_row(h).is_some_and(|r| r.contains("mod_004.rs")))
+        .unwrap();
+
+    let filter_row = screen
+        .lines()
+        .position(|l| l.contains("Filter files"))
+        .unwrap_or_else(|| panic!("the sidebar has a filter field. Screen:\n{screen}"))
+        as u16;
+    harness.mouse_click(5, filter_row).unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+
+    let selected = selected_sidebar_row(&harness);
+    assert!(
+        selected
+            .as_deref()
+            .is_some_and(|r| r.contains("mod_004.rs")),
+        "focusing the filter field must not take the \"you are here\" band \
+         away — it is on {selected:?}. Screen:\n{}",
         harness.screen_to_string()
     );
 }

@@ -1823,22 +1823,23 @@ let toolbarPanel: WidgetPanel | null = null;
 let filesPanel: WidgetPanel | null = null;
 let commentsPanel: WidgetPanel | null = null;
 
-/** Width in columns of a side panel: the host's last reported viewport
- *  width for it, or the share of the review `REVIEW_LAYOUT` gives it
- *  until the first `viewport_changed` for that panel arrives.
+/** Width in columns of a side panel: the host's reported width for it, or
+ *  the share `REVIEW_LAYOUT` gives it — only for paints issued before that
+ *  report arrives.
  *
- *  The share is taken from the *group's* width (the toolbar spans it), not
- *  from `state.viewportWidth`: that one is seeded from `getViewport()`,
- *  which reports whichever split holds focus. Opening a review from a
- *  narrow pane — a file explorer, or the FILES sidebar of the review being
- *  replaced — therefore seeded it with a few dozen columns, and every row
- *  in a 40-column sidebar came out elided to the 12-column floor below. */
+ *  The share is of the *group's* width (the toolbar spans it) rather than
+ *  of `state.viewportWidth`, which is seeded from `getViewport()` — the
+ *  focused split, and so a few dozen columns when the review is opened
+ *  from a narrow pane. */
 function panelWidthOf(panel: 'files' | 'comments'): number {
     const known = state.panelWidths[panel];
     if (known && known > 0) return known;
     const group = state.panelWidths["toolbar"];
     const basis = group && group > 0 ? group : state.viewportWidth;
-    return Math.max(12, Math.floor(basis * (panel === 'files' ? FILES_PANEL_RATIO : 0.15)));
+    const share = Math.floor(basis * (panel === 'files' ? FILES_PANEL_RATIO : 0.15));
+    // Overshooting is the direction that hurts: rows built wider than the
+    // panel are clipped by the host, `…` and status letter included.
+    return Math.min(Math.max(12, share), Math.max(4, basis));
 }
 
 /** `text` clipped to `width` columns, dropping characters from the left
@@ -2196,11 +2197,11 @@ let filesTree: FilesTree = {
  *  the file tree. */
 function buildFilesPanelSpec(): WidgetSpec {
     filesTree = buildFilesTree();
-    // The spec's `selectedIndex` is authoritative on every render, so it
-    // has to agree with where the host's own navigation left the
-    // selection — otherwise each repaint drags the selection back to the
-    // current file and folding a directory (which selects a directory
-    // row first) never gets to happen.
+    // A seed: the host's stored selection wins once anything has set one.
+    // It still has to agree with where the host's own navigation left the
+    // selection, or a freshly mounted tree starts on the current file and
+    // folding a directory (which selects a directory row first) never gets
+    // to happen.
     const fileNodeKey = state.filesCurrentKey !== null ? `file:${state.filesCurrentKey}` : "";
     const trackedKey = filesSelectedNodeKey.startsWith("file:")
         ? fileNodeKey                       // a file row: the review's current file wins
@@ -2392,14 +2393,13 @@ function renderFilesPanel(): void {
 
 /** Move the sidebar's selection onto the review's current file.
  *
- *  A tree's selected row is host state after its first render — the
- *  `selectedIndex` in a rebuilt spec is a seed the host ignores — so
- *  repainting the panel with a new current file left the highlight
- *  wherever the sidebar's own navigation had last put it. Reading down
- *  the stream then walked the cursor through file after file with the
- *  sidebar still pointing at the one you started in. This is the
- *  host-side setter, so the selection actually moves (and scrolls itself
- *  into view).
+ *  A tree's selected row is host state once anything has set it, and the
+ *  `selectedIndex` in a rebuilt spec is a seed the host ignores from then
+ *  on — so repainting alone left the highlight where the sidebar's own
+ *  navigation had put it, and reading down the stream walked the cursor
+ *  through file after file with the sidebar still on the first. This is
+ *  the host-side setter, so the row actually moves (and scrolls into
+ *  view).
  *
  *  A directory or section row the user selected stays put: those are the
  *  sidebar's own navigation, and folding one is a gesture the diff cursor
@@ -2409,10 +2409,15 @@ function pointSidebarAtCurrentFile(): void {
     if (state.filesCurrentKey === null) return;
     if (filesSelectedNodeKey.startsWith("dir:") || filesSelectedNodeKey.startsWith("cat:")) return;
     const nodeKey = `file:${state.filesCurrentKey}`;
-    if (nodeKey === filesSelectedNodeKey) return;
     const idx = filesTree.keys.indexOf(nodeKey);
     if (idx < 0) return;
     filesSelectedNodeKey = nodeKey;
+    // Unconditionally, because the host stores an *absolute* index into a
+    // node list this tree rebuilds whenever the changeset moves: a file
+    // appearing above the current one would slide the highlight onto its
+    // neighbour. It also puts the band back after the host clears a blurred
+    // tree's selection (`Tree::on_focus_change`), which clicking the filter
+    // field does. Re-pinning an unchanged index preserves a user scroll.
     filesPanel.setSelectedIndex(FILES_TREE_KEY, idx);
 }
 
@@ -3077,12 +3082,9 @@ registerHandler("review_relayout_diff", review_relayout_diff);
 
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
-    // The toolbar spans the group, so its width is the group's width —
-    // what `panelWidthOf` takes its ratio of for a panel the host has not
-    // reported yet. Recorded (and nothing else: the toolbar's own row is
-    // laid out by the host) so that share is taken from the review's real
-    // width rather than from whichever split happened to hold focus when
-    // the review opened.
+    // The toolbar spans the group, so its width is the group's — the basis
+    // `panelWidthOf` takes a share of for a panel not yet reported. Nothing
+    // else to do with it: the host lays the toolbar's own row out.
     if (data.buffer_id === state.panelBuffers["toolbar"]) {
         state.panelWidths["toolbar"] = data.width;
         return;
@@ -7422,9 +7424,8 @@ function stop_review_diff() {
         state.panelBuffers = {};
     }
     state.reviewBufferId = null;
-    // Panel geometry is keyed by panel name, and the next session's panels
-    // are different buffers in a differently sized group. Carrying it over
-    // would lay the new session's first paint out to the old one's widths.
+    // Keyed by panel name, so the next session would inherit these — its
+    // panels are different buffers in a differently sized group.
     state.panelWidths = {};
     state.panelHeights = {};
     stopWatchPoll();

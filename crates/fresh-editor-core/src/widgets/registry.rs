@@ -576,21 +576,16 @@ impl WidgetPanelState {
     /// selection move no longer has to know they exist — and cannot
     /// reset them by forgetting to copy one.
     pub fn set_selected_index(&mut self, widget_key: &str, index: i32) {
-        // **Which state this records is the widget's kind, not whatever
+        // **The widget's kind decides which state this records, not what
         // happens to be in the map.** An untouched `Tree` has no entry at
-        // all — the render walk stopped writing one back — and recording a
-        // `List` entry for it made the write invisible: `tree::resolve`
-        // honours a `Tree` entry or falls back to the spec's seed, so the
-        // selection snapped back to whatever the plugin's last repaint had
-        // seeded. Clicking a row in the review's FILES sidebar left the
-        // highlight where it was for exactly that reason, and only looked
-        // right when a repaint happened to re-seed it at the clicked row.
+        // all, and `tree::resolve` ignores a `List` one — so writing `List`
+        // here left the selection reading back as the spec's seed, i.e. the
+        // write silently did nothing.
         let tree_spec = crate::widgets::find_widget_by_key(&self.spec, widget_key)
             .filter(|spec| matches!(spec, WidgetSpec::Tree { .. }));
         if let Some(spec) = tree_spec {
-            // Through the resolver, so a first write inherits the spec's
-            // `expanded_keys` seed instead of recording an empty set and
-            // collapsing every directory in the tree.
+            // Resolved, not defaulted: a first write must inherit the spec's
+            // `expanded_keys` seed rather than record an empty set.
             let current =
                 crate::widgets::kinds::tree::resolve(spec, widget_key, &self.instance_states);
             let new_state = WidgetInstanceState::Tree {
@@ -616,8 +611,8 @@ impl WidgetPanelState {
                 user_scrolled,
             }) => WidgetInstanceState::Tree {
                 expanded_keys: expanded_keys.clone(),
-                // A tree whose spec is not mounted here (a stale key) keeps
-                // the old shape: nothing to resolve against.
+                // A key with no spec mounted here: nothing to resolve
+                // against, so the stored shape is all there is.
                 user_scrolled: *user_scrolled && index == *selected_index,
                 selected_index: index,
             },
