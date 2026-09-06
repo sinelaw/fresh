@@ -2419,7 +2419,7 @@ impl Window {
             pending_async_prompt_callback: None,
             pending_file_pick_callback: None,
             pending_quit_unnamed_save: Vec::new(),
-            search_case_sensitive: true,
+            search_case_sensitive: false,
             search_whole_word: false,
             search_use_regex: false,
             search_confirm_each: false,

@@ -1411,16 +1411,16 @@ fn test_toggle_case_sensitive_in_search() {
         .unwrap();
     harness.render().unwrap();
 
-    // Type search query (case-sensitive by default)
+    // Type search query (case-insensitive by default)
     harness.type_text("hello").unwrap();
     harness.render().unwrap();
 
-    // By default, case-sensitive is ON, so search for "hello" should match only "hello" (lowercase)
-    // Verify the [x] checkbox is shown for case sensitive
+    // By default, case-insensitive is ON, so search for "hello" should match case-insensitively
+    // Verify the [ ] checkbox is shown for case sensitive
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("[x] Case Sensitive") || screen.contains("[x]"),
-        "Case Sensitive should be checked by default"
+        screen.contains("[ ] Case Sensitive") || screen.contains("[ ]"),
+        "Case Sensitive should be unchecked by default"
     );
 
     // Toggle case sensitivity with Alt+C
@@ -1429,11 +1429,11 @@ fn test_toggle_case_sensitive_in_search() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify checkbox is now unchecked
+    // Verify checkbox is now checked
     let screen_after_toggle = harness.screen_to_string();
     assert!(
-        screen_after_toggle.contains("[ ] Case Sensitive") || screen_after_toggle.contains("[ ]"),
-        "Case Sensitive should be unchecked after Alt+C"
+        screen_after_toggle.contains("[x] Case Sensitive") || screen_after_toggle.contains("[x]"),
+        "Case Sensitive should be checked after Alt+C"
     );
 
     // Cancel search
