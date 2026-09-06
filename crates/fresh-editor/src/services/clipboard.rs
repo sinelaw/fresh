@@ -12,6 +12,7 @@ use crossterm::clipboard::CopyToClipboard;
 use crossterm::execute;
 use std::io::{stdout, Write};
 use std::sync::Mutex;
+use std::time::Duration;
 
 /// True when running inside Termux on Android.
 ///
@@ -108,7 +109,66 @@ pub fn read_system_clipboard() -> Option<String> {
 /// On X11, the clipboard owner must stay alive to respond to paste requests.
 /// On Wayland, the data-source is destroyed when dropped.
 /// This static keeps the handle alive for the process lifetime.
+///
+/// NOTE: Only the COPY path touches this static. Synchronous PASTE reads use
+/// a fresh `arboard::Clipboard` in a timeout-bounded thread (see
+/// `read_system_clipboard_with_timeout`) so that a hung X11 selection owner
+/// can never wedge this mutex and freeze every subsequent clipboard call
+/// (issue #2155).
 static SYSTEM_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+
+/// Maximum time a synchronous `Clipboard::paste()` will block waiting for the
+/// system clipboard. A normal arboard read completes in single-digit
+/// milliseconds; anything past this generally means the X11 CLIPBOARD owner is
+/// unresponsive (e.g. a recently-closed window whose process is gone, or the
+/// case in issue #2155 where another window is ignoring `SelectionRequest`s).
+/// Without this cap the read would hang the UI thread indefinitely.
+///
+/// The async buffer-paste path (`Editor::paste`) keeps its own deadline; this
+/// constant only governs the synchronous fallbacks (prompt paste, terminal
+/// paste, focused-widget paste, settings-dialog paste, and the no-bridge
+/// bootstrap path).
+pub(crate) const PASTE_SYNC_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Run `reader` on a background thread and wait up to `timeout` for its
+/// result. Returns `None` if the reader doesn't finish in time.
+///
+/// Existence of this helper — rather than calling `arboard` directly — is
+/// what bounds the worst-case stall on a hung X11 clipboard owner. The
+/// reader thread is allowed to leak: it will complete eventually (when the
+/// owner finally responds or the process exits) and its result is dropped.
+/// This is acceptable because the timeout fires before pending threads
+/// pile up faster than they drain in any realistic usage pattern.
+///
+/// The closure is generic so tests can substitute a deterministic blocker
+/// (e.g. `std::thread::park`) without depending on a real X11 server.
+fn read_with_timeout<F>(reader: F, timeout: Duration) -> Option<String>
+where
+    F: FnOnce() -> Option<String> + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Option<String>>(1);
+    let spawned = std::thread::Builder::new()
+        .name("clipboard-paste-sync".into())
+        .spawn(move || {
+            // Receiver may be dropped if the caller already timed out.
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = tx.send(reader());
+        });
+    if spawned.is_err() {
+        // OS refused a new thread; degrade to no-op rather than blocking.
+        return None;
+    }
+    rx.recv_timeout(timeout).ok().flatten()
+}
+
+/// Read text from the system clipboard with a timeout, using a fresh
+/// `arboard::Clipboard` to avoid contending on the `SYSTEM_CLIPBOARD` mutex.
+///
+/// Delegates to `read_system_clipboard` so the timeout-bounded path keeps the
+/// same backend coverage (arboard, then the Termux helper) as the direct read.
+fn read_system_clipboard_with_timeout(timeout: Duration) -> Option<String> {
+    read_with_timeout(read_system_clipboard, timeout)
+}
 
 /// Copy text to the system clipboard using OSC 52 and/or arboard.
 ///
@@ -316,6 +376,12 @@ impl Clipboard {
     ///
     /// Tries system clipboard first, falls back to internal clipboard.
     /// If internal_only mode is enabled (for testing), skips system clipboard.
+    ///
+    /// The system-clipboard read is bounded by `PASTE_SYNC_TIMEOUT`: when an
+    /// X11 selection owner is unresponsive (see issue #2155), the read would
+    /// otherwise block the UI thread indefinitely. On timeout we fall back to
+    /// the internal clipboard so the user still gets *something* meaningful
+    /// (and Ctrl+V doesn't appear to do nothing).
     pub fn paste(&mut self) -> Option<String> {
         // In internal-only mode, skip system clipboard entirely
         if self.internal_only {
@@ -323,9 +389,11 @@ impl Clipboard {
         }
 
         // Read from the system clipboard (arboard on desktop, the
-        // termux-clipboard-get helper on Termux where arboard has no backend).
+        // termux-clipboard-get helper on Termux where arboard has no backend),
+        // bounded by PASTE_SYNC_TIMEOUT so a hung selection owner can't wedge
+        // the UI thread (issue #2155).
         if self.use_system_clipboard {
-            if let Some(text) = read_system_clipboard() {
+            if let Some(text) = read_system_clipboard_with_timeout(PASTE_SYNC_TIMEOUT) {
                 self.internal = text.clone();
                 return Some(text);
             }
@@ -360,14 +428,20 @@ impl Clipboard {
     }
 
     /// Check if clipboard is empty (checks both internal and system)
+    ///
+    /// Uses the same timeout-bounded read as `paste()` so a hung clipboard
+    /// owner can't wedge this call either (issue #2155).
     pub fn is_empty(&self) -> bool {
         if !self.internal.is_empty() {
             return false;
         }
 
-        // Check the system clipboard (arboard / termux-clipboard-get).
-        if self.use_system_clipboard && read_system_clipboard().is_some() {
-            return false;
+        // Check the system clipboard (arboard / termux-clipboard-get),
+        // timeout-bounded so a hung owner can't wedge this call (issue #2155).
+        if self.use_system_clipboard {
+            if let Some(text) = read_system_clipboard_with_timeout(PASTE_SYNC_TIMEOUT) {
+                return text.is_empty();
+            }
         }
 
         true
@@ -429,5 +503,37 @@ mod tests {
 
         clipboard.copy("internal only".to_string());
         assert_eq!(clipboard.get_internal(), "internal only");
+    }
+
+    /// Issue #2155: a reader that never returns (modelling a hung X11
+    /// CLIPBOARD owner) must NOT block the caller — the timeout fires and
+    /// `None` is returned. Without the timeout this test would hang
+    /// forever (and `cargo nextest` would kill it externally).
+    #[test]
+    fn read_with_timeout_returns_none_when_reader_blocks() {
+        let result = read_with_timeout(
+            || {
+                std::thread::park();
+                unreachable!("parked thread should never proceed");
+            },
+            Duration::from_millis(50),
+        );
+        assert!(result.is_none(), "hung reader must yield None");
+    }
+
+    /// The happy-path timeout helper still delivers a fast reader's value.
+    #[test]
+    fn read_with_timeout_returns_fast_reader_value() {
+        let result = read_with_timeout(|| Some("hello".to_string()), Duration::from_millis(500));
+        assert_eq!(result.as_deref(), Some("hello"));
+    }
+
+    /// An empty / "no clipboard text" reader maps to `None`, distinguishing
+    /// "nothing on the clipboard" from "the read timed out" at the caller's
+    /// granularity (both fall back to the internal clipboard).
+    #[test]
+    fn read_with_timeout_returns_none_for_reader_returning_none() {
+        let result = read_with_timeout(|| None, Duration::from_millis(500));
+        assert!(result.is_none());
     }
 }
