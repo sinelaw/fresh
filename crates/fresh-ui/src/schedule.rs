@@ -918,6 +918,43 @@ impl<M: 'static> Ui<M> {
             .unwrap_or(0)
     }
 
+    /// The rows the keyed **wrapped text run** was shaped into, and the string
+    /// they index: `text[indent..] == whole[src]` for each, and the gaps
+    /// between them are what the wrap dropped.
+    ///
+    /// **The third piece of L5, beside a byte caret and a byte press.** Those
+    /// two answer at paint time and at press time; a key handler asking
+    /// "which byte is one rendered row below this one" is at neither, has no
+    /// width, and has no tree — so a surface whose `Up`/`Down` mean *rendered*
+    /// rows had to keep a second, shadow wrap of the text just to have rows to
+    /// count. This hands back the wrap layout already did, at the width layout
+    /// settled on, and [`cell_of`](crate::render::prim::cell_of) /
+    /// [`byte_of`](crate::render::prim::byte_of) turn it into the answer.
+    ///
+    /// `None` where the key names nothing, or names something that is not a
+    /// text run. Frame-wide, so it is right where the key is unique — the same
+    /// standing as [`Ui::item_window`].
+    ///
+    /// Takes `&mut self` because a render object is owned by its node: it is
+    /// taken out to be asked and put straight back, exactly as layout takes it.
+    pub fn text_rows(
+        &mut self,
+        key: &crate::key::Key,
+    ) -> Option<(String, Vec<crate::render::prim::Row>)> {
+        let el = self.find_by_key(key)?;
+        let r = self.render_for(el)?;
+        let mut obj = self.render.get_mut(r)?.obj.take()?;
+        let out = obj
+            .as_any_mut()
+            .downcast_ref::<crate::render::prim::TextRender>()
+            .map(|t| {
+                let (whole, rows) = t.shaped_rows();
+                (whole.to_string(), rows.to_vec())
+            });
+        self.render.get_mut(r).expect("live render node").obj = Some(obj);
+        out
+    }
+
     /// A viewport's scroll offset and the size of the content behind it.
     ///
     /// Both are in the unit that viewport's offset counts, which only

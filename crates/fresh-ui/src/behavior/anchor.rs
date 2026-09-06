@@ -33,6 +33,7 @@ pub(crate) enum Command {
     /// Move the window so that one row *inside* the keyed descendant is in
     /// it: `(key, rows from that band's top)`.
     RevealKeyAt(crate::key::Key, u32),
+    RevealByte(crate::key::Key, usize),
     /// Move the window by this many rows (negative: up), clamped.
     ScrollBy(i32),
     /// Move the window by this many of its own heights (negative: up),
@@ -139,6 +140,26 @@ impl Anchor {
         self.queue
             .borrow_mut()
             .push(Command::RevealKeyAt(key.into(), row));
+    }
+
+    /// Move the target's window so that the row holding `byte` of the keyed
+    /// **wrapped text run** is inside it.
+    ///
+    /// **The same split as [`Anchor::reveal_key_at`], one step further** (L5).
+    /// There the caller owns an offset *in rows* inside content the framework
+    /// placed; here it does not have rows at all. A document view knows where
+    /// its caret is as a byte of the string it handed over, and which row that
+    /// byte landed on is the wrap's answer — it changes with the width, and
+    /// the caller would have to re-shape the text to find it, which is the
+    /// second layout this design exists to remove. So the caller names the
+    /// byte and the framework, which shaped the rows, does the rest.
+    ///
+    /// The keyed descendant must be a text run; naming anything else moves
+    /// nothing, as an unknown key does.
+    pub fn reveal_byte(&self, key: impl Into<crate::key::Key>, byte: usize) {
+        self.queue
+            .borrow_mut()
+            .push(Command::RevealByte(key.into(), byte));
     }
 }
 

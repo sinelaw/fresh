@@ -607,6 +607,99 @@ pub fn push_block_caret_overlay(entry: &mut TextPropertyEntry, byte: usize) {
 /// value or new width); scroll state and `user_scrolled` follow the
 /// List/Tree contract.
 #[allow(clippy::too_many_arguments)]
+/// The whole markdown document as **one** styled entry: the rendered text with
+/// one inline overlay per span, unwrapped.
+///
+/// **Unwrapped is the point.** `render_markdown_text_area` wraps the parse to a
+/// width it is handed and then emits a row per rendered line, which makes a row
+/// a fact of the renderer rather than of the layout — so the caller has to
+/// re-state the width it laid out at, and the caret, the selection and the
+/// scroll all end up in coordinates only a second wrap can produce. Handed over
+/// as one run instead, the wrap is `fresh-ui`'s at the width *it* settled, and
+/// a byte of this string is the one coordinate everyone shares (L5).
+///
+/// **The indent is normalised back to spaces.** `parse_markdown` turns leading
+/// whitespace into NBSP so the markdown parser does not read an indented line
+/// as a code block, and lays list markers behind NBSP for the same reason; a
+/// wrapper that treats NBSP as space-like then puts the hanging indent back.
+/// `fresh-ui` breaks on `' '` only — correctly, since NBSP exists to *prevent*
+/// a break — so a line's own leading run is converted here, where it is known
+/// to be indentation. An NBSP the author wrote *inside* a line keeps its
+/// meaning.
+pub fn markdown_document(value: &str, ctx: RenderContext<'_>) -> TextPropertyEntry {
+    use crate::markdown::parse_markdown;
+    let lines = match ctx.markdown {
+        Some(md) => parse_markdown(value, md.theme, md.grammars),
+        // No theme (unit tests, plugin-less hosts): the source, unstyled.
+        None => value
+            .split('\n')
+            .map(|l| {
+                let mut sl = crate::markdown::StyledLine::new();
+                sl.push(l.to_string(), ratatui::style::Style::default());
+                sl
+            })
+            .collect(),
+    };
+    markdown_entry_from_lines(&lines)
+}
+
+/// [`markdown_document`] with the parse already done: the assembly half, which
+/// is where the normalisation and the overlay offsets have to agree.
+fn markdown_entry_from_lines(lines: &[crate::markdown::StyledLine]) -> TextPropertyEntry {
+    let mut text = String::new();
+    let mut overlays: Vec<InlineOverlay> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            text.push('\n');
+        }
+        // The line's own leading whitespace, across spans: everything up to its
+        // first non-space-like character is indentation.
+        let mut leading = true;
+        for span in &line.spans {
+            let start = text.len();
+            match leading {
+                true => {
+                    let n = span
+                        .text
+                        .chars()
+                        .take_while(|c| crate::markdown::is_space(*c))
+                        .count();
+                    let head: String = span.text.chars().take(n).map(|_| ' ').collect();
+                    text.push_str(&head);
+                    text.push_str(
+                        &span.text[span
+                            .text
+                            .char_indices()
+                            .nth(n)
+                            .map(|(b, _)| b)
+                            .unwrap_or(span.text.len())..],
+                    );
+                    leading = n == span.text.chars().count();
+                }
+                false => text.push_str(&span.text),
+            }
+            if let Some(style) = ratatui_style_to_overlay(span.style) {
+                overlays.push(InlineOverlay {
+                    start,
+                    end: text.len(),
+                    style,
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+    }
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
 fn render_markdown_text_area(
     value: &str,
     rows: u32,
@@ -1697,5 +1790,78 @@ fn selected_completion_value(
             Some(completions[idx].value.clone())
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod markdown_document_tests {
+    use super::*;
+
+    /// Without a theme the document is the source, and that is enough to pin
+    /// what the switch to a wrapped run depends on: one string, `\n` between
+    /// the rendered lines, and nothing wrapped.
+    #[test]
+    fn the_document_is_one_string_with_no_wrapping_in_it() {
+        let e = markdown_document(
+            "a paragraph that is much longer than any plausible panel width",
+            RenderContext::default(),
+        );
+        assert_eq!(
+            e.text, "a paragraph that is much longer than any plausible panel width",
+            "unwrapped: which row a byte lands on is the layout's answer, not this one's"
+        );
+    }
+
+    /// **The indent comes back as spaces.** `parse_markdown` writes NBSP so the
+    /// markdown parser does not read an indented line as a code block; a run
+    /// handed to `fresh-ui` must break and indent on `' '`, which is the one
+    /// thing NBSP exists to prevent.
+    #[test]
+    fn a_lines_leading_nbsp_is_normalised_and_one_inside_it_is_not() {
+        let mut line = crate::markdown::StyledLine::new();
+        line.push(
+            "\u{00A0}\u{00A0}• ".into(),
+            ratatui::style::Style::default(),
+        );
+        line.push(
+            "an item\u{00A0}kept whole".into(),
+            ratatui::style::Style::default(),
+        );
+        let text = document_text_of(&[line]);
+        assert_eq!(
+            text, "  • an item\u{00A0}kept whole",
+            "leading NBSP is indentation; one inside the line is the author's"
+        );
+    }
+
+    /// The overlays index the text they were built beside — the property
+    /// `entry_runs` slices on, and the one the normalisation above could break
+    /// by changing byte lengths as it goes.
+    #[test]
+    fn every_overlay_indexes_the_text_it_was_built_with() {
+        let mut line = crate::markdown::StyledLine::new();
+        line.push("\u{00A0}\u{00A0}".into(), ratatui::style::Style::default());
+        line.push(
+            "bold".into(),
+            ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+        );
+        let e = entry_of(&[line]);
+        assert_eq!(e.text, "  bold");
+        let o = e
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("the bold span");
+        assert_eq!(&e.text[o.start..o.end], "bold");
+    }
+
+    /// `markdown_document` with the lines already parsed — the half these tests
+    /// are about, without a theme to build.
+    fn entry_of(lines: &[crate::markdown::StyledLine]) -> TextPropertyEntry {
+        markdown_entry_from_lines(lines)
+    }
+
+    fn document_text_of(lines: &[crate::markdown::StyledLine]) -> String {
+        entry_of(lines).text
     }
 }

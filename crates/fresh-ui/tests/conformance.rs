@@ -1795,3 +1795,266 @@ fn nested_flex_under_a_definite_box_still_divides() {
     let i = ui.rect_of(ui.find_by_key(&inner).expect("inner"));
     assert_eq!((m.h, i.h), (9, 9), "mid={m:?} inner={i:?}");
 }
+
+/// **What a wrapped run inside a viewport does today, and what L5 still owes.**
+///
+/// The document view's shape: one wrapped run in a viewport, with the caret
+/// stated as a byte of the logical string. Two thirds of it already hold — the
+/// wrap makes the content taller than the window, and a byte inside the window
+/// lands on the row and column the wrap put it on — and this pins them so the
+/// remaining third is stated against something.
+///
+/// **What is missing is the follow**: a byte whose row is outside the window
+/// produces no caret and nothing scrolls to it, so a document view cannot put
+/// the caret back on screen by naming a byte. That is the viewport half of L5.
+#[test]
+fn a_wrapped_run_places_a_byte_caret_where_the_wrap_put_it() {
+    let key = Key::Str("doc".into());
+    // Three words of nine cells; at width 20 two fit per row, so the run is
+    // three rows tall in a window of two.
+    let doc = "alphaaaaa bravooooo charlieee deltaaaaa echoooooo foxtrotss";
+    let at = |w: u16, byte: usize| -> (Ui<()>, Option<Point>) {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(
+            col().child(
+                viewport(text(doc).wrap().cursor_byte(byte))
+                    .key(key.clone())
+                    .h(Sizing::Cells(2)),
+            ),
+            Size::new(w, 6),
+        );
+        let caret = ui.spec().cursor.map(|c| c.pos);
+        (ui, caret)
+    };
+
+    // The wrap produces more rows than the window holds, so there is something
+    // for a scroll unit to count.
+    let (ui, first) = at(20, 0);
+    let (_, content) = ui.scroll(ui.find_by_key(&key).expect("the viewport"));
+    assert!(
+        content.h > 2,
+        "the wrapped run is taller than its window: {content:?}"
+    );
+    assert_eq!(first, Some(Point::new(0, 0)), "byte 0 is the first cell");
+
+    // A byte on the second wrapped row lands there, at its column within the
+    // row — the mapping is the wrap's, not the string's.
+    let second_row = doc.find("charlieee").expect("the third word");
+    assert_eq!(
+        at(20, second_row).1,
+        Some(Point::new(0, 1)),
+        "the first byte of the second wrapped row"
+    );
+    assert_eq!(
+        at(20, second_row + 4).1,
+        Some(Point::new(4, 1)),
+        "and four cells into it"
+    );
+
+    // The same byte at a width that fits everything on one row is on row 0 —
+    // the caret follows the wrap when the width changes.
+    assert_eq!(
+        at(60, second_row).1,
+        Some(Point::new(second_row as i32, 0)),
+        "one row at 60 columns, so the byte's column is its index"
+    );
+
+    // A byte whose row is past the window is not placed: a terminal has one
+    // cursor, and a row the clip does not show is not where the text is. Moving
+    // the window to it is `Anchor::reveal_byte`'s job, tested below.
+    let last = doc.find("foxtrotss").expect("the last word");
+    assert_eq!(
+        at(20, last).1,
+        None,
+        "today a caret outside the window is dropped rather than revealed"
+    );
+}
+
+/// **A caret named as a byte is revealed on the row the wrap put it on** (L5).
+///
+/// The follow the test above says is missing. A document view knows where its
+/// caret is as a byte of the string it handed over; which row that is belongs
+/// to the wrap, and changes with the width. `Anchor::reveal_byte` splits the
+/// question there — the caller names the byte, the framework moves the window
+/// — so a view can put its caret back on screen without re-shaping the text
+/// to work out where it went.
+#[test]
+fn a_byte_is_revealed_on_the_row_the_wrap_put_it_on() {
+    let anchor = fresh_ui::behavior::anchor::Anchor::new();
+    let run = Key::Str("run".into());
+    let port = Key::Str("port".into());
+    // Two nine-cell words per row at width 20: six words are three rows, in a
+    // window of one.
+    let doc = "alphaaaaa bravooooo charlieee deltaaaaa echoooooo foxtrotss";
+    let mk = |a: Rc<fresh_ui::behavior::anchor::Anchor>| -> Node<()> {
+        col().child(
+            viewport(text(doc).wrap().key(run.clone()))
+                .anchor_to(a)
+                .key(port.clone())
+                .h(Sizing::Cells(1)),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(anchor.clone()), Size::new(20, 6));
+    let scroll = |ui: &Ui<()>| ui.scroll(ui.find_by_key(&port).expect("the viewport")).0.y;
+    assert_eq!(scroll(&ui), 0, "the window starts at the top");
+
+    // A byte on the third wrapped row brings the window to it.
+    let third = doc.find("echoooooo").expect("the fifth word");
+    anchor.reveal_byte(run.clone(), third);
+    ui.frame(mk(anchor.clone()), Size::new(20, 6));
+    assert_eq!(scroll(&ui), 2, "the third row, in a window one row tall");
+
+    // Back to a byte on the first row, and the window comes back with it.
+    anchor.reveal_byte(run.clone(), 0);
+    ui.frame(mk(anchor.clone()), Size::new(20, 6));
+    assert_eq!(scroll(&ui), 0, "the first row again");
+
+    // The row is the wrap's, not the string's: at a width that fits everything
+    // on one row, the same byte needs no scroll at all.
+    let mut wide: Ui<()> = Ui::new();
+    let a2 = fresh_ui::behavior::anchor::Anchor::new();
+    let mk2 = |a: Rc<fresh_ui::behavior::anchor::Anchor>| -> Node<()> {
+        col().child(
+            viewport(text(doc).wrap().key(run.clone()))
+                .anchor_to(a)
+                .key(port.clone())
+                .h(Sizing::Cells(1)),
+        )
+    };
+    wide.frame(mk2(a2.clone()), Size::new(60, 6));
+    a2.reveal_byte(run.clone(), third);
+    wide.frame(mk2(a2.clone()), Size::new(60, 6));
+    assert_eq!(
+        wide.scroll(wide.find_by_key(&port).expect("the viewport"))
+            .0
+            .y,
+        0,
+        "one row at 60 columns, so the byte is already in the window"
+    );
+}
+
+/// **A selected byte range is washed across the rows the wrap put it on** (L5).
+///
+/// The other half of stating a text view's state in source coordinates. A
+/// selection is a fact about the string; which cells of which rows it covers is
+/// the wrap's answer and changes with the width, exactly as the caret's cell
+/// does. So the caller names the bytes and the rows come back from the same
+/// `Row::src` the caret is placed through — a selection and the caret walking
+/// out of its end cannot land on different rows.
+#[test]
+fn a_selected_byte_range_is_washed_across_the_rows_the_wrap_put_it_on() {
+    // Two nine-cell words per row at width 20.
+    let doc = "alphaaaaa bravooooo charlieee deltaaaaa echoooooo foxtrotss";
+    let washes = |w: u16, bytes: std::ops::Range<usize>| -> Vec<Rect> {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(
+            col().child(text(doc).wrap().selection_bytes(bytes, "sel")),
+            Size::new(w, 6),
+        )
+        .items
+        .iter()
+        .filter(|i| i.draw == Draw::Wash)
+        .map(|i| i.rect)
+        .collect()
+    };
+
+    // Inside one row: the span is the cells those bytes occupy, and nothing
+    // else is washed.
+    let bravo = doc.find("bravooooo").expect("the second word");
+    assert_eq!(
+        washes(20, bravo..bravo + 5),
+        vec![Rect::new(10, 0, 5, 1)],
+        "five cells of the second word, on the first row"
+    );
+
+    // Across a wrap: one span per row, each cut to what that row shows. The
+    // space the break ate belongs to no row, so no span covers it.
+    let echo = doc.find("echoooooo").expect("the fifth word");
+    assert_eq!(
+        washes(20, bravo..echo + 4),
+        vec![
+            Rect::new(10, 0, 9, 1),
+            Rect::new(0, 1, 19, 1),
+            Rect::new(0, 2, 4, 1),
+        ],
+        "the tail of row 0, all of row 1, and four cells of row 2"
+    );
+
+    // The same bytes at a width that wraps differently are washed differently:
+    // the range is the caller's, the rows are the wrap's.
+    assert_eq!(
+        washes(60, bravo..echo + 4),
+        vec![Rect::new(bravo as i32, 0, (echo + 4 - bravo) as u16, 1)],
+        "one row at 60 columns, so one span"
+    );
+
+    // An empty range selects nothing, and so does a reversed one.
+    assert!(washes(20, bravo..bravo).is_empty());
+    assert!(washes(20, echo..bravo).is_empty());
+}
+
+/// **The wrap's rows are readable after layout, so "one rendered row down" is
+/// answerable without a second wrap** (L5).
+///
+/// The third piece, beside a byte caret and a byte press. Those answer at paint
+/// time and at press time; a surface whose `Up`/`Down` mean *rendered* rows
+/// asks from a key handler, which is at neither and has no width — which is why
+/// such a surface kept a shadow wrap of its own text just to have rows to
+/// count. `Ui::text_rows` hands back the wrap layout already did, at the width
+/// layout settled on, and `cell_of`/`byte_of` are the rest of the answer.
+#[test]
+fn the_rows_a_run_was_wrapped_into_are_readable_after_layout() {
+    use fresh_ui::render::prim::{byte_of, cell_of};
+    let run = Key::Str("run".into());
+    // Two nine-cell words per row at width 20; one row at 60.
+    let doc = "alphaaaaa bravooooo charlieee deltaaaaa echoooooo foxtrotss";
+    let rows_at = |w: u16| -> (Ui<()>, (String, Vec<fresh_ui::render::prim::Row>)) {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(
+            col().child(text(doc).wrap().key(run.clone())),
+            Size::new(w, 6),
+        );
+        let rows = ui.text_rows(&run).expect("the run's rows");
+        (ui, rows)
+    };
+
+    let (_, (whole, rows)) = rows_at(20);
+    assert_eq!(rows.len(), 3, "three rows of two words at width 20");
+    assert_eq!(
+        whole, doc,
+        "the string the ranges index is the one that was shaped"
+    );
+    // `text[indent..] == whole[src]`, which is what makes the ranges usable.
+    for r in &rows {
+        assert_eq!(&r.text[r.indent..], &whole[r.src.clone()]);
+    }
+
+    // The question a key handler asks, answered from those rows alone: the
+    // byte one rendered row below this one, at the same column.
+    let down = |byte: usize| -> Option<usize> {
+        let (row, col) = cell_of(&rows, &whole, byte);
+        byte_of(&rows, &whole, row + 1, col as i32)
+    };
+    let bravo = doc.find("bravooooo").expect("the second word");
+    let delta = doc.find("deltaaaaa").expect("the fourth word");
+    assert_eq!(
+        down(bravo),
+        Some(delta),
+        "column 10 of row 0 is column 10 of row 1, which is the fourth word"
+    );
+    assert_eq!(down(doc.len() - 1), None, "nothing below the last row");
+
+    // The rows are the wrap's, so a different width is different rows — the
+    // reason a caller must not keep its own copy.
+    let (_, (_, wide)) = rows_at(60);
+    assert_eq!(wide.len(), 1, "one row at 60 columns");
+
+    // A key that names something which is not a text run answers nothing,
+    // rather than an empty wrap that would read as "no rows".
+    let mut ui: Ui<()> = Ui::new();
+    let boxed = Key::Str("boxed".into());
+    ui.frame(col().child(col().key(boxed.clone())), Size::new(20, 6));
+    assert!(ui.text_rows(&boxed).is_none());
+    assert!(ui.text_rows(&Key::Str("absent".into())).is_none());
+}

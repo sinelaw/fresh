@@ -215,6 +215,74 @@ is the markdown document view (the last immediate-mode render inside a
 description build, `view/shell/widgets.rs:2065`); the test is a caret placed
 by byte landing on the right row after a width change.
 
+**Two thirds of that already hold**, and
+`a_wrapped_run_places_a_byte_caret_where_the_wrap_put_it` pins them so the
+rest is stated against something: a wrapped run inside a viewport measures
+taller than its window, and a byte *inside* the window is placed at the row
+and column the wrap put it on, following the wrap when the width changes.
+*Landed, the follow*: `Anchor::reveal_byte(key, byte)` moves a window so the
+row holding that byte of the keyed wrapped run is inside it
+(`a_byte_is_revealed_on_the_row_the_wrap_put_it_on`). It is
+`reveal_key_at`'s split one step further — there the caller owns an offset in
+*rows* inside content the framework placed; here it has no rows at all, because
+which row a byte landed on is the wrap's answer and changes with the width, so
+the caller would have to re-shape the text to find it. The framework, which
+shaped the rows, answers instead (`TextRender::row_of_byte`, reading the same
+rows paint draws, so a reveal and the caret it chases cannot disagree).
+
+*Landed, the selection*: `Node::selection_bytes(range, theme)` washes a byte
+range of the run across every row the wrap put it on
+(`a_selected_byte_range_is_washed_across_the_rows_the_wrap_put_it_on`). One span
+per row, cut to what that row shows, built from the same `Row::src` the caret is
+placed through — so a selection and the caret walking out of its end cannot land
+on different rows, and the same bytes at a different width are washed
+differently without the caller knowing anything about rows. It is a
+[`Draw::Wash`], not a fill: a styled run keeps its own colours under a
+selection, which is L12's rule applied to a run's ground.
+
+*Landed, the rows*: `Ui::text_rows(key)` hands back the rows a keyed run was
+shaped into and the string they index, after layout, at the width layout
+settled on (`the_rows_a_run_was_wrapped_into_are_readable_after_layout`). This
+is the third piece, and the one §6.2's two did not cover: a byte caret answers
+at paint time and a byte press at press time, but a surface whose `Up`/`Down`
+mean *rendered* rows asks **"which byte is one rendered row below this one"**
+from a key handler, which is at neither and has no width. With the rows in hand
+it is `cell_of` then `byte_of` — the same two directions everything else here
+reads — instead of a second wrap kept only to have rows to count.
+
+**Still owed: the consumer switch, and it is not only glue.** The markdown
+document view still windows its rows through a `List` with a row index for a
+selection (`view/shell/widgets.rs`), which is what made it the last
+immediate-mode render inside a description build. Two facts, recorded at that
+arm, stand between it and `viewport(text_runs(parsed).wrap(Hanging))`:
+
+* **Rendered-row key motion.** `kinds::text::text_key` runs the shared text-key
+  table over a *shadow* editor whose lines are the reflowed rows — that is how
+  render-time wrapping reaches a key handler that has a `WidgetPanelState` and
+  no width. `Ui::text_rows` is what that shadow existed to compute, so the
+  switch is now editor-side work rather than a missing library piece — and
+  **where it happens is decided by a dependency**: `fresh-editor-core` does not
+  depend on `fresh-ui`, so a kind cannot read a `Row`, and giving it a copy of
+  `cell_of`/`byte_of` is the second mapping this whole rule exists to remove. So
+  `Up`/`Down`/`Home`/`End` over a markdown document are resolved *in the editor*,
+  where the tree is, into a byte, and the kind is told to move its caret there —
+  the same shape `UiFact::WidgetKey`'s `viewport` already has, a tree fact
+  travelling with the key. Everything else on that surface (character and word
+  motion, selection, Copy) stays the kind's and stays logical.
+* **The state's text becomes the document, not its reflow.** With the wrap the
+  library's, the widget's `TextEdit` holds the string the description handed
+  over — so Copy yields the document rather than the rows it happened to be cut
+  into, and `scroll`/`user_scrolled` on that state are the viewport's.
+* **The text is deliberately not breakable.** `parse_markdown`
+  (`fresh-editor-core/src/markdown.rs`, "Preserve leading whitespace (as
+  NBSP)") turns leading spaces into NBSP so the markdown parser does not read
+  an indented line as a code block, and `wrap_styled_lines` then treats NBSP as
+  space-like for both breaking and the hanging indent. `fresh-ui` breaks on
+  `' '` only — correctly, since NBSP exists to *prevent* a break — so the
+  indent has to be normalised back to spaces where the runs are built for the
+  library, not taught to the library, which would be wrong for every other
+  wrapped surface.
+
 **L6 — A keyed geometry index.** `find_by_key` has 160 call sites in the
 editor and walks the tree. After layout the library publishes `Key → Rect`
 (and the scroll/window facts `GeomSnapshot` already carries) as an O(1)
@@ -1101,6 +1169,28 @@ pane the pass did not settle this frame has no caret at all
 library's question (L17). *Landed* since: the pipeline's cell patches are runs in the rows it draws
 (L12), so nothing rewrites a cell the pane has already written.
 
+**The gutter cannot follow it, and the reason is the frame's own order.**
+"Line numbers, folds and diagnostics as runs beside the leaf" reads like the
+same move, but the gutter's rows are not knowable when the description is
+built: what a row shows depends on which *view line* it holds — a wrapped
+continuation shows no number, a virtual line shows its own glyph, a fold
+shows its arrow — and view lines come out of `build_view_data`, which the
+content pass runs **after** layout, at the rectangle layout gave the pane.
+A description is built before layout; even a `layout_reader` builds during
+it, which is still too early. So a gutter of runs would need the content
+pass to move inside layout, and §3.7.3 put it between the halves on purpose,
+so the caret a frame places is the one that frame settled.
+
+What *is* reachable, and what "beside the leaf" should mean until then: the
+gutter as its **own leaf** next to the content's, painted by the same pass.
+That is worth doing on its own — the content leaf's rectangle stops
+including a margin it then subtracts back out of every byte-at-cell answer,
+and a press in the gutter becomes the gutter node's rather than a column
+test inside the pane — but it is a change to the pane's rect and its
+row-to-byte mapping, not a run conversion. The run form waits on the same
+thing S9 waits on: a pane's rows reaching the display list, at which point
+the gutter's rows travel with them.
+
 #### 3.7.4 Pointer
 
 `hit` claims the whole rect; `text_byte_at(local)` answers the byte under a
@@ -1525,7 +1615,8 @@ context and not in the departing list's. Its thirteenth: the pipeline's cell pat
 are runs in the rows it draws (§3.7.3, L12) — the ruler and the cursor
 column are styled into the line before it is drawn, padded rows carry a
 ruler below a short buffer, and `post_pass`'s two tint functions are
-deleted. Open in S7: the gutter as runs.
+deleted. Open in S7: the gutter, and its shape is not the one this table
+assumed — see §3.7.3's note.
 Open in S3: the kinds' keys from the node, `painted`/`boxes` (the text
 projection still runs on the plugin's mount and update, and for the two
 exceptions `resolve_described_panel` names) and the anchored panel's
