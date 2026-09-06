@@ -968,6 +968,15 @@ fn focused_line(screen: &str) -> String {
     lines[0].to_string()
 }
 
+/// Like [`focused_line`], but `None` instead of a panic when the marker count
+/// is not exactly one. For `wait_until` conditions, which see intermediate
+/// frames where a focus handoff is still in flight.
+fn focused_line_opt(screen: &str) -> Option<String> {
+    let mut lines = screen.lines().filter(|l| l.contains('▸'));
+    let first = lines.next()?;
+    lines.next().is_none().then(|| first.to_string())
+}
+
 /// Open the form on a non-git workspace (so the worktree toggle and
 /// Branch field are absent — a predictable, minimal field set).
 fn open_form_on(workspace: &PathBuf) -> EditorTestHarness {
@@ -1828,8 +1837,16 @@ fn custom_agent_is_typable_when_running_in_the_current_workspace() {
         );
     }
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    // The selector paints "custom…" immediately, but the preset hands focus to
+    // the command box through a plugin round-trip that can land a tick later.
+    // Gate on the marker rather than the label: a key sent inside that window
+    // goes to the selector instead of the box, and is lost.
     harness
-        .wait_until(|h| h.screen_to_string().contains("custom"))
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("custom")
+                && focused_line_opt(&screen).is_some_and(|l| !l.contains("Agent:"))
+        })
         .unwrap();
 
     // Focus followed the preset onto the command field, so the user can just
