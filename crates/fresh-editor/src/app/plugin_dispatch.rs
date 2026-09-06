@@ -4539,6 +4539,7 @@ impl Editor {
                 focus: focus.unwrap_or(true),
                 persistent,
                 command: command.clone(),
+                environment: Vec::new(),
                 title: title.filter(|t| !t.is_empty()),
                 env: terminal_env.clone(),
             };

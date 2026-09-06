@@ -1631,6 +1631,11 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "LSP"))]
     pub enable_inlay_hints: bool,
 
+    /// Whether to enable LSP code lenses (action annotations above code).
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "LSP"))]
+    pub enable_code_lens: bool,
+
     /// Whether to request full-document LSP semantic tokens.
     /// Range requests are still used when supported.
     /// Default: false (range-only to avoid heavy full refreshes).
@@ -2030,6 +2035,7 @@ impl Default for EditorConfig {
             large_file_threshold_bytes: default_large_file_threshold(),
             estimated_line_length: default_estimated_line_length(),
             enable_inlay_hints: true,
+            enable_code_lens: true,
             enable_semantic_tokens_full: false,
             diagnostics_inline_text: false,
             auto_save_enabled: false,

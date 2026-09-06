@@ -118,6 +118,7 @@
         "quick_suggestions_delay_ms": 150,
         "suggest_on_trigger_characters": true,
         "enable_inlay_hints": true,
+        "enable_code_lens": true,
         "enable_semantic_tokens_full": false,
         "diagnostics_inline_text": false,
         "mouse_wheel_scroll_lines": 3,
@@ -803,6 +804,12 @@
         },
         "enable_inlay_hints": {
           "description": "Whether to enable LSP inlay hints (type hints, parameter hints, etc.)",
+          "type": "boolean",
+          "default": true,
+          "x-section": "LSP"
+        },
+        "enable_code_lens": {
+          "description": "Whether to enable LSP code lenses (action annotations above code).",
           "type": "boolean",
           "default": true,
           "x-section": "LSP"
@@ -1991,6 +1998,11 @@
           "description": "Inlay hints (exclusive)",
           "type": "string",
           "const": "inlay_hints"
+        },
+        {
+          "description": "Code lens annotations and commands (exclusive)",
+          "type": "string",
+          "const": "code_lens"
         },
         {
           "description": "Folding ranges (exclusive)",

@@ -96,6 +96,9 @@ pub struct PluginTerminalSpec {
     pub focus: bool,
     pub persistent: bool,
     pub command: Option<Vec<String>>,
+    /// Extra environment variables for the spawned command. These override
+    /// the activated project environment.
+    pub environment: Vec<(String, String)>,
     pub title: Option<String>,
     /// Extra environment variables applied to the terminal's child
     /// process, on top of the inherited + activated env. Applied after
@@ -350,7 +353,7 @@ impl Window {
         command_override: Option<Vec<String>>,
         extra_env: HashMap<String, String>,
     ) -> Option<TerminalId> {
-        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, false)
+        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, &[], false)
     }
 
     /// Like [`Self::spawn_terminal_session`] but builds the command wrapper from
@@ -365,7 +368,7 @@ impl Window {
         command_override: Option<Vec<String>>,
         extra_env: HashMap<String, String>,
     ) -> Option<TerminalId> {
-        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, true)
+        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, &[], true)
     }
 
     /// Pick the `fresh-terminal-…` file stem for a new persistent terminal in
@@ -416,6 +419,7 @@ impl Window {
         persistent: bool,
         command_override: Option<Vec<String>>,
         extra_env: HashMap<String, String>,
+        environment: &[(String, String)],
         force_local: bool,
     ) -> Option<TerminalId> {
         let (cols, rows) = self.get_terminal_dimensions();
@@ -462,19 +466,44 @@ impl Window {
         // this host regardless of any remote backend (see `local_direct_wrapper`).
         let wrapper = match command_override {
             Some(argv) if !argv.is_empty() && force_local => local_direct_wrapper(&argv),
-            Some(argv) if !argv.is_empty() => self.authority().terminal_command(&argv),
+            Some(mut argv) if !argv.is_empty() => {
+                let initial = self.authority().terminal_command(&argv);
+                if initial.manages_cwd && !environment.is_empty() {
+                    // For SSH/container backends CommandBuilder's environment
+                    // belongs to the local transport process. Put the overrides
+                    // inside the backend command so the runnable receives them.
+                    let mut remote_argv = Vec::with_capacity(environment.len() + argv.len() + 1);
+                    remote_argv.push("env".to_string());
+                    remote_argv.extend(
+                        environment
+                            .iter()
+                            .map(|(key, value)| format!("{key}={value}")),
+                    );
+                    remote_argv.append(&mut argv);
+                    self.authority().terminal_command(&remote_argv)
+                } else {
+                    initial
+                }
+            }
             _ => self.resolved_terminal_wrapper(),
         };
         // A forced-local command must not inherit a remote authority's activated
         // env (venv/direnv living on another host); it runs on this host and
         // inherits this editor process's real environment instead.
-        let (wrapper, env_delta) = if force_local {
+        let (wrapper, mut env_delta) = if force_local {
             (wrapper, crate::services::env_provider::EnvDelta::default())
         } else {
             let wrapper = self.apply_remote_terminal_env(wrapper);
             let env_delta = self.terminal_env_delta(&wrapper);
             (wrapper, env_delta)
         };
+        if !wrapper.manages_cwd {
+            for (key, value) in environment {
+                env_delta.set.retain(|(existing, _)| existing != key);
+                env_delta.unset.retain(|existing| existing != key);
+                env_delta.set.push((key.clone(), value.clone()));
+            }
+        }
         match self.terminal_manager.spawn(
             cols,
             rows,
@@ -635,6 +664,7 @@ impl Window {
             focus,
             persistent,
             command,
+            environment,
             title,
             env,
         } = spec;
@@ -654,7 +684,7 @@ impl Window {
         });
         let resolved_title = title.or(auto_title);
         let terminal_id = self
-            .spawn_terminal_session(cwd, persistent, command, env)
+            .spawn_terminal_session_impl(cwd, persistent, command, env, &environment, false)
             .ok_or_else(|| "Failed to spawn terminal".to_string())?;
 
         // Register the leader pid with this window's process_groups

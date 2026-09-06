@@ -206,6 +206,8 @@ pub struct ServerCapabilitySummary {
     pub rename: bool,
     pub signature_help: bool,
     pub inlay_hints: bool,
+    pub code_lens: bool,
+    pub code_lens_resolve: bool,
     pub folding_ranges: bool,
     pub semantic_tokens_full: bool,
     pub semantic_tokens_full_delta: bool,
@@ -276,6 +278,19 @@ impl ServerCapabilitySummary {
             "textDocument/rename" => self.rename = register,
             "textDocument/signatureHelp" => self.signature_help = register,
             "textDocument/inlayHint" => self.inlay_hints = register,
+            "textDocument/codeLens" => {
+                self.code_lens = register;
+                if register {
+                    if let Some(resolve) = register_options
+                        .and_then(|opts| opts.get("resolveProvider"))
+                        .and_then(serde_json::Value::as_bool)
+                    {
+                        self.code_lens_resolve = resolve;
+                    }
+                } else {
+                    self.code_lens_resolve = false;
+                }
+            }
             "textDocument/foldingRange" => self.folding_ranges = register,
             "textDocument/documentHighlight" => self.document_highlight = register,
             "textDocument/codeAction" => {
@@ -380,6 +395,7 @@ impl ServerHandle {
             LspFeature::Rename => self.capabilities.rename,
             LspFeature::SignatureHelp => self.capabilities.signature_help,
             LspFeature::InlayHints => self.capabilities.inlay_hints,
+            LspFeature::CodeLens => self.capabilities.code_lens,
             LspFeature::FoldingRange => self.capabilities.folding_ranges,
             LspFeature::SemanticTokens => {
                 self.capabilities.semantic_tokens_full || self.capabilities.semantic_tokens_range

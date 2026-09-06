@@ -33,6 +33,8 @@ pub struct ViewLineMapping {
     /// the row below claims the byte, and a `Home` or `Up` after `End` acts on
     /// the wrong row.
     pub end_exclusive: Option<usize>,
+    /// Namespace of the virtual text that generated this visual row.
+    pub virtual_text_namespace: Option<String>,
 }
 
 impl ViewLineMapping {

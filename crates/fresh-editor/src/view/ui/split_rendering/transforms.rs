@@ -587,13 +587,18 @@ pub(super) fn inject_virtual_lines(
                                 vtext.gutter_color.unwrap_or(theme.line_number_fg),
                             )
                         });
-                        result.extend(create_wrapped_virtual_lines(
+                        let mut lines = create_wrapped_virtual_lines(
                             &vtext.text,
                             vtext.resolved_style(theme),
                             wrap_width,
                             glyph,
                             &vtext.text_overlays,
-                        ));
+                        );
+                        let namespace = vtext.namespace.as_ref().map(|ns| ns.as_str().to_string());
+                        for line in &mut lines {
+                            line.virtual_text_namespace = namespace.clone();
+                        }
+                        result.extend(lines);
                     }
                 }
             }
@@ -614,13 +619,18 @@ pub(super) fn inject_virtual_lines(
                                 vtext.gutter_color.unwrap_or(theme.line_number_fg),
                             )
                         });
-                        result.extend(create_wrapped_virtual_lines(
+                        let mut lines = create_wrapped_virtual_lines(
                             &vtext.text,
                             vtext.resolved_style(theme),
                             wrap_width,
                             glyph,
                             &vtext.text_overlays,
-                        ));
+                        );
+                        let namespace = vtext.namespace.as_ref().map(|ns| ns.as_str().to_string());
+                        for line in &mut lines {
+                            line.virtual_text_namespace = namespace.clone();
+                        }
+                        result.extend(lines);
                     }
                 }
             }

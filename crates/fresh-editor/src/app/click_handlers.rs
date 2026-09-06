@@ -363,6 +363,13 @@ impl Editor {
         // Focus this split (handles terminal mode exit, tab state, etc.)
         self.focus_split(split_id, buffer_id);
 
+        if let Some(command) =
+            self.code_lens_command_at_screen_position(col, row, split_id, buffer_id, content_rect)
+        {
+            self.execute_code_lens_command(buffer_id, command);
+            return Ok(());
+        }
+
         // Handle composite buffer clicks specially
         if self.active_window().is_composite_buffer(buffer_id) {
             return self.handle_composite_click(col, row, split_id, buffer_id, content_rect);

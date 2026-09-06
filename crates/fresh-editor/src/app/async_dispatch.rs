@@ -361,6 +361,13 @@ impl Editor {
                 } => {
                     self.handle_lsp_inlay_hints(request_id, uri, hints);
                 }
+                AsyncMessage::LspCodeLens {
+                    request_id,
+                    uri,
+                    lenses,
+                } => {
+                    self.handle_lsp_code_lens(request_id, uri, lenses);
+                }
                 AsyncMessage::LspFoldingRanges {
                     request_id,
                     uri,
@@ -383,6 +390,9 @@ impl Editor {
                 }
                 AsyncMessage::LspInlayHintRefresh { language } => {
                     self.handle_lsp_inlay_hint_refresh(language);
+                }
+                AsyncMessage::LspCodeLensRefresh { language } => {
+                    self.handle_lsp_code_lens_refresh(language);
                 }
                 AsyncMessage::LspSemanticTokensRefresh { language } => {
                     self.handle_lsp_semantic_tokens_refresh(language);
@@ -699,6 +709,7 @@ impl Editor {
         self.resend_did_open_for_language(&language);
         self.request_semantic_tokens_for_language(&language);
         self.request_folding_ranges_for_language(&language);
+        self.request_code_lens_for_language(&language);
         // Now that capabilities are known, kick off inlay hints
         // and pull-diagnostics for buffers that opened before the
         // `initialize` handshake completed. Both paths route

@@ -3595,6 +3595,7 @@ pub fn action_to_events(
         | Action::LspHover
         | Action::LspSignatureHelp
         | Action::LspCodeActions
+        | Action::LspCodeLens
         | Action::LspRestart
         | Action::LspStop
         | Action::LspToggleForBuffer

@@ -159,6 +159,7 @@ pub mod lsp_bulk_edit_undo_desync;
 pub mod lsp_code_action_diagnostic_context;
 pub mod lsp_code_action_modal;
 pub mod lsp_code_action_resolve_and_commands;
+pub mod lsp_code_lens;
 pub mod lsp_completion_duplicate_entries_1514;
 pub mod lsp_completion_duplicate_label_import_2952;
 pub mod lsp_completion_dynamic_registration;

@@ -12,7 +12,7 @@
 
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
-    CodeActionOrCommand, CompletionItem, Diagnostic, FoldingRange, InlayHint, Location,
+    CodeActionOrCommand, CodeLens, CompletionItem, Diagnostic, FoldingRange, InlayHint, Location,
     SemanticTokensFullDeltaResult, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
 };
 use serde_json::Value;
@@ -262,6 +262,13 @@ pub enum AsyncMessage {
         hints: Vec<InlayHint>,
     },
 
+    /// LSP code lens response (textDocument/codeLens)
+    LspCodeLens {
+        request_id: u64,
+        uri: String,
+        lenses: Vec<CodeLens>,
+    },
+
     /// LSP folding ranges response (textDocument/foldingRange)
     LspFoldingRanges {
         request_id: u64,
@@ -289,6 +296,10 @@ pub enum AsyncMessage {
     /// server learns more later (e.g. a change in file A alters inferred types
     /// in file B, which the user never edited so was never otherwise re-pulled).
     LspInlayHintRefresh { language: String },
+
+    /// LSP server requests a code-lens refresh (workspace/codeLens/refresh).
+    /// Client should re-pull code lenses for all open documents.
+    LspCodeLensRefresh { language: String },
 
     /// LSP server requests a semantic-tokens refresh
     /// (workspace/semanticTokens/refresh). Client should re-pull semantic
