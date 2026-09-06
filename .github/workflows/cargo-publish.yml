@@ -27,4 +27,33 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --allow-dirty
+        run: |
+          # Publish crates individually in dependency order, skipping
+          # any that are already published (makes the workflow re-runnable).
+          crates=(
+            fresh-core
+            fresh-languages
+            fresh-parser-js
+            fresh-plugin-api-macros
+            fresh-winterm
+            fresh-plugin-runtime
+            fresh-editor
+          )
+          for crate in "${crates[@]}"; do
+            echo "::group::Publishing $crate"
+            flags=""
+            if [ "$crate" = "fresh-editor" ]; then
+              flags="--allow-dirty"
+            fi
+            if cargo publish -p "$crate" $flags 2>&1 | tee /tmp/publish.log; then
+              echo "Published $crate"
+            elif grep -q "already exists" /tmp/publish.log; then
+              echo "Skipping $crate (already published)"
+            else
+              echo "::error::Failed to publish $crate"
+              cat /tmp/publish.log
+              exit 1
+            fi
+            echo "::endgroup::"
+            sleep 15
+          done
