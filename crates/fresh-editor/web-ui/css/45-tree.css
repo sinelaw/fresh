@@ -2,14 +2,43 @@
    the exact cell rectangles the tree laid them out at; the layer takes no
    input of its own and the items fall through to the document's cell mapping. */
 .tree{position:absolute;left:0;top:0;pointer-events:none;user-select:none;z-index:90}
+/* A surface is an opaque region of the screen, and its GROUND is the terminal's
+   own: the TUI clears the frame to the theme background and then folds the
+   display list over it, so a cell no item paints reads as `editor.bg` there.
+   The web has no such clear — under the layer sits the page (a wallpaper, in
+   the shell themes) — so every cell the panel leaves blank leaked it: the gaps
+   between a row's runs, the dock's hint bar, the empty space under a short
+   session list. The ground is painted per surface, and all surfaces are
+   appended before any item, which is exactly the terminal's order (clear the
+   screen, then paint). A `sidebar` section stands inside the file explorer's
+   native column, which paints its own ground, so it is left to that. */
 .tree-surface{position:absolute;pointer-events:none}
+.tree-surface.dock,.tree-surface.floating{background:var(--bg)}
+/* The dock's right edge is a drag border in the editor (`Grip::DockWidth`).
+   The cell mapping already forwards a press there, so this only carries the
+   affordance the pointer needs — and `.tree` takes no pointer events, so the
+   grip has to ask for its own. */
+.tree .resize-grip{pointer-events:auto}
 .tree-scrim{position:absolute;left:0;top:0;pointer-events:auto;background:rgba(0,0,0,.45)}
 .tree-item{position:absolute;pointer-events:auto;overflow:hidden;box-sizing:border-box}
 .tree-item.k-border{border:1px solid currentColor}
 .tree-item.k-border.rounded{border-radius:6px}
 .tree-item.k-scrim.dim{background:rgba(0,0,0,.45)}
 .tree-item.k-selectable{pointer-events:none}
-.tree-line{position:absolute;white-space:pre;color:inherit}
+/* A run of the display list's text, one row tall at its cell origin. It is
+   GRID text, not chrome text: pinned to the buffer's monospace stack at the
+   size the metrics were measured with, and tracked so N characters advance N
+   cells — the same contract `svg.cells` keeps. Left to inherit the page's
+   font, a web theme that repoints the chrome at a proportional stack (macOS,
+   which also drops the tracking and shrinks the size) rendered every panel
+   run narrower than the cells the tree budgeted for it, and the dock's rows
+   drifted out of their own layout. Weight/slant/decoration stay inherited
+   from the item, so no `font` shorthand here — it would reset them. */
+.tree-line{position:absolute;white-space:pre;color:inherit;
+  font-family:var(--mono-family);font-size:var(--font-size);
+  letter-spacing:var(--cell-tracking,0)}
+/* A vertical box-drawing glyph, drawn as a rule instead (see 72-tree.js). */
+.tree-rule{position:absolute;background:currentColor}
 .tree-thumb{position:absolute;left:0;right:0;border-radius:3px}
 .tree-caret{position:absolute;pointer-events:none;border-left:2px solid var(--accent, #fff);opacity:.9}
 /* A mark on a scrollbar's track: half the cell's width in the mark's colour

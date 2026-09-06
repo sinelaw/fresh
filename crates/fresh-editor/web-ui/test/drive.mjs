@@ -230,6 +230,72 @@ if (webDockPanels) {
   check('NO svg/cells inside the dock', (await page.locator('.tree svg').count()) === 0);
   await page.screenshot({ path: `${SHOTS}/28-native-dock.png` });
 
+  // What a second backend owes the display list, each one a way the dock came
+  // out wrong in a browser while the terminal drew it right.
+  console.log('\n[the dock is all of what the terminal draws there]');
+  {
+    const t = await treeOf();
+    const si = t.surfaces.findIndex(s => s.kind === 'dock');
+    const dk = t.surfaces[si];
+    // (1) The surface is the whole subtree: the wall down the column's last
+    // cell is `grip_strip`, a SIBLING of the keyed column, so a projection
+    // rooted at the column alone ships a dock with no right edge.
+    const wall = t.items.filter(i => i.surface === si && i.x === dk.x + dk.w - 1
+      && (i.lines || []).some(l => /[│┃]/.test(l)));
+    check('the dock\'s wall is in the display list, down its last column',
+      wall.length >= dk.h - 1, `${wall.length} of ${dk.h} rows`);
+    // (2) A vertical wall is drawn as a RULE, not as the font's glyph — the
+    // same substitution svg.cells makes, because a glyph stacked at our cell
+    // height leaves a gap between rows and the wall comes out dashed.
+    check('the wall is drawn as rules, not stacked glyphs',
+      (await page.locator('.tree .tree-rule').count()) >= dk.h - 1);
+    check('no │ glyph is left behind the rules',
+      (await page.evaluate(() => [...document.querySelectorAll('.tree .tree-line')]
+        .every(e => !/[│┃]/.test(e.textContent)))));
+    // (3) The surface carries its own ground. The terminal clears the frame to
+    // the theme background before folding; the web has no such clear, so a
+    // cell no item paints showed the page (the wallpaper) through the dock.
+    const ground = await page.evaluate(() => {
+      const el = document.querySelector('.tree-surface.dock');
+      return el ? getComputedStyle(el).backgroundColor : null;
+    });
+    check('the dock surface paints an opaque ground', !!ground && !/rgba\([^)]*,\s*0\)/.test(ground), String(ground));
+    // (4) The runs are GRID text: pinned to the buffer's monospace stack at the
+    // measured size with the cell tracking, so a web theme that repoints the
+    // chrome font at a proportional stack (macOS) cannot shrink them out of the
+    // cells the tree laid them out in. Forced here on <body> directly — the
+    // editor never sees it, so nothing reflows.
+    const pitch = await page.evaluate(() => {
+      const pick = () => [...document.querySelectorAll('.tree .tree-line')]
+        .find(e => (e.textContent || '').trim().length >= 6);
+      const cw = window.fresh.metrics.cw;
+      const measure = () => { const e = pick(); return e ? e.getBoundingClientRect().width / e.textContent.length : null; };
+      const before = measure();
+      const b = document.body.style;
+      const keep = [b.fontFamily, b.fontSize, b.letterSpacing];
+      b.fontFamily = 'Georgia, serif'; b.fontSize = '9px'; b.letterSpacing = 'normal';
+      const after = measure();
+      const fam = getComputedStyle(pick()).fontFamily;
+      [b.fontFamily, b.fontSize, b.letterSpacing] = keep;
+      return { cw, before, after, fam };
+    });
+    check('a panel run advances one cell per character',
+      pitch.before != null && Math.abs(pitch.before - pitch.cw) < 0.5, JSON.stringify(pitch));
+    check('and keeps that pitch under a proportional chrome font',
+      pitch.after != null && Math.abs(pitch.after - pitch.cw) < 0.5 && /mono/i.test(pitch.fam), JSON.stringify(pitch));
+    // (5) The column's last cell is the editor's width grip; the cell mapping
+    // forwards the drag, this is the affordance that says so.
+    const grip = await page.evaluate(() => {
+      const g = document.querySelector('.tree .resize-grip');
+      if (!g) return null;
+      const cs = getComputedStyle(g);
+      return { cursor: cs.cursor, pe: cs.pointerEvents, left: parseFloat(g.style.left) };
+    });
+    check('the dock edge carries a resize grip', !!grip && grip.cursor === 'col-resize'
+      && grip.pe === 'auto' && Math.abs(grip.left - (dk.x + dk.w - 1) * (await page.evaluate(() => window.fresh.metrics.cw))) < 1,
+      JSON.stringify(grip));
+  }
+
   console.log('\n[dock clicks are cells routed over the tree]');
   // The "empty" toggle (hide trivial): its row's text changes state when
   // clicked, and again when clicked once more.

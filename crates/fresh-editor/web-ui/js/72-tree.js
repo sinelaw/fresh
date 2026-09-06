@@ -58,9 +58,27 @@ function treeItemEl(it){
       (it.lines||[]).forEach((line,i)=>{
         const top=dy+px(i,CH);
         if(top+CH<=0||top>=px(it.h,CH)) return;
-        const row=div("tree-line"); row.textContent=line;
+        // Vertical box-drawing glyphs become vector rules, exactly as the cell
+        // SVG does them (VRULE, 20-cells.js): stacked at our cell height the
+        // font's own glyph leaves a gap between rows, so a wall a row tall per
+        // cell — the dock's divider is one such per row — came out dashed. The
+        // rule takes the run's colour from the item (`currentColor`) and the
+        // glyph is blanked so nothing shows behind it.
+        let shown=line;
+        if([...line].some(ch=>VRULE.includes(ch))){
+          for(let c=0;c<line.length;c++){
+            if(!VRULE.includes(line[c])) continue;
+            const hv=(line[c]==="┃"?1.8:1.1)*zoom;
+            const rule=div("tree-rule");
+            rule.style.left=(dx+px(c,CW)+CW/2-hv/2)+"px"; rule.style.top=top+"px";
+            rule.style.width=hv+"px"; rule.style.height=CH+"px";
+            el.appendChild(rule);
+          }
+          shown=[...line].map(ch=>VRULE.includes(ch)?" ":ch).join("");
+        }
+        const row=div("tree-line"); row.textContent=shown;
         row.style.left=dx+"px"; row.style.top=top+"px";
-        row.style.font=FONT; row.style.lineHeight=CH+"px"; row.style.height=CH+"px";
+        row.style.lineHeight=CH+"px"; row.style.height=CH+"px";
         el.appendChild(row);
       });
       break;
@@ -120,6 +138,11 @@ function treeEls(t){
     if(s.section!==undefined) sd.dataset.section=s.section;
     place(sd,{x:s.x,y:s.y,w:s.w,h:s.h});
     layer.appendChild(sd);
+    // A full-height left dock is resized by dragging its last column — the
+    // cell the tree draws its wall into. The document's cell mapping already
+    // forwards the drag (the layer is not `onChrome`), so this adds only the
+    // affordance: the col-resize cursor over the one column that has it.
+    if(s.kind==="dock"&&s.x===0&&!isMobile()) layer.appendChild(borderDragHandle(s.x+s.w-1,s.y,s.h));
   });
   for(const it of (t.items||[])) layer.appendChild(treeItemEl(it));
   if(t.cursor){
