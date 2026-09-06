@@ -446,6 +446,16 @@ pub enum UiFact {
         x: u16,
         y: u16,
     },
+    /// A primary press on the Explorer's scrollbar track or thumb.
+    ExplorerScrollbarPress {
+        row: u16,
+    },
+    /// Pointer movement while the Explorer scrollbar owns capture.
+    ExplorerScrollbarDrag {
+        row: u16,
+    },
+    /// The captured Explorer scrollbar button was released.
+    ExplorerScrollbarRelease,
     /// A left press landed on the dock's column and nothing in it answered.
     ///
     /// **A press on the column carries no cell, and there is nothing left to

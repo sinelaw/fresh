@@ -43,7 +43,8 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, row, stack, text, text_runs, Event, GestureKind, Key, Node, Run, Sizing,
+    col, gesture, layout_reader, row, stack, text, text_runs, Event, GestureKind, Key, LayoutInfo,
+    Node, PointerMode, Run, Sizing,
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -157,6 +158,10 @@ pub fn slot_key(index: usize) -> Key {
     Key::Pair("explorer_slot".into(), index as u64)
 }
 
+pub fn scrollbar_key() -> Key {
+    Key::Str("explorer_scrollbar".into())
+}
+
 fn hover_msg(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
     Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::Hover(t.clone()))))
 }
@@ -186,16 +191,11 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
         ),
         Body::Rows(rows) => col().children(rows.iter().map(|r| node_row(e, r))),
     };
-    match e.scroll {
-        // The bar takes a column of its own rather than floating over the
-        // rows: a row's trailing status slot is pushed flush to the right
-        // edge by layout, so an overlay bar would sit exactly on top of the
-        // git markers. One column narrower is what a gutter costs, and the
-        // rows are measured at the narrower width by the same layout that
-        // answers a press — nothing re-derives a column.
-        Some(scroll) => row().children([body.flex(1), scrollbar(scroll)]),
-        None => body,
-    }
+
+    // Keep the final inner column out of row content even while the bar is
+    // hidden. That makes trailing status hit targets stable as the tree moves
+    // between fitting and overflowing its viewport.
+    row().children([body.flex(1), scrollbar(e.scroll).w(Sizing::Cells(1))])
 }
 
 /// The bar for an overflowing tree: one cell per visible row, the thumb's
@@ -209,32 +209,71 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
 /// The geometry is [`ScrollbarState::thumb_geometry`], the same one the
 /// settings panel's bar and the editor's use, so a thumb of a given size sits
 /// where the rest of the editor would put it.
-fn scrollbar(scroll: Scroll) -> Node<UiMsg> {
-    use crate::view::ui::scrollbar::ScrollbarState;
-    // `ScrollbarState`'s ceiling is `total_items - visible_items`, so the
-    // `visible_items` it is given has to be the one that makes that ceiling
-    // the model's own `max_offset` — otherwise the thumb reaches the track's
-    // end before the tree reaches its last row. With ancestors pinned that is
-    // fewer rows than the panel shows, and a slightly shorter thumb is the
-    // honest answer: fewer of the tree's rows are reachable as ordinary ones.
-    let visible = scroll.total.saturating_sub(scroll.max_offset).max(1);
-    let state = ScrollbarState::new(scroll.total, visible, scroll.offset.min(scroll.max_offset));
-    let (thumb_top, thumb_len) = state.thumb_geometry(scroll.rows);
-    let thumb = pair("ui.scrollbar_thumb_fg", "ui.scrollbar_thumb_fg");
-    let track = pair("ui.scrollbar_track_fg", "ui.scrollbar_track_fg");
-    col()
-        .w(Sizing::Cells(1))
-        // The bar is drawn, not pressed: a press here is the panel's dead
-        // space, which the union box answers by focusing the explorer.
-        .pointer_mode(fresh_ui::PointerMode::Transparent)
-        .children((0..scroll.rows).map(|i| {
-            let on_thumb = i >= thumb_top && i < thumb_top + thumb_len;
-            row().h(Sizing::Cells(1)).theme(if on_thumb {
-                thumb.clone()
+fn scrollbar(scroll: Option<Scroll>) -> Node<UiMsg> {
+    let Some(scroll) = scroll else {
+        return row().pointer_mode(PointerMode::Transparent);
+    };
+    let ink = layout_reader(move |c: LayoutInfo| {
+        use crate::view::ui::scrollbar::ScrollbarState;
+
+        let height = c.constraints.max_h as usize;
+        // `ScrollbarState`'s ceiling is `total_items - visible_items`, so the
+        // visible count must reproduce FileTreeView's sticky-aware ceiling.
+        let visible = scroll.total.saturating_sub(scroll.max_offset).max(1);
+        let state =
+            ScrollbarState::new(scroll.total, visible, scroll.offset.min(scroll.max_offset));
+        let (thumb_top, thumb_len) = state.thumb_geometry(height);
+        col().children((0..height).map(move |row| {
+            let key = if row >= thumb_top && row < thumb_top + thumb_len {
+                "ui.scrollbar_thumb_fg"
             } else {
-                track.clone()
-            })
+                "ui.scrollbar_track_fg"
+            };
+            text(" ").theme(pair(key, key)).h(Sizing::Cells(1))
         }))
+    });
+
+    gesture(ink)
+        .key(scrollbar_key())
+        .on(
+            GestureKind::Press,
+            Rc::new(|ev: &Event| {
+                if ev.button != fresh_ui::MouseButton::Left {
+                    return None;
+                }
+                ev.capture_pointer();
+                ev.stop();
+                Some(UiMsg::Ui(UiFact::ExplorerScrollbarPress {
+                    row: ev.pos.y.max(0) as u16,
+                }))
+            }),
+        )
+        .on(
+            GestureKind::Move,
+            Rc::new(|ev: &Event| {
+                Some(UiMsg::Ui(UiFact::ExplorerScrollbarDrag {
+                    row: ev.pos.y.max(0) as u16,
+                }))
+            }),
+        )
+        .on(
+            GestureKind::Release,
+            Rc::new(|ev: &Event| {
+                ev.stop();
+                Some(UiMsg::Ui(UiFact::ExplorerScrollbarRelease))
+            }),
+        )
+        .on(
+            GestureKind::Wheel,
+            Rc::new(|ev: &Event| {
+                ev.stop();
+                Some(UiMsg::Ui(UiFact::ExplorerScroll {
+                    delta: ev.delta,
+                    x: ev.pos.x.max(0) as u16,
+                    y: ev.pos.y.max(0) as u16,
+                }))
+            }),
+        )
 }
 
 /// **The union box.** A right-press anywhere on the panel opens the menu,
@@ -338,7 +377,11 @@ fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
             body,
             row()
                 .h(Sizing::Cells(1))
-                .children([text("▌").theme(caret_ink(&r.theme)).w(Sizing::Cells(1))]),
+                .pointer_mode(PointerMode::Transparent)
+                .children([text("▌")
+                    .theme(caret_ink(&r.theme))
+                    .w(Sizing::Cells(1))
+                    .pointer_mode(PointerMode::Transparent)]),
         ])
     } else {
         body
@@ -491,7 +534,7 @@ mod tests {
     use super::*;
     use crate::view::shell::fold::{fold_native, Band};
     use crate::view::shell::frame::{frame_tree, Frame};
-    use crate::view::shell::sidebar::{close_key, grip_key, Sidebar};
+    use crate::view::shell::sidebar::{close_key, grip_key, SectionKind, Sidebar};
     use fresh_ui::{Input, Mods, MouseButton, Point, Size, Ui};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -762,7 +805,7 @@ mod tests {
     #[test]
     fn the_status_slot_is_pushed_right_and_keeps_its_gap() {
         let got = lines(panel_of(vec![row_of(0, "a-file", Some("M"))], 20), 20, 4);
-        assert_eq!(got[1], "│  a-file         M│");
+        assert_eq!(got[1], "│  a-file        M │");
         // Squeezed until the row no longer fits, the gap still holds its cell
         // — which is what `min_w` is for — and the row overflows.
         //
@@ -796,11 +839,47 @@ mod tests {
         let ui = laid_out(panel_of(vec![row_of(0, "a-file", Some("M"))], 20), 20, 4);
         let size = Rect::new(0, 0, 20, 4);
         let slot = slot_rect(&ui, 0, size).expect("the slot");
-        assert_eq!((slot.x, slot.y, slot.width), (18, 1, 1));
+        assert_eq!((slot.x, slot.y, slot.width), (17, 1, 1));
         // A row without a slot reports none, rather than a zero-width sliver
         // that would hit-test.
         let ui = laid_out(panel_of(vec![row_of(0, "a-file", None)], 20), 20, 4);
         assert!(slot_rect(&ui, 0, size).is_none());
+    }
+
+    #[test]
+    fn a_scrollbar_keeps_the_status_slot_hittable_beside_it() {
+        let mut e = panel_of(vec![row_of(0, "a-file", Some("M"))], 20);
+        let SectionKind::Explorer(explorer) = &mut e.sections[0].kind else {
+            panic!("the fixture's first section must be the Explorer");
+        };
+        explorer.scroll = Some(Scroll {
+            offset: 0,
+            max_offset: 38,
+            total: 40,
+            rows: 2,
+        });
+        // The caret is a paint-only overlay. It must not turn the selected
+        // row into one opaque hit target and hide the status gesture below.
+        explorer.caret_row = Some(0);
+        let mut ui = laid_out(e, 20, 4);
+        let size = Rect::new(0, 0, 20, 4);
+        let slot = slot_rect(&ui, 0, size).expect("the slot");
+        assert_eq!((slot.x, slot.y, slot.width), (17, 1, 1));
+
+        let got = ui.dispatch(Input::Move {
+            pos: Point::new(slot.x as i32, slot.y as i32),
+            mods: Mods::NONE,
+        });
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::Hover(Some(
+                    HoverTarget::FileExplorerStatusIndicator(path)
+                ))) if path == std::path::Path::new("a-file")
+            )),
+            "got {:?}",
+            got.msgs
+        );
     }
 
     /// A press on a row names the row and carries the run count the host

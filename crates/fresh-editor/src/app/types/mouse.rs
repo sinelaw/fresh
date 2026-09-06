@@ -43,6 +43,8 @@ pub struct MouseState {
     pub drag_start_ratio: Option<f32>,
     /// Whether we're currently dragging the file explorer border
     pub dragging_file_explorer: bool,
+    /// Press-relative state for the shell-owned Explorer scrollbar.
+    pub file_explorer_scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
     /// File explorer width at the moment the drag started. Drag
     /// preserves the active variant: a drag that begins in `Percent`
     /// stays in `Percent`, and likewise for `Columns`.

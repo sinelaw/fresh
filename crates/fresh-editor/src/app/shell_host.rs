@@ -2895,6 +2895,16 @@ impl Editor {
                 self.active_window().wheel_plugin_hook(x, y, delta);
                 self.active_window_mut().scroll_file_explorer_view(delta);
             }
+            UiFact::ExplorerScrollbarPress { row } => {
+                self.dismiss_transient_popups();
+                self.explorer_scrollbar_pressed(row);
+            }
+            UiFact::ExplorerScrollbarDrag { row } => {
+                self.explorer_scrollbar_dragged(row);
+            }
+            UiFact::ExplorerScrollbarRelease => {
+                self.explorer_scrollbar_released();
+            }
 
             UiFact::MenuItemClick { depth, index } => {
                 let Some(active) = self.menu_state.active_menu else {

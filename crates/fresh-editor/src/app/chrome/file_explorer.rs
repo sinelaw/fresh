@@ -151,6 +151,62 @@ impl Editor {
         self.explorer_row_context(index, x, y);
     }
 
+    fn explorer_scrollbar_geometry(
+        &self,
+    ) -> Option<(
+        ratatui::layout::Rect,
+        crate::view::ui::scrollbar::ScrollbarState,
+    )> {
+        let track = self.panel_rect(&crate::view::shell::file_explorer::scrollbar_key())?;
+        let viewport = track.height as usize;
+        let view = self.file_explorer()?;
+        let max_scroll = view.max_scroll_offset();
+        if max_scroll == 0 || viewport < 2 {
+            return None;
+        }
+        let state = crate::view::ui::scrollbar::ScrollbarState::new(
+            max_scroll.saturating_add(viewport),
+            viewport,
+            view.get_scroll_offset().min(max_scroll),
+        );
+        Some((track, state))
+    }
+
+    pub(crate) fn explorer_scrollbar_pressed(&mut self, row: u16) {
+        let Some((track, state)) = self.explorer_scrollbar_geometry() else {
+            return;
+        };
+        let offset = self
+            .active_window_mut()
+            .mouse_state
+            .file_explorer_scrollbar_mouse
+            .press(state, track, track.x, row);
+        if let (Some(offset), Some(view)) = (offset, self.file_explorer_mut()) {
+            view.set_scroll_offset(offset);
+        }
+    }
+
+    pub(crate) fn explorer_scrollbar_dragged(&mut self, row: u16) {
+        let Some((track, state)) = self.explorer_scrollbar_geometry() else {
+            return;
+        };
+        let offset = self
+            .active_window_mut()
+            .mouse_state
+            .file_explorer_scrollbar_mouse
+            .drag(state, track, row);
+        if let (Some(offset), Some(view)) = (offset, self.file_explorer_mut()) {
+            view.set_scroll_offset(offset);
+        }
+    }
+
+    pub(crate) fn explorer_scrollbar_released(&mut self) {
+        self.active_window_mut()
+            .mouse_state
+            .file_explorer_scrollbar_mouse
+            .release();
+    }
+
     /// Show a tooltip for a file explorer status indicator
     pub(super) fn show_file_explorer_status_tooltip(
         &mut self,
