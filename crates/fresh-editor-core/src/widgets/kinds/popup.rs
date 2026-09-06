@@ -1,7 +1,7 @@
 //! `Popup` — a popup layer as a first-class tree node.
 //!
-//! The plugin-facing popup vocabulary (widget-framework-v2-review.md
-//! phase 7). Two modes: panel-clipped (`screen_space: false`) renders
+//! The plugin-facing popup vocabulary (`docs/internal/retained-mode-ui.md`
+//! §3.5). Two modes: panel-clipped (`screen_space: false`) renders
 //! through the same promoted-overlay path `Overlay` uses;
 //! `screen_space: true` projects the child's fully-rendered rows
 //! through the generalized [`PanelPopup`] channel — the same channel

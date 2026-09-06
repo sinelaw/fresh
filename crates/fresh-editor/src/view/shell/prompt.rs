@@ -1,7 +1,7 @@
 //! The prompt's suggestion list, as a description.
 //!
 //! The first surface where the migration is mostly *deletion by concept*. The
-//! ledger (`docs/internal/fresh-ui-parity-ledger-prompt.md`) enumerated eleven
+//! ledger (since folded into `docs/internal/retained-mode-ui.md`) enumerated eleven
 //! rules the painter and the chrome component enforce; ten of them are things
 //! `fresh-ui` already says, so the work is naming the concept rather than
 //! porting the code:

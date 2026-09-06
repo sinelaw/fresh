@@ -957,7 +957,7 @@ pub fn render_collected(
     panel_width: u32,
 ) -> CollectedOutput {
     // Every kind's behaviour lives in `widgets::kinds` behind the
-    // `WidgetImpl` trait (widget-framework-v2-review.md §4.3); the single
+    // `WidgetImpl` trait (`docs/internal/retained-mode-ui.md` §3.5); the single
     // kind-dispatch is `kinds::behavior`.
     let behavior = super::kinds::behavior(spec);
     let mut out = behavior.collect(spec, prev, next_state, ctx, panel_width);

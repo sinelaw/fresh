@@ -3,7 +3,7 @@
 //! Renders its child unchanged; `focus_trap` on its `box_meta` is what
 //! scopes Tab cycling (`render::focus_ring_scoped_in_spec`, and the layout
 //! box that carries the same flag) to the subtree. See
-//! widget-framework-v2-review.md §4.3/§4.4.
+//! `docs/internal/retained-mode-ui.md` §3.5.
 
 use std::collections::HashMap;
 

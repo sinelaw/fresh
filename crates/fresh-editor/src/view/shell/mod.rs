@@ -1,7 +1,7 @@
 //! The outside-in migration shell.
 //!
 //! Two pieces, both described in
-//! `docs/internal/fresh-editor-ui-migration.md`:
+//! `docs/internal/retained-mode-ui.md`:
 //!
 //! - [`frame`] — the editor frame as a `fresh-ui` description, with one
 //!   `Host` region per area the old painters own. Pinned cell-for-cell against

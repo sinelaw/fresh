@@ -1,6 +1,9 @@
 # The sidebar as a column of sections
 
-> _Design note. Status: **PLANNED**. Nothing here ships today. It answers
+> _Design note. Status: **SHIPPED** — the section model, dividers, accordion,
+> persistence, `Slot::Sidebar`, `mountSidebarSection` and the Markdown
+> contents section are all in the tree; the host asks it leaves open are
+> recorded in `retained-mode-ui.md` §9. Written before any of it existed, it answers
 > sinelaw/fresh#3045 ("Make the file explorer sidebar vertically splittable"):
 > whether the request duplicates something Fresh already has, what the feature
 > looks like, and how a plugin uses it — worked through on a first consumer, a
@@ -465,7 +468,7 @@ panel's `(plugin, id)` and not by where it is drawn.
 The section model is app state and the web consumes the display list, so the
 explorer section reaches the web the way the explorer does today. Plugin
 panels on the web were deliberately deleted with the retained-mode work and
-return by consuming the tree (`fresh-editor-retained-mode-plan.md` §6d); a
+return by consuming the display list (`retained-mode-ui.md` §3.9); a
 plugin section is TUI-only until that lands, which is the same gap the dock has.
 
 ---

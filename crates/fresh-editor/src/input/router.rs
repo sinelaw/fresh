@@ -219,7 +219,7 @@ pub fn widget_panel_key(
             .unwrap_or(false)
     };
 
-    // ACKNOWLEDGED RESIDUE (recorded in the v2 review doc): this dock
+    // ACKNOWLEDGED RESIDUE (retired by `docs/internal/retained-mode-ui.md` §2.3): this dock
     // branch hardcodes ONE plugin's widget-key conventions ("filter",
     // "sessions", "project-pick:"/"menu-pick:" prefixes, dock_menu_*
     // events) — orchestrator-specific panel semantics in host

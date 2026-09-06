@@ -6,7 +6,7 @@
 //! Everything else this registry once carried has crossed to the shell
 //! tree — the per-event box tree and its validated memo, the pointer walk
 //! over those boxes, and the ranked keyboard walk. Their retirement is
-//! recorded in `docs/internal/fresh-editor-ui-migration.md`; nothing here
+//! recorded in `docs/internal/retained-mode-ui.md` §3.1, which deletes this module; nothing here
 //! memoizes, and no cache is consulted on the way to a layer.
 //!
 //! What keeps the registry alive is that the layer stack must stay DERIVED

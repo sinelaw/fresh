@@ -1,7 +1,7 @@
 //! Popups, as descriptions.
 //!
-//! See `docs/internal/fresh-ui-parity-ledger-popups.md` for the full rule
-//! inventory. This module starts where the surface is most obviously a
+//! The parity ledger this surface was migrated against is folded into
+//! `docs/internal/retained-mode-ui.md` (§3.4, §8). This module starts where the surface is most obviously a
 //! restatement: **placement**.
 //!
 //! `Popup::calculate_area` is six strategies, each of which ends by clamping to
