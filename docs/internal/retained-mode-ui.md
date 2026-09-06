@@ -283,6 +283,36 @@ arm, stand between it and `viewport(text_runs(parsed).wrap(Hanging))`:
   library, not taught to the library, which would be wrong for every other
   wrapped surface.
 
+**A page's reader** (`WidgetPanelOptions::focusFollowsCursor`, merged from
+master's #3194 and ported onto the tree). Focus and where the reader is are two
+answers to one question on a document laid out by widgets, and left independent
+they contradict each other. The option's own surface had a buffer caret and
+resolved focus by scanning `WidgetPanelState::hits`; here the pane draws the
+tree and `hits` is deleted, so the reading position is the host's
+(`Editor::page_reading`, `(row, column)` in the page's content, beside the
+anchor that drives its window) and the geometry is the tree's. Five rules the
+port needed, each found by driving the surface rather than by reading the diff:
+
+* **A widget's region is every node carrying its key**, and the seat is the
+  *innermost* of them. A card several rows tall is a Tab stop once and a place
+  to be many times; its frame's top edge is a border rather than a line to be
+  on. Master had to arrange the first out of per-row hits sharing a key; here
+  it falls out of the tree, and needs both namespaces (`widget_focus:` for the
+  ring, `widget:` for what layout placed).
+* **A press no widget claimed is a move**, with the same two halves: the reader
+  goes there and focus follows, to nothing when the row carries no control.
+* **A page key moves the window too.** Every other movement key leaves the
+  window alone until the reader reaches its edge, which is what following
+  means; a page key is a request for the next screenful, and a minimal reveal
+  answers it by pinning the reader to the bottom edge.
+* **The caret layer hits nothing.** A stack's children all get the whole rect
+  and a plain box is `Hit::Opaque`, so the layer that only places a cursor was
+  swallowing every press on the page.
+* **The mirror follows rather than leads.** Its cursor is set from the reading
+  row, so the status bar's `Ln`/`Col`, `cursor_moved` and a click's line go on
+  working; nothing resolves focus from it, which is what breaks the loop the
+  buffer-caret version had.
+
 **L6 — A keyed geometry index.** `find_by_key` has 160 call sites in the
 editor and walks the tree. After layout the library publishes `Key → Rect`
 (and the scroll/window facts `GeomSnapshot` already carries) as an O(1)

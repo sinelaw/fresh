@@ -1099,7 +1099,26 @@ impl Editor {
             None
         } else {
             crate::widgets::find_widget_by_key(&panel.spec, &focus_key)
-        };
+        }
+        .cloned();
+        let widget = widget.as_ref();
+        // **A page whose focus follows its reader moves the reader, not the
+        // window.** The window then follows, minimally, because that is what
+        // the reveal in `move_page_reader_to` is — so the two are one gesture
+        // and cannot drift, which is the whole of what `focusFollowsCursor`
+        // asks for. A page that did not ask for it scrolls instead, below.
+        if self
+            .widget_registry
+            .get(panel_key)
+            .is_some_and(|p| p.page && p.focus_follows_cursor)
+        {
+            if let Some(moved) = self.move_page_reader_by(panel_key, key) {
+                if moved {
+                    self.sync_widget_focus_to_reading_row(panel_key);
+                }
+                return;
+            }
+        }
         // **A page's navigation keys scroll the page** when no widget took
         // them: the window is the tree's, and the anchor is the host's word
         // to it. Applied by the layout that measured the page, on the next
@@ -1271,6 +1290,10 @@ impl Editor {
             .focus_key(panel_key)
             .map(str::to_string)
             .unwrap_or_default();
+        let follows_reader = self
+            .widget_registry
+            .get(panel_key)
+            .is_some_and(|p| p.page && p.focus_follows_cursor);
         let Some(ui) = self.shell_ui.as_ref() else {
             return;
         };
@@ -1292,6 +1315,23 @@ impl Editor {
         // "Nothing focused" sits *outside* the ring: the first Tab lands on
         // the first widget and the first Shift+Tab on the last, which is what
         // `next_in` answers for a `from` it does not find.
+        //
+        // **Except on a page whose focus follows its reader**, where nothing
+        // focused is not the panel at rest — it is the reader on prose, which
+        // on a page that is mostly prose is most rows. Starting at the ring's
+        // end there would send every Tab from below the fold to the top of the
+        // document: read down to the third level, press Tab, and you are back
+        // on the startup switch. So the ring is seeded from where the reader
+        // is, and Tab goes on from there.
+        let seed = match from.is_none() && follows_reader {
+            true => self.page_ring_seed(panel_key, delta >= 0),
+            false => None,
+        };
+        let from = seed
+            .as_deref()
+            .and_then(|k| ui.find_by_key(&crate::view::shell::widgets::widget_focus_key(k)))
+            .filter(|f| ui.contains(interior, *f))
+            .or(from);
         let mut cur = from;
         for _ in 0..delta.unsigned_abs() {
             match ui.next_in(root, cur, dir) {
@@ -1544,10 +1584,461 @@ impl Editor {
         //                   └ set_panel_focus_and_notify   (at most once)
         //
         // It terminates because the inner call's guard compares against
-        // the caret the outer one just wrote, and the second-level entry
-        // then finds focus and caret already agreeing. `seat_focus_depth`
-        // makes that an assertion rather than a hope.
+        // the reading row the outer one just wrote, and the second-level
+        // entry then finds focus and the reader already agreeing.
+        // `seat_focus_depth` makes that an assertion rather than a hope.
         //
+        // Placing it *after* the event is the whole reason this is the
+        // last statement: with the seat in the middle, a disagreeing
+        // resolve fired the inner (final) `focus` event before the outer
+        // (already superseded) one, and every plugin mirroring focus from
+        // these events — `welcome_screen.ts` does — was left holding the
+        // stale key.
+        self.seat_focus_depth += 1;
+        debug_assert!(
+            self.seat_focus_depth <= 2,
+            "focus/reader sync recursed past its one re-entry: focus and the reading \
+             row disagree after a seat, which means `page_anchor_of_widget` and \
+             `page_focus_target_at` are not settling on the same widget"
+        );
+        self.seat_reading_row_on_focused_widget(panel_key, &new_key);
+        self.seat_focus_depth -= 1;
+    }
+
+    /// The page's viewport element, from the anchor bound to it.
+    ///
+    /// The anchor **is** the host's handle on that window (§3.5), so it is
+    /// also the only name the host has for the element: the description keys
+    /// the widgets inside the page, not the viewport around them.
+    fn page_viewport(&self, panel_key: &crate::widgets::PanelKey) -> Option<fresh_ui::ElementId> {
+        self.page_anchors.get(panel_key)?.target()
+    }
+
+    /// Every region a focusable widget of this page occupies, as
+    /// `(content row, rows, first column, columns, key)`.
+    ///
+    /// **Content coordinates, not screen ones.** A child's laid-out rectangle
+    /// has the window's offset already taken off it, so putting the offset
+    /// back is what turns "where it is on screen" into "where it is in the
+    /// page" — which is the space a reading row is in, and the space the
+    /// anchor's `reveal` counts.
+    ///
+    /// **A widget's region is every node carrying its key, not just the one
+    /// that takes focus.** A card several rows tall is a Tab stop once and a
+    /// place to be many times: the welcome screen's door cards emit a node per
+    /// row, all under the card's key, with `focusable` on the row that names
+    /// the action. Reading only the focusable node would make the card a
+    /// one-row region, so moving down inside it would leave it and take the
+    /// Enter the reader aimed at it with them.
+    fn page_widget_spans(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+    ) -> Vec<(u32, u16, u16, u16, String)> {
+        let Some(slot) = self.described_slot_of_panel(panel_key) else {
+            return Vec::new();
+        };
+        let (Some(ui), Some(vp)) = (self.shell_ui.as_ref(), self.page_viewport(panel_key)) else {
+            return Vec::new();
+        };
+        let Some(interior) = ui.find_by_key(&crate::view::shell::panel::interior_key(slot)) else {
+            return Vec::new();
+        };
+        let ring_key_of = |el| {
+            ui.key_of(el)
+                .as_ref()
+                .and_then(crate::view::shell::widgets::widget_key_of)
+                .map(str::to_string)
+        };
+        // The region's nodes are in the *node* namespace, the ring's wrappers
+        // in the focus one; a widget is both.
+        let key_of = |el| {
+            ui.key_of(el)
+                .as_ref()
+                .and_then(crate::view::shell::widgets::widget_key_of_any)
+                .map(str::to_string)
+        };
+        // Only what Tab can reach is a place to be: prose is where "nothing
+        // focused" comes from, and a node that cannot take focus must not
+        // silently become the answer for its row.
+        let tabbable: std::collections::HashSet<String> = ui
+            .traversal_order(interior)
+            .into_iter()
+            .filter_map(ring_key_of)
+            .collect();
+        let origin = ui.rect_of(vp);
+        let (scroll, _) = ui.scroll(vp);
+        let mut out = Vec::new();
+        let mut stack = vec![interior];
+        while let Some(el) = stack.pop() {
+            stack.extend(ui.children(el));
+            let Some(key) = key_of(el).filter(|k| tabbable.contains(k)) else {
+                continue;
+            };
+            let r = ui.rect_of(el);
+            if r.h == 0 || r.w == 0 {
+                continue;
+            }
+            let row = (r.y - origin.y + scroll.y).max(0) as u32;
+            let col = (r.x - origin.x + scroll.x).max(0) as u16;
+            out.push((row, r.h, col, r.w, key));
+        }
+        out
+    }
+
+    /// How far `col` is from a span running `[start, start + width)`: zero
+    /// inside it, and the distance to the nearer edge outside.
+    fn column_distance(start: u16, width: u16, col: u16) -> u32 {
+        let end = start.saturating_add(width);
+        match col {
+            c if c < start => (start - c) as u32,
+            c if c >= end => (c - end) as u32 + 1,
+            _ => 0,
+        }
+    }
+
+    /// The widget in `panel_key` that a reader at `(row, col)` is on, or `""`
+    /// for none.
+    ///
+    /// **The row is the region; the column decides which control on it.** That
+    /// is a weaker rule than "a focus region is a widget's own placed
+    /// rectangle", and the weaker one is the one that works: a reader moving
+    /// down a page keeps whatever column they were in, and on this editor's own
+    /// pages that column is very often a framed card's border or the margin
+    /// left of an inset card. Requiring containment would mean moving down
+    /// through a card focuses nothing in it — including its text field, which
+    /// then does not take what you type.
+    ///
+    /// So containment wins where it applies (distance zero), and otherwise the
+    /// nearest control **on the same row**, ties leftmost. There is no distance
+    /// cap, which has a consequence worth stating rather than discovering: on a
+    /// row carrying exactly one control, that control is the answer for every
+    /// column of the row.
+    ///
+    /// An empty string is an answer, not the absence of one: a reader on a row
+    /// with no control at all means *nothing* is focused, and a caller that
+    /// read it as "leave focus alone" would keep the last Tab's target armed
+    /// under an Enter aimed at prose.
+    ///
+    /// **A card several rows tall is one region because it is one node.** The
+    /// welcome screen's door cards are keyed once and placed once, so their
+    /// rectangle covers every row they occupy and a reader anywhere in the card
+    /// is on the card. That fell out of the tree rather than having to be
+    /// arranged: the projection this replaced had a hit per *row*, and being a
+    /// region at all depended on those rows sharing a key.
+    fn page_focus_target_at(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+        row: u32,
+        col: u16,
+    ) -> String {
+        let mut best: Option<(u32, u16, String)> = None;
+        for (top, rows, start, width, key) in self.page_widget_spans(panel_key) {
+            if row < top || row >= top + rows.max(1) as u32 {
+                continue;
+            }
+            let d = Self::column_distance(start, width, col);
+            if best
+                .as_ref()
+                .is_none_or(|(bd, bs, _)| d < *bd || (d == *bd && start < *bs))
+            {
+                best = Some((d, start, key));
+            }
+        }
+        best.map(|(_, _, k)| k).unwrap_or_default()
+    }
+
+    /// Where the reader goes when this widget takes focus: the first cell of
+    /// the node that *takes* the focus, which is not the top of its region.
+    ///
+    /// **The two differ for a card, and each is right for its own question.**
+    /// A card's region is every row it occupies, because a reader anywhere in
+    /// it is on it; the row it is *seated* on is the one naming the action,
+    /// because that is the line the card is about — its frame's top edge is
+    /// not somewhere to be. `focusable` marks that row, so the ring's own
+    /// element answers this and the region answers the other.
+    fn page_anchor_of_widget(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+        key: &str,
+    ) -> Option<(u32, u16)> {
+        let slot = self.described_slot_of_panel(panel_key)?;
+        let ui = self.shell_ui.as_ref()?;
+        let vp = self.page_viewport(panel_key)?;
+        let interior = ui.find_by_key(&crate::view::shell::panel::interior_key(slot))?;
+        let origin = ui.rect_of(vp);
+        let (scroll, _) = ui.scroll(vp);
+        // Every node carrying the key, and then the *innermost* of them: a
+        // card is a frame around rows that carry its key too, and the frame's
+        // top edge is a border rather than a line to be on.
+        let mut mine = Vec::new();
+        let mut stack = vec![interior];
+        while let Some(el) = stack.pop() {
+            stack.extend(ui.children(el));
+            if ui
+                .key_of(el)
+                .as_ref()
+                .and_then(crate::view::shell::widgets::widget_key_of_any)
+                == Some(key)
+            {
+                mine.push(el);
+            }
+        }
+        mine.iter()
+            .filter(|el| !mine.iter().any(|o| o != *el && ui.contains(**el, *o)))
+            .map(|el| {
+                let r = ui.rect_of(*el);
+                (
+                    (r.y - origin.y + scroll.y).max(0) as u32,
+                    (r.x - origin.x + scroll.x).max(0) as u16,
+                )
+            })
+            .min()
+    }
+
+    /// Move the reader onto the region of the widget that just took focus, on
+    /// a page that asked for `focusFollowsCursor`.
+    ///
+    /// The guard is not "is the reader already on that row" but "does the
+    /// reader's row already resolve to this widget", which is the same question
+    /// the other direction asks — and it has to be, because a card several rows
+    /// tall anchors at its top. Arriving at its last row from below focuses the
+    /// card; seating the reader on the card's *top* row would then throw them
+    /// back over everything they just walked past, and the next Up would do it
+    /// again.
+    ///
+    /// Clearing focus never moves the reader. "Nothing is focused" is what a
+    /// reader on prose means; there is no row to go to.
+    pub(super) fn seat_reading_row_on_focused_widget(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        new_key: &str,
+    ) {
+        if new_key.is_empty() {
+            return;
+        }
+        if !self
+            .widget_registry
+            .get(panel_key)
+            .is_some_and(|p| p.focus_follows_cursor)
+        {
+            return;
+        }
+        // The spans are read off the tree, so the tree has to carry the panel
+        // as it is now.
+        self.lay_out_shell_if_stale();
+        if let Some((row, col)) = self.page_reading.get(panel_key).copied() {
+            if self.page_focus_target_at(panel_key, row, col) == new_key {
+                return;
+            }
+        }
+        let Some(at) = self.page_anchor_of_widget(panel_key, new_key) else {
+            return;
+        };
+        self.move_page_reader_to(panel_key, at);
+    }
+
+    /// Where a Tab ring should start when nothing is focused and the reader is
+    /// where they are: the first focusable at or after that point in the ring's
+    /// own order (`forward`), or the last at or before it. Wraps.
+    ///
+    /// The order is the tree's traversal order, and so is the geometry, so
+    /// "before the reader" is asked and answered in one place.
+    fn page_ring_seed(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+        forward: bool,
+    ) -> Option<String> {
+        let at = self.page_reading.get(panel_key).copied()?;
+        // One entry per widget, at its own first cell: the ring has one stop
+        // per widget however many nodes carry its key.
+        let mut anchors: std::collections::HashMap<String, (u32, u16)> =
+            std::collections::HashMap::new();
+        for (row, _, col, _, key) in self.page_widget_spans(panel_key) {
+            let at = anchors.entry(key).or_insert((row, col));
+            *at = (*at).min((row, col));
+        }
+        let mut ordered: Vec<((u32, u16), String)> =
+            anchors.into_iter().map(|(k, at)| (at, k)).collect();
+        ordered.sort();
+        let found = match forward {
+            true => ordered
+                .iter()
+                .find(|(p, _)| *p >= at)
+                .or_else(|| ordered.first()),
+            false => ordered
+                .iter()
+                .rev()
+                .find(|(p, _)| *p <= at)
+                .or_else(|| ordered.last()),
+        };
+        found.map(|(_, k)| k.clone())
+    }
+
+    /// A press on `pane` at screen `(x, y)` moves that pane's page reader, if
+    /// it has one and the press landed inside its window.
+    ///
+    /// Screen coordinates in, content coordinates out — the same conversion
+    /// `page_widget_spans` does, in the other direction.
+    pub(super) fn press_moved_the_page_reader(&mut self, pane: LeafId, x: u16, y: u16) {
+        let Some(panel_key) = self
+            .widget_registry
+            .panel_keys()
+            .into_iter()
+            .find(|k| {
+                self.described_slot_of_panel(k)
+                    == Some(crate::view::shell::widgets::Slot::Pane(pane))
+            })
+            .filter(|k| {
+                self.widget_registry
+                    .get(k)
+                    .is_some_and(|p| p.page && p.focus_follows_cursor)
+            })
+        else {
+            return;
+        };
+        let at = {
+            let (Some(ui), Some(vp)) = (self.shell_ui.as_ref(), self.page_viewport(&panel_key))
+            else {
+                return;
+            };
+            let window = ui.rect_of(vp);
+            let (scroll, _) = ui.scroll(vp);
+            let (x, y) = (x as i32, y as i32);
+            if x < window.x || x >= window.right() || y < window.y || y >= window.bottom() {
+                return;
+            }
+            (
+                (y - window.y + scroll.y).max(0) as u32,
+                (x - window.x + scroll.x).max(0) as u16,
+            )
+        };
+        self.move_page_reader_to(&panel_key, at);
+        self.sync_widget_focus_to_reading_row(&panel_key);
+    }
+
+    /// Move the reader by a navigation key, or `None` for a key that is not
+    /// one. `Some(false)` means the key was this page's and the reader was
+    /// already at that end.
+    ///
+    /// **Rows, in the page's own content**, so the reader steps past a card
+    /// the same way it steps past a paragraph — and the column is carried, so
+    /// walking down a page of three-across cards stays in the column it
+    /// started in. That is the rule `page_focus_target_at` is written against.
+    fn move_page_reader_by(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        key: &str,
+    ) -> Option<bool> {
+        // The extent and the window are the tree's, so it has to carry the
+        // page as it is now.
+        self.lay_out_shell_if_stale();
+        let vp = self.page_viewport(panel_key)?;
+        let ui = self.shell_ui.as_ref()?;
+        let (_, content) = ui.scroll(vp);
+        let window = ui.rect_of(vp).h.max(1) as u32;
+        let last = (content.h as u32).saturating_sub(1);
+        let (row, col) = self.page_reading.get(panel_key).copied().unwrap_or((0, 0));
+        let to = match key {
+            "Up" => row.saturating_sub(1),
+            "Down" => (row + 1).min(last),
+            "PageUp" => row.saturating_sub(window),
+            "PageDown" => (row + window).min(last),
+            "Home" => 0,
+            "End" => last,
+            _ => return None,
+        };
+        if to == row {
+            return Some(false);
+        }
+        // **A page key moves the window by a page too.** Every other movement
+        // key leaves the window alone until the reader reaches its edge, which
+        // is what following means; a page key is the reader asking for the
+        // *next screenful*, and a minimal reveal would answer it by pinning
+        // them to the bottom edge with the page they asked for above them.
+        // Moving both keeps the reader where they were looking, which is what
+        // a page key does everywhere else in the editor.
+        if let Some(anchor) = self.page_anchors.get(panel_key) {
+            match key {
+                "PageUp" => anchor.scroll_by_pages(-1),
+                "PageDown" => anchor.scroll_by_pages(1),
+                _ => {}
+            }
+        }
+        self.move_page_reader_to(panel_key, (to, col));
+        Some(true)
+    }
+
+    /// Put the reader at `(row, col)` and bring that row into the window.
+    ///
+    /// The reveal is minimal, which is what following is: a Tab between two
+    /// controls of one card must not move the page under them.
+    fn move_page_reader_to(&mut self, panel_key: &crate::widgets::PanelKey, at: (u32, u16)) {
+        self.page_reading.insert(panel_key.clone(), at);
+        if let Some(anchor) = self.page_anchors.get(panel_key) {
+            anchor.reveal(at.0);
+        }
+        self.mirror_page_reader_into_buffer(panel_key, at);
+        self.shell_description_stale = true;
+    }
+
+    /// Put the mirror buffer's cursor on the row the reader is on.
+    ///
+    /// **The mirror is where a reading position is *reported* from**, and it
+    /// goes on being that: the status bar's `Ln`/`Col`, a plugin's
+    /// `cursor_moved`, and a click's line are all read off the buffer under a
+    /// described panel. What changed is the direction — the buffer's cursor
+    /// used to be the reading position and now follows it — which is what
+    /// breaks the loop the page had: nothing resolves focus from the mirror any
+    /// more, so a cursor that arrives here cannot come back round as a focus
+    /// move.
+    ///
+    /// The pane shows the tree rather than the mirror, so this scrolls nothing.
+    fn mirror_page_reader_into_buffer(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        (row, col): (u32, u16),
+    ) {
+        let Some(buffer_id) = self
+            .widget_registry
+            .get(panel_key)
+            .and_then(|p| p.buffer_id)
+        else {
+            return;
+        };
+        let Some(offset) = self.active_window().buffers.get(&buffer_id).and_then(|st| {
+            let start = st.buffer.line_start_offset(row as usize)?;
+            let end = match st.buffer.line_start_offset(row as usize + 1) {
+                // Less the newline that begins the next row.
+                Some(next) => next.saturating_sub(1),
+                None => st.buffer.len(),
+            };
+            Some((start + col as usize).min(end))
+        }) else {
+            return;
+        };
+        self.seat_buffer_cursor(buffer_id, offset);
+    }
+
+    /// The other direction: the reader has landed somewhere on a
+    /// `focusFollowsCursor` page, so focus goes to whatever focusable widget is
+    /// on that row — or to nothing, when the row carries none.
+    ///
+    /// Clearing is the half that matters most. Without it a movement key leaves
+    /// the last Tab's target armed under Enter, three cards up and off screen:
+    /// the reader is looking at one thing and the keyboard is pointed at
+    /// another.
+    fn sync_widget_focus_to_reading_row(&mut self, panel_key: &crate::widgets::PanelKey) {
+        let Some((row, col)) = self.page_reading.get(panel_key).copied() else {
+            return;
+        };
+        let next = self.page_focus_target_at(panel_key, row, col);
+        if self.widget_registry.focus_key(panel_key) == Some(next.as_str()) {
+            return;
+        }
+        self.set_panel_focus_and_notify(panel_key, next);
+        // The focus marker is painted by the render, so the panel has to
+        // repaint for the move to be visible at all.
+        self.rerender_widget_panel(panel_key);
     }
 
     /// Every split currently showing `buffer_id`, the leaves of grouped
@@ -1606,29 +2097,6 @@ impl Editor {
         }
         self.active_window_mut()
             .set_buffer_cursor_in_splits(buffer_id, position, &splits);
-    }
-
-    /// Clear `skip_ensure_visible` on every split showing `buffer_id`, so
-    /// the next caret move is allowed to scroll the pane to it.
-    ///
-    /// The latch is set by any wheel or scrollbar scroll, and is
-    /// otherwise cleared only at the top of `handle_key` and only for the
-    /// effective active split. A reveal that declines to scroll looks
-    /// exactly like a reveal that had no need to, so a caller that skips
-    /// this fails silently.
-    pub(super) fn unlatch_ensure_visible(&mut self, buffer_id: BufferId) {
-        let splits = self.splits_showing_buffer(buffer_id);
-        if let Some(states) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-        {
-            for leaf in splits {
-                if let Some(view_state) = states.get_mut(&leaf) {
-                    view_state.viewport.clear_skip_ensure_visible();
-                }
-            }
-        }
     }
 
     /// Offer a panel-focus transition to the kinds: the widget losing
@@ -3025,6 +3493,7 @@ mod tests {
             out.boxes,
             true,
             false,
+            false,
         );
     }
 
@@ -3086,6 +3555,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
             false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
@@ -3250,6 +3720,7 @@ mod tests {
             out.boxes,
             true,
             false,
+            false,
         );
         assert_eq!(
             editor.widget_registry.focus_key(&panel_key),
@@ -3316,6 +3787,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
             false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
@@ -3389,6 +3861,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
             false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
@@ -3631,6 +4104,7 @@ mod tests {
             out.boxes,
             true,
             false,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -3696,6 +4170,7 @@ mod tests {
             out.boxes,
             true,
             false,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -3754,6 +4229,7 @@ mod tests {
             out.boxes,
             true,
             false,
+            false,
         );
         let mut dock = dock_panel(panel_key.clone());
         dock.focused = false;
@@ -3811,6 +4287,7 @@ mod tests {
             out.boxes,
             false,
             false,
+            false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         frame_the_shell(&mut editor);
@@ -3858,6 +4335,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
             false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
@@ -3929,6 +4407,7 @@ mod tests {
             out.painted,
             out.boxes,
             true,
+            false,
             false,
         );
         editor.dock = Some(dock_panel(panel_key.clone()));

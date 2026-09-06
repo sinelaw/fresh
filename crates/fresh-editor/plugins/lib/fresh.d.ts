@@ -1560,23 +1560,6 @@ type WidgetSpec = {
 	* controls aligns their value cells. `0` = no padding.
 	*/
 	labelWidth: number;
-	/**
-	* In-place edit buffer. `Some` = the value is being edited:
-	* the cell renders this text (with caret / selection) instead
-	* of the formatted value. `None` = display mode.
-	*/
-	editText?: string | null;
-	/**
-	* Byte offset of the edit caret within `edit_text`. `-1` =
-	* no caret (ignored unless `edit_text` is `Some`).
-	*/
-	editCursor: number;
-	/**
-	* Selection byte range within `edit_text` (`start`, `end`).
-	* `-1` for either end = no selection.
-	*/
-	editSelStart: number;
-	editSelEnd: number;
 	key?: string | null;
 } | {
 	"kind": "dropdown";
@@ -2154,6 +2137,41 @@ type WidgetPanelOptions = {
 	* window their lists. Unspecified reads as `false`.
 	*/
 	page?: boolean;
+	/**
+	* Keep this panel's focus and the reader's place on the same thing.
+	*
+	* For a [`page`](WidgetPanelOptions::page) — a document laid out by
+	* widgets, in one window the host scrolls — focus and where the reader is
+	* are two answers
+	* to one question: what am I looking at. Left independent they contradict
+	* each other, and the contradiction is not cosmetic: Tab moves focus while
+	* the page stays three cards above, and a movement key moves the page
+	* while Enter still fires whatever the last Tab left focused — off screen,
+	* unasked for.
+	*
+	* Saying so makes the host maintain both directions. The movement keys
+	* (`Up`/`Down`, the page keys, `Home`/`End`) move a *reading row* through
+	* the page's content instead of scrolling the window, and focus goes to
+	* the widget on the row it lands on — or to nothing, when the row carries
+	* none. A focus move (Tab, Shift+Tab, a plugin's `setFocusKey`) puts the
+	* reader on the focused widget's own region, and the window follows
+	* minimally, so a Tab between two controls of one card does not move the
+	* page under them.
+	*
+	* "Nothing focused" is a state this option produces constantly — most rows
+	* of a page are prose — so a panel declaring it almost certainly wants
+	* `autoFocusFirst: false` too, and the Tab ring seeds from the reader
+	* rather than from the top of the document.
+	*
+	* `None` reads as `false`: every panel written before this field keeps
+	* focus and the window independent.
+	*
+	* It makes `autoFocusFirst` false whatever the panel said — see
+	* [`WidgetPanelOptions::auto_focus_first`]. The pair is not a
+	* setting with two useful values; it is one broken combination, so
+	* it is not representable rather than advised against.
+	*/
+	focusFollowsCursor?: boolean;
 };
 type ScrollAlign = "top" | "minimal";
 type WidgetAction = {

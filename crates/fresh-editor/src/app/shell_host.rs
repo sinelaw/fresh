@@ -2378,6 +2378,13 @@ impl Editor {
                 mods,
             } => {
                 let mods = crate::view::shell::input::crossterm_mods(mods);
+                // **A press no widget claimed, on a page whose focus follows
+                // its reader, is where the reader now is.** It is the same
+                // gesture as a movement key and gets the same two halves: the
+                // reader moves, and focus follows it — to nothing, when the
+                // row carries no control, which is the point. A press *on* a
+                // control never reaches here, because the control took it.
+                self.press_moved_the_page_reader(pane, x, y);
                 if let Err(e) = self.press_pane_content(pane, byte, x, y, clicks, mods) {
                     tracing::warn!("pane content click failed: {e}");
                 }

@@ -1786,6 +1786,7 @@ mod wave_dismiss_tests {
             Vec::new(),
             true,
             false,
+            false,
         );
         editor.floating_widget_panel = Some(crate::app::FloatingWidgetState {
             panel_key: panel_key.clone(),

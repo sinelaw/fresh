@@ -5308,6 +5308,7 @@ impl Editor {
             out.boxes,
             options.auto_focus_first(),
             options.page(),
+            options.focus_follows_cursor(),
         );
         // A page's window is the tree's; this is the host's handle on it,
         // born with the panel and dropped with it.
@@ -5710,6 +5711,12 @@ impl Editor {
                 // moves it did not ask for.
                 self.widget_registry
                     .decide_focus(panel_key, widget_key.clone());
+                // On a `focusFollowsCursor` page the reading row is half of
+                // what focus *is*, so it comes along here too — a plugin that
+                // focuses its search field from a hotkey means the reader to
+                // be at that field. Still no `focus` event: the plugin asked
+                // for this one.
+                self.seat_reading_row_on_focused_widget(panel_key, &widget_key);
                 self.shell_description_stale = true;
             }
         }
@@ -5870,6 +5877,8 @@ impl Editor {
             // record what they actually rendered under rather than a
             // policy they do not read.
             true,
+            // Not a page, and with no buffer caret to track.
+            false,
             false,
         );
         if let Some(fwp) = self.panel_mut(slot) {
@@ -5975,6 +5984,9 @@ impl Editor {
             // As the dock: `render_floating_spec` seeds focus
             // unconditionally, so record what was rendered under.
             true,
+            // Not a page, and — as the dock — with no buffer caret of its
+            // own to track.
+            false,
             false,
         );
         if let Some(fwp) = self.panel_mut(slot) {
