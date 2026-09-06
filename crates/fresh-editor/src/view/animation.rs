@@ -1166,8 +1166,19 @@ impl AnimationRunner {
     }
 
     /// Tear down any interactive, dismiss-on-input effect (the wave).
+    ///
+    /// The frame on screen right now is the effect's own composite, so
+    /// removing it owes one more frame to paint the true content
+    /// underneath — the same debt `apply_all` records when an effect
+    /// finishes on its own. Without it a dismissal that the frontend does
+    /// not separately mark as needing a redraw (the daemon loop's focus
+    /// path) leaves the last wave frame frozen on screen.
     pub fn cancel_dismissable(&mut self) {
+        let before = self.active.len();
         self.active.retain(|e| !e.dismissable);
+        if self.active.len() != before {
+            self.settle_owed = true;
+        }
     }
 
     /// Let each active effect snapshot the "before" state of its Rect
@@ -2044,6 +2055,35 @@ mod tests {
         std::thread::sleep(Duration::from_millis(90));
         runner.apply_all(&mut buf);
         assert!(!runner.is_active(), "wave finishes past its duration cap");
+    }
+
+    /// Dismissing the wave owes the frame that paints the content it was
+    /// drawn over — the same debt an effect that finishes on its own
+    /// records. Without it a frontend that doesn't separately ask for a
+    /// redraw leaves the last wave frame frozen on screen.
+    #[test]
+    fn cancel_dismissable_owes_a_settle_frame() {
+        let area = Rect::new(0, 0, 6, 5);
+        let mut runner = AnimationRunner::new();
+        runner.start(
+            area,
+            AnimationKind::Wave {
+                duration: Duration::from_secs(600),
+            },
+        );
+        let mut buf = make_buf(6, 5);
+        paint(&mut buf, area, '#', Color::Rgb(180, 180, 180));
+        runner.apply_all(&mut buf);
+        assert!(!runner.take_settle_frame(), "nothing owed while it runs");
+
+        runner.cancel_dismissable();
+        assert!(!runner.is_active());
+        assert!(runner.take_settle_frame(), "the dismissal owes one frame");
+        assert!(!runner.take_settle_frame(), "and only one");
+
+        // Cancelling with nothing dismissable running owes nothing.
+        runner.cancel_dismissable();
+        assert!(!runner.take_settle_frame());
     }
 
     #[test]
