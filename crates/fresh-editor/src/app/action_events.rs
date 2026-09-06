@@ -157,10 +157,19 @@ impl crate::app::window::Window {
                 .with_buffer_and_split(buffer_id, split_id, |state, vs| {
                     let soft_breaks = state.collect_soft_break_positions();
                     let virtual_lines = state.collect_virtual_line_positions();
+                    // The rows this walks are the rows the frame drew, so it
+                    // has to skip the same collapsed folds the frame did.
+                    let hidden_ranges: Vec<(usize, usize)> = vs
+                        .folds
+                        .resolved_ranges(&state.buffer, &state.marker_list)
+                        .into_iter()
+                        .map(|r| (r.start_byte, r.end_byte))
+                        .collect();
                     vs.viewport.top_visual_row_source_byte(
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
                     )
                 })?
         };
@@ -595,10 +604,27 @@ impl crate::app::window::Window {
             // `find_view_line_for_byte` resolves back to the SAME row — so
             // pressing Down from an empty separator line on a CRLF file
             // appears to jump the cursor to the wrong visual row (issue
-            // #1574, Windows-CRLF variant).  When `cur_row_line_end` isn't a
-            // newline the current row is a wrapped continuation and the
-            // next visual row starts at the same byte position.
-            let target_pos = step_past_line_break(buffer, cur_row_line_end, buffer_len);
+            // #1574, Windows-CRLF variant).
+            //
+            // Past a line ending that step is the whole story. On a wrapped
+            // continuation row it is not: `line_end_byte` is the last byte the
+            // row *drew*, not one past it, so the cursor lands back on the row
+            // it started from and every later Down resolves to it again — which
+            // is what pinned `Down` on a one-line file (issue #1806). The row
+            // pass keeps a margin of built rows and never reaches this
+            // fallback; a lazily-loaded buffer has no such index.
+            //
+            // The next row starts one character on, whether the wrap split a
+            // run or broke on a space it consumed.
+            let stepped = step_past_line_break(buffer, cur_row_line_end, buffer_len);
+            let target_pos = if stepped != cur_row_line_end {
+                stepped
+            } else {
+                match char_at(buffer, cur_row_line_end) {
+                    Some(ch) => cur_row_line_end + ch.len_utf8(),
+                    None => return None,
+                }
+            };
             if target_pos > buffer_len {
                 return None;
             }

@@ -375,34 +375,27 @@ impl Viewport {
 
     /// Bytes-per-column headroom in [`row_budget_bytes`](Self::row_budget_bytes).
     ///
-    /// A row holds at most `width` columns, so `cap * width` *columns* is
-    /// exactly `cap` rows' worth of text. The densest UTF-8 spends four bytes
-    /// on a one-column character, so four is the factor that turns a column
-    /// budget into a byte budget; doubling it again leaves the prefix
-    /// comfortably past `cap` rows even on such text, instead of landing on
-    /// the boundary and sending the caller down the whole-line path.
+    /// Four bytes is the densest UTF-8 spends on a one-column character;
+    /// doubling that lands the prefix past `cap` rows rather than exactly on
+    /// the boundary, where it would fall through to the whole-line path.
     const ROW_BUDGET_BYTES_PER_COLUMN: usize = 8;
 
     /// How many bytes of a logical line are worth reading to decide whether it
     /// wraps past `cap` visual rows.
     ///
-    /// Hard-capped at [`MAX_LINE_BYTES`], and that ceiling is load-bearing
-    /// twice over. `cap` is not always bounded by the screen: two of the
-    /// callers add `top_view_line_offset`, which grows without limit as you
-    /// page *into* a single enormous line, so an uncapped `cap * width * 8`
-    /// would ask for tens of megabytes a keystroke — worse than the whole-line
-    /// read it replaces, because the saturating count is deliberately not
-    /// cached. And `LineIterator` decodes each `MAX_LINE_BYTES` piece
-    /// separately, so a budget spanning several pieces would take a lossy cut
-    /// at every boundary rather than the single one
-    /// [`next_line_visual_rows_capped`](Self::next_line_visual_rows_capped)
-    /// budgets a row of slack for.
+    /// Hard-capped at [`MAX_LINE_BYTES`], for two independent reasons. `cap` is
+    /// not always screen-bounded — two callers add `top_view_line_offset`, which
+    /// grows without limit as you page into one enormous line — so an uncapped
+    /// budget would ask for tens of megabytes a keystroke, worse than the
+    /// whole-line read it replaces since a saturating count is not cached. And
+    /// `LineIterator` decodes each piece separately, so a budget spanning
+    /// several would take a lossy cut at every boundary instead of the single
+    /// one [`next_line_visual_rows_capped`](Self::next_line_visual_rows_capped)
+    /// allows a row of slack for.
     ///
-    /// Under the ceiling this is still a budget, not a proof: a `cap` too
-    /// large for 100 KB to settle — or content that is pathologically narrow
-    /// (long runs of zero-width marks) — falls through to reading the whole
-    /// line, which is what this code did before the cap existed and is still
-    /// cached, so that case is no worse than it was.
+    /// A budget, not a proof: a `cap` too large for 100 KB to settle, or
+    /// pathologically narrow content, falls through to the whole-line read —
+    /// which is what this did before the cap existed, and is still cached.
     fn row_budget_bytes(cap: usize, wrap_config: &WrapConfig) -> usize {
         let width = wrap_config
             .grid_cols
@@ -427,12 +420,9 @@ impl Viewport {
     /// be advanced again — every caller has its answer at that point and
     /// returns.
     ///
-    /// Scroll math never needs more than a viewport's worth of rows out of any
-    /// single line, and this is what keeps it from paying for more. Counting a
-    /// line's rows means running the renderer's wrap machine over its text, so
-    /// on a file that is one 53 MB line the old unconditional count wrapped all
-    /// 53 MB — several times — before the first frame could be drawn (issue
-    /// #1806).
+    /// Scroll math never needs more than a viewport's worth of rows out of one
+    /// line; counting them unconditionally wrapped all 53 MB of a single-line
+    /// file, several times, before the first frame (issue #1806).
     fn next_line_visual_rows_capped(
         iter: &mut crate::primitives::line_iterator::LineIterator<'_>,
         cap: usize,
@@ -446,23 +436,20 @@ impl Viewport {
         let (line_start, mut content, complete) = iter.next_logical_line_budgeted(budget)?;
 
         if !complete {
-            // The prefix is a lower bound on the whole line's row count —
-            // word wrap is greedy left to right, so appending text never
-            // removes a wrap — which makes "the prefix already fills `cap`
-            // rows" a sound answer for the whole line. Deliberately not
-            // cached: the count is a floor, not the line's true height.
+            // Sound because word wrap is greedy left to right: appending text
+            // never removes a wrap, so a prefix filling `cap` rows means the
+            // whole line does. Not cached — the count is a floor, not the
+            // line's height.
             //
-            // One row of slack, because the prefix is cut at a byte offset:
-            // a multi-byte character split across the cut comes back as
-            // replacement characters, which can be a column or two wider than
-            // what it replaced and so add a row the real line does not have.
-            // Exactly one such cut, because `row_budget_bytes` never exceeds
-            // the size of a single `LineIterator` piece.
+            // A row of slack for the byte cut: a character split across it
+            // decodes to replacement characters a column or two wider, which
+            // can add a row the real line lacks. Exactly one such cut, since
+            // `row_budget_bytes` never exceeds one `LineIterator` piece.
             //
-            // The prefix ends where the *reader* stopped, not where the
-            // decoded string ends: invalid bytes decode to a wider U+FFFD, so
-            // `content.len()` would reach past the prefix and pull soft breaks
-            // and plugin virtual lines from beyond it into its row count.
+            // The prefix ends where the *reader* stopped, not where the decoded
+            // string does — U+FFFD is wider than what it replaces, so
+            // `content.len()` would pull in soft breaks and virtual lines from
+            // beyond the prefix.
             let prefix_end = iter.current_position();
             let rows = Self::count_visual_rows_for_line(
                 line_start,
@@ -476,8 +463,7 @@ impl Viewport {
             if rows > cap {
                 return Some((line_start, cap, None));
             }
-            // Narrow enough that the budget didn't settle it — pay for the
-            // whole line, as this code always used to.
+            // The budget didn't settle it: pay for the whole line, as before.
             iter.finish_logical_line(&mut content);
         }
 
@@ -627,54 +613,6 @@ impl Viewport {
     }
 }
 
-/// Source byte at the start of each visual (word-wrap) row of `line_text`,
-/// where `line_start` is the absolute byte offset of the line.  The Nth
-/// entry is the byte position that the renderer draws at the start of the
-/// Nth visual row — the byte counterpart of
-/// [`count_visual_rows_for_text`](crate::view::line_wrap_cache::count_visual_rows_for_text)
-/// (which returns only the row *count*).  Used to translate the viewport's
-/// `top_view_line_offset` (a visual-row index inside the logical line at
-/// `top_byte`) back into a buffer byte so PageUp/PageDown can land the
-/// cursor on the row actually shown at the top of the viewport — without
-/// this, a single hugely-wrapped line maps every visual row back to the
-/// line's start byte.
-///
-/// Drives the same machine as the renderer, so the byte mapping and the
-/// drawn rows cannot disagree.
-fn wrap_segment_source_bytes(
-    line_text: &str,
-    line_start: usize,
-    effective_width: usize,
-    gutter_width: usize,
-    hanging_indent: bool,
-) -> Vec<usize> {
-    use crate::view::wrap_machine::{WrapMachine, WrapRule};
-    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-    let tokens = vec![ViewTokenWire {
-        source_offset: Some(line_start),
-        kind: ViewTokenWireKind::Text(line_text.to_string()),
-        style: None,
-    }];
-    let out = WrapMachine::run(
-        tokens,
-        WrapRule::Word {
-            content_width: effective_width,
-            gutter_width,
-            hanging_indent,
-        },
-    );
-    let mut rows: Vec<usize> = out
-        .rows
-        .iter()
-        .map(|r| r.source_byte.unwrap_or(line_start))
-        .collect();
-    if rows.is_empty() {
-        rows.push(line_start);
-    }
-    rows
-}
-
 impl Viewport {
     /// Source byte of the visual row currently shown at the top of the
     /// viewport, accounting for `top_view_line_offset` rows into the
@@ -696,53 +634,46 @@ impl Viewport {
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
         virtual_lines: &[usize],
+        hidden_ranges: &[(usize, usize)],
     ) -> usize {
         if !self.line_wrap_enabled || self.top_view_line_offset() == 0 {
             return self.top_byte();
         }
 
         let line_start = self.top_byte();
-        let mut iter = buffer.line_iterator(line_start, 80);
-        let line_content = match iter.next_line() {
-            Some((_, content)) => content.trim_end_matches(['\n', '\r']).to_string(),
-            None => return self.top_byte(),
-        };
-        let line_end = line_start + line_content.len();
+        let offset = self.top_view_line_offset();
 
-        // Plugin soft-breaks / virtual rows make `top_view_line_offset`
-        // count rows that aren't plain word-wrap segments; their byte
-        // mapping lives in the render pipeline, so defer to the old
-        // behavior for those lines.
+        // Walk the rows as one continuous run. Wrapping each `MAX_LINE_BYTES`
+        // read piece on its own restarts the machine at column 0 and re-measures
+        // a hanging indent from mid-line content, so it gained a row per piece
+        // against `top_view_line_offset`, which is counted over the joined line.
+        let rule = self.wrap_rule(buffer);
+        let folds = Self::fold_skip(hidden_ranges);
+        let starts = crate::view::row_walk::row_starts_from(
+            buffer,
+            line_start,
+            rule,
+            offset.saturating_add(1),
+            &folds,
+        );
+        let walk_end = starts.last().copied().unwrap_or(line_start);
+
+        // Plugin soft-breaks and virtual rows make `top_view_line_offset` count
+        // rows that are not plain word-wrap segments; their byte mapping lives
+        // in the render pipeline, so defer to the old behaviour for such lines.
+        // Tested over the span actually walked — asking where the logical line
+        // *ends* would read all of it, which is the cost this branch removes.
         let touches_soft_break = soft_breaks
             .iter()
-            .any(|(p, _)| *p >= line_start && *p < line_end);
+            .any(|(p, _)| *p >= line_start && *p <= walk_end);
         let touches_virtual = virtual_lines
             .iter()
-            .any(|p| *p >= line_start && *p <= line_end);
+            .any(|p| *p >= line_start && *p <= walk_end);
         if touches_soft_break || touches_virtual {
             return self.top_byte();
         }
 
-        let wrap_config = self.make_wrap_config(buffer);
-        let seg_bytes = if let Some(cols) = wrap_config.grid_cols {
-            crate::view::line_wrap_cache::grid_segment_source_bytes(&line_content, line_start, cols)
-        } else {
-            let effective_width = wrap_config
-                .first_line_width
-                .saturating_add(wrap_config.gutter_width)
-                .max(2);
-            wrap_segment_source_bytes(
-                &line_content,
-                line_start,
-                effective_width,
-                wrap_config.gutter_width,
-                wrap_config.hanging_indent,
-            )
-        };
-        let idx = self
-            .top_view_line_offset()
-            .min(seg_bytes.len().saturating_sub(1));
-        seg_bytes.get(idx).copied().unwrap_or(self.top_byte())
+        starts.get(offset).copied().unwrap_or(walk_end)
     }
 
     /// Scroll by `delta` visual rows using the wrap index — the whole of wheel
@@ -923,6 +854,19 @@ impl Viewport {
             return;
         }
 
+        // Addressed by byte: scrolling reads the rows it moves over and nothing
+        // else. The walk below counts from the logical line's start, which on a
+        // one-line file is every row above the viewport.
+        if crate::view::row_walk::addresses_rows_by_byte(buffer, self.line_wrap_enabled) {
+            let rule = self.wrap_rule(buffer);
+            let folds = Self::fold_skip(hidden_ranges);
+            let top = self.top_byte();
+            let new_top =
+                crate::view::row_walk::row_start_before(buffer, top, visual_rows, rule, &folds);
+            self.set_anchored_top(buffer, rule, &folds, new_top);
+            return;
+        }
+
         let buffer_version = buffer.version();
         let wrap_config = self.make_wrap_config(buffer);
 
@@ -1008,6 +952,17 @@ impl Viewport {
         visual_rows: usize,
     ) {
         if visual_rows == 0 {
+            return;
+        }
+
+        // Mirror of `scroll_up_visual`'s anchored branch.
+        if crate::view::row_walk::addresses_rows_by_byte(buffer, self.line_wrap_enabled) {
+            let rule = self.wrap_rule(buffer);
+            let folds = Self::fold_skip(hidden_ranges);
+            let top = self.top_byte();
+            let new_top =
+                crate::view::row_walk::row_start_after(buffer, top, rule, visual_rows, &folds);
+            self.set_anchored_top(buffer, rule, &folds, new_top);
             return;
         }
 
@@ -2028,7 +1983,16 @@ impl Viewport {
         // actual visible top. Defer to `ensure_visible_in_layout` unless the
         // cursor is so far below that the layout-aware path can't reach it
         // either (issue #1574 / #1689 follow-up).
-        if self.top_view_line_offset() > 0 && cursor.position >= self.top_byte() {
+        //
+        // Only when there is a row pass to defer to. With no wrap index this
+        // pass is the only vertical authority, so deferring means nobody
+        // scrolls at all once a top is parked inside a line (issue #1806).
+        // `check_wrapped_visibility` measures from the visible top, so the
+        // undercount this guards against is not there to guard.
+        if self.row_pass_owns_placement
+            && self.top_view_line_offset() > 0
+            && cursor.position >= self.top_byte()
+        {
             let top_line = buffer.get_line_number(self.top_byte());
             let cursor_line = buffer.get_line_number(cursor.position);
             let viewport_height = self.visible_line_count().max(1);
@@ -2060,6 +2024,19 @@ impl Viewport {
         );
 
         self.load_data_around_cursor(buffer, cursor.position, viewport_lines);
+
+        // No index covers this buffer, so placement is a bounded walk from the
+        // anchor, and this branch owns the whole of it. The gate implies wrap is
+        // on, so the horizontal half of the tail below is its `left_column = 0`;
+        // do that here rather than falling through, since the vertical half
+        // would then re-place the viewport by row.
+        if !self.row_pass_owns_placement
+            && crate::view::row_walk::addresses_rows_by_byte(buffer, self.line_wrap_enabled)
+        {
+            self.ensure_visible_anchored(buffer, cursor, hidden_ranges);
+            self.left_column = 0;
+            return;
+        }
 
         let cursor_line_start = buffer.line_iterator(cursor.position, 80).current_position();
         let effective_offset = self.scroll_offset.min(viewport_lines / 2);
@@ -2192,6 +2169,16 @@ impl Viewport {
     }
 
     /// Compute the line-wrap layout for `line_text` using `wrap_config`.
+    /// How `line_text` wraps, as the rows the renderer would draw for it.
+    ///
+    /// One run: row boundaries inside a line come from the wrap alone.
+    ///
+    /// The token build used to inject a `Break` every `MAX_SAFE_LINE_WIDTH`
+    /// characters counted from wherever its read began, so the rows a line fell
+    /// into depended on where it had been read from and no two readers agreed.
+    /// Nothing splits a line into pieces here now; the width bound is the wrap
+    /// width itself, which with wrap off is `MAX_SAFE_LINE_WIDTH` — see
+    /// `view_data::effective_wrap_width`.
     fn compute_line_layout(
         line_text: &str,
         wrap_config: &WrapConfig,
@@ -2212,6 +2199,154 @@ impl Viewport {
         )
     }
 
+    /// The wrap rule this viewport's rows are decided by — the same rule the
+    /// renderer hands the wrap machine, so a walk over rows here and the rows
+    /// drawn there are the same rows.
+    pub(crate) fn wrap_rule(&self, buffer: &mut Buffer) -> crate::view::wrap_machine::WrapRule {
+        use crate::view::wrap_machine::WrapRule;
+        if self.grid_wrap {
+            return WrapRule::Grid {
+                cols: self.grid_cols().max(1),
+            };
+        }
+        let config = self.make_wrap_config(buffer);
+        WrapRule::Word {
+            content_width: config
+                .first_line_width
+                .saturating_add(config.gutter_width)
+                .max(2),
+            gutter_width: config.gutter_width,
+            hanging_indent: config.hanging_indent,
+        }
+    }
+
+    /// Place the viewport for a buffer whose rows are addressed by byte.
+    ///
+    /// The anchor is the first visible row, so "is the cursor on screen" is a
+    /// walk of at most a screenful and moving the view is choosing a different
+    /// row start. Nothing counts rows from the logical line's start — a count
+    /// that could not be taken past the first `MAX_LINE_BYTES` the reader
+    /// returns, so it saturated and the view stopped following (issue #1806).
+    /// The viewport's `hidden_ranges` in the shape the token build wants.
+    ///
+    /// `reconcile` derives both from the same `folds.resolved_ranges()`; this is
+    /// the one place the two shapes meet, so a walk and the frame it is placing
+    /// skip the same bytes.
+    fn fold_skip(hidden_ranges: &[(usize, usize)]) -> Vec<std::ops::Range<usize>> {
+        let mut ranges: Vec<std::ops::Range<usize>> =
+            hidden_ranges.iter().map(|(s, e)| *s..*e).collect();
+        ranges.sort_by_key(|r| r.start);
+        ranges
+    }
+
+    /// Largest top an anchored viewport may take: the row start that still
+    /// leaves a screenful below it.
+    ///
+    /// The row-numbered path gets this from `set_top_byte_with_limit` /
+    /// `apply_visual_scroll_limit`, which an anchored top cannot use — they
+    /// clamp a *line* start plus a row offset. Without it a wheel roll at EOF
+    /// walks the top on until the buffer's last row is the first drawn row and
+    /// the rest of the screen is empty.
+    fn max_anchored_top(
+        &self,
+        buffer: &mut Buffer,
+        rule: crate::view::wrap_machine::WrapRule,
+        folds: &[std::ops::Range<usize>],
+    ) -> usize {
+        let height = self.visible_line_count();
+        if height <= 1 {
+            return buffer.len();
+        }
+        crate::view::row_walk::row_start_before(
+            buffer,
+            buffer.len(),
+            height.saturating_sub(1),
+            rule,
+            folds,
+        )
+    }
+
+    /// [`Self::set_top_byte`] for an anchored viewport, held to
+    /// [`Self::max_anchored_top`].
+    fn set_anchored_top(
+        &mut self,
+        buffer: &mut Buffer,
+        rule: crate::view::wrap_machine::WrapRule,
+        folds: &[std::ops::Range<usize>],
+        proposed: usize,
+    ) {
+        let capped = proposed.min(self.max_anchored_top(buffer, rule, folds));
+        self.set_top_byte(capped);
+        // An anchored viewport has no second coordinate to reconcile.
+        self.set_top_view_line_offset(0);
+    }
+
+    fn ensure_visible_anchored(
+        &mut self,
+        buffer: &mut Buffer,
+        cursor: &Cursor,
+        hidden_ranges: &[(usize, usize)],
+    ) {
+        use crate::view::row_walk;
+
+        let height = self.visible_line_count().max(1);
+        let margin = self.scroll_offset.min((height.saturating_sub(1)) / 2);
+        let rule = self.wrap_rule(buffer);
+        let folds = Self::fold_skip(hidden_ranges);
+
+        // A viewport can arrive here still holding the row-counted pair — a line
+        // start plus rows into it — from before this buffer was byte-addressed.
+        // Convert rather than discard: the visible top is that many rows below
+        // `top_byte`, so walk to it and make it the anchor. Zeroing the offset
+        // and keeping the line start would drop those rows off the screen
+        // without moving anything the reader asked to move.
+        let carried_rows = self.top_view_line_offset();
+        let top = if carried_rows > 0 {
+            row_walk::row_start_after(buffer, self.top_byte(), rule, carried_rows, &folds)
+        } else {
+            self.top_byte()
+        };
+        self.set_top_byte(top);
+        self.set_top_view_line_offset(0);
+
+        if cursor.position < top {
+            // Above the window: the cursor's row becomes the margin row.
+            let cursor_row_start =
+                row_walk::row_start_before(buffer, cursor.position, 0, rule, &folds);
+            let new_top =
+                row_walk::row_start_before(buffer, cursor_row_start, margin, rule, &folds);
+            self.set_anchored_top(buffer, rule, &folds, new_top);
+            return;
+        }
+
+        // Rows from the top down to the cursor, looking one screen ahead.
+        let last_row = height.saturating_sub(1);
+        if let Some(row) =
+            row_walk::rows_between(buffer, top, cursor.position, rule, last_row, &folds)
+        {
+            if row >= margin && row + margin <= last_row {
+                return; // inside the margin band: nothing to do
+            }
+            if row < margin {
+                let new_top = row_walk::row_start_before(buffer, top, margin - row, rule, &folds);
+                self.set_anchored_top(buffer, rule, &folds, new_top);
+                return;
+            }
+            // Below the bottom margin but on screen: move down by the shortfall.
+            let shortfall = row + margin - last_row;
+            let new_top = row_walk::row_start_after(buffer, top, rule, shortfall, &folds);
+            self.set_anchored_top(buffer, rule, &folds, new_top);
+            return;
+        }
+
+        // Further below than a screen: put the cursor on the bottom margin row.
+        let cursor_row_start = row_walk::row_start_before(buffer, cursor.position, 0, rule, &folds);
+        let rows_above = last_row.saturating_sub(margin);
+        let new_top =
+            row_walk::row_start_before(buffer, cursor_row_start, rows_above, rule, &folds);
+        self.set_anchored_top(buffer, rule, &folds, new_top);
+    }
+
     /// Return `(is_visible, cursor_near_top)` for wrap mode.
     ///
     /// Counts visual rows from `top_byte` toward the cursor; a cursor at the
@@ -2230,6 +2365,10 @@ impl Viewport {
         let mut iter = buffer.line_iterator(self.top_byte(), 80);
         let mut visual_rows: usize = 0;
         let mut cursor_near_top = false;
+        // Rows of the top line scrolled off above the screen. The walk below
+        // counts from `top_byte` — the line's *start* — so without this the
+        // cursor reads as that many rows higher than it is drawn.
+        let hidden_above = self.top_view_line_offset();
 
         loop {
             let current_pos = iter.current_position();
@@ -2247,14 +2386,15 @@ impl Viewport {
                 let segments_count = layout.len().max(1);
                 let cursor_column = cursor.position.saturating_sub(cursor_line_start);
                 let (cursor_segment_idx, _) =
-                    crate::view::line_wrap_cache::char_position_in_layout(&layout, cursor_column);
+                    crate::view::line_wrap_cache::byte_position_in_layout(&layout, cursor_column);
                 visual_rows += cursor_segment_idx.min(segments_count - 1) + 1;
+                let rows_from_top = visual_rows.saturating_sub(hidden_above);
 
-                // visual_rows is 1-based here; > effective_offset gives the same
+                // rows_from_top is 1-based here; > effective_offset gives the same
                 // margin as lines_from_top >= effective_offset in no-wrap mode.
-                let vis = visual_rows > effective_offset
-                    && visual_rows <= viewport_lines.saturating_sub(effective_offset);
-                if !vis && visual_rows <= effective_offset {
+                let vis = rows_from_top > effective_offset
+                    && rows_from_top <= viewport_lines.saturating_sub(effective_offset);
+                if !vis && rows_from_top <= effective_offset {
                     cursor_near_top = true;
                 }
                 return (vis, cursor_near_top);
@@ -2274,7 +2414,7 @@ impl Viewport {
                 let layout =
                     Self::compute_line_layout(line_content.trim_end_matches('\n'), &wrap_config);
                 visual_rows += layout.len();
-                if visual_rows >= viewport_lines {
+                if visual_rows.saturating_sub(hidden_above) >= viewport_lines {
                     return (false, false);
                 }
             } else {
@@ -2351,7 +2491,7 @@ impl Viewport {
             let layout = Self::compute_line_layout(line_text, &wrap_config);
             let cursor_column = cursor.position.saturating_sub(cursor_line_start);
             let (cursor_segment_idx, _) =
-                crate::view::line_wrap_cache::char_position_in_layout(&layout, cursor_column);
+                crate::view::line_wrap_cache::byte_position_in_layout(&layout, cursor_column);
             cursor_segment_idx_in_line = cursor_segment_idx;
             visual_rows_counted += cursor_segment_idx + 1;
         } else {
@@ -2369,6 +2509,18 @@ impl Viewport {
             self.set_top_view_line_offset(
                 cursor_segment_idx_in_line.saturating_sub(effective_offset),
             );
+            return;
+        }
+
+        // The new top is a row *inside* the cursor's line. The backward walk
+        // below can only land on a line start, which is enough while an earlier
+        // line supplies the rows above the cursor; when the cursor's own line
+        // supplies them all it has nowhere to go and leaves the top put — every
+        // scroll, on a one-line file (issue #1806). `scroll_down_visual`, which
+        // `PageDown` runs, has always parked the top inside a line this way.
+        if !cursor_near_top && visual_rows_counted >= target_visual_rows {
+            self.set_top_byte_with_limit(buffer, &[], &[], cursor_line_start);
+            self.set_top_view_line_offset(visual_rows_counted - target_visual_rows);
             return;
         }
 
@@ -2698,7 +2850,7 @@ impl Viewport {
 
             // Find which ViewLine the cursor is in and its visual column.
             let (segment_idx, col_in_segment) =
-                crate::view::line_wrap_cache::char_position_in_layout(&layout, column);
+                crate::view::line_wrap_cache::byte_position_in_layout(&layout, column);
 
             (col_in_segment as u16, segment_idx)
         } else {
@@ -2772,12 +2924,9 @@ mod tests {
         assert!(plain.iter().any(|&r| r > 1), "the middle line must wrap");
     }
 
-    /// The read budget never exceeds one `LineIterator` piece, however large a
-    /// `cap` it is asked for. Two callers add `top_view_line_offset` to their
-    /// cap, and that grows without bound as you page into a single enormous
-    /// line — an uncapped budget would then ask for tens of megabytes a
-    /// keystroke, and would also take a lossy cut at every 100 KB boundary
-    /// instead of the single one the row of slack accounts for.
+    /// The budget never exceeds one `LineIterator` piece, however large a `cap`
+    /// it is asked for — two callers inflate `cap` by `top_view_line_offset`,
+    /// which grows without bound as you page into one enormous line.
     #[test]
     fn row_budget_never_exceeds_one_read_piece() {
         let wrap_config = WrapConfig::new(200, 5, true, false);
@@ -2834,16 +2983,14 @@ mod tests {
         assert_eq!(line_end, Some(6), "iterator sits on the next line");
     }
 
-    /// Clamping the top byte on a one-huge-line buffer is the path that made
-    /// opening a 53 MB single-line file take ~19 s: it asked for the line's
-    /// full row count when it only needed to know the line fills the screen.
-    /// The result is unchanged — the proposed top stands — and it is now
-    /// reached without computing that count.
+    /// The path that made opening a 53 MB single-line file take ~19 s: it asked
+    /// for the line's full row count when it only needed to know the line fills
+    /// the screen. Same result, without that count.
     ///
-    /// Asserted on work rather than on the clock: a line's full row count is
-    /// only ever computed through the row-count cache, so an empty cache after
-    /// the clamp *is* the statement that the whole line was never wrapped, and
-    /// it says so on a loaded CI box exactly as it does on an idle one.
+    /// Asserted on work, not the clock: a full row count only ever goes through
+    /// the row-count cache, so an empty cache after the clamp *is* the statement
+    /// that the line was never wrapped — and it means that on a loaded CI box
+    /// too.
     #[test]
     fn clamping_a_huge_line_does_not_count_the_whole_line() {
         let content = format!("{}\n", "word ".repeat(200_000)); // ~1 MB, one line
@@ -2860,9 +3007,8 @@ mod tests {
         );
     }
 
-    /// The control for the test above: on ordinary lines the clamp does count
-    /// them, and caches what it counted. Without this, an empty cache could
-    /// mean the capped path worked or that the clamp never ran at all.
+    /// Control for the test above: without it, an empty cache could equally
+    /// mean the clamp never ran.
     #[test]
     fn clamping_ordinary_lines_does_count_them() {
         let content = "a short line\n".repeat(200);
@@ -3372,6 +3518,11 @@ mod tests {
 
         let mut vp = Viewport::new(80, 10);
         vp.line_wrap_enabled = true;
+        // A 50-line file is well inside the index's ceilings, so this frame has
+        // a row pass and that pass owns vertical placement — the state the
+        // deferral is *for*. See `..._with_no_row_pass_scrolls` below for the
+        // other side.
+        vp.row_pass_owns_placement = true;
 
         let mut iter = buffer.line_iterator(0, 80);
         let mut line_5_byte = 0;
@@ -3412,6 +3563,47 @@ mod tests {
              ensure_visible_in_layout (the #1574 invariant). Got top_byte={}, expected {}",
             vp.top_byte(),
             top_before
+        );
+    }
+
+    /// The other side: with no wrap index there is no row pass to defer to, so
+    /// a cursor below the screen must move the viewport — and can only do so by
+    /// parking the top *inside* the line, the file being one line.
+    ///
+    /// Both halves failed before: cursor-follow only ever landed on a line
+    /// start, and once an offset was set `ensure_visible` returned early for
+    /// every later scroll, so `Down` stopped at the first screenful (#1806).
+    #[test]
+    fn test_ensure_visible_inside_one_long_line_with_no_row_pass_scrolls() {
+        // One line, no newline: the file is a single wrapped paragraph, so
+        // there is no earlier line for the backward walk to use.
+        let content = "x".repeat(4000);
+        let mut buffer = Buffer::from_str_test(&content);
+
+        let mut vp = Viewport::new(80, 10);
+        vp.line_wrap_enabled = true;
+        // No row pass for this frame, so the byte-oriented pass places the
+        // viewport. This buffer is small, so that is the row-counted path, not
+        // the anchored one — `addresses_rows_by_byte` covers large files only.
+        assert!(!vp.row_pass_owns_placement);
+
+        // Top of the file, and a cursor far enough into the line to be well
+        // below a 10-row viewport at any plausible row width.
+        vp.set_top_byte(0);
+        vp.set_top_view_line_offset(0);
+        let cursor = Cursor::new(2000);
+
+        vp.ensure_visible(&mut buffer, &cursor, &[]);
+
+        assert!(
+            vp.top_view_line_offset() > 0,
+            "a cursor {} bytes into a single wrapped line is below a {}-row \
+             viewport; ensure_visible must scroll to it, which inside one line \
+             means a non-zero top_view_line_offset (got {}, top_byte {})",
+            2000,
+            vp.visible_line_count(),
+            vp.top_view_line_offset(),
+            vp.top_byte(),
         );
     }
 

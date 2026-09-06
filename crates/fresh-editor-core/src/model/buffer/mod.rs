@@ -626,17 +626,14 @@ impl TextBuffer {
         let is_binary = detected_binary && !force_text;
 
         // Binary files skip encoding conversion to preserve raw bytes — and,
-        // like large text, they are never slurped. Reading a 2 GB zip into a
-        // `Vec<u8>` and indexing its line starts cost ~1.2x the file size in
-        // resident memory and froze the editor thread for the whole read plus
-        // scan (~13 s here, linear in size, and an OOM on a machine whose RAM
-        // is near the file size) — issue #3142. A binary buffer is opened
-        // read-only, so the lazy whole-file piece below serves it exactly as
-        // well: bytes are pulled in per chunk as the viewport touches them.
-        // The `requires_full_load` gates below exist to stop a
-        // non-resynchronizable *text* encoding from being decoded chunk-wise;
-        // binary content is never decoded at all, so — as before this change,
-        // which returned above them — they do not apply to it.
+        // like large text, are never slurped: reading a 2 GB zip whole cost
+        // ~1.2x its size resident and froze the editor thread for the read plus
+        // the line scan (issue #3142). A binary buffer opens read-only, so the
+        // lazy piece below serves it just as well.
+        //
+        // The `requires_full_load` gates below stop a non-resynchronizable
+        // *text* encoding being decoded chunk-wise; binary is never decoded, so
+        // they do not apply to it — as before, when it returned above them.
         if !is_binary {
             // Check if encoding requires full file loading
             let requires_full_load = encoding.requires_full_file_load();
@@ -950,12 +947,9 @@ impl TextBuffer {
 
     /// Bytes of this buffer's content currently held in memory.
     ///
-    /// For a lazily loaded file this is the chunks something has actually
-    /// asked for, not the file's size — the gap between the two is the whole
-    /// point of the lazy path, and the only direct way to observe it. Zero
-    /// right after a large file is opened; it grows as the viewport reaches
-    /// into the file, and equals [`total_bytes`](Self::total_bytes) for a
-    /// buffer that was read eagerly.
+    /// For a lazily loaded file this is the chunks something actually asked
+    /// for, not the file's size — the gap between the two is the point of the
+    /// lazy path, and this is the only direct way to observe it.
     pub fn resident_bytes(&self) -> usize {
         self.buffers.iter().map(|b| b.resident_bytes()).sum()
     }

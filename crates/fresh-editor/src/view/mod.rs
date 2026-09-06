@@ -38,6 +38,7 @@ pub mod margin;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod overlay;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod row_walk;
 pub mod scroll_sync;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod scrollbar_marker;
