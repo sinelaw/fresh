@@ -371,11 +371,13 @@ fn dropdown(
             // As wide as the widest row, as tall as the rows — and no taller
             // than the room it is placed in: a menu longer than the screen
             // shows what fits, which is what the old walk's `items_to_show`
-            // did. The width is measured from the rows' own text, because a
-            // row's slack is a flex spacer and a stack hands flex the whole
-            // loose room when measured intrinsically (`Sizing::Auto` here
-            // would make every dropdown as wide as the frame).
-            .w(Sizing::Cells(content_width(&level.rows).saturating_add(2)))
+            // did. **The width is the box's own answer now** (rule L15): a
+            // row's slack is a flex spacer, and flex contributes nothing but
+            // its floor to an intrinsic measure, so `Auto` is the widest row's
+            // text and its trail — which is what `content_width` computed by
+            // hand, in a second walk of the same rows, and is what its
+            // deletion says.
+            .w(Sizing::Auto)
             .clip(true)
             .children(rows);
         // The level this one opened, inside it. A layer is out of flow, so it
@@ -482,25 +484,6 @@ fn dropdown(
             .on_dismiss(|_| UiMsg::Ui(UiFact::CloseMenu));
     }
     l
-}
-
-/// The cells a level's widest row needs: its text, and its trail with the
-/// two-cell gap `row_node` puts before one.
-fn content_width(rows: &[DropdownRow]) -> u16 {
-    use crate::primitives::display_width::str_width;
-    rows.iter()
-        .map(|r| match &r.body {
-            RowBody::Item { text, trail } => {
-                let trail = match trail.is_empty() {
-                    true => 0,
-                    false => str_width(trail) + 2,
-                };
-                (str_width(text) + trail) as u16
-            }
-            RowBody::Separator => 1,
-        })
-        .max()
-        .unwrap_or(0)
 }
 
 /// A dropdown row as a node: one cell high, the row's own ink across its

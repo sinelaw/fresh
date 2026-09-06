@@ -171,10 +171,14 @@ pub fn layer(d: &Dialog) -> Node<UiMsg> {
                 };
                 let ring = pair(ring_fg, "ui.popup_bg");
                 // `render_entry_dialog_inner` drew this frame rounded.
+                // The body fills the box: its item list is a flexed
+                // viewport, and flex divides what is left, so the column
+                // holding it has to be given the box's height rather than ask
+                // for its own natural one (rule L15).
                 let boxed = col()
                     .theme(ring)
                     .border_style(fresh_ui::BorderStyle::Rounded)
-                    .child(body(&d));
+                    .child(body(&d).h(Sizing::Flex(1)));
                 fresh_ui::stack()
                     .w(Sizing::Cells(w))
                     .h(Sizing::Cells(h))

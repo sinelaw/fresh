@@ -1706,3 +1706,92 @@ fn a_pointer_modal_layer_takes_the_pointer_and_leaves_the_keyboard() {
         "and the claim swallows nothing it never took"
     );
 }
+
+/// **Flex contributes nothing but its floor to an intrinsic measure** (L15).
+///
+/// A box that is being *asked how big it wants to be* has no room to divide:
+/// the maximum it was handed is its parent's room, not an extent anyone has
+/// claimed. Dividing that among the flex children made every `Sizing::Auto`
+/// box holding a spacer as wide as the frame — which is why a menu dropdown
+/// and an anchored popup measured their own rows' text instead of saying
+/// `Auto`.
+///
+/// The row here is the shape that made the rule necessary: `label · spacer ·
+/// accelerator`, the spacer flexed, inside a box that hugs its content.
+#[test]
+fn flex_contributes_only_its_floor_to_an_intrinsic_measure() {
+    let hug = Key::Str("hug".into());
+    // A layer measures its child loosely — it is placed at a point and sized
+    // to what it holds, which is exactly the question the rule is about.
+    let mk = || {
+        col().child(
+            layer()
+                .anchor(Anchor::Point(0, 0))
+                .place(Place::Over)
+                .child(col().w(Sizing::Auto).key(hug.clone()).child(
+                    fresh_ui::row().w(Sizing::Auto).children([
+                        text("Open"),
+                        fresh_ui::row().w(Sizing::Flex(1)),
+                        text("^O"),
+                    ]),
+                )),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(), FRAME);
+    let w = ui.rect_of(ui.find_by_key(&hug).expect("the hugging box")).w;
+    assert_eq!(
+        w, 6,
+        "the box is as wide as its content — \"Open\" and \"^O\" — not as wide \
+         as the frame the flex spacer was offered"
+    );
+
+    // And where the extent *is* definite, flex still divides what is left:
+    // the same row inside a box of a stated width puts the accelerator against
+    // the right edge.
+    let fixed = Key::Str("fixed".into());
+    let acc = Key::Str("acc".into());
+    let mk = || {
+        col().w(Sizing::Cells(20)).key(fixed.clone()).child(
+            fresh_ui::row().w(Sizing::Flex(1)).children([
+                text("Open"),
+                fresh_ui::row().w(Sizing::Flex(1)),
+                text("^O").key(acc.clone()),
+            ]),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(), FRAME);
+    let r = ui.rect_of(ui.find_by_key(&acc).expect("the accelerator"));
+    assert_eq!(
+        r.x + r.w as i32,
+        20,
+        "a definite extent still has room for the spacer to divide"
+    );
+}
+#[test]
+fn nested_flex_under_a_definite_box_still_divides() {
+    use fresh_ui::{col, row, text, Key, Size, Sizing, Ui};
+    let inner = Key::Str("inner".into());
+    let mid = Key::Str("mid".into());
+    let mut ui: Ui<()> = Ui::new();
+    let (ik, mk2) = (inner.clone(), mid.clone());
+    ui.frame(
+        layout_reader(move |_i: LayoutInfo| {
+            col().w(Sizing::Cells(20)).h(Sizing::Cells(10)).children([
+                row().h(Sizing::Cells(1)).child(text("head")),
+                row().flex(1).children([
+                    col().w(Sizing::Cells(4)).child(text("cat")),
+                    col()
+                        .w(Sizing::Flex(1))
+                        .key(mk2.clone())
+                        .child(row().h(Sizing::Flex(1)).key(ik.clone()).child(text("x"))),
+                ]),
+            ])
+        }),
+        Size::new(40, 20),
+    );
+    let m = ui.rect_of(ui.find_by_key(&mid).expect("mid"));
+    let i = ui.rect_of(ui.find_by_key(&inner).expect("inner"));
+    assert_eq!((m.h, i.h), (9, 9), "mid={m:?} inner={i:?}");
+}

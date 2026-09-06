@@ -616,15 +616,22 @@ fn grip_strip(s: &Sidebar) -> Node<UiMsg> {
     .key(grip_key())
     .on_enter(hover_msg(Some(HoverTarget::FileExplorerBorder)))
     .on_leave(hover_msg(None));
-    col().pointer_mode(PointerMode::Transparent).children([
-        row()
-            .flex(1)
-            .pointer_mode(PointerMode::Transparent)
-            .children([row().flex(1).pointer_mode(PointerMode::Transparent), grip]),
-        row()
-            .h(Sizing::Cells(1))
-            .pointer_mode(PointerMode::Transparent),
-    ])
+    // **The strip spans the column, and says so.** Its band is a flex child —
+    // the grip runs from under the top border to above the bottom one — and
+    // flex divides what is left, so a column that asked only for its natural
+    // height had nothing to divide (rule L15) and the grip lost its rows.
+    col()
+        .h(Sizing::Flex(1))
+        .pointer_mode(PointerMode::Transparent)
+        .children([
+            row()
+                .flex(1)
+                .pointer_mode(PointerMode::Transparent)
+                .children([row().flex(1).pointer_mode(PointerMode::Transparent), grip]),
+            row()
+                .h(Sizing::Cells(1))
+                .pointer_mode(PointerMode::Transparent),
+        ])
 }
 
 #[cfg(test)]

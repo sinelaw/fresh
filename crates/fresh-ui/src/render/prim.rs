@@ -712,6 +712,15 @@ impl RenderObject for BoxRender {
             Dir::Row => inner.min_h == inner.max_h,
             Dir::Col => inner.min_w == inner.max_w,
         };
+        // **Is there a main extent to divide, or is this box being asked how
+        // big it wants to be?** A loose main axis is a question, not a room:
+        // the answer must not be "as much as you offered", which is what
+        // dividing the maximum among the flex children says. See the flex pass
+        // below (rule L15).
+        let main_definite = match dir {
+            Dir::Row => inner.min_w == inner.max_w,
+            Dir::Col => inner.min_h == inner.max_h,
+        };
 
         let mut mains = vec![0u16; n];
         let mut crosses = vec![0u16; n];
@@ -783,7 +792,19 @@ impl RenderObject for BoxRender {
                 Dir::Col => sw,
             };
             let cross = range(s_cross, cross_extent, cross_definite, p.align);
-            let share = shares[i].max(floors[i]);
+            // **Flex contributes nothing but its floor to an intrinsic
+            // measure** (rule L15). Flex means "divide what is left over" —
+            // and under a loose main constraint nothing is left over, because
+            // nothing has been given out: the box is being measured, and the
+            // maximum it was handed is the room its *parent* has, not a size
+            // anyone has claimed. Dividing that among the flex children made
+            // every `Sizing::Auto` box holding a spacer as wide as the frame,
+            // which is why a menu dropdown and an anchored panel measured
+            // their rows' text by hand instead of saying `Auto`.
+            let share = match main_definite {
+                true => shares[i].max(floors[i]),
+                false => floors[i],
+            };
             let s = cx.measure(kids[i], axes(dir, (share, share), cross));
             mains[i] = main_of(dir, s);
             crosses[i] = cross_of(dir, s);

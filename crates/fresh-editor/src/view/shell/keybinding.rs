@@ -209,7 +209,11 @@ pub fn layer(c: &Chrome, t: Option<&Table>) -> Node<UiMsg> {
                 // was empty and it did not matter, and it would have laid the
                 // header band beside the table rather than above it.
                 let body = match &t {
-                    Some(t) => col().flex(1).children([table(t)]),
+                    // The table takes the band: it is a `layout_reader`, whose
+                    // node asks for its natural height unless it is told to
+                    // flex — and its rows are a flexed viewport inside, which
+                    // divides what is left of nothing (rule L15).
+                    Some(t) => col().flex(1).children([table(t).flex(1)]),
                     // A dialog covers the table, so there is nothing to build: the
                     // band is a claim surface, keeping a press off whatever is
                     // behind the modal.
@@ -376,9 +380,14 @@ fn help_box(h: &Help) -> Node<UiMsg> {
     }
     // The list is longer than the box on a short frame, and the painter simply
     // clipped it. A viewport says there is more.
+    // **The table fills the band it was given, and says so.** Its rows are a
+    // flexed viewport, and flex divides what is *left* — so a box that asked
+    // only for its natural height left nothing to divide (rule L15) and the
+    // table came out with no rows at all.
     col()
         .theme(ring())
         .border()
+        .h(Sizing::Flex(1))
         .child(fresh_ui::viewport(col().children(rows)).scrollbar().flex(1))
 }
 
