@@ -124,7 +124,6 @@ fn start_server(config: Config) {
 /// shim could never run and would protect nothing.
 #[cfg(unix)]
 fn configure_hostile_diff_output(repo: &GitTestRepo) {
-    use crate::common::git_test_helper::git_command;
     use std::os::unix::fs::PermissionsExt;
 
     // Everything the fixture installs lives under `.git/`, which git never
@@ -160,13 +159,24 @@ fn configure_hostile_diff_output(repo: &GitTestRepo) {
     // `.gitattributes` would, without adding a file to the working tree.
     repo.create_file(".git/info/attributes", "*.rs diff=fresh-test\n");
 
-    for (key, value) in [
-        ("diff.external", external.as_str()),
-        ("diff.fresh-test.textconv", textconv.as_str()),
-        ("color.diff", "always"),
-        ("diff.noprefix", "true"),
-        ("diff.mnemonicPrefix", "true"),
-    ] {
+    set_git_config(
+        repo,
+        &[
+            ("diff.external", external.as_str()),
+            ("diff.fresh-test.textconv", textconv.as_str()),
+            ("color.diff", "always"),
+            ("diff.noprefix", "true"),
+            ("diff.mnemonicPrefix", "true"),
+        ],
+    );
+}
+
+/// Write each `(key, value)` into the repo's local git config.
+#[cfg(unix)]
+fn set_git_config(repo: &GitTestRepo, pairs: &[(&str, &str)]) {
+    use crate::common::git_test_helper::git_command;
+
+    for (key, value) in pairs {
         let output = git_command(&repo.path)
             .args(["config", "--local", key, value])
             .output()
@@ -2359,6 +2369,159 @@ fn test_stash_review_ignores_external_diff_and_format_settings() {
         marker_new_line_number(&screen, "STASH_EXTERNAL_DIFF_MARKER"),
         Some(2),
         "Review Diff: Stash should number the marker by the real file. Screen:\n{screen}"
+    );
+}
+
+/// `diff.suppressBlankEmpty=true` makes git print an empty context line as
+/// `""` instead of `" "`. Review Diff classifies rows by their first byte, so
+/// such a row used to vanish from the hunk and every row below it was numbered
+/// one too low — the numbers `buildHunkPatch` then hands to `git apply`.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_keeps_blank_context_lines_under_suppress_blank_empty() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // The blank line is inside the hunk's leading context, above the change.
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    let a = 1;\n\n    let b = 2;\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    let a = 1;\n\n    let b = 2;\n    // BLANK_CONTEXT_MARKER\n}\n",
+    );
+    set_git_config(&repo, &[("diff.suppressBlankEmpty", "true")]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    assert!(
+        screen.contains("BLANK_CONTEXT_MARKER"),
+        "Review Diff should render the hunk. Screen:\n{screen}"
+    );
+    // The marker is line 5 of the new file; with the blank context row
+    // dropped it would be counted as line 4.
+    assert_eq!(
+        marker_new_line_number(&screen, "BLANK_CONTEXT_MARKER"),
+        Some(5),
+        "Review Diff should keep the empty context line above the marker and \
+         number the marker by the real file. Screen:\n{screen}"
+    );
+}
+
+/// With `core.quotePath=true` (git's default) a non-ASCII path is quoted and
+/// octal-escaped in every diff header: `diff --git "a/src/a\303\261adido.rs"
+/// ...`. Review Diff matches the unquoted `a/`/`b/` form, so the file used to
+/// list with no hunks at all.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_parses_non_ascii_paths_under_quotepath() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/añadido.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/añadido.rs",
+        "fn main() {\n    // QUOTEPATH_MARKER\n}\n",
+    );
+    // Pinned explicitly so the test keeps its meaning if git's default moves.
+    set_git_config(&repo, &[("core.quotePath", "true")]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    assert!(
+        screen.contains("QUOTEPATH_MARKER"),
+        "Review Diff should render the hunk of a non-ASCII path even though \
+         git quotes it in the diff headers. Screen:\n{screen}"
+    );
+    assert_eq!(
+        marker_new_line_number(&screen, "QUOTEPATH_MARKER"),
+        Some(2),
+        "Review Diff should number the marker by the real file. Screen:\n{screen}"
+    );
+}
+
+/// Side-by-Side Diff resolves the file's repo-relative path through
+/// `git ls-files`, whose output is quoted under `core.quotePath` just like the
+/// diff headers. A quoted path matches nothing afterwards, so the file was
+/// treated as untracked and the view never opened.
+#[test]
+#[cfg(unix)]
+fn test_side_by_side_diff_parses_non_ascii_paths_under_quotepath() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    let path = repo.create_file("src/añadido.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/añadido.rs",
+        "fn main() {\n    // SIDE_BY_SIDE_QUOTEPATH_MARKER\n}\n",
+    );
+    set_git_config(&repo, &[("core.quotePath", "true")]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    harness.run_palette_command("Side-by-Side Diff").unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast: a failed path lookup reports the file as unchanged
+            // and never opens the view, which would otherwise be a hang.
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{screen}");
+            }
+            screen.contains("OLD (HEAD)") && screen.contains("NEW (Working)")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("SIDE_BY_SIDE_QUOTEPATH_MARKER"),
+        "Side-by-Side Diff should show the working-tree change of a non-ASCII \
+         path. Screen:\n{screen}"
     );
 }
 

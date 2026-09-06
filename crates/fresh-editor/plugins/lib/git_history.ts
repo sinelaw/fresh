@@ -14,6 +14,8 @@
 // gateway) alongside the rest of repo resolution — import `discoverSubRepos`
 // from there.
 
+import { diffArgs } from "./git_repo.ts";
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -114,7 +116,9 @@ export async function fetchGitLog(
   const maxCommits = opts.maxCommits ?? 200;
   const cwd = opts.cwd ?? editor.getCwd();
   const format = "%H%x00%h%x00%an%x00%ae%x00%ai%x00%ar%x00%D%x00%s%x00%b%x1e";
-  const args = ["log", `--format=${format}`, `-n${maxCommits}`];
+  // `--no-show-signature`: with `log.showSignature` set, a signed commit's
+  // gpg lines precede its record and would be read as part of its hash.
+  const args = ["log", "--no-show-signature", `--format=${format}`, `-n${maxCommits}`];
   if (opts.range) args.push(opts.range);
   // `-- <path>` must come last so git treats it as a pathspec, not a
   // revision. Restricts the log to commits touching that file.
@@ -163,9 +167,11 @@ export async function fetchCommitShow(
 
   // numstat first — small output, lets us spot oversized files before
   // pulling the full diff.
+  // Through `diffArgs` so the paths come back unquoted and match the
+  // `:(exclude,top)` pathspecs built from them below.
   const numstatResult = await editor.spawnProcess(
     "git",
-    ["show", "--numstat", "--format=", hash],
+    diffArgs(["show"], "--numstat", "--format=", hash),
     workdir
   );
   const oversized: string[] = [];
@@ -189,7 +195,7 @@ export async function fetchCommitShow(
 
   // Stat + patch, excluding oversized paths. `:(exclude,top)` is rooted
   // at the repo root so it matches regardless of git's cwd.
-  const showArgs = ["show", "--stat", "--patch", hash];
+  const showArgs = diffArgs(["show"], "--stat", "--patch", hash);
   if (oversized.length > 0) {
     showArgs.push("--", ".");
     for (const p of oversized) showArgs.push(`:(exclude,top)${p}`);
