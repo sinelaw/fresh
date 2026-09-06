@@ -67,6 +67,8 @@ pub mod bracket_highlight_overlay;
 #[cfg(feature = "runtime")]
 pub mod cursor_line_overlay;
 #[cfg(feature = "runtime")]
+pub mod diff_gutter;
+#[cfg(feature = "runtime")]
 #[cfg(feature = "runtime")]
 pub mod file_browser_input;
 #[cfg(feature = "runtime")]

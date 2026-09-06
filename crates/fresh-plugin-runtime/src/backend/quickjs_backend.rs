@@ -5647,6 +5647,33 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Choose the grammar a virtual buffer is highlighted with.
+    ///
+    /// Panel buffers are named `*<panel id>*`, which resolves to no
+    /// grammar; a plugin composing a known text shape into one calls this
+    /// so the host highlights it instead of the plugin painting overlays.
+    #[qjs(rename = "setBufferLanguage")]
+    pub fn set_buffer_language(&self, buffer_id: u32, name: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferLanguage {
+                buffer_id: BufferId(buffer_id as usize),
+                name,
+            })
+            .is_ok()
+    }
+
+    /// Show old/new diff line numbers in a composed diff stream's gutter,
+    /// derived by the host from the stream's `@@` headers.
+    #[qjs(rename = "setBufferDiffGutter")]
+    pub fn set_buffer_diff_gutter(&self, buffer_id: u32, enabled: bool) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferDiffGutter {
+                buffer_id: BufferId(buffer_id as usize),
+                enabled,
+            })
+            .is_ok()
+    }
+
     // === Line Indicators ===
 
     /// Set a line indicator in the gutter

@@ -459,6 +459,10 @@ pub struct PerfCounters {
     /// waste. Counted in rows rather than calls because that is what
     /// separates re-emitting a whole diff stream from repainting the
     /// one-row sticky header above it.
+    ///
+    /// A row is a line of the entries' text, not an entry: an entry can
+    /// carry one row or a whole file's diff (the review stream ships
+    /// git's output verbatim, in blocks), and it is the rows that cost.
     pub panel_content_rows: u64,
 }
 
