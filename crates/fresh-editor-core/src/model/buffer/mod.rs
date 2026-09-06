@@ -625,33 +625,32 @@ impl TextBuffer {
             format::detect_encoding_or_binary(&sample, file_size > sample_size);
         let is_binary = detected_binary && !force_text;
 
-        // Binary files skip encoding conversion to preserve raw bytes
-        if is_binary {
-            tracing::info!("Large binary file detected, loading without encoding conversion");
-            let contents = fs.read_file(path)?;
-            let mut buffer = Self::from_bytes_raw(contents, fs);
-            buffer.persistence.set_file_path(path.to_path_buf());
-            buffer.persistence.clear_modified();
-            buffer.file_kind.set_large_file(true);
-            buffer.format.set_default_encoding(encoding);
-            return Ok(buffer);
-        }
+        // Binary files skip encoding conversion to preserve raw bytes — and,
+        // like large text, are never slurped: reading a 2 GB zip whole cost
+        // ~1.2x its size resident and froze the editor thread for the read plus
+        // the line scan (issue #3142). A binary buffer opens read-only, so the
+        // lazy piece below serves it just as well.
+        //
+        // The `requires_full_load` gates below stop a non-resynchronizable
+        // *text* encoding being decoded chunk-wise; binary is never decoded, so
+        // they do not apply to it — as before, when it returned above them.
+        if !is_binary {
+            // Check if encoding requires full file loading
+            let requires_full_load = encoding.requires_full_file_load();
 
-        // Check if encoding requires full file loading
-        let requires_full_load = encoding.requires_full_file_load();
-
-        // For non-resynchronizable encodings, require confirmation unless forced
-        if requires_full_load && !force_full_load {
-            anyhow::bail!(LargeFileEncodingConfirmation {
-                path: path.to_path_buf(),
-                file_size,
-                encoding,
-            });
+            // For non-resynchronizable encodings, require confirmation unless forced
+            if requires_full_load && !force_full_load {
+                anyhow::bail!(LargeFileEncodingConfirmation {
+                    path: path.to_path_buf(),
+                    file_size,
+                    encoding,
+                });
+            }
         }
 
         // For encodings that require full load (non-resynchronizable or non-UTF-8),
         // load the entire file and convert
-        if !matches!(encoding, Encoding::Utf8 | Encoding::Ascii) {
+        if !is_binary && !matches!(encoding, Encoding::Utf8 | Encoding::Ascii) {
             tracing::info!(
                 "Large file with non-UTF-8 encoding ({:?}), loading fully for conversion",
                 encoding
@@ -944,6 +943,15 @@ impl TextBuffer {
     /// Get the total number of bytes in the document
     pub fn total_bytes(&self) -> usize {
         self.piece_tree.total_bytes()
+    }
+
+    /// Bytes of this buffer's content currently held in memory.
+    ///
+    /// For a lazily loaded file this is the chunks something actually asked
+    /// for, not the file's size — the gap between the two is the point of the
+    /// lazy path, and this is the only direct way to observe it.
+    pub fn resident_bytes(&self) -> usize {
+        self.buffers.iter().map(|b| b.resident_bytes()).sum()
     }
 
     /// Get the total number of lines in the document

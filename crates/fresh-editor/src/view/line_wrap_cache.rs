@@ -383,6 +383,47 @@ fn layout_for_plain_text_under(
     lines
 }
 
+/// The visual row of `byte_in_line` within a laid-out logical line, and the
+/// visual column it sits at.
+///
+/// The byte-oriented counterpart of [`char_position_in_layout`], which walks
+/// *drawn* characters: a wrap breaking on a space consumes it, so that count
+/// falls one behind the source per wrapped row. Callers pass a byte offset,
+/// which is a character index only for single-byte text that never wraps on
+/// whitespace — deep in one enormous line the drift is the difference between
+/// the viewport agreeing with what was drawn and not (issue #1806). Rows carry
+/// real byte offsets, so ask them.
+///
+/// If `layout` is empty, returns `(0, 0)`. A byte past the end of the last row
+/// returns that row and the visual column of its last *source* character —
+/// which is not the same as [`char_position_in_layout`]'s last visual column
+/// when the row ends in injected content or a wide glyph.
+pub fn byte_position_in_layout(layout: &[ViewLine], byte_in_line: usize) -> (usize, usize) {
+    if layout.is_empty() {
+        return (0, 0);
+    }
+    // Rows ascend, so it is the last one starting at or before the byte. A row
+    // drawing no source of its own leaves the answer with the row above.
+    let mut row_idx = 0;
+    for (i, row) in layout.iter().enumerate() {
+        match row.char_source_bytes.iter().find_map(|b| *b) {
+            Some(first) if first <= byte_in_line => row_idx = i,
+            Some(_) => break,
+            None => {}
+        }
+    }
+    let row = &layout[row_idx];
+    let mut col = 0;
+    for (char_idx, source) in row.char_source_bytes.iter().enumerate() {
+        match source {
+            Some(b) if *b <= byte_in_line => col = row.visual_col_at_char(char_idx),
+            Some(_) => break,
+            None => {}
+        }
+    }
+    (row_idx, col)
+}
+
 /// Given a logical line's layout and a character position within the
 /// LOGICAL line (not the ViewLine), return `(segment_idx,
 /// col_in_segment)` — the index of the `ViewLine` the character falls

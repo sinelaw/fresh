@@ -313,16 +313,61 @@ impl<'a> LineIterator<'a> {
     /// layout (the wrap index reads whole lines via `Buffer::get_line`):
     /// the returned `String` is as long as the logical line.
     pub fn next_logical_line(&mut self) -> Option<(usize, String)> {
-        let (line_start, mut content) = self.next_line()?;
-        // A piece that stopped short of a terminator while bytes remain was
-        // cut by the read budget — keep pulling until the line really ends.
+        let (line_start, content, _) = self.next_logical_line_budgeted(usize::MAX)?;
+        Some((line_start, content))
+    }
+
+    /// [`next_logical_line`](Self::next_logical_line) with a read budget.
+    ///
+    /// Returns `(line_start, text, complete)`. `complete` false means the line
+    /// runs past `max_bytes` and the iterator is left **parked mid-line**, so
+    /// `current_position()` is not a line start and the only way forward is
+    /// [`finish_logical_line`](Self::finish_logical_line).
+    ///
+    /// Lets a caller with a bounded question — "does this line fill the
+    /// viewport?" — stop reading once it can answer, instead of materializing a
+    /// 53 MB single-line file to lay out thirty rows (issue #1806).
+    pub fn next_logical_line_budgeted(
+        &mut self,
+        max_bytes: usize,
+    ) -> Option<(usize, String, bool)> {
+        // Must bind `next_line`'s per-piece cap too, or a budget under
+        // `MAX_LINE_BYTES` would still read a full piece before the join loop
+        // saw it. Tightening only, and restored on the way out.
+        let saved_max = self.max_line_bytes;
+        self.max_line_bytes = saved_max.min(max_bytes.max(1));
+
+        let joined = self.next_line().map(|(line_start, mut content)| {
+            // A piece that stopped short of a terminator while bytes remain was
+            // cut by the read budget — keep pulling until the line really ends.
+            while !content.ends_with('\n')
+                && self.current_pos < self.buffer_len
+                && content.len() < max_bytes
+            {
+                match self.next_line() {
+                    Some((_, more)) => content.push_str(&more),
+                    None => break,
+                }
+            }
+            let complete = content.ends_with('\n') || self.current_pos >= self.buffer_len;
+            (line_start, content, complete)
+        });
+
+        self.max_line_bytes = saved_max;
+        joined
+    }
+
+    /// Join the rest of the logical line onto `content`, for a caller that
+    /// ran [`next_logical_line_budgeted`](Self::next_logical_line_budgeted)
+    /// out of budget and then found it needed the whole line after all. A
+    /// no-op when `content` already ends the line.
+    pub fn finish_logical_line(&mut self, content: &mut String) {
         while !content.ends_with('\n') && self.current_pos < self.buffer_len {
             match self.next_line() {
                 Some((_, more)) => content.push_str(&more),
                 None => break,
             }
         }
-        Some((line_start, content))
     }
 
     /// Get the previous line (moving backward)
@@ -440,6 +485,78 @@ mod tests {
             .expect("a line");
         assert_eq!(start, 4_000);
         assert_eq!(text.len(), 1_000);
+    }
+
+    /// The budgeted read stops early on a line longer than the budget, and
+    /// says so — the signal a caller needs to decide whether it has enough.
+    #[test]
+    fn budgeted_read_stops_short_of_a_long_line() {
+        let body = "x".repeat(50_000);
+        let mut buffer = TextBuffer::from_bytes(body.into_bytes(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let (start, text, complete) = iter.next_logical_line_budgeted(1_000).expect("a line");
+        assert_eq!(start, 0);
+        assert!(!complete, "a 50 KB line does not fit a 1 KB budget");
+        // `next_line` reads in chunks, so the budget is a floor, not a ceiling:
+        // what matters is that it is bounded well below the whole line.
+        assert!(
+            text.len() < 50_000,
+            "budgeted read returned the whole line ({} bytes)",
+            text.len()
+        );
+    }
+
+    /// A line inside the budget comes back whole and flagged complete, so the
+    /// budgeted read is a drop-in for `next_logical_line` on ordinary text.
+    #[test]
+    fn budgeted_read_returns_short_lines_whole() {
+        let mut buffer = TextBuffer::from_bytes(b"alpha\nbeta\ngamma".to_vec(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 80);
+        for expected in ["alpha\n", "beta\n", "gamma"] {
+            let (_, text, complete) = iter.next_logical_line_budgeted(1_000).expect("a line");
+            assert_eq!(text, expected);
+            assert!(complete, "{expected:?} fits the budget");
+        }
+        assert!(iter.next_logical_line_budgeted(1_000).is_none());
+    }
+
+    /// After a short read, `finish_logical_line` joins the rest, landing the
+    /// iterator exactly where `next_logical_line` would have left it.
+    #[test]
+    fn finish_logical_line_completes_a_budgeted_read() {
+        let body = format!("{}\nnext line\n", "x".repeat(50_000));
+        let mut buffer = TextBuffer::from_bytes(body.into_bytes(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let (_, mut text, complete) = iter.next_logical_line_budgeted(1_000).expect("a line");
+        assert!(!complete);
+        iter.finish_logical_line(&mut text);
+        assert_eq!(text.len(), 50_001, "the whole line plus its newline");
+        assert_eq!(iter.current_position(), 50_001);
+
+        let (start, rest) = iter.next_logical_line().expect("second line");
+        assert_eq!(start, 50_001);
+        assert_eq!(rest, "next line\n");
+    }
+
+    /// An unbudgeted read is the budgeted one with no budget — the delegation
+    /// that keeps the two from drifting.
+    #[test]
+    fn unbudgeted_read_matches_a_huge_budget() {
+        let body = format!("{}\ntail\n", "y".repeat(200_000));
+        let mut buffer = TextBuffer::from_bytes(body.clone().into_bytes(), test_fs());
+
+        let joined = {
+            let mut iter = buffer.line_iterator(0, 80);
+            iter.next_logical_line().expect("a line").1
+        };
+        let mut iter = buffer.line_iterator(0, 80);
+        let (_, budgeted, complete) = iter.next_logical_line_budgeted(usize::MAX).expect("a line");
+        assert!(complete);
+        assert_eq!(joined, budgeted);
+        assert_eq!(joined.len(), 200_001);
     }
 
     use crate::model::filesystem::StdFileSystem;
