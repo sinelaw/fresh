@@ -278,14 +278,31 @@ impl<M: 'static> Ui<M> {
             out,
             &mut fout,
         );
-        if let Some(fp) = focus_parent {
-            let Some(fe) = self.focus_tree.get(fp).map(|n| n.element) else {
-                return;
-            };
-            let mut kids = Vec::new();
-            self.collect_focus_children(fe, &mut kids);
-            if let Some(n) = self.focus_tree.get_mut(fp) {
-                n.children = kids;
+        match focus_parent {
+            Some(fp) => {
+                let Some(fe) = self.focus_tree.get(fp).map(|n| n.element) else {
+                    return;
+                };
+                let mut kids = Vec::new();
+                self.collect_focus_children(fe, &mut kids);
+                if let Some(n) = self.focus_tree.get_mut(fp) {
+                    n.children = kids;
+                }
+            }
+            // **No focusable encloses this reader: its registrations are
+            // focus roots.** The root scope's list is recomputed the same
+            // way, over the whole element tree, or what the reader built
+            // is invisible to the settle until the next full `relink` — a
+            // split grid's panes are built by the grid's reader, so a
+            // two-pane frame's first settle found no pane content in the
+            // root scope, followed the active pane's mark a frame late, and
+            // the first key into a restored session had no focus holder.
+            None => {
+                if let Some(root) = self.root {
+                    let mut roots = Vec::new();
+                    self.collect_focus_children(root, &mut roots);
+                    self.focus_roots = roots;
+                }
             }
         }
     }

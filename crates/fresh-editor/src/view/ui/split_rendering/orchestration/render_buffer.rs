@@ -26,7 +26,6 @@ use super::render_line::{render_view_lines, LastLineEnd, LineRenderInput, LineRe
 use crate::app::types::{CellThemeInfo, ViewLineMapping};
 use crate::config::IndentationGuideMode;
 use crate::model::cursor::Cursors;
-use crate::model::event::{BufferId, EventLog};
 use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::{EditorState, ViewMode};
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
@@ -487,25 +486,78 @@ pub(crate) fn compute_buffer_layout(
     }
 }
 
+/// Where the pane's caret is, on screen, from a layout the content pass
+/// produced: the row and cell the line pass placed it at, or the end-of-buffer
+/// fallback, floated onto its virtual line or past the line end in virtual
+/// space, clamped to the rows drawn. `None` for a layout that placed no
+/// cursor at all.
+///
+/// **The one derivation of the caret's cell.** The pane's leaf places the
+/// display list's cursor from it, the popup anchored to the caret reads it
+/// back off the leaf, and the paint that draws a software cursor takes the
+/// same value — none of them measures the rows again.
+pub(crate) fn caret_cell(layout: &BufferLayoutOutput, buffer_len: usize) -> Option<(u16, u16)> {
+    let render_area = layout.render_area;
+    let gutter_width = layout.gutter_width;
+    let cursor_from_line_pass = layout.render_output.cursor.is_some();
+    let cursor = resolve_cursor_fallback(
+        layout.render_output.cursor,
+        layout.selection.primary_cursor_position,
+        buffer_len,
+        layout.buffer_ends_with_newline,
+        layout.render_output.last_line_end,
+        layout.render_output.content_lines_rendered,
+        gutter_width,
+    );
+    // Virtual space: both the per-line pass and the EOF fallback park the
+    // cursor at the buffer end's real position. Float it onto its virtual
+    // line (vertical) — or, when the fallback produced it (the per-line
+    // pass already applies horizontal shifts itself), out past the line
+    // end (horizontal). Clamped to the render area.
+    let cursor = cursor.map(|(cx, cy)| {
+        let selection = &layout.selection;
+        let max_x = render_area.width.saturating_sub(1);
+        let max_y = render_area.height.saturating_sub(1);
+        if selection.primary_virtual_lines > 0 {
+            let x = gutter_width as u16
+                + selection
+                    .primary_virtual_line_col
+                    .saturating_sub(layout.left_column) as u16;
+            let y = cy.saturating_add(selection.primary_virtual_lines as u16);
+            (x.min(max_x), y.min(max_y))
+        } else if !cursor_from_line_pass && selection.primary_virtual_cols > 0 {
+            ((cx + selection.primary_virtual_cols as u16).min(max_x), cy)
+        } else {
+            (cx, cy)
+        }
+    });
+    cursor.map(|(cx, cy)| {
+        let screen_x = render_area.x.saturating_add(cx);
+        let max_y = render_area.height.saturating_sub(1);
+        let screen_y = render_area.y.saturating_add(cy.min(max_y));
+        (screen_x, screen_y)
+    })
+}
+
 /// Draw a buffer into a frame using pre-computed layout output.
+///
+/// `caret` is the pane's caret on screen ([`caret_cell`]), when the pane
+/// shows one: what the software cursor and the column highlight follow. The
+/// hardware cursor is not this paint's — the pane's leaf placed it in the
+/// display list from the same cell.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_buffer_in_split(
     buf: &mut ratatui::buffer::Buffer,
-    state: &EditorState,
-    cursors: &Cursors,
     layout_output: BufferLayoutOutput,
-    event_log: Option<&mut EventLog>,
     area: Rect,
-    is_active: bool,
     theme: &Theme,
     ansi_background: Option<&AnsiBackground>,
     background_fade: f32,
-    hide_cursor: bool,
     software_cursor_only: bool,
     rulers: &[usize],
     compose_column_guides: Option<Vec<u16>>,
     highlight_current_column: bool,
-    pending_hardware_cursor: &mut Option<(u16, u16)>,
+    caret: Option<(u16, u16)>,
 ) {
     let render_area = layout_output.render_area;
     let effective_editor_bg = layout_output.effective_editor_bg;
@@ -545,49 +597,13 @@ pub(crate) fn draw_buffer_in_split(
         .block(editor_block)
         .render(render_area, buf);
 
-    let cursor_from_line_pass = layout_output.render_output.cursor.is_some();
-    let cursor = resolve_cursor_fallback(
-        layout_output.render_output.cursor,
-        layout_output.selection.primary_cursor_position,
-        state.buffer.len(),
-        layout_output.buffer_ends_with_newline,
-        layout_output.render_output.last_line_end,
-        layout_output.render_output.content_lines_rendered,
-        gutter_width,
-    );
-    // Virtual space: both the per-line pass and the EOF fallback park the
-    // cursor at the buffer end's real position. Float it onto its virtual
-    // line (vertical) — or, when the fallback produced it (the per-line
-    // pass already applies horizontal shifts itself), out past the line
-    // end (horizontal). Clamped to the render area.
-    let cursor = cursor.map(|(cx, cy)| {
-        let selection = &layout_output.selection;
-        let max_x = render_area.width.saturating_sub(1);
-        let max_y = render_area.height.saturating_sub(1);
-        if selection.primary_virtual_lines > 0 {
-            let x = gutter_width as u16
-                + selection
-                    .primary_virtual_line_col
-                    .saturating_sub(layout_output.left_column) as u16;
-            let y = cy.saturating_add(selection.primary_virtual_lines as u16);
-            (x.min(max_x), y.min(max_y))
-        } else if !cursor_from_line_pass && selection.primary_virtual_cols > 0 {
-            ((cx + selection.primary_virtual_cols as u16).min(max_x), cy)
-        } else {
-            (cx, cy)
-        }
+    // The caret, local to the rows: what the column highlight follows.
+    let cursor = caret.map(|(sx, sy)| {
+        (
+            sx.saturating_sub(render_area.x),
+            sy.saturating_sub(render_area.y),
+        )
     });
-
-    let cursor_screen_pos = if is_active && state.show_cursors && !hide_cursor {
-        cursor.map(|(cx, cy)| {
-            let screen_x = render_area.x.saturating_add(cx);
-            let max_y = render_area.height.saturating_sub(1);
-            let screen_y = render_area.y.saturating_add(cy.min(max_y));
-            (screen_x, screen_y)
-        })
-    } else {
-        None
-    };
 
     // Render config-based vertical rulers. Span the full editor height rather
     // than stopping at the last text line: the ruler is a column guide, so it
@@ -616,7 +632,7 @@ pub(crate) fn draw_buffer_in_split(
 
     // Highlight the cursor column (same bg tint as the current line) when
     // `highlight_current_column` is enabled and the split is active.
-    if highlight_current_column && is_active && !hide_cursor {
+    if highlight_current_column {
         if let Some((cx, _)) = cursor {
             // `cx` already accounts for the gutter offset from render_area.x,
             // so skip highlighting if it falls inside the gutter.
@@ -648,14 +664,7 @@ pub(crate) fn draw_buffer_in_split(
         );
     }
 
-    if let Some((screen_x, screen_y)) = cursor_screen_pos {
-        // Record the hardware cursor position instead of committing it to
-        // the frame now. `render.rs` decides at the end of the render pass
-        // whether to show the cursor — if a popup later overlays this cell
-        // it suppresses the cursor so the hardware caret does not bleed
-        // through the popup.
-        *pending_hardware_cursor = Some((screen_x, screen_y));
-
+    if let Some((screen_x, screen_y)) = caret {
         // When software_cursor_only the backend has no hardware cursor, so
         // ensure the cell at the cursor position always has REVERSED style.
         if software_cursor_only {
@@ -670,133 +679,6 @@ pub(crate) fn draw_buffer_in_split(
                 }
             }
         }
-
-        if let Some(event_log) = event_log {
-            let cursor_pos = cursors.primary().position;
-            let buffer_len = state.buffer.len();
-            event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
-        }
-    }
-}
-
-/// What a pane's text pass hands back to the paint that ran it.
-pub(crate) struct PaneTextResult {
-    /// The per-row mappings for mouse click handling.
-    pub view_line_mappings: Vec<ViewLineMapping>,
-    /// The horizontal scroll the rows were drawn with, for
-    /// [`super::reconcile::settle_pane`] to store.
-    pub left_column: usize,
-}
-
-/// Render a single buffer in a split pane (convenience wrapper).
-/// Calls [`compute_buffer_layout`] then [`draw_buffer_in_split`].
-///
-/// The pane must have been reconciled for this frame
-/// (`super::reconcile`); this writes nothing to the view state.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn render_buffer_in_split(
-    buf: &mut ratatui::buffer::Buffer,
-    state: &mut EditorState,
-    cursors: &Cursors,
-    viewport: &Viewport,
-    folds: &FoldManager,
-    event_log: Option<&mut EventLog>,
-    area: Rect,
-    is_active: bool,
-    style: crate::view::ui::RenderStyle<'_>,
-    lsp_waiting: bool,
-    view_mode: ViewMode,
-    compose_width: Option<u16>,
-    compose_column_guides: Option<Vec<u16>>,
-    _buffer_id: BufferId,
-    hide_cursor: bool,
-    session_mode: bool,
-    rulers: &[usize],
-    show_line_numbers: bool,
-    highlight_current_line: bool,
-    fold_indicators_visible: bool,
-    show_tilde: bool,
-    highlight_current_column: bool,
-    cell_theme_map: &mut Vec<CellThemeInfo>,
-    screen_width: u16,
-    pending_hardware_cursor: &mut Option<(u16, u16)>,
-) -> PaneTextResult {
-    // The style group provides theme + the appearance flags; unpack into the
-    // locals the body already uses by name. The cfg fields this painter
-    // doesn't read are ignored.
-    let crate::view::ui::RenderStyle {
-        theme,
-        ansi_background,
-        cfg,
-    } = style;
-    let crate::view::ui::EditorRenderConfig {
-        background_fade,
-        estimated_line_length,
-        highlight_context_bytes,
-        relative_line_numbers,
-        use_terminal_bg,
-        software_cursor_only,
-        diagnostics_inline_text,
-        indentation_guide,
-        indentation_guide_glyph,
-        rainbow_indentation,
-        bracket_highlight,
-        ..
-    } = cfg;
-    let layout_output = compute_buffer_layout(
-        state,
-        cursors,
-        viewport,
-        folds,
-        area,
-        is_active,
-        theme,
-        lsp_waiting,
-        view_mode.clone(),
-        compose_width,
-        estimated_line_length,
-        highlight_context_bytes,
-        relative_line_numbers,
-        use_terminal_bg,
-        session_mode,
-        software_cursor_only,
-        show_line_numbers,
-        highlight_current_line,
-        fold_indicators_visible,
-        diagnostics_inline_text,
-        show_tilde,
-        indentation_guide,
-        indentation_guide_glyph,
-        rainbow_indentation,
-        bracket_highlight,
-        Some((cell_theme_map, screen_width)),
-    );
-
-    let view_line_mappings = layout_output.view_line_mappings.clone();
-    let left_column = layout_output.left_column;
-
-    draw_buffer_in_split(
-        buf,
-        state,
-        cursors,
-        layout_output,
-        event_log,
-        area,
-        is_active,
-        theme,
-        ansi_background,
-        background_fade,
-        hide_cursor,
-        software_cursor_only,
-        rulers,
-        compose_column_guides,
-        highlight_current_column,
-        pending_hardware_cursor,
-    );
-
-    PaneTextResult {
-        view_line_mappings,
-        left_column,
     }
 }
 

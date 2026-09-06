@@ -140,6 +140,13 @@ impl<M: 'static> Ui<M> {
                 mods,
                 clicks,
             } => {
+                // **A press is a new gesture.** A capture still held from the
+                // last one means its release never arrived — a host that
+                // reports presses without releases, a release lost between
+                // hosts — and the element that took it has no claim on this
+                // press. Routing it to that element would send a click on
+                // one pane to the pane pressed before it, forever.
+                self.captured = None;
                 // A press on a viewport's scrollbar gutter drives its scroll
                 // directly — click to jump, then drag to follow. Scroll is
                 // framework-owned, so this produces no application message.
@@ -528,6 +535,10 @@ impl<M: 'static> Ui<M> {
         // the byte without knowing which leaf under it holds the text, and
         // means it is computed once rather than per handler.
         let text_byte = self.text_byte_at(target, pos);
+        // Routed by capture: the path is the captor's, not the pointer's.
+        let captured = self
+            .captured
+            .is_some_and(|c| self.arena.get(c).is_some() && path.contains(&c));
 
         for capture in [true, false] {
             let order: Vec<ElementId> = if capture {
@@ -553,6 +564,7 @@ impl<M: 'static> Ui<M> {
                     delta: wheel.delta,
                     axis: wheel.axis,
                     text_byte,
+                    captured,
                     key,
                     clicks,
                     selection: SelectionOnFocus::None,
@@ -671,6 +683,7 @@ impl<M: 'static> Ui<M> {
             delta: 0,
             axis: Axis::Vertical,
             text_byte: self.text_byte_at(n, pos),
+            captured: false,
             key: None,
             clicks: 1,
             selection: SelectionOnFocus::None,
@@ -976,6 +989,7 @@ impl<M: 'static> Ui<M> {
                     // A dismissal is delivered to the layer, not to whatever
                     // the pointer happened to be over outside it.
                     text_byte: None,
+                    captured: false,
                     key: None,
                     clicks: 1,
                     selection: SelectionOnFocus::None,
@@ -1039,6 +1053,7 @@ impl<M: 'static> Ui<M> {
                     delta: 0,
                     axis: Axis::Vertical,
                     text_byte: None,
+                    captured: false,
                     key: Some(k),
                     selection: SelectionOnFocus::None,
                     target: lid,

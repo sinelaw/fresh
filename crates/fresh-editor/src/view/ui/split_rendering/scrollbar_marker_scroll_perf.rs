@@ -25,9 +25,9 @@
 //!
 //! * [`ScrollbarMarkerManager::set_markers_in_range`] — an O(M) retain over
 //!   the namespace, where M is every heading found *so far*.
-//! * [`project_scrollbar_markers`] — publication bumps the marker version, so
+//! * [`resolve_scrollbar_marks`] — publication bumps the marker version, so
 //!   the [`ProjectionKey`](crate::view::scrollbar_marker::ProjectionKey)
-//!   changes on every frame of the scroll and the cached column is always a
+//!   changes on every frame of the scroll and the cached rows are always a
 //!   miss. The rebuild resolves all M anchors and, on the logical-line basis a
 //!   markdown file of this size uses, does an O(log n) `get_line_number`
 //!   descent per anchor.
@@ -60,7 +60,7 @@
 
 use std::sync::Arc;
 
-use super::scrollbar::project_scrollbar_markers;
+use super::scrollbar::resolve_scrollbar_marks;
 use crate::state::EditorState;
 use crate::view::scrollbar_marker::{MarkerBasis, ResolvedMarker};
 
@@ -166,7 +166,8 @@ fn scroll_frame(
     }
 
     let before = state.scrollbar_marker_buckets.stats();
-    let _ = project_scrollbar_markers(state, basis, TRACK_HEIGHT);
+    let rows = resolve_scrollbar_marks(state, basis);
+    let _ = crate::view::scrollbar_marker::bucket(&rows, basis.total(), TRACK_HEIGHT);
     let after = state.scrollbar_marker_buckets.stats();
 
     FrameWork {

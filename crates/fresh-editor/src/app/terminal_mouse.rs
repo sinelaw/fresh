@@ -243,7 +243,7 @@ impl Window {
 
         let state = self.buffers.get(&active)?;
         let gutter_width = state.margins.left_total_width() as u16;
-        let cached_mappings = self.layout_cache.view_line_mappings.get(&split_id).cloned();
+        let cached_mappings = self.pane_view(split_id).map(|v| v.rows.clone());
         let (fallback, compose_width) = self
             .buffers
             .splits()
@@ -257,7 +257,7 @@ impl Window {
             row,
             content_rect,
             gutter_width,
-            &cached_mappings,
+            cached_mappings.as_deref(),
             fallback,
             false,
             compose_width,

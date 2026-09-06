@@ -29,10 +29,9 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    gesture, host, row, stack, Event, GestureKind, Key, MouseButton, Node, PointerMode, Sizing,
+    gesture, row, stack, Event, GestureKind, Key, MouseButton, Node, PointerMode, Sizing,
 };
 
-use super::frame::HostRegion;
 use super::msg::{UiFact, UiMsg};
 
 /// The grip's key, for tests and for callers that want its rectangle.
@@ -93,7 +92,8 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
         .as_ref()
         .map(|i| (i.keymap.clone(), i.keyboard && i.focus_key.is_empty()));
     let body = match interior {
-        None => host(HostRegion::Dock.id()),
+        // An empty slot: a column with nothing in it, which nothing paints.
+        None => row(),
         Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
             // **The interior is not the column.** The runtime lays this same
             // spec at `floating_panel_inner_width` — `width_cols - 2` for a
@@ -532,7 +532,8 @@ mod tests {
         let mut ui = laid_out(None, 100, 30);
         assert!(ui.find_by_key(&grip_key()).is_none(), "no grip");
         assert!(
-            ui.find_by_key(&region_key(HostRegion::Dock)).is_some(),
+            ui.find_by_key(&region_key(crate::view::shell::frame::HostRegion::Dock))
+                .is_some(),
             "the region still reports a rectangle"
         );
         assert!(

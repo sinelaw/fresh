@@ -48,18 +48,17 @@ pub trait ProvenanceSink {
     fn item(&mut self, rect: Rect, clip: Rect, theme: &ThemeKey);
 }
 
-/// Where the terminal caret ends up for a frame.
-pub type Caret = Option<(u16, u16)>;
-
 /// Content the host paints itself — a buffer split, a terminal grid, or (during
 /// the migration) any region not yet moved onto `fresh-ui`.
+///
+/// **A host paints cells and nothing else.** Where the frame's caret is, is
+/// the display list's to say (`LayoutSpec::cursor`): a pane's leaf places it
+/// from the caret its text pass settled, a field's run from its byte. The
+/// out-parameter a host used to write its caret into is gone with the last
+/// host that had one to write.
 pub trait HostPainter {
     /// Paint `region` into `rect`.
-    ///
-    /// `caret` is an out-parameter with the same shape as `render_content`'s
-    /// `pending_hardware_cursor`: a region that owns the caret writes its
-    /// screen position, and [`fold`] resolves the winner (see [`fold`]'s doc).
-    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer, caret: &mut Caret);
+    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer);
 }
 
 /// Resolve a theme key to a concrete style. `fresh-ui` says only *where*
@@ -119,12 +118,7 @@ pub enum Band {
 ///
 /// When the last region is native this collapses into [`fold`], whose
 /// `HostPainter` is the general form, and both bands become one pass again.
-pub fn fold_native(
-    spec: &LayoutSpec,
-    buf: &mut Buffer,
-    palette: &dyn Palette,
-    band: Band,
-) -> Caret {
+pub fn fold_native(spec: &LayoutSpec, buf: &mut Buffer, palette: &dyn Palette, band: Band) {
     fold_band(spec, buf, palette, &mut SkipHosts, band, Paints::All, None)
 }
 
@@ -136,34 +130,57 @@ pub fn fold_native(
 pub struct SkipHosts;
 
 impl HostPainter for SkipHosts {
-    fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {}
+    fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer) {}
 }
 
-/// Fold a display list into `buf`, returning the caret position for the frame.
+/// Fold a display list into `buf`.
 ///
-/// **Caret rule.** A native `fresh-ui` widget that placed a cursor
-/// (`LayoutSpec::cursor` — a focused `TextField`) wins over a caret a host
-/// region wrote. That reproduces today's behaviour, where a prompt or overlay
-/// field takes the caret away from the buffer, without needing the
-/// `cursor_suppressed_by_late_overlay` list: if a native field has focus, it
-/// set the cursor, and it wins by construction.
+/// The frame's caret is not this fold's to return: it is `spec.cursor`, which
+/// the library resolved when it painted — the last surface to place one wins,
+/// and a layer painted over a cursor ends it — so the caller reads it off the
+/// display list it folded.
 pub fn fold(
     spec: &LayoutSpec,
     buf: &mut Buffer,
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
-) -> Caret {
-    let a = fold_band(
-        spec,
-        buf,
-        palette,
-        host,
-        Band::Background,
-        Paints::All,
-        None,
-    );
-    let b = fold_band(spec, buf, palette, host, Band::Overlay, Paints::All, None);
-    b.or(a)
+) {
+    fold_all(spec, buf, palette, host, Paints::All, None);
+}
+
+/// [`fold`], with which items a pass writes and one provenance sink over
+/// both bands: **the frame's one paint** (design §3.3). Every cell the
+/// frame shows is written here — the tree's own surfaces in display-list
+/// order, the panes and embeds through `host` where their leaves are — so
+/// nothing paints between the in-flow content and the layers, and what
+/// runs after it is an effect over the finished cells (the software cursor,
+/// an animation), never a surface.
+pub fn fold_all(
+    spec: &LayoutSpec,
+    buf: &mut Buffer,
+    palette: &dyn Palette,
+    host: &mut dyn HostPainter,
+    paints: Paints,
+    provenance: Option<&mut dyn ProvenanceSink>,
+) {
+    match provenance {
+        Some(p) => {
+            fold_band(
+                spec,
+                buf,
+                palette,
+                host,
+                Band::Background,
+                paints,
+                Some(&mut *p),
+            );
+            fold_band(spec, buf, palette, host, Band::Overlay, paints, Some(p));
+        }
+        None => {
+            fold_band(spec, buf, palette, host, Band::Background, paints, None);
+            fold_band(spec, buf, palette, host, Band::Overlay, paints, None);
+        }
+    }
 }
 
 /// Which of the display list's items a pass writes.
@@ -192,9 +209,8 @@ pub fn fold_band(
     band: Band,
     paints: Paints,
     mut provenance: Option<&mut dyn ProvenanceSink>,
-) -> Caret {
+) {
     let frame = buf.area;
-    let mut host_caret: Caret = None;
 
     // The library says where the split is. It used to be derived here, by
     // matching keys against a hand-kept list of the frame's layer families —
@@ -230,7 +246,7 @@ pub fn fold_band(
         if let Some(sink) = provenance.as_deref_mut() {
             if matches!(
                 item.draw,
-                Draw::Fill | Draw::Border(_) | Draw::Lines(_) | Draw::Scrollbar { .. }
+                Draw::Fill | Draw::Wash | Draw::Border(_) | Draw::Lines(_) | Draw::Scrollbar { .. }
             ) {
                 sink.item(rect, clip, &item.theme);
             }
@@ -238,6 +254,9 @@ pub fn fold_band(
 
         match &item.draw {
             Draw::Fill => fill(buf, rect, ' ', style, clip),
+            // A wash keeps the text it covers: the theme's ground over the
+            // cells, their symbols and foregrounds as they were.
+            Draw::Wash => wash(buf, rect, style, clip),
             Draw::Border(bs) => border(buf, rect, style, clip, *bs),
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything
@@ -289,8 +308,13 @@ pub fn fold_band(
                 offset,
                 content,
                 window,
+                axis,
+                marks,
             } => {
-                let track = rect.height.max(1);
+                let track = match axis {
+                    fresh_ui::Axis::Vertical => rect.height.max(1),
+                    fresh_ui::Axis::Horizontal => rect.width.max(1),
+                };
                 let (top, len) =
                     Draw::scrollbar_thumb(*offset, *content, u32::from(*window), track);
                 for i in 0..track {
@@ -310,7 +334,27 @@ pub fn fold_band(
                         // colour when the row did.
                         cell = cell.fg(c).bg(c);
                     }
-                    put(buf, rect.x, rect.y.saturating_add(i), ' ', cell, clip);
+                    // A mark shares the cell with the bar: a half block in
+                    // the mark's colour over the bar's own ground shows both
+                    // the mark and the scroll position; a full mark takes
+                    // the cell (a track cell lit under the pointer).
+                    let mut glyph = ' ';
+                    if let Some(m) = marks.iter().find(|m| m.at == i) {
+                        let ms = palette.style(&m.theme);
+                        if m.full {
+                            if let Some(c) = ms.bg.or(ms.fg) {
+                                cell = cell.fg(c).bg(c);
+                            }
+                        } else if let Some(c) = ms.fg {
+                            cell = cell.fg(c);
+                            glyph = '▌';
+                        }
+                    }
+                    let (x, y) = match axis {
+                        fresh_ui::Axis::Vertical => (rect.x, rect.y.saturating_add(i)),
+                        fresh_ui::Axis::Horizontal => (rect.x.saturating_add(i), rect.y),
+                    };
+                    put(buf, x, y, glyph, cell, clip);
                 }
             }
             // A hint about where selecting text is meaningful; nothing to draw.
@@ -326,30 +370,12 @@ pub fn fold_band(
                     // Clipped to the frame, so a host never paints outside it.
                     let area = intersect(rect, clip);
                     if area.width > 0 && area.height > 0 {
-                        host.paint_host(target, area, buf, &mut host_caret);
+                        host.paint_host(target, area, buf);
                     }
                 }
             }
         }
     }
-
-    // There is one `LayoutSpec::cursor` per frame, and the display list does
-    // not record which half placed it — so this reports it from the **last**
-    // band rather than pretending to know its provenance. Reporting it from
-    // both would hand the caller the same caret twice; reporting it from the
-    // first would let a host painted later overwrite a native field's caret,
-    // which is the one thing the rule forbids.
-    //
-    // A background surface that places a cursor is therefore still answered
-    // for, just by the overlay pass — which is correct, because the overlay
-    // pass runs last and nothing can have covered it since.
-    let native = match band {
-        Band::Overlay => spec.cursor.filter(|c| c.visible),
-        Band::Background => None,
-    };
-    native
-        .map(|c| (c.pos.x.max(0) as u16, c.pos.y.max(0) as u16))
-        .or(host_caret)
 }
 
 /// A palette whose styles are *distinguishable*, for tests.
@@ -477,6 +503,20 @@ fn fill(buf: &mut Buffer, r: Rect, ch: char, style: Style, clip: Rect) {
     }
 }
 
+/// Lay `style`'s background over `r`, keeping each cell's symbol, foreground
+/// and modifiers — the region form of a run that inherits its background.
+fn wash(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
+    let Some(bg) = style.bg else {
+        return;
+    };
+    let area = intersect(intersect(r, clip), buf.area);
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_bg(bg);
+        }
+    }
+}
+
 fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect, bs: BorderStyle) {
     if r.width < 2 || r.height < 2 {
         return;
@@ -511,69 +551,34 @@ fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect, bs: BorderStyle) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::shell::frame::{frame_tree, Frame, HostRegion};
-    use fresh_ui::{
-        col, host, layer, text, Align, Anchor, ComponentExt, Modality, Node, Size, Sizing, Ui,
-    };
+    use crate::view::shell::frame::{frame_tree, Frame};
+    use fresh_ui::{col, host, layer, text, Align, Anchor, Modality, Node, Size, Sizing, Ui};
 
     /// Records what it was asked to paint, and fills its rect with a letter so
     /// paint order is visible in the buffer.
     #[derive(Default)]
     struct Recorder {
-        calls: Vec<(HostRegion, Rect)>,
-        caret_at: Option<(HostRegion, u16, u16)>,
-        /// Panes, kept apart from the regions: they are addressed by leaf and
-        /// there is no fixed set of them.
+        /// Panes, addressed by leaf: there is no fixed set of them.
         panes: Vec<(crate::model::event::LeafId, Rect)>,
     }
 
     impl HostPainter for Recorder {
-        fn paint_host(
-            &mut self,
-            target: HostTarget,
-            rect: Rect,
-            buf: &mut Buffer,
-            caret: &mut Caret,
-        ) {
-            let region = match target {
+        fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer) {
+            match target {
                 HostTarget::Pane(leaf) => {
                     self.panes.push((leaf, rect));
                     fill(buf, rect, '#', Style::default(), rect);
-                    return;
                 }
-                // An embedded editor window is a hole in a plugin panel. The
-                // fold treats it like any other host leaf; these tests build
-                // frames with no panel in them, so nothing reaches here — but
-                // filling it distinguishably means a frame that grows one is a
-                // visible change rather than a silent no-op.
+                // An embedded editor window is a leaf in a plugin panel. These
+                // tests build frames with no panel in them, so nothing reaches
+                // here — but filling it distinguishably means a frame that
+                // grows one is a visible change rather than a silent no-op.
                 HostTarget::Embed(_) => {
                     fill(buf, rect, '@', Style::default(), rect);
-                    return;
                 }
-                // A card band paints nothing at all; see `paint_host`'s arm.
-                // Filled here for the same reason as the embed: so a frame
-                // that starts folding the card's layer in a hosts-painting
-                // band shows up.
+                // The card's preview band, for the same reason.
                 HostTarget::Card(_) => {
                     fill(buf, rect, '%', Style::default(), rect);
-                    return;
-                }
-                HostTarget::Region(r) => r,
-            };
-            self.calls.push((region, rect));
-            let ch = match region {
-                HostRegion::Body => 'B',
-                HostRegion::MenuBar => 'M',
-                HostRegion::StatusBar => 'S',
-                HostRegion::Dock => 'D',
-                HostRegion::Explorer => 'E',
-                HostRegion::SearchOptions => 'O',
-                HostRegion::PromptLine => 'P',
-            };
-            fill(buf, rect, ch, Style::default(), rect);
-            if let Some((r, x, y)) = self.caret_at {
-                if r == region {
-                    *caret = Some((x, y));
                 }
             }
         }
@@ -588,20 +593,20 @@ mod tests {
         w: u16,
         h: u16,
         rec: &mut Recorder,
-    ) -> (Buffer, Caret) {
+    ) -> Buffer {
         let mut ui: Ui<crate::view::shell::msg::UiMsg> = Ui::new();
         let spec = ui.frame(root, Size::new(w, h)).clone();
         let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
-        let caret = fold(&spec, &mut buf, &plain, rec);
-        (buf, caret)
+        fold(&spec, &mut buf, &plain, rec);
+        buf
     }
 
-    fn run(root: Node<()>, w: u16, h: u16, rec: &mut Recorder) -> (Buffer, Caret) {
+    fn run(root: Node<()>, w: u16, h: u16, rec: &mut Recorder) -> Buffer {
         let mut ui: Ui<()> = Ui::new();
         let spec = ui.frame(root, Size::new(w, h)).clone();
         let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
-        let caret = fold(&spec, &mut buf, &plain, rec);
-        (buf, caret)
+        fold(&spec, &mut buf, &plain, rec);
+        buf
     }
 
     fn row_text(buf: &Buffer, y: u16) -> String {
@@ -610,27 +615,54 @@ mod tests {
             .collect()
     }
 
-    /// Every region still painted by its own code reaches its painter, in the
-    /// rect layout computed. The menu bar is absent because it is no longer a
-    /// `Host`: it is a native region now, and its row is drawn from the tree
-    /// rather than handed back to a painter.
+    /// A frame with one pane and no grid: what is left for the painter.
+    fn one_pane() -> crate::view::shell::splits::Splits {
+        use crate::model::event::BufferId;
+        crate::view::shell::splits::Splits {
+            root: crate::view::split::SplitNode::leaf(BufferId(1), fresh_core::SplitId(1)),
+            maximized: None,
+            active: None,
+            chrome: Default::default(),
+            controls: crate::view::shell::splits::PaneControls {
+                maximize: false,
+                close: false,
+            },
+            groups: Default::default(),
+            interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
+        }
+    }
+
+    /// The only cells a painter is handed are a pane's: every region of the
+    /// frame is native, so the menu bar and the status bar are drawn from
+    /// the tree, and the grid's pane reaches its painter in the rect layout
+    /// computed for it — the body, between the two.
     #[test]
-    fn each_region_is_painted_into_its_own_rect() {
+    fn only_the_panes_reach_the_painter() {
         let f = Frame {
             menu_bar: true,
             status_bar: true,
+            splits: Some(one_pane()),
             ..Frame::default()
         };
         let mut rec = Recorder::default();
-        let (buf, _) = run_msg(frame_tree(f), 10, 4, &mut rec);
+        let buf = run_msg(frame_tree(f), 10, 4, &mut rec);
 
-        let mut got: Vec<_> = rec.calls.iter().map(|(r, _)| *r).collect();
-        got.sort();
-        assert_eq!(got, vec![HostRegion::Body, HostRegion::StatusBar]);
+        assert_eq!(
+            rec.panes,
+            vec![(
+                crate::model::event::LeafId(fresh_core::SplitId(1)),
+                Rect::new(0, 1, 10, 2)
+            )],
+            "one pane, at the body"
+        );
         assert_eq!(row_text(&buf, 0), "          ", "the native bar, unthemed");
-        assert_eq!(row_text(&buf, 1), "BBBBBBBBBB");
-        assert_eq!(row_text(&buf, 2), "BBBBBBBBBB");
-        assert_eq!(row_text(&buf, 3), "SSSSSSSSSS");
+        assert_eq!(row_text(&buf, 1), "##########");
+        assert_eq!(row_text(&buf, 2), "##########");
+        assert_eq!(row_text(&buf, 3), "          ", "the native status bar");
     }
 
     /// **The ordering guarantee.** A chrome item that paints after a host lands
@@ -640,15 +672,18 @@ mod tests {
     fn chrome_painted_after_a_host_lands_on_top_of_it() {
         // A layer over the body: it resolves after the frame, so its items come
         // later in the display list.
+        let pane = crate::view::shell::frame::pane_host_id(crate::model::event::LeafId(
+            fresh_core::SplitId(1),
+        ));
         let root: Node<()> = col().children([
-            host(HostRegion::Body.id()).flex(1),
+            host(pane.0).flex(1),
             layer()
                 .anchor(Anchor::Screen(Align::Center))
                 .modality(Modality::None)
                 .child(text("xx").h(Sizing::Cells(1))),
         ]);
         let mut rec = Recorder::default();
-        let (buf, _) = run(root, 6, 3, &mut rec);
+        let buf = run(root, 6, 3, &mut rec);
 
         let painted: String = (0..3).map(|y| row_text(&buf, y)).collect();
         assert!(
@@ -656,7 +691,7 @@ mod tests {
             "the layer's text must survive the host fill beneath it, got {painted:?}"
         );
         // And the host really did paint underneath.
-        assert!(painted.contains('B'), "host content missing: {painted:?}");
+        assert!(painted.contains('#'), "host content missing: {painted:?}");
     }
 
     /// A host is never handed a rect reaching outside the frame.
@@ -667,48 +702,18 @@ mod tests {
             status_bar: true,
             search_options: Some(Default::default()),
             prompt_line: true,
+            splits: Some(one_pane()),
             ..Frame::default()
         };
         let mut rec = Recorder::default();
-        let (buf, _) = run_msg(frame_tree(f), 8, 2, &mut rec);
-        for (region, rect) in &rec.calls {
+        let buf = run_msg(frame_tree(f), 8, 2, &mut rec);
+        for (pane, rect) in &rec.panes {
             assert!(
                 rect.x + rect.width <= buf.area.width && rect.y + rect.height <= buf.area.height,
-                "{region:?} got {rect:?}, outside {:?}",
+                "{pane:?} got {rect:?}, outside {:?}",
                 buf.area
             );
         }
-    }
-
-    /// A host region owning the caret has it reported when nothing native
-    /// placed one.
-    #[test]
-    fn a_host_region_can_own_the_caret() {
-        let mut rec = Recorder::default();
-        rec.caret_at = Some((HostRegion::Body, 3, 1));
-        let (_, caret) = run_msg(frame_tree(Frame::default()), 10, 4, &mut rec);
-        assert_eq!(caret, Some((3, 1)));
-    }
-
-    /// **The caret rule.** A focused native field placed a cursor, so it wins
-    /// over the buffer's — today's "an overlay takes the caret" behaviour,
-    /// derived rather than listed.
-    #[test]
-    fn a_native_cursor_beats_a_host_caret() {
-        let root: Node<()> = col().children([
-            host(HostRegion::Body.id()).flex(1),
-            fresh_ui::widgets::TextField::new("hi")
-                .autofocus()
-                .node()
-                .h(Sizing::Cells(1)),
-        ]);
-        let mut rec = Recorder::default();
-        rec.caret_at = Some((HostRegion::Body, 9, 9));
-        let (_, caret) = run(root, 10, 4, &mut rec);
-        assert!(
-            caret.is_some() && caret != Some((9, 9)),
-            "the focused field's cursor must win over the host's, got {caret:?}"
-        );
     }
 
     /// `fold`'s signature must keep admitting a **mutable** host while the
@@ -725,7 +730,7 @@ mod tests {
             painted: u32,
         }
         impl HostPainter for Host {
-            fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {
+            fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer) {
                 self.painted += 1; // real &mut access to host state
             }
         }
@@ -734,9 +739,14 @@ mod tests {
         let mut host_state = Host { painted: 0 };
         let mut buf = Buffer::empty(Rect::new(0, 0, 10, 4));
 
-        // Two separate objects, borrowed at the same time.
-        let spec = ui.frame(frame_tree(Frame::default()), Size::new(10, 4));
-        let _ = fold(spec, &mut buf, &plain, &mut host_state);
+        // Two separate objects, borrowed at the same time. A pane is what
+        // reaches a painter; no region does.
+        let f = Frame {
+            splits: Some(one_pane()),
+            ..Frame::default()
+        };
+        let spec = ui.frame(frame_tree(f), Size::new(10, 4));
+        fold(spec, &mut buf, &plain, &mut host_state);
 
         assert!(host_state.painted > 0);
     }
@@ -759,7 +769,7 @@ mod width_tests {
         let mut buf = Buffer::filled(Rect::new(0, 0, w, 1), ratatui::buffer::Cell::new("~"));
         struct NoHosts;
         impl HostPainter for NoHosts {
-            fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {
+            fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer) {
                 unreachable!("no hosts in these trees")
             }
         }

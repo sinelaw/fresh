@@ -26,20 +26,19 @@ impl crate::app::window::Window {
     /// fallback, and chrome that owns no scrollable content drops the wheel
     /// (sinelaw/fresh#2969, the base component's).
     ///
-    /// Scrolling right stops at the last tab — `right_overflow` is the
-    /// renderer's own record of whether anything is still hidden off the right
-    /// edge, so the offset can't run out into empty space and leave the user
-    /// wheeling back through nothing. Which tab is *active* never changes: the
-    /// wheel moves the view, like every other wheel surface in the editor.
-    pub(crate) fn scroll_tab_strip(&mut self, split_id: LeafId, delta: i32) {
+    /// Scrolling right stops at the last tab — whether anything is still
+    /// hidden off the right edge is the strip's layout's to say, so the offset
+    /// can't run out into empty space and leave the user wheeling back through
+    /// nothing. Which tab is *active* never changes: the wheel moves the view,
+    /// like every other wheel surface in the editor.
+    ///
+    /// `overflows_right` is whether the strip has tabs past its right edge —
+    /// a fact of the strip's layout, which the caller reads off the tree
+    /// (`Editor::scroll_pane_tab_strip`); stepping right stops there.
+    pub(crate) fn scroll_tab_strip(&mut self, split_id: LeafId, delta: i32, overflows_right: bool) {
         if delta == 0 {
             return;
         }
-        let overflows_right = self
-            .layout_cache
-            .tab_layouts
-            .get(&split_id)
-            .is_some_and(|layout| layout.right_overflow);
         if delta > 0 && !overflows_right {
             return;
         }

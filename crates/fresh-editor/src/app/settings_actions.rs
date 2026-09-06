@@ -329,7 +329,7 @@ impl Editor {
                 }
             }
 
-            window.layout_cache.view_line_mappings.clear();
+            window.clear_pane_rows();
         }
     }
 

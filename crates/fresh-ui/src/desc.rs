@@ -199,6 +199,9 @@ pub struct BoxProps {
     /// Break onto a new line when the next child would not fit, instead of
     /// letting the row overflow. See [`Node::wrap_children`].
     pub wrap: bool,
+    /// The box's ground is a wash: it recolours what is already painted
+    /// under it and keeps the text. See [`Node::wash`].
+    pub wash: bool,
 }
 
 /// How a run gives up cells it was not given.
@@ -1185,6 +1188,19 @@ pub fn host_leaf<M>(f: impl Fn() -> Box<dyn crate::render::object::HostLeaf> + '
     Node::new(Desc::Host(HostSpec::Leaf(Rc::new(f))))
 }
 
+/// [`host_leaf`] from a factory the application keeps.
+///
+/// Two `Leaf` specs are equal when they hold the *same* factory
+/// (`Rc::ptr_eq`), so a description rebuilt every frame around a factory
+/// made every frame would relayout the leaf every frame. An application that
+/// describes a long-lived leaf — an editor pane, a terminal grid — keeps one
+/// factory per leaf for as long as the leaf exists and hands it in here; the
+/// object it makes is then created once per mount and pushed nothing, like
+/// any other retained state.
+pub fn host_object<M>(f: crate::render::object::HostObject) -> Node<M> {
+    Node::new(Desc::Host(HostSpec::Leaf(f)))
+}
+
 // ---------------------------------------------------------------------------
 // Builder methods
 // ---------------------------------------------------------------------------
@@ -1550,6 +1566,16 @@ impl<M> Node<M> {
 
     pub fn align(mut self, a: Align) -> Self {
         self.box_props().align = a;
+        self
+    }
+
+    /// Paint this box's ground as a wash rather than a fill: its theme's
+    /// background is laid over whatever was painted under it, and the text
+    /// there stays. A fill is a region that paints; a wash is a region that
+    /// *inherits* — the region form of a run that inherits its background.
+    /// What a drop target's highlight over a pane's text is.
+    pub fn wash(mut self) -> Self {
+        self.box_props().wash = true;
         self
     }
 

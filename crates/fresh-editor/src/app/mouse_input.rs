@@ -256,26 +256,10 @@ impl Editor {
                 // more per-surface field-poke ladder that had to be kept
                 // in sync with the grab roster by hand. Grabs without a
                 // finalizer just fall to the blanket clear below.
-                let grab = super::chrome::pointer_grab(self);
-                match grab {
-                    // Complete a tab drop before the drag state clears.
-                    Some(super::chrome::PointerGrab::TabDrag) => {
-                        if let Some(drag_state) =
-                            self.active_window_mut().mouse_state.dragging_tab.take()
-                        {
-                            if drag_state.is_dragging() {
-                                if let Some(drop_zone) = drag_state.drop_zone {
-                                    self.execute_tab_drop(
-                                        drag_state.buffer_id,
-                                        drag_state.source_split_id,
-                                        drop_zone,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+                // A tab drop was finalized here, keyed on its grab. The
+                // tab's node holds the pointer for the drag now, so the
+                // release comes back to it (`UiFact::PaneTabDrop`) and never
+                // reaches this walk.
 
                 // Blanket sweep: every remaining drag flag drops here,
                 // so no grab can outlive its release even if its
@@ -656,12 +640,12 @@ impl Editor {
             return false;
         };
 
-        // Get cached mappings and gutter width for this split
+        // The rows the pane's last text pass drew, as its leaf keeps them,
+        // and the gutter width for this split.
         let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(&split_id)
-            .cloned();
+            .active_window()
+            .pane_view(split_id)
+            .map(|v| v.rows.clone());
         let gutter_width = self
             .buffers()
             .get(&buffer_id)
@@ -689,7 +673,7 @@ impl Editor {
             row,
             content_rect,
             gutter_width,
-            &cached_mappings,
+            cached_mappings.as_deref(),
             fallback,
             false, // Don't include gutter
             compose_width,
@@ -964,41 +948,25 @@ impl Editor {
         if self.overlay_prompt_active() && !matches!(grab, PointerGrab::WidgetText) {
             return Ok(());
         }
+        #[allow(clippy::single_match, clippy::match_single_binding)]
         match grab {
             // Drag-to-select on a widget markdown/text document: armed by the
             // press that placed the caret; every Drag extends the selection to
             // the pointer.
             PointerGrab::WidgetText => {
                 self.handle_widget_text_selection_drag(col, row);
-            }
-            // A panel's list scrollbar was an arm here — the dock's and the
-            // modal's, then a buffer-mounted panel's. A described panel's
-            // list is a viewport and `hit.rs` captures the pointer for its
-            // own thumb, so the drag never reaches this walk.
-            // The split separator's and the file explorer's width drags were
-            // here, and so were both of a pane's scrollbars. All four are
-            // nodes that capture the pointer, so their moves arrive as
-            // `UiFact::GripDrag` / `UiFact::PaneScrollbarDrag` and never reach
-            // this walk.
-            // A drag whose press landed on a live terminal grid: this is
-            // selection intent (a bare click only focuses — see
-            // `handle_editor_click`). Drop the split into read-only scrollback
-            // and start a normal text-selection drag anchored at the press.
-            PointerGrab::TerminalSelectPending => {
-                if let Some((split_id, buffer_id, ocol, orow)) =
-                    self.active_window().mouse_state.terminal_drag_pending
-                {
-                    self.begin_terminal_grid_selection(split_id, buffer_id, ocol, orow, col, row)?;
-                }
-            }
-            // Text-selection drag: extend from the anchor.
-            PointerGrab::TextSelection => {
-                self.handle_text_selection_drag(col, row)?;
-            }
-            // Tab drag: update position and compute the drop zone.
-            PointerGrab::TabDrag => {
-                self.handle_tab_drag(col, row)?;
-            }
+            } // A panel's list scrollbar was an arm here — the dock's and the
+              // modal's, then a buffer-mounted panel's. A described panel's
+              // list is a viewport and `hit.rs` captures the pointer for its
+              // own thumb, so the drag never reaches this walk.
+              // The split separator's and the file explorer's width drags were
+              // here, and so were both of a pane's scrollbars. All four are
+              // nodes that capture the pointer, so their moves arrive as
+              // `UiFact::GripDrag` / `UiFact::PaneScrollbarDrag` and never reach
+              // this walk. The buffer's text selection and the live terminal
+              // grid's selection intent were the last two: the pane's content
+              // leaf captures the pointer on its press, so they arrive as
+              // `UiFact::PaneContentDrag` (`Editor::drag_pane_content`).
         }
 
         Ok(())
@@ -1007,7 +975,7 @@ impl Editor {
     /// Clear all in-progress drag state on the active window's mouse state.
     /// The active text/popup selection is intentionally preserved — only the
     /// drag bookkeeping fields are reset.
-    fn clear_active_window_drag_state(&mut self) {
+    pub(crate) fn clear_active_window_drag_state(&mut self) {
         let ms = &mut self.active_window_mut().mouse_state;
         ms.dragging_scrollbar = None;
         ms.drag_start_row = None;

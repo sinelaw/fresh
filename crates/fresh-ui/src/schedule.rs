@@ -589,12 +589,42 @@ impl<M: 'static> Ui<M> {
 
     /// One frame: take a freshly built root description, reconcile it, lay it
     /// out for a terminal of `size`, and return the display list.
+    ///
+    /// [`Self::lay_out`] followed by [`Self::paint`]; a host with a pass of
+    /// its own to run between the two calls them itself.
     pub fn frame(&mut self, root: Node<M>, size: Size) -> &LayoutSpec {
+        self.lay_out(root, size);
+        self.paint()
+    }
+
+    /// The first half of a frame: reconcile `root`, lay it out for a
+    /// terminal of `size`, and settle what a laid-out tree decides — focus
+    /// moving to an autofocused element, a queued reveal, a builder that ran
+    /// during layout.
+    ///
+    /// **Why a frame has two halves.** A host leaf's paint may depend on
+    /// work the application does over the *laid-out* geometry: a text pane
+    /// formats its rows for the rectangle layout gave it, and where its
+    /// caret lands is an answer of that pass. Painting in the same call as
+    /// layout would put that leaf's paint a frame behind its own geometry.
+    /// So a host lays the tree out, runs its pass at the rectangles the tree
+    /// reports, and then asks for the display list — which paints the leaf
+    /// from what the pass settled.
+    ///
+    /// Unlike [`Self::layout_only`] this is a frame's own first half, so the
+    /// reactions to it happen; only the display list is deferred to
+    /// [`Self::paint`].
+    pub fn lay_out(&mut self, root: Node<M>, size: Size) {
         self.host_anchors.clear();
         self.run_flush(Some(root));
         self.flush_layout(size);
         self.settle(size);
-        self.flush_paint(size);
+    }
+
+    /// The second half of a frame: the display list of the tree as
+    /// [`Self::lay_out`] left it.
+    pub fn paint(&mut self) -> &LayoutSpec {
+        self.flush_paint(self.frame_size);
         &self.spec
     }
 
@@ -748,6 +778,16 @@ impl<M: 'static> Ui<M> {
     /// inert, and a leaf that is inert takes no raw input. A leaf *inside* the
     /// exclusive layer still does. This is what replaces a
     /// `blocks_terminal_input` flag.
+    ///
+    /// **And raw input is the keyboard's.** A leaf takes it only while the
+    /// keyboard is its own: focus is on its focus holder or inside it, or
+    /// nothing holds focus at all. A leaf's holder is the nearest element at
+    /// or above it that registers for focus — a leaf wrapped in a
+    /// `focusable` is that focusable's content, and focus on the wrapper is
+    /// focus on the leaf — or the leaf itself when nothing above it does. A
+    /// popup or a panel that holds the keyboard above a terminal takes the
+    /// keys the terminal would have taken raw, and the gate says so without
+    /// a list of which layers block a PTY.
     pub fn raw_input_leaves(&self) -> impl Iterator<Item = ElementId> + '_ {
         let exclusive: Vec<ElementId> = self
             .pending_layers
@@ -767,6 +807,24 @@ impl<M: 'static> Ui<M> {
             .filter(move |e| {
                 exclusive.is_empty() || exclusive.iter().any(|x| self.is_ancestor(*x, *e))
             })
+            .filter(move |e| {
+                let holder = self.focus_holder_of(*e);
+                self.focus.is_none_or(|f| self.is_within(f, holder))
+            })
+    }
+
+    /// The element whose focus is `e`'s keyboard: the nearest at or above it
+    /// with a focus registration, or `e` itself when none has one.
+    fn focus_holder_of(&self, e: ElementId) -> ElementId {
+        let mut cur = Some(e);
+        while let Some(x) = cur {
+            let Some(el) = self.arena.get(x) else { break };
+            if el.focus.is_some() {
+                return x;
+            }
+            cur = el.parent;
+        }
+        e
     }
 
     /// Whether `anc` is `e` or one of its ancestors.

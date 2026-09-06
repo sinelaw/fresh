@@ -47,10 +47,6 @@ fn dim_color(color: Color) -> Option<Color> {
 }
 
 /// Apply dimming effect to all cells in an area
-pub fn apply_dimming(frame: &mut Frame, area: Rect) {
-    apply_dimming_excluding(frame, area, None);
-}
-
 /// Apply dimming effect to an area, optionally excluding a sub-area
 pub fn apply_dimming_excluding(frame: &mut Frame, area: Rect, exclude: Option<Rect>) {
     dim_buffer(frame.buffer_mut(), area, exclude);

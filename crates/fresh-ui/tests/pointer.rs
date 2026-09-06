@@ -264,6 +264,111 @@ fn capture_survives_the_pointer_leaving_the_rectangle() {
     assert!(ui.captured().is_none(), "release ends the drag");
 }
 
+/// **A move says whether it came by capture.** A bare motion over an element
+/// is a hover, and the same element's move while it holds the pointer is a
+/// drag; a listener that returned a fact for both would ask for a frame per
+/// pointer sample over ground that changes nothing.
+#[test]
+fn a_move_reports_whether_it_came_by_capture() {
+    let seen: Rc<RefCell<Vec<bool>>> = Rc::default();
+    let s = seen.clone();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            gesture(text("grip"))
+                .on(
+                    GestureKind::Press,
+                    Rc::new(|e: &Event| {
+                        e.capture_pointer();
+                        None
+                    }),
+                )
+                .on(
+                    GestureKind::Move,
+                    Rc::new(move |e: &Event| {
+                        s.borrow_mut().push(e.captured);
+                        None
+                    }),
+                ),
+            text("elsewhere"),
+        ]),
+        FRAME,
+    );
+    // A bare move over the grip: a hover.
+    ui.dispatch(Input::Move {
+        pos: Point::new(1, 0),
+        mods: Mods::NONE,
+    });
+    // Pressed, then moved: a drag, wherever the pointer is.
+    ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    ui.dispatch(Input::Move {
+        pos: Point::new(2, 0),
+        mods: Mods::NONE,
+    });
+    ui.dispatch(Input::Move {
+        pos: Point::new(5, 6),
+        mods: Mods::NONE,
+    });
+    ui.dispatch(Input::release(
+        Point::new(5, 6),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    // Released: a move over the grip is a hover again.
+    ui.dispatch(Input::Move {
+        pos: Point::new(1, 0),
+        mods: Mods::NONE,
+    });
+    assert_eq!(*seen.borrow(), vec![false, true, true, false]);
+}
+
+/// **A press is a new gesture, and ends a capture whose release never
+/// came.** A host that reports presses without releases — a test harness, a
+/// lost event between hosts — must not leave every later press routed to the
+/// element that captured the first one: a press on a second pane went to the
+/// first pane's content, forever, and the second pane could never be focused
+/// by the pointer.
+#[test]
+fn a_press_ends_a_stale_capture_and_is_routed_by_the_pointer() {
+    let pressed: Rc<RefCell<Vec<&'static str>>> = Rc::default();
+    let grip = |name: &'static str| {
+        let p = pressed.clone();
+        gesture(text(name)).on(
+            GestureKind::Press,
+            Rc::new(move |e: &Event| {
+                e.capture_pointer();
+                p.borrow_mut().push(name);
+                None
+            }),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(col().children([grip("first"), grip("second")]), FRAME);
+
+    ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(ui.captured().is_some(), "the first press captures");
+
+    // No release. The next press lands on the other element.
+    ui.dispatch(Input::press(
+        Point::new(1, 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert_eq!(
+        *pressed.borrow(),
+        vec!["first", "second"],
+        "the second press is the second element's, not the captor's"
+    );
+}
+
 #[test]
 fn a_viewport_at_its_bound_lets_the_wheel_through() {
     let mut ui: Ui<()> = Ui::new();
@@ -518,6 +623,7 @@ fn pressing_the_track_of_an_item_scrolling_viewport_scrolls_it() {
                 offset,
                 content,
                 window,
+                ..
             } => Some((offset, content, u32::from(window), i.rect.h)),
             _ => None,
         })
@@ -881,6 +987,7 @@ fn pressing_a_track_row_puts_the_thumb_on_that_row() {
                     offset,
                     content,
                     window,
+                    ..
                 } => Some((offset, content, u32::from(window), i.rect.h)),
                 _ => None,
             })

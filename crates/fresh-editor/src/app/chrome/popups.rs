@@ -102,7 +102,7 @@ impl Editor {
                 // Selecting and confirming in one step, and only when the row
                 // is really there — the number keys' own rule.
                 K::Pick(i) => pick = p.select_index(i).then_some(()),
-                K::Close => ctx.defer(DeferredAction::ClosePopup),
+                K::Close | K::Through => ctx.defer(DeferredAction::ClosePopup),
                 K::Copy => {
                     if p.has_selection() {
                         if let Some(text) = p.get_selected_text() {
@@ -118,5 +118,21 @@ impl Editor {
             ctx.defer(DeferredAction::ConfirmPopup);
         }
         self.process_deferred_actions(ctx);
+        // **A popup is part of the description, and every arm above changed
+        // one** — closed it, moved its selection, filtered its rows. Saying so
+        // is what makes the next read of the tree describe the popup as it now
+        // is, and the read immediately below is one: the key handed on has to
+        // resolve in the context the *pane* has, not in the one the departing
+        // list had. Without this the tree still held `Completion` when the
+        // list was already gone, and a character typed at a completion popup
+        // was resolved there and dropped instead of reaching the buffer.
+        self.shell_description_stale = true;
+        // The key that closed the list is the editor's — routed now, with
+        // the list gone, so the context it resolves in is the pane's.
+        if k == K::Through {
+            if let Some(ev) = self.shell_key_event {
+                self.hand_key_to_editor(ev);
+            }
+        }
     }
 }

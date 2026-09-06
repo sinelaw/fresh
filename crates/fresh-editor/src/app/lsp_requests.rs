@@ -3352,7 +3352,7 @@ impl Editor {
         // Pre-fill the input with the current name and position cursor at the end
         prompt.set_input(word_text);
 
-        self.active_window_mut().prompt = Some(prompt);
+        self.set_prompt(prompt);
         Ok(())
     }
 

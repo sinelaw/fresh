@@ -983,57 +983,6 @@ fn a_mark_that_goes_away_rests_focus_on_the_scope() {
     assert_eq!(ui.focused(), ui.find_by_key(&"a".into()));
 }
 
-// -- observed, not claimed -------------------------------------------------------
-
-/// **A key can be observed without being claimed.** A subtree whose keys are
-/// bound outside the tree — a plugin panel whose Tab is the plugin's own —
-/// needs propagation and the tree's intent resolution to end at it while the
-/// key still reaches the host. `Flow::Stop` would swallow it; `Flow::Continue`
-/// would let traversal have it. Observing is the third answer.
-#[test]
-fn an_observed_key_ends_propagation_and_traversal_but_is_not_claimed() {
-    let mut ui: Ui<()> = Ui::new();
-    ui.frame(
-        focusable(col().children([field("one"), field("two")]))
-            .key("interior")
-            .skip_traversal()
-            .on_key(|e: &Event| {
-                e.observe();
-                None
-            }),
-        FRAME,
-    );
-    let one = ui.find_by_key(&"one".into()).unwrap();
-    ui.request_focus(one, SelectionOnFocus::None);
-    let d = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
-    assert_eq!(ui.focused(), Some(one), "traversal did not move focus");
-    assert!(!d.claimed, "and the key is still the host's");
-    // A stop recorded first stands: observing cannot un-claim.
-    let mut ui2: Ui<()> = Ui::new();
-    ui2.frame(
-        focusable(
-            col().child(focusable(text("inner")).key("inner").on_key(|e: &Event| {
-                e.stop();
-                None
-            })),
-        )
-        .key("outer")
-        .skip_traversal()
-        .on_key(|e: &Event| {
-            e.observe();
-            None
-        }),
-        FRAME,
-    );
-    let inner = ui2.find_by_key(&"inner".into()).unwrap();
-    ui2.request_focus(inner, SelectionOnFocus::None);
-    let d = ui2.dispatch(Input::Key(KeyPress::new(KeyCode::Enter)));
-    assert!(
-        d.claimed,
-        "the inner stop claimed it before the outer observer ran"
-    );
-}
-
 /// A focusable built inside a `layout_reader` is an ordinary ring member: a
 /// mark on it lands, stays across frames, and its keys reach it.
 ///

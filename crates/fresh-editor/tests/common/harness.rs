@@ -1601,6 +1601,16 @@ impl EditorTestHarness {
             frame.buffer_layouts, frame.pane_placements,
             "a frame formatted a pane it did not place, or placed one it did not format: {frame:?}"
         );
+        // **The provenance gate** (design §3.7.9): the only painter-written
+        // cells are inside host leaves. Asserted on every frame the corpus
+        // renders, so a painter that is not a leaf's cannot come back.
+        let provenance = self.editor.cells_provenance();
+        assert!(
+            provenance.painter_outside_hosts.is_empty(),
+            "a painter wrote cells outside every host leaf: {:?}; the frame's hosts were {:?}",
+            &provenance.painter_outside_hosts[..provenance.painter_outside_hosts.len().min(8)],
+            provenance.hosts
+        );
         Ok(())
     }
 

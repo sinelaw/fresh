@@ -14,6 +14,7 @@ fn snapshot(spec: &fresh_ui::LayoutSpec) -> String {
         let r = i.rect;
         let what = match &i.draw {
             Draw::Fill => "fill".to_string(),
+            Draw::Wash => "wash".to_string(),
             Draw::Border(bs) => format!("border:{bs:?}"),
             Draw::Selectable => "selectable".to_string(),
             Draw::Scrim(s) => format!("scrim {s:?}"),
@@ -25,6 +26,7 @@ fn snapshot(spec: &fresh_ui::LayoutSpec) -> String {
                 offset,
                 content,
                 window,
+                ..
             } => {
                 format!("scrollbar {offset}/{content}/{window}")
             }
@@ -111,7 +113,8 @@ fn a_viewport_emits_only_what_is_inside_its_window() {
         Draw::Scrollbar {
             offset: 0,
             content: 100,
-            window: 6
+            window: 6,
+            ..
         }
     )));
 }
@@ -997,5 +1000,99 @@ fn a_caret_outside_the_clip_is_not_placed() {
     assert!(
         ui.spec().cursor.is_none(),
         "the caret is on a row the two-row window is scrolled away from"
+    );
+}
+
+// -- a cursor under a layer -----------------------------------------------------
+//
+// The terminal draws its one cursor on top of every cell, so a caret placed by
+// something a layer then paints over would blink through the layer. The
+// library drops it: a layer that scrims the frame, or whose box holds the
+// cursor's cell, ends any cursor placed before it; a layer beside the cursor
+// leaves it; a layer that places its own cursor wins by being last.
+
+fn cursor_of(root: Node<()>) -> Option<Point> {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(root, FRAME);
+    ui.spec().cursor.map(|c| c.pos)
+}
+
+#[test]
+fn a_layer_whose_box_covers_the_cursor_ends_it() {
+    // The caret sits at (2, 0); a layer placed over the frame's top-left
+    // corner covers that cell.
+    let covered = col().children([
+        text("hello").cursor_byte(2),
+        layer()
+            .anchor(Anchor::Point(0, 0))
+            .place(Place::Over)
+            .child(text("over it").w(Sizing::Cells(7)).h(Sizing::Cells(1))),
+    ]);
+    assert_eq!(
+        cursor_of(covered),
+        None,
+        "the layer paints over the caret's cell"
+    );
+}
+
+#[test]
+fn a_layer_beside_the_cursor_leaves_it() {
+    let beside = col().children([
+        text("hello").cursor_byte(2),
+        layer()
+            .anchor(Anchor::Point(20, 4))
+            .place(Place::Over)
+            .child(text("elsewhere").w(Sizing::Cells(9)).h(Sizing::Cells(1))),
+    ]);
+    assert_eq!(cursor_of(beside), Some(Point::new(2, 0)));
+}
+
+#[test]
+fn a_scrimmed_layer_ends_a_cursor_wherever_it_is() {
+    let dimmed = col().children([
+        text("hello").cursor_byte(2),
+        layer()
+            .anchor(Anchor::Point(20, 4))
+            .place(Place::Over)
+            .scrim(Some(Scrim::Dim))
+            .child(text("modal").w(Sizing::Cells(5)).h(Sizing::Cells(1))),
+    ]);
+    assert_eq!(cursor_of(dimmed), None, "a scrim covers the whole frame");
+}
+
+/// A layer whose box spans the caret's cell but paints nothing there — a
+/// keyboard layer with no surface of its own — does not cover it.
+#[test]
+fn a_layer_that_paints_nothing_over_the_cursor_leaves_it() {
+    let keys_only = col().children([
+        text("hello").cursor_byte(2),
+        layer()
+            .anchor(Anchor::Point(0, 0))
+            .place(Place::Over)
+            .modality(Modality::Focus)
+            .child(col().w(Sizing::Cells(40)).h(Sizing::Cells(6))),
+    ]);
+    assert_eq!(cursor_of(keys_only), Some(Point::new(2, 0)));
+}
+
+#[test]
+fn a_layer_that_places_its_own_cursor_keeps_that_one() {
+    let field = col().children([
+        text("hello").cursor_byte(2),
+        layer()
+            .anchor(Anchor::Point(0, 0))
+            .place(Place::Over)
+            .scrim(Some(Scrim::Dim))
+            .child(
+                text("query")
+                    .cursor_byte(5)
+                    .w(Sizing::Cells(5))
+                    .h(Sizing::Cells(1)),
+            ),
+    ]);
+    assert_eq!(
+        cursor_of(field),
+        Some(Point::new(5, 0)),
+        "the layer's own field's"
     );
 }

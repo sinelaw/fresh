@@ -45,7 +45,8 @@ impl UiFact {
         matches!(
             self,
             UiFact::Hover(_)
-                | UiFact::PaneTabsHover(_)
+                | UiFact::PaneContentDrag { .. }
+                | UiFact::PaneTabDrag { .. }
                 | UiFact::PaneTabsWheel { .. }
                 | UiFact::PaneTabsPan { .. }
                 | UiFact::PaneScrollbarPress { .. }
@@ -182,23 +183,45 @@ pub enum UiFact {
     /// `Editor::shell_hover`.
     Hover(Option<crate::app::types::HoverTarget>),
     // -- a pane's tab strip ---------------------------------------------------
-    /// A left press on a pane's tab strip, at a cell.
-    ///
-    /// The strip is one node per pane; its *interior* — the tabs, their close
-    /// buttons, the "+", the scroll arrows and the split controls drawn over
-    /// them — is laid out by the tab renderer and hit-tested against what it
-    /// recorded. So the fact says which strip and where, and the two handlers
-    /// behind it are the ones the boxes dispatched to, in the order their `z`
-    /// used to express: the split controls sit on top of the tab row.
-    PaneTabsPress {
+    /// A left press on a tab's name: activate it, and take the pointer for
+    /// the drag that may follow. The tab's node names the tab; `x, y` is
+    /// where the press was, which the drag's threshold measures from.
+    PaneTabPress {
         pane: LeafId,
+        target: crate::view::split::TabTarget,
         x: u16,
         y: u16,
     },
-    /// A right press on a pane's tab strip: the tab's context menu, on the tab
-    /// under the pointer. Dismissing it from elsewhere is still the base
-    /// surface's, which this claim simply keeps out of the way of.
-    PaneTabsSecondary {
+    /// The `×` beside a tab's name.
+    PaneTabClose {
+        pane: LeafId,
+        target: crate::view::split::TabTarget,
+    },
+    /// A right press on a tab: its context menu, just below the cell pressed.
+    /// Dismissing it from elsewhere is still the base surface's, which this
+    /// claim simply keeps out of the way of.
+    PaneTabMenu {
+        pane: LeafId,
+        target: crate::view::split::TabTarget,
+        x: u16,
+        y: u16,
+    },
+    /// The pointer moved while a tab's name holds it: the drag, whose drop
+    /// zone the applier computes from where the tabs and panes are.
+    PaneTabDrag {
+        x: u16,
+        y: u16,
+    },
+    /// The pointer was released while a tab's name held it: the drop, if the
+    /// drag ever passed its threshold.
+    PaneTabDrop,
+    /// The `<` or `>` at a strip's edge: step the strip one notch.
+    PaneTabsScroll {
+        pane: LeafId,
+        delta: i32,
+    },
+    /// The `+` after the last tab: the new-tab menu, just below it.
+    PaneNewTab {
         pane: LeafId,
         x: u16,
         y: u16,
@@ -208,11 +231,6 @@ pub enum UiFact {
     PaneMaximize(LeafId),
     /// The `×` beside it. Pops a confirmation rather than closing outright.
     PaneClose(LeafId),
-    /// The pointer is on a pane's tab strip at a cell, or has left one.
-    ///
-    /// Which tab, which close button, which split control is the tab
-    /// renderer's hit test — resolved where that layout lives, not here.
-    PaneTabsHover(Option<(LeafId, u16, u16)>),
     /// A vertical wheel over a pane's tab strip pans it: up walks toward the
     /// first tab, down toward the last.
     PaneTabsWheel {
@@ -232,11 +250,17 @@ pub enum UiFact {
     /// places the caret, two selects the word, three the line — or toggles a
     /// fold, when the cell is a folded line's gutter indicator.
     ///
-    /// The pane is the node's. The content *rectangle* the handlers take is
-    /// read back from the same node, because click-to-byte is a projection
-    /// through the view pipeline and needs the extent, not just the cell.
+    /// The pane is the node's, and so is the byte: the pane's content is a
+    /// leaf that answers `text_byte_at` from the rows its last text pass
+    /// drew, and the press carries its answer. The cell rides along for what
+    /// is not the buffer's — a live terminal grid's forwarding, the plugin
+    /// hook, the gutter's fold toggle.
     PaneContentPress {
         pane: LeafId,
+        /// Where the caret goes: the byte under the cell, as the leaf
+        /// answered it. `None` for a pane whose leaf has no rows to answer
+        /// from, which places nothing.
+        byte: Option<usize>,
         x: u16,
         y: u16,
         clicks: u8,
@@ -245,6 +269,26 @@ pub enum UiFact {
         /// the way it carries `clicks` — rather than the applier reading it
         /// off the crossterm event parked on the editor.
         mods: fresh_ui::Mods,
+    },
+    /// A left press on the prompt row's query: the caret goes to the byte
+    /// under the pointer, which the input run answered (`Event::text_byte`).
+    PromptInputPress {
+        byte: usize,
+    },
+    /// The pane's content holds the pointer its press captured, and this is
+    /// a move of it: a selection drag if the press armed one, a live
+    /// terminal's own drag if it forwards the mouse. Every move while the
+    /// leaf holds the pointer, wherever the pointer is — the editor decides
+    /// which drag, if any, from what the press set up.
+    PaneContentDrag {
+        pane: LeafId,
+        x: u16,
+        y: u16,
+    },
+    /// The pane's content let go of the pointer: the drag its press armed
+    /// is over.
+    PaneContentRelease {
+        pane: LeafId,
     },
 
     // -- a pane's scrollbars, and its wheel -----------------------------------
@@ -629,6 +673,20 @@ pub enum UiFact {
     /// it here — the surface answers what it means — and the prompt's layer
     /// is `Modality::Focus`, which confines the keyboard without swallowing.
     PromptKey,
+    /// A key reached the active pane's content — the buffer host, holding the
+    /// keyboard as the base's own focus holder — and is the editor's to
+    /// resolve: the popup keys, the mode's bindings, a composite's routing,
+    /// chords and the keybinding resolver for the context the focus chain
+    /// says (`chrome::base::dispatch_base_key`). **The base key dispatcher
+    /// is reached only through this** (design §3.7.5): a key the tree
+    /// declines everywhere is nobody's, not the editor's by default.
+    PaneKey {
+        pane: LeafId,
+    },
+    /// A key reached the file explorer while it holds the keyboard: its
+    /// header is the focus holder, and the key is the editor's to resolve in
+    /// the explorer's context, which the chain names.
+    SidebarKey,
     /// A key belongs to a focused plugin panel, whose interior is the widget
     /// runtime's.
     ///
@@ -866,6 +924,12 @@ pub enum PopupKey {
     Pick(usize),
     /// Close, without taking anything.
     Close,
+    /// Close, and the key that closed it is the editor's: a completion list
+    /// was never in the way of the keystroke, so Enter closes it *and*
+    /// inserts the newline. The one step, because the tree is the whole
+    /// keyboard — a key it declines is nobody's — so "let it through" is a
+    /// hand-on, not a decline.
+    Through,
     /// Copy the selection to the clipboard.
     Copy,
     /// A completion list's filter.

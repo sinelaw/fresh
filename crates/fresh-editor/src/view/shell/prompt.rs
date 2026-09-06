@@ -775,6 +775,7 @@ pub fn suggestions_window(spec: &fresh_ui::LayoutSpec) -> Option<(usize, usize)>
                 offset,
                 content,
                 window,
+                ..
             } => Some((*offset as usize, (*window as usize).min(*content as usize))),
             _ => None,
         })
@@ -1271,6 +1272,7 @@ mod tests {
                         footer: true,
                         search: false,
                         input_focused: true,
+                        ..Card::default()
                     }),
                     suggestions: Some(Suggestions {
                         rows: rows(3),

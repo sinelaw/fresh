@@ -29,6 +29,13 @@ function treeItemEl(it){
     case "fill":
       if(it.bg) el.style.background=it.bg;
       break;
+    case "wash":
+      // A ground laid over what is under it, keeping the text there: the
+      // TUI recolours the cells' backgrounds; here the ground is translucent.
+      if(it.bg) el.style.background=it.bg;
+      el.style.opacity="0.45";
+      el.style.pointerEvents="none";
+      break;
     case "border":
       el.style.borderColor=it.fg||"currentColor";
       if(it.bg) el.style.background=it.bg;
@@ -62,9 +69,23 @@ function treeItemEl(it){
       if(it.bg) el.style.background=it.bg;
       const th=div("tree-thumb");
       const [top,len]=it.thumb||[0,0];
-      th.style.top=px(top,CH)+"px"; th.style.height=px(len,CH)+"px";
+      if(it.horizontal){
+        th.style.left=px(top,CW)+"px"; th.style.width=px(len,CW)+"px";
+        th.style.top="0px"; th.style.height=CH+"px";
+      } else {
+        th.style.top=px(top,CH)+"px"; th.style.height=px(len,CH)+"px";
+      }
       if(it.fg) th.style.background=it.fg;
       el.appendChild(th);
+      // Marks on the track: a half-width bar in the mark's colour over the
+      // thumb or track (the TUI's half-block glyph), or the whole cell.
+      for(const m of (it.marks||[])){
+        const mk=div(m.full?"tree-mark-full":"tree-mark");
+        if(it.horizontal){ mk.style.left=px(m.at,CW)+"px"; mk.style.width=CW+"px"; mk.style.top="0px"; mk.style.height=CH+"px"; }
+        else { mk.style.top=px(m.at,CH)+"px"; mk.style.height=CH+"px"; }
+        mk.style.background=m.color;
+        el.appendChild(mk);
+      }
       break;
     }
     case "selectable":

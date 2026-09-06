@@ -30,47 +30,32 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use crate::app::Editor;
-use crate::model::event::{BufferId, LeafId};
+use crate::model::event::LeafId;
 use crate::view::shell::geometry::PaneRects;
 use crate::view::shell::splits::PaneChrome;
 use crate::view::ui::split_rendering::{
-    paint_leaf, paint_separators, prepare_content, reconcile_panes, record_scrollbar_theme_runs,
-    ContentPass, FrameFacts, Stores,
+    content_pass, paint_leaf, prepare_content, reconcile_panes, ContentPass, FrameFacts,
+    PaneContent, Stores,
 };
 use crate::view::ui::{EditorRenderConfig, RenderStyle};
 
-use crate::view::shell::fold::Caret;
-use crate::view::shell::frame::{HostRegion, HostTarget};
+use crate::view::shell::frame::HostTarget;
 
 /// Per-frame facts the split renderer needs that are not borrows.
 ///
 /// `paint_host` takes a region and a rectangle and nothing else — which is
 /// right, because a host painter is reached from a display list and a display
-/// list carries geometry, not the editor's hover state. So `render` leaves
-/// this on the editor before it folds, and the callback reads it there.
+/// list carries geometry, not the editor's hover state. So `render` resolves
+/// this once, before the reconcile, and every pass of the frame reads it.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BodyState {
     pub lsp_waiting: bool,
+    /// The active pane shows no caret: another surface owns the keyboard
+    /// (the explorer, the dock, a prompt, a live terminal) or a modal is up.
+    /// Read by the content pass, which settles a caret only when this is
+    /// false — so the pane's leaf places none.
     pub hide_cursor: bool,
-    pub hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>,
-    pub hovered_close_split: Option<LeafId>,
-    pub hovered_maximize_split: Option<LeafId>,
-    /// The tab bar lays out but paints no cells when false — the web renders
-    /// tabs natively. Panes always draw.
-    pub draw_tab_bar: bool,
 }
-
-/// What the split grid publishes back across the seam.
-///
-/// Every rectangle the grid produces, which is what chrome reads *after*
-/// paint: click-to-byte mapping, the scrollbar and separator drags, the tab
-/// hit tests. `render` takes this off the painter once the fold returns and
-/// files it in `WindowLayoutCache`.
-///
-/// It is the split renderer's own sink: the panes write into it one `Host` at
-/// a time, and a copy of it here would be a second list of the same
-/// rectangles.
-pub(crate) use crate::view::ui::split_rendering::PaneAreas as BodyOutput;
 
 /// What one dispatch into the shell's tree did.
 ///
@@ -127,6 +112,9 @@ pub(crate) struct Dispatched {
 /// editor carries between frames.
 pub struct BodyPainter<'a> {
     editor: &'a mut Editor,
+    /// The window whose grid this paints: the active window for the frame,
+    /// an embedded window for the tree an embed lays out (`paint_embed`).
+    window: fresh_core::WindowId,
     state: BodyState,
     /// What every pane in this frame shares, resolved when the fold reaches
     /// the body and read by each pane's `Host` after it.
@@ -135,7 +123,8 @@ pub struct BodyPainter<'a> {
     /// first; a pane reached without it would be a tree that mounted a pane
     /// outside the body.
     pass: Option<ContentPass>,
-    out: BodyOutput,
+    /// What each pane's text pass laid out, taken by the pane's paint.
+    contents: std::collections::HashMap<LeafId, PaneContent>,
     /// The frame's width, for the theme runs recorded in [`Self::finish`].
     screen_width: u16,
     /// What the shell's description of this same grid says each pane has.
@@ -165,34 +154,36 @@ pub struct BodyPainter<'a> {
     /// asserts the fold's rect is it.
     rects: PaneRects,
     /// The grid as [`reconcile_body`] prepared it for this frame, taken by
-    /// [`Self::body`] so the panes are prepared once per frame — preparing
+    /// [`Self::prepare`] so the panes are prepared once per frame — preparing
     /// them again would resize a buffer group's inner panels back to their
     /// panel rects after the reconcile sized them to their content rects,
     /// and the text pass would wrap at a width nobody placed for.
     prepared: Option<PreparedGrid>,
 }
 
-/// What [`reconcile_body`] prepared: the frame's panes, in paint order, and
-/// the split manager's leaves the separators are drawn between.
+/// What [`reconcile_body`] prepared: the frame's panes, in paint order — and,
+/// once [`content_body`] has run, what each pane's text pass laid out.
 pub struct PreparedGrid {
-    base_visible: Vec<(LeafId, BufferId, Rect)>,
     pass: ContentPass,
+    contents: std::collections::HashMap<LeafId, PaneContent>,
 }
 
 impl<'a> BodyPainter<'a> {
     pub fn new(
         editor: &'a mut Editor,
+        window: fresh_core::WindowId,
         state: BodyState,
         pane_chrome: std::collections::HashMap<LeafId, PaneChrome>,
         rects: PaneRects,
         prepared: Option<PreparedGrid>,
     ) -> Self {
-        let (scrollback, described_panes) = frame_pane_sets(editor);
+        let (scrollback, described_panes) = frame_pane_sets(editor, window);
         Self {
             editor,
+            window,
             state,
             pass: None,
-            out: BodyOutput::default(),
+            contents: Default::default(),
             screen_width: 0,
             pane_chrome,
             scrollback,
@@ -202,56 +193,31 @@ impl<'a> BodyPainter<'a> {
         }
     }
 
-    /// The rectangles the grid produced.
+    /// Resolve what the panes share, once per frame, before the first pane
+    /// is painted.
     ///
-    /// The scrollbar theme runs are recorded here rather than in a pane
-    /// because `apply_theme_runs` patches cells the panes are still
-    /// appending: it needs every pane painted, which is what "after the fold"
-    /// means now that a pane is its own `Host`.
-    pub fn finish(self) -> BodyOutput {
-        let BodyPainter {
-            editor,
-            out,
-            screen_width,
-            ..
-        } = self;
-        let active = editor.active_window;
-        if let Some(win) = editor.windows.get_mut(&active) {
-            record_scrollbar_theme_runs(
-                &out.pane_rects,
-                &mut win.chrome_layout.cell_theme_map,
-                screen_width,
-            );
-        }
-        out
-    }
-
-    /// The body: resolve what the panes share, and paint what is between
-    /// them.
-    ///
-    /// A separator belongs to no pane — it is the gap between two — so it is
-    /// the body's, and the body's `Host` is the only leaf that still spans the
-    /// whole grid.
-    fn body(&mut self, area: Rect, buf: &mut Buffer) {
+    /// The reconcile and the content pass prepared the grid for this frame;
+    /// they run here only when nothing did (a caller that folds without
+    /// reconciling), and then what they settled is settled on the leaves too.
+    fn prepare(&mut self, screen_width: u16) {
         let state = self.state;
-        self.screen_width = buf.area.width;
-        // The pass keeps its own copy: a `ContentPass` is what the preview
-        // path builds for a grid with no painter, so it owns its rects.
+        let window = self.window;
+        self.screen_width = screen_width;
+        // The pass keeps its own copy: a `ContentPass` owns its rects.
         let rects = self.rects.clone();
-        // The reconcile prepared the grid for this frame; prepare it again
-        // only when nothing did (a caller that folds without reconciling).
         let prepared = self.prepared.take();
-        self.pass = with_grid(
+        let fresh = prepared.is_none();
+        let prepared = with_grid(
             self.editor,
+            window,
             state,
-            buf.area.width,
+            screen_width,
             &self.pane_chrome,
-            &self.scrollback,
             &self.described_panes,
-            |facts, stores, mgr, window_chrome| {
-                let PreparedGrid { base_visible, pass } = prepared.unwrap_or_else(|| {
-                    // The panes at the boxes the tree placed them in — not a
-                    // second layout of the grid into `area`.
+            |facts, stores, mgr| {
+                prepared.unwrap_or_else(|| {
+                    // The panes at the boxes the tree placed them in —
+                    // not a second layout of the grid.
                     let base_visible = rects.visible(&mgr.visible_leaves());
                     let pass = prepare_content(
                         rects,
@@ -259,14 +225,21 @@ impl<'a> BodyPainter<'a> {
                         mgr,
                         stores.split_view_states.as_deref_mut(),
                         facts.grouped_subtrees,
-                        window_chrome,
                     );
-                    PreparedGrid { base_visible, pass }
-                });
-                paint_separators(buf, area, mgr, &base_visible, facts, stores);
-                pass
+                    reconcile_panes(&pass, facts, stores);
+                    let contents = content_pass(&pass, facts, stores);
+                    PreparedGrid { pass, contents }
+                })
             },
         );
+        let Some(mut prepared) = prepared else {
+            return;
+        };
+        if fresh {
+            settle_views(self.editor, window, &mut prepared);
+        }
+        self.pass = Some(prepared.pass);
+        self.contents = prepared.contents;
     }
 
     /// One pane, into the rectangle layout gave it.
@@ -277,9 +250,10 @@ impl<'a> BodyPainter<'a> {
     /// there is no reason to keep two answers. The pointer half already
     /// routes by this same rectangle, so a pane painted at any other one
     /// would be a pane you cannot click.
-    fn pane(&mut self, leaf: LeafId, rect: Rect, buf: &mut Buffer, caret: &mut Caret) {
-        // No pass means the fold reached a pane without reaching the body,
-        // which the tree does not describe.
+    fn pane(&mut self, leaf: LeafId, rect: Rect, buf: &mut Buffer) {
+        if self.pass.is_none() {
+            self.prepare(buf.area.width);
+        }
         let Some(pass) = self.pass.as_ref() else {
             return;
         };
@@ -289,37 +263,234 @@ impl<'a> BodyPainter<'a> {
         let Some(mut pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
             return;
         };
-        // The fold's rect is the pane's node's, and the pass's rect was read
-        // off the same node before the fold: one layout, one answer.
+        // **The fold's rect is the content leaf's.** The pane's box — the
+        // strip and the bars the painter still fills beside the content — is
+        // read off the same tree the leaf was placed in (`PaneRects`), so the
+        // two are one layout's answers; the content rect the pass carves from
+        // that box is asserted equal to this one in `paint_leaf`.
         debug_assert_eq!(
-            self.rects.pane(leaf),
+            self.rects.content(leaf),
             Some(rect),
-            "pane {leaf:?}: the fold's rect is not the one the tree placed it at"
+            "pane {leaf:?}: the fold's rect is not the content slot the tree placed"
         );
-        pane.3 = rect;
+        let Some(pane_box) = self.rects.pane(leaf) else {
+            return;
+        };
+        pane.3 = pane_box;
         let state = self.state;
-        let out = &mut self.out;
+        let window = self.window;
+        let contents = &mut self.contents;
         with_grid(
             self.editor,
+            window,
             state,
             buf.area.width,
             &self.pane_chrome,
-            &self.scrollback,
             &self.described_panes,
-            |facts, stores, _mgr, _window_chrome| {
-                paint_leaf(buf, pane, facts, pass, stores, out, caret);
+            |facts, stores, _mgr| {
+                paint_leaf(buf, pane, facts, pass, stores, contents);
             },
         );
+        // **The pane's paint ends with what the painter used to run over the
+        // whole grid between the fold's two bands**: a live terminal's PTY
+        // grid over the mirror the text pass drew, or — for text — the fade
+        // at the pane's scrolled edges. Per pane, inside the host's callback,
+        // so the fold is the frame's one paint (design §3.3).
+        let (_, _, buffer_id, _, _) = pane;
+        let live_terminal = !self.scrollback.contains(&leaf)
+            && self
+                .editor
+                .windows
+                .get(&window)
+                .is_some_and(|w| w.is_terminal_buffer(buffer_id));
+        let active = window == self.editor.active_window;
+        if live_terminal {
+            if let Some(win) = self.editor.windows.get(&window) {
+                // The block cursor is the frame's, and the active window's:
+                // an embed is not the input target.
+                win.paint_terminal_grid(buf, leaf, buffer_id, rect, active);
+            }
+        } else if active {
+            // The fade is the frame's affordance for scrolling; an embed
+            // does not scroll.
+            shade_pane_edges(self.editor, leaf, buffer_id, rect, buf);
+        }
     }
+}
+
+/// Shade the top and bottom rows of a text pane's content, so the text
+/// meets the edge of its pane by fading out rather than being cut off
+/// mid-line.
+///
+/// An edge only shades when there is something beyond it to trail off into:
+/// at the top or bottom of a document the text simply ends, and dimming it
+/// there would say the opposite. A file that fits its pane gets no shading
+/// at all. Above is read off the viewport, which knows exactly. Below is the
+/// bar's fact: a thumb short of the end of its track is content past the
+/// bottom row, and a pane with no bar has no extent to read, so its bottom
+/// edge shades — the affordance is the better guess when the answer is
+/// unavailable.
+fn shade_pane_edges(
+    editor: &Editor,
+    leaf: LeafId,
+    buffer_id: fresh_core::BufferId,
+    rect: Rect,
+    buf: &mut Buffer,
+) {
+    /// Rows at each edge that are shaded, and how far the shading reaches:
+    /// the row hard against the edge is painted a third of the way up from
+    /// its background, the one inside it two thirds, and the third row in is
+    /// fully painted.
+    const EDGE_FADE_ROWS: u16 = 2;
+    if !editor.config.editor.viewport_edge_fade || rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    let window = editor.active_window();
+    let Some((_, view_states)) = window.buffers.splits() else {
+        return;
+    };
+    let _ = buffer_id;
+    let Some(view_state) = view_states.get(&leaf) else {
+        return;
+    };
+    let content_below = window
+        .panes
+        .get(&leaf)
+        .and_then(|h| h.bar(fresh_ui::Axis::Vertical))
+        .is_none_or(|f| f.thumb(rect.height).1 < rect.height);
+    let anchor = view_state.viewport.anchor;
+    let content_above = anchor.byte > 0 || anchor.row_offset != 0;
+    let editor_bg = editor.theme.read().unwrap().editor_bg;
+    for row in 0..rect.height {
+        let from_top = row;
+        let from_bottom = rect.height - 1 - row;
+        let in_top = content_above && from_top < EDGE_FADE_ROWS;
+        let in_bottom = content_below && from_bottom < EDGE_FADE_ROWS;
+        let distance = match (in_top, in_bottom) {
+            (true, true) => from_top.min(from_bottom),
+            (true, false) => from_top,
+            (false, true) => from_bottom,
+            (false, false) => continue,
+        };
+        let level = (distance + 1) as f32 / (EDGE_FADE_ROWS + 1) as f32;
+        crate::view::animation::shade_row_toward_background(buf, rect, row, level, editor_bg);
+    }
+}
+
+/// Settle what every pane's text pass laid out on the pane's leaf: the rows,
+/// at the content rectangle they were laid out for, and the caret's cell —
+/// what the leaf answers the byte under a cell from, and where it places the
+/// display list's cursor (design §3.7.3, §3.7.4).
+fn settle_views(editor: &mut Editor, window: fresh_core::WindowId, prepared: &mut PreparedGrid) {
+    for (leaf, c) in prepared.contents.iter_mut() {
+        let rect = c.rect;
+        let rows = std::mem::take(&mut c.layout.view_line_mappings);
+        let caret = c
+            .caret
+            .map(|(x, y)| (x.saturating_sub(rect.x), y.saturating_sub(rect.y)));
+        settle_pane_view(editor, window, *leaf, rect, rows, caret, c.caret_shown);
+    }
+    // **A pane the pass did not settle shows no caret.** Its handle keeps
+    // the rows it last drew — a hidden sibling of a maximized pane comes
+    // back with them — but a caret is this frame's answer or nobody's, so
+    // the window's one caret cannot be read off a pane the frame did not
+    // draw.
+    let settled: Vec<LeafId> = prepared.contents.keys().copied().collect();
+    if let Some(win) = editor.windows.get(&window) {
+        win.clear_carets_except(&settled);
+    }
+}
+
+/// Lay out every text pane of the frame about to be painted — see
+/// `orchestration::content_pass`.
+///
+/// **After the reconcile and the plugin hooks, before the tree paints.** The
+/// hooks decorate the lines the frame will draw, so the rows are formatted
+/// after them; the tree paints after this, so the pane's leaf places the
+/// caret this settled in the frame's own display list, and the fold draws
+/// the cells from the same layout.
+pub fn content_body(
+    editor: &mut Editor,
+    window: fresh_core::WindowId,
+    state: BodyState,
+    screen_width: u16,
+    pane_chrome: &std::collections::HashMap<LeafId, PaneChrome>,
+    prepared: &mut PreparedGrid,
+) {
+    let (_, described_panes) = frame_pane_sets(editor, window);
+    let pass = &prepared.pass;
+    let contents = with_grid(
+        editor,
+        window,
+        state,
+        screen_width,
+        pane_chrome,
+        &described_panes,
+        |facts, stores, _| content_pass(pass, facts, stores),
+    );
+    prepared.contents = contents.unwrap_or_default();
+    settle_views(editor, window, prepared);
+}
+
+/// Settle what a text pass drew for `pane` on the pane's leaf: the rows, at
+/// the content rectangle they were drawn into, with the projection's other
+/// inputs — the gutter width, the compose-mode paper width, the viewport's
+/// top byte — as they stand.
+///
+/// The one writer of a pane's view. The frame's content pass calls it per
+/// pane of the window it laid out — the active window's at the frame's
+/// rectangles, an embedded window's at the embed's own (`paint_embed`).
+pub(crate) fn settle_pane_view(
+    editor: &mut Editor,
+    window: fresh_core::WindowId,
+    pane: LeafId,
+    rect: Rect,
+    rows: Vec<crate::app::types::ViewLineMapping>,
+    caret: Option<(u16, u16)>,
+    caret_shown: bool,
+) {
+    let Some(win) = editor.windows.get_mut(&window) else {
+        return;
+    };
+    let Some(buffer_id) = win.pane_buffer(pane) else {
+        return;
+    };
+    let gutter_width = win
+        .buffers
+        .get(&buffer_id)
+        .map(|s| s.margins.left_total_width() as u16)
+        .unwrap_or(0);
+    let (compose_width, top_byte) = win
+        .buffers
+        .splits()
+        .and_then(|(_, vs)| vs.get(&pane))
+        .map(|vs| (vs.compose_width, vs.viewport.top_byte()))
+        .unwrap_or((None, 0));
+    win.pane_handle_for(pane).settle(
+        rect,
+        rows,
+        gutter_width,
+        compose_width,
+        top_byte,
+        caret,
+        caret_shown,
+    );
 }
 
 /// The two per-frame sets every pane's paint reads: the splits showing a
 /// terminal in read-only scrollback, and the panes the tree describes instead
 /// of painting. Gathered once per frame — a `paint_host` call is per pane.
-fn frame_pane_sets(editor: &Editor) -> (HashSet<LeafId>, HashSet<LeafId>) {
+///
+/// The described set is the frame's: the active window's tree mounts the
+/// plugin panels the editor holds, and an embedded window's grid is described
+/// with none (`Editor::embed_grid`), so it describes no pane.
+fn frame_pane_sets(
+    editor: &Editor,
+    window: fresh_core::WindowId,
+) -> (HashSet<LeafId>, HashSet<LeafId>) {
     let scrollback = editor
         .windows
-        .get(&editor.active_window)
+        .get(&window)
         .and_then(|win| {
             win.buffers.splits().map(|(_, vs_map)| {
                 vs_map
@@ -330,7 +501,11 @@ fn frame_pane_sets(editor: &Editor) -> (HashSet<LeafId>, HashSet<LeafId>) {
             })
         })
         .unwrap_or_default();
-    (scrollback, editor.described_panes())
+    let described = match window == editor.active_window {
+        true => editor.described_panes(),
+        false => HashSet::new(),
+    };
+    (scrollback, described)
 }
 
 /// Reconcile every text pane of the frame about to be painted — see
@@ -346,21 +521,22 @@ fn frame_pane_sets(editor: &Editor) -> (HashSet<LeafId>, HashSet<LeafId>) {
 /// the panes this reconciled rather than preparing them a second time.
 pub fn reconcile_body(
     editor: &mut Editor,
+    window: fresh_core::WindowId,
     state: BodyState,
     rects: &PaneRects,
     screen_width: u16,
     pane_chrome: &std::collections::HashMap<LeafId, PaneChrome>,
 ) -> Option<PreparedGrid> {
-    let (scrollback, described_panes) = frame_pane_sets(editor);
+    let (_, described_panes) = frame_pane_sets(editor, window);
     let rects = rects.clone();
-    with_grid(
+    let prepared = with_grid(
         editor,
+        window,
         state,
         screen_width,
         pane_chrome,
-        &scrollback,
         &described_panes,
-        |facts, stores, mgr, window_chrome| {
+        |facts, stores, mgr| {
             let base_visible = rects.visible(&mgr.visible_leaves());
             let pass = prepare_content(
                 rects,
@@ -368,12 +544,45 @@ pub fn reconcile_body(
                 mgr,
                 stores.split_view_states.as_deref_mut(),
                 facts.grouped_subtrees,
-                window_chrome,
             );
+            // Where every pane's viewport stands before it is settled at the
+            // frame's rectangle. The frame was described from this: a bar's
+            // thumb states it (`Editor::settle_pane_bars`). A reconcile that
+            // moves it — the pane resized, and the cursor had to be kept in
+            // view — leaves the description a frame behind the paint, so
+            // the frame that shows the move is asked for.
+            let stand = |stores: &Stores<'_>| -> Vec<(LeafId, usize, usize)> {
+                stores
+                    .split_view_states
+                    .as_deref()
+                    .map(|vs| {
+                        pass.visible
+                            .iter()
+                            .filter_map(|(_, leaf, ..)| {
+                                let v = &vs.get(leaf)?.active_state().viewport;
+                                Some((*leaf, v.top_byte(), v.left_column))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let before = stand(stores);
             reconcile_panes(&pass, facts, stores);
-            PreparedGrid { base_visible, pass }
+            let moved = stand(stores) != before;
+            (
+                PreparedGrid {
+                    pass,
+                    contents: Default::default(),
+                },
+                moved,
+            )
         },
-    )
+    );
+    let (prepared, moved) = prepared?;
+    if moved {
+        editor.frame_requested = true;
+    }
+    Some(prepared)
 }
 
 /// Assemble the grid's borrows off the editor and hand them to `f`.
@@ -385,14 +594,15 @@ pub fn reconcile_body(
 /// `Ui` that does not live on the editor. It is assembled once per call
 /// rather than once per frame because a `paint_host` call is where the
 /// editor is in hand; there is no place between them to keep it.
+#[allow(clippy::too_many_arguments)]
 fn with_grid<R>(
     editor: &mut Editor,
+    window: fresh_core::WindowId,
     state: BodyState,
     screen_width: u16,
     pane_chrome: &std::collections::HashMap<LeafId, PaneChrome>,
-    scrollback_view_splits: &HashSet<LeafId>,
     described_panes: &HashSet<LeafId>,
-    f: impl FnOnce(&FrameFacts<'_>, &mut Stores<'_>, &crate::view::split::SplitManager, PaneChrome) -> R,
+    f: impl FnOnce(&FrameFacts<'_>, &mut Stores<'_>, &crate::view::split::SplitManager) -> R,
 ) -> Option<R> {
     // Built before the `&mut editor.windows` borrow below; it only borrows
     // `editor.config`, so the two coexist — as in `Editor::render`.
@@ -402,24 +612,10 @@ fn with_grid<R>(
         editor.software_cursor_only,
     );
     let session_mode = editor.session_mode || !editor.software_cursor_only;
-    let active_window_id = editor.active_window;
 
-    let win = editor.windows.get_mut(&active_window_id)?;
+    let win = editor.windows.get_mut(&window)?;
 
-    let is_maximized = win
-        .buffers
-        .splits()
-        .map(|(mgr, _)| mgr.is_maximized())
-        .unwrap_or(false);
-    // The window's half of the pane-chrome rule: what the frame offers every
-    // pane, before each narrows it by what it is.
-    let window_chrome = PaneChrome {
-        tabs: win.tab_bar_visible,
-        vscroll: cfg.show_vertical_scrollbar,
-        hscroll: cfg.show_horizontal_scrollbar,
-    };
     let metadata_ref = &win.buffer_metadata;
-    let preview_buffer = win.preview.map(|(_, b)| b);
     let event_logs_mut = &mut win.event_logs;
     let grouped_ref = &win.grouped_subtrees;
     let composite_buffers_mut = &mut win.composite_buffers;
@@ -436,19 +632,12 @@ fn with_grid<R>(
                 cfg,
             },
             buffer_metadata: metadata_ref,
-            preview_buffer,
             grouped_subtrees: grouped_ref,
             pane_chrome,
-            scrollback_view_splits,
             described_panes,
             lsp_waiting: state.lsp_waiting,
             hide_cursor: state.hide_cursor,
-            hovered_tab: state.hovered_tab,
-            hovered_close_split: state.hovered_close_split,
-            hovered_maximize_split: state.hovered_maximize_split,
-            is_maximized,
             session_mode,
-            draw_tab_bar: state.draw_tab_bar,
             screen_width,
         };
         let mut stores = Stores {
@@ -459,115 +648,192 @@ fn with_grid<R>(
             split_view_states: Some(vs_map),
             cell_theme_map: cell_theme_map_mut,
         };
-        f(&facts, &mut stores, &*mgr, window_chrome)
+        f(&facts, &mut stores, &*mgr)
     })
 }
 
-/// The frame's host painter.
-///
-/// During the migration this is what shrinks: every region still listed here
-/// is one the old painters own, and each stage moves one of them out into a
-/// native `fresh-ui` description. [`HostRegion::Body`] never migrates — the
-/// buffer and terminal grid stays cells — but it is no longer *one* leaf: the
-/// body's is the separators' and the panes' shared preamble, and each pane
-/// carries its own.
+/// The frame's host painter: one callback, resolving a `Draw::Host` to the
+/// leaf it names — a pane's content, an embedded window — and painting it
+/// (design §3.7.8). Every region of the frame is native; the cells the
+/// painter still writes are inside these leaves.
 impl crate::view::shell::fold::HostPainter for BodyPainter<'_> {
-    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer, caret: &mut Caret) {
-        let region = match target {
-            HostTarget::Pane(leaf) => return self.pane(leaf, rect, buf, caret),
-            HostTarget::Embed(window_id) => return self.embed(window_id, rect, buf),
-            // A band of the overlay prompt's card. Nothing paints per band:
-            // `render_overlay_prompt` draws the card whole, between the two
-            // fold bands, and the tree's job there is to say where the bands
-            // are so that painter and every read-back share one set of
-            // rectangles. Reached only if the card's layer is ever folded in a
-            // hosts-painting band; today it is not.
-            HostTarget::Card(_) => return,
-            HostTarget::Region(r) => r,
-        };
-        match region {
-            HostRegion::Body => self.body(rect, buf),
-            // Native already — the tree paints these, and the fold never
-            // reaches here for them because a native region emits no
-            // `Draw::Host`. Listed so that un-migrating one is a compile
-            // error rather than a blank row.
-            HostRegion::MenuBar | HostRegion::SearchOptions | HostRegion::Explorer => {}
-            // The prompt's input row: cells the fold writes, at the rectangle
-            // layout gave the region.
-            HostRegion::PromptLine => self.editor.render_prompt_line(buf, rect, caret),
-            // **Neither paints, and both reach here only when empty.**
-            //
-            // The dock emits a `Host` only for a column with no mounted panel
-            // — an empty dock, which has nothing to draw. It used to be the
-            // seam the panel painter drew the interior through; that painter
-            // is deleted, and the dock's content is the tree's.
-            //
-            // The status bar emits one only when it has no items: with items
-            // it is described down to the run, and the description leaves no
-            // `Host` behind. The prompt row is not this region — it is
-            // `HostRegion::PromptLine`, painted three arms above, inside the
-            // fold and at the rectangle layout gave it.
-            HostRegion::Dock | HostRegion::StatusBar => {}
+    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer) {
+        match target {
+            HostTarget::Pane(leaf) => self.pane(leaf, rect, buf),
+            HostTarget::Embed(window_id) => paint_embed(
+                self.editor,
+                fresh_core::WindowId(window_id as u64),
+                rect,
+                buf,
+            ),
+            // The overlay prompt card's preview: a buffer the text pipeline
+            // renders into the band layout gave it, or another window's
+            // grid as an embed paints it — the card's one host band.
+            HostTarget::Card(crate::view::shell::overlay_prompt::CardRegion::Preview) => {
+                self.editor.paint_card_preview(buf, rect)
+            }
+            HostTarget::Card(_) => {}
         }
     }
 }
 
-impl BodyPainter<'_> {
-    /// An editor window embedded in a plugin panel, painted into the rectangle
-    /// layout gave it.
-    ///
-    /// **The rectangle is handed over, not reconstructed.** The runtime
-    /// reserved this space by emitting blank rows and then overlaid the
-    /// window's paint on top of them, deriving the target rect from the
-    /// panel's inner area plus the row and column those blanks had landed on —
-    /// a rectangle rebuilt from where text ended up. A `Host` leaf is given
-    /// one, which is the whole difference.
-    ///
-    /// `preview_window_id` is still borrowed around the call because that is
-    /// how the per-window paint path selects a session; what has gone is the
-    /// arithmetic, not the mechanism. Window id `0` names no window and paints
-    /// nothing, which is the spec's own "renders empty placeholder rows".
-    fn embed(&mut self, window_id: u32, rect: Rect, buf: &mut Buffer) {
-        paint_embed(self.editor, window_id, rect, buf);
+/// **The windows whose grids are being painted as embeds, right now.**
+///
+/// An embed may name the window it is mounted in — that is what the
+/// Orchestrator's preview of the current session is — so "is this the active
+/// window" cannot be the guard. What cannot happen is a window painting itself
+/// inside itself: the embedded grid is folded through the same host painter,
+/// which would meet the same embed again and again. This is that stack, and an
+/// id already on it paints nothing.
+///
+/// Thread-local because a paint runs to completion on one thread and the stack
+/// is the frame's, not the editor's; the guard pops on drop, so a panic in a
+/// painter cannot leave an id behind.
+struct EmbedPaint(fresh_core::WindowId);
+
+thread_local! {
+    static PAINTING_EMBEDS: std::cell::RefCell<Vec<fresh_core::WindowId>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl EmbedPaint {
+    fn enter(window: fresh_core::WindowId) -> Option<Self> {
+        PAINTING_EMBEDS.with(|s| {
+            let mut s = s.borrow_mut();
+            match s.contains(&window) {
+                true => None,
+                false => {
+                    s.push(window);
+                    Some(EmbedPaint(window))
+                }
+            }
+        })
     }
 }
 
-/// The body of [`BodyPainter::embed`], as a function, because the *overlay*
-/// band needs it too and has no `BodyPainter`.
+impl Drop for EmbedPaint {
+    fn drop(&mut self) {
+        PAINTING_EMBEDS.with(|s| {
+            let mut s = s.borrow_mut();
+            if let Some(at) = s.iter().rposition(|w| *w == self.0) {
+                s.remove(at);
+            }
+        });
+    }
+}
+
+/// An editor window embedded in a plugin panel, painted into the rectangle
+/// layout gave the embed's leaf — as that window's own grid, described the
+/// way the frame describes the active window's and laid out in a tree of its
+/// own at the embed's size (design §3.7.8).
 ///
-/// See [`EmbedHosts`] for why the overlay band paints hosts at all.
-fn paint_embed(editor: &mut Editor, window_id: u32, rect: Rect, buf: &mut Buffer) {
-    if window_id == 0 || rect.width == 0 || rect.height == 0 {
+/// **The same nodes, in a tree the frame does not hold.** The embedded
+/// window's panes are leaves on that window's own handles (`Window::panes`),
+/// its strips and dividers the same `shell::splits` nodes the active grid is
+/// made of, its content pass the same reconcile-and-settle the frame runs
+/// (`reconcile_body`, `content_body`, over that window), and its paint the
+/// same fold through the same `BodyPainter`. The embed's tree is laid out at
+/// the embed's box and folded into a buffer of that size, then copied into
+/// the frame; the panes of an embedded window are settled in the embed's own
+/// coordinates, which is the frame they were laid out in.
+///
+/// Nothing of the embedded window's is interactive through this tree: the
+/// embed's leaf is the pointer's and the keyboard's stop, and the tree is
+/// dropped with the paint. Its bars are not offered (`Editor::embed_grid`):
+/// a bar in a small box is noise, and the frame's own chrome is the one that
+/// answers.
+///
+/// A window id that names no window — `0`, the spec's own "renders empty
+/// placeholder rows", or one closed under the panel — paints nothing.
+///
+/// **The active window is not that case.** A panel may embed the window it is
+/// mounted in, and that is the shape issue #2035 is about: the Orchestrator's
+/// preview aimed at the current session, whose buffer *group* has to resolve
+/// through the window's own panes rather than through the buffer sitting under
+/// them. What it must not do is paint itself inside itself, so the guard is a
+/// cycle guard ([`EmbedPaint`]) rather than an identity test.
+pub(crate) fn paint_embed(
+    editor: &mut Editor,
+    window: fresh_core::WindowId,
+    rect: Rect,
+    buf: &mut Buffer,
+) {
+    if rect.width == 0 || rect.height == 0 {
         return;
     }
-    let theme = editor.theme.read().unwrap().clone();
-    let saved = editor.preview_window_id;
-    editor.preview_window_id = Some(fresh_core::WindowId(window_id as u64));
-    editor.render_session_preview_into_rect(buf, rect, &theme);
-    editor.preview_window_id = saved;
-}
+    if !editor.windows.contains_key(&window) {
+        return;
+    }
+    let Some(_painting) = EmbedPaint::enter(window) else {
+        return;
+    };
+    // A previewed window whose workspace has not been restored yet is
+    // restored on its first paint, so the embed shows real content.
+    editor.materialize_window(window);
+    let Some(splits) = editor.embed_grid(window) else {
+        return;
+    };
+    let pane_chrome = splits.chrome.clone();
+    let panes = crate::view::shell::geometry::panes_of(&splits);
+    let local = Rect::new(0, 0, rect.width, rect.height);
 
-/// The overlay band's host painter: embedded windows, and nothing else.
-///
-/// **A `Layer` can contain a `Host`, and one does.** The overlay band folded
-/// with `SkipHosts`, which was right while every host leaf was in flow — the
-/// panes, the status bar, the dock — and stopped being right the moment
-/// `WindowEmbed` became one: a plugin panel is a `Layer`, so its embed is
-/// resolved in the overlay band and was skipped there. The float came out as
-/// an empty box (issue #2035's `windowEmbed` rendered nothing at all).
-///
-/// It is not `BodyPainter`: that one resolves the split grid's shared pass and
-/// hands back the rectangles the frame is read from, and running it twice
-/// would be a second opinion about both. The overlay band's hosts are embeds —
-/// a `Card` band paints nothing by its own arm's rule, and a pane or a region
-/// in an overlay would be a tree that mounted the body inside a popup — so
-/// this answers for the one and ignores the rest.
-pub struct EmbedHosts<'a>(pub &'a mut Editor);
+    // The embedded grid's own tree: laid out at the embed's size, read for
+    // its panes' boxes, painted after the content pass — the frame's two
+    // halves, for this grid.
+    let mut ui: fresh_ui::Ui<crate::view::shell::msg::UiMsg> = fresh_ui::Ui::new();
+    ui.lay_out(
+        crate::view::shell::splits::overlay(&splits),
+        fresh_ui::Size::new(rect.width, rect.height),
+    );
+    let rects = PaneRects::read(&ui, panes, local);
+    let state = BodyState {
+        lsp_waiting: false,
+        // The active window owns the frame's caret; an embed shows none.
+        hide_cursor: true,
+    };
+    // **The embed's panes record no cell provenance, because they are not
+    // painted where they are laid out.** `screen_width: 0` is how the text
+    // pipeline is told to skip the theme map (`render_line::cells`): this grid
+    // is folded into a buffer of its own at `local`, then copied into the
+    // frame at the embed's box, so a cell recorded here would be filed at the
+    // embed's *local* coordinates — the top-left of the screen — over cells
+    // that belong to whatever is really there. The theme inspector reports
+    // nothing inside an embed, which is the honest answer until the copy
+    // carries provenance with it.
+    let mut prepared = reconcile_body(editor, window, state, &rects, 0, &pane_chrome);
+    if let Some(p) = prepared.as_mut() {
+        content_body(editor, window, state, 0, &pane_chrome, p);
+    }
+    // The window's PTYs are sized to the panes the embed gives them before
+    // the panes paint their grids — a PTY left at the size it had when last
+    // active draws a taller frame than the box shows.
+    if let Some(win) = editor.windows.get_mut(&window) {
+        for (leaf, buffer_id) in win.panes_with_buffers() {
+            let Some(content) = rects.content(leaf) else {
+                continue;
+            };
+            if win.terminal_buffers.contains_key(&buffer_id)
+                && content.width > 0
+                && content.height > 0
+            {
+                win.resize_terminal(buffer_id, content.width, content.height);
+            }
+        }
+    }
+    let spec = ui.paint();
+    let palette = editor.shell_palette();
+    let mut scratch = Buffer::empty(local);
+    let mut body = BodyPainter::new(editor, window, state, pane_chrome, rects, prepared);
+    crate::view::shell::fold::fold(spec, &mut scratch, &palette, &mut body);
+    drop(body);
 
-impl crate::view::shell::fold::HostPainter for EmbedHosts<'_> {
-    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer, _: &mut Caret) {
-        if let HostTarget::Embed(window_id) = target {
-            paint_embed(self.0, window_id, rect, buf);
+    // Into the frame, at the embed's box, clipped to the frame.
+    for y in 0..rect.height {
+        for x in 0..rect.width {
+            let (tx, ty) = (rect.x.saturating_add(x), rect.y.saturating_add(y));
+            if tx < buf.area.right() && ty < buf.area.bottom() {
+                buf[(tx, ty)] = scratch[(x, y)].clone();
+            }
         }
     }
 }
@@ -1622,10 +1888,15 @@ impl Editor {
         // change nothing the next input's routing reads, and marking them
         // stale cost a layout per motion report (the geometry pass counts
         // them: `a_divider_drag_that_moves_nothing_lays_out_nothing`).
-        if msgs.iter().any(|m| !m.is_pointer_transient()) {
-            self.shell_description_stale = true;
-        }
+        //
+        // **Marked after the applier, not before it.** A fact describes the
+        // tree that produced it, and its applier reads that tree: a
+        // `PaneKey`'s applier resolves the key's context off the focus chain
+        // the key was routed on. Marked before, that read laid the tree out
+        // again — a second full layout for every typed key
+        // (`a_typed_key_lays_the_tree_out_once`).
         for msg in msgs {
+            let stales = !msg.is_pointer_transient();
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
                     // Straight into the pipeline that has always applied
@@ -1635,6 +1906,9 @@ impl Editor {
                     }
                 }
                 crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact, facts),
+            }
+            if stales {
+                self.shell_description_stale = true;
             }
         }
     }
@@ -2061,42 +2335,67 @@ impl Editor {
             // The tab strip. The strip is a node per pane; what is *inside* it
             // is the tab renderer's layout, hit-tested against what it
             // recorded — so these arms are the box handlers, minus the box.
-            UiFact::PaneTabsPress { pane, x, y } => {
-                // Only the tabs are left here. The two buttons drawn over the
-                // right end of this row are nodes of their own, and a node
-                // deeper on the hit path answers first — which is what the two
-                // `LayoutBox`es at z 70 over z 60 were saying.
-                if let Some(Err(e)) = self.handle_click_tab_bar(pane, x, y) {
-                    tracing::warn!("tab strip click failed: {e}");
+            // A pane's tabs. Each is a node that names itself, so what
+            // used to be `handle_click_tab_bar` — a hit test over the tab
+            // renderer's recorded rectangles, then a match on what it found
+            // — is the match alone.
+            UiFact::PaneTabPress { pane, target, x, y } => {
+                self.press_tab(pane, target, (x, y));
+            }
+            UiFact::PaneTabClose { pane, target } => self.close_tab_button(pane, target),
+            UiFact::PaneTabMenu { pane, target, x, y } => {
+                self.open_tab_context_menu(pane, target, x, y);
+            }
+            // The drag rides the pointer capture the tab's press took: every
+            // move comes back to the tab's node until the release, so the
+            // `PointerGrab::TabDrag` flag the legacy walk read on each motion
+            // report has nothing left to route.
+            UiFact::PaneTabDrag { x, y } => {
+                if let Err(e) = self.handle_tab_drag(x, y) {
+                    tracing::warn!("tab drag failed: {e}");
                 }
             }
-            UiFact::PaneTabsSecondary { pane, x, y } => self.open_tab_context_menu(pane, x, y),
+            UiFact::PaneTabDrop => self.finish_tab_drag(),
+            UiFact::PaneTabsScroll { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
+            UiFact::PaneNewTab { pane, x, y } => self.new_tab_button(pane, x, y),
             // The two strip buttons. They carry no coordinates: each is a node
             // that knows its pane, so what used to be a scan of two recorded
             // rect lists is the dispatch itself.
             UiFact::PaneMaximize(pane) => self.maximize_split_button(pane),
             UiFact::PaneClose(pane) => self.close_split_button(pane),
-            UiFact::PaneTabsHover(at) => {
-                self.shell_hover = at.and_then(|(pane, x, y)| self.tab_strip_hover(pane, x, y));
-            }
             UiFact::PaneTabsWheel { pane, x, y, delta } => {
                 self.dismiss_transient_popups();
                 self.active_window().wheel_plugin_hook(x, y, delta);
-                self.active_window_mut().scroll_tab_strip(pane, delta);
+                self.scroll_pane_tab_strip(pane, delta);
             }
-            UiFact::PaneTabsPan { pane, delta } => {
-                self.active_window_mut().scroll_tab_strip(pane, delta);
-            }
+            UiFact::PaneTabsPan { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
             UiFact::PaneContentPress {
                 pane,
+                byte,
                 x,
                 y,
                 clicks,
                 mods,
             } => {
                 let mods = crate::view::shell::input::crossterm_mods(mods);
-                if let Err(e) = self.press_pane_content(pane, x, y, clicks, mods) {
+                if let Err(e) = self.press_pane_content(pane, byte, x, y, clicks, mods) {
                     tracing::warn!("pane content click failed: {e}");
+                }
+            }
+            // **The content leaf holds the pointer its press captured.** A
+            // move is the drag the press armed, if any — the buffer's text
+            // selection, a live terminal grid's selection intent, the
+            // terminal's own forwarding — decided from what the press set up
+            // rather than by a grab ranked in the legacy walk.
+            UiFact::PaneContentDrag { pane, x, y } => {
+                if let Err(e) = self.drag_pane_content(pane, x, y) {
+                    tracing::warn!("pane content drag failed: {e}");
+                }
+            }
+            UiFact::PaneContentRelease { pane } => self.release_pane_content(pane),
+            UiFact::PromptInputPress { byte } => {
+                if let Some(p) = self.active_window_mut().prompt.as_mut() {
+                    p.set_cursor_byte(byte);
                 }
             }
             // A pane's scrollbars, and its wheel. Every one of these took a
@@ -2802,6 +3101,17 @@ impl Editor {
             // shortcut the panel does not bind — a blurred dock and ordinary
             // keybinding resolution — so the layer confines the keyboard
             // without swallowing, and the claim is completed here.
+            // **The editor's own keyboard, reached through the tree.** The
+            // active pane's content or the explorer's header held focus and
+            // claimed the key; what it resolves to — the popup keys, the
+            // mode's bindings, a composite's routing, a chord, the resolver
+            // in the context the chain names — is the base dispatcher's, and
+            // this is the only way into it.
+            UiFact::PaneKey { .. } | UiFact::SidebarKey => {
+                if let Some(ev) = self.shell_key_event {
+                    self.hand_key_to_editor(ev);
+                }
+            }
             UiFact::PanelKey(slot) => {
                 use crate::view::shell::widgets::Slot;
                 let Some(ev) = self.shell_key_event else {

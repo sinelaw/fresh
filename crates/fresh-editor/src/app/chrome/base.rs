@@ -47,6 +47,23 @@ impl Editor {
 
         let context = self.get_key_context();
 
+        // **The PTY is the leaf's.** The context is `Terminal` only when the
+        // active pane's leaf — whose settled fact it is — holds the
+        // keyboard, so a key that resolves here was routed to the terminal
+        // by the tree; the forwarding checks the tree's own gate
+        // (`Ui::raw_input`) and takes the key raw, save the bypass and UI
+        // actions it lets through. A terminal parked in scroll-back is the
+        // plain content (`Normal`), and a key that re-enters terminal mode
+        // is answered there, by the same dispatch.
+        if matches!(
+            context,
+            crate::input::keybindings::KeyContext::Terminal
+                | crate::input::keybindings::KeyContext::Normal
+        ) && self.dispatch_terminal_input(&key_event, &context).is_some()
+        {
+            return Ok(());
+        }
+
         // Only check buffer mode keybindings when the editor buffer has focus.
         // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
         // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).

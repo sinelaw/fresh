@@ -621,6 +621,7 @@ pub fn window(ui: &fresh_ui::Ui<UiMsg>, size: ratatui::layout::Rect) -> Option<W
             offset,
             content,
             window,
+            ..
         } => Some((offset, content, window, i.rect.h)),
         _ => None,
     });

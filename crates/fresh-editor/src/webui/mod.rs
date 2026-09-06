@@ -3,7 +3,7 @@
 //! The frontend renders the real editor by tapping the **actual render
 //! pipeline**: we run `Editor::render` once into an in-memory cell buffer, then
 //! read the geometry the pipeline already aggregated for the frame
-//! (`WindowLayoutCache` + `ChromeLayout`) and slice the rendered cells. Nothing
+//! (the frame's tree + `ChromeLayout`) and slice the rendered cells. Nothing
 //! about layout, highlighting, tabs, scrollbars, or split borders is
 //! re-implemented — we only re-target the final drawing:
 //!
@@ -1712,51 +1712,45 @@ fn rect_json(r: Rect) -> Value {
 }
 
 /// Slice the rendered cells inside `r` into rows of styled runs.
-/// Plugin scrollbar markers for one pane, as `[{row, color}]`.
+/// The marks on one pane's vertical bar, as `[{row, color}]`.
 ///
-/// Reads the projection the render pass just cached for this track height
-/// (see [`ScrollbarMarkerBuckets::latest_for_height`]) rather than
-/// re-projecting, so the web scrollbar shows exactly the rows the terminal
-/// painted. Theme keys are resolved to concrete hex here — the frontend has
-/// no theme-key resolver.
-fn scrollbar_markers_json(
-    editor: &Editor,
-    buffer_id: crate::model::event::BufferId,
-    scrollbar_rect: Rect,
-) -> Value {
-    let Some(state) = editor.active_window().buffer_state(buffer_id) else {
+/// Read off the bar's own item in the frame's display list — the marks the
+/// bar's leaf bucketed onto the track layout gave it — so the web scrollbar
+/// shows exactly the cells the terminal painted. Theme names are resolved
+/// to hex here: the frontend has no theme-key resolver.
+fn scrollbar_markers_json(editor: &Editor, leaf: crate::model::event::LeafId) -> Value {
+    let key = crate::view::shell::splits::vscroll_key(leaf);
+    let Some(ui) = editor.shell_ui.as_ref() else {
         return json!([]);
     };
-    let Some(cells) = state
-        .scrollbar_marker_buckets
-        .latest_for_height(scrollbar_rect.height as usize)
-    else {
-        return json!([]);
-    };
-
     let theme = editor.theme.read().unwrap();
-    let out: Vec<Value> = cells
+    let out: Vec<Value> = ui
+        .spec()
+        .items
         .iter()
-        .enumerate()
-        .filter_map(|(row, cell)| {
-            let cell = cell.as_ref()?;
-            let color = match &cell.color {
-                fresh_core::api::OverlayColorSpec::Rgb(r, g, b) => (*r, *g, *b),
-                fresh_core::api::OverlayColorSpec::ThemeKey(key) => {
-                    let resolved = crate::view::theme::named_color_from_str(key)
-                        .or_else(|| theme.resolve_theme_key(key))?;
-                    match resolved {
-                        ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
-                        _ => return None,
-                    }
-                }
-            };
-            Some(json!({
-                "row": row,
-                "color": format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2),
-            }))
+        .filter(|i| i.key.as_ref() == Some(&key))
+        .find_map(|i| match &i.draw {
+            fresh_ui::Draw::Scrollbar { marks, .. } => Some(marks.clone()),
+            _ => None,
         })
-        .collect();
+        .map(|marks| {
+            marks
+                .iter()
+                .filter(|m| !m.full)
+                .filter_map(|m| {
+                    let style =
+                        crate::app::shell_host::shell_theme::resolve(m.theme.as_str(), &theme);
+                    let ratatui::style::Color::Rgb(r, g, b) = style.fg? else {
+                        return None;
+                    };
+                    Some(json!({
+                        "row": m.at,
+                        "color": format!("#{r:02x}{g:02x}{b:02x}"),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     json!(out)
 }
 
@@ -1887,11 +1881,8 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let submenu_path = get("submenuPath");
     let dropdown = get("dropdown");
 
-    // --- per-window geometry from the pipeline's layout cache ---
-    let layout = editor.active_layout();
-    let content = layout
-        .last_editor_content_area
-        .unwrap_or(Rect::new(0, 0, w, h));
+    // --- per-window geometry, read off the frame's tree ---
+    let content = editor.body_area().unwrap_or(Rect::new(0, 0, w, h));
     // The menu bar spans the FULL width at row 0 — exactly as the TUI draws it,
     // *above* any left dock (the dock/file-explorer carve the rows below). Using
     // `content.x` here would shift the whole menu right when a left dock opens.
@@ -1899,22 +1890,27 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // titles + their dropdowns align); only the container is full-width.
     let menubar_rect = (content.y > 0).then(|| Rect::new(0, 0, w, content.y));
 
-    // **The rectangles are the tree's here too.** The web is a consumer of
-    // the same layout the TUI folds (D.3), so a pane's content and its
-    // scrollbar come from the nodes under `content_key` / `vscroll_key`; what
-    // is still read from the record is the thumb, which is a read of the
-    // scroll state rather than of layout. A pane the tree has no rectangle
-    // for is dropped, which is what a zero-size entry meant.
-    let panes: Vec<Value> = layout
-        .split_areas
+    // **The rectangles are the tree's here too, and so is the thumb.** The
+    // web is a consumer of the same layout the TUI folds (D.3), so a pane's
+    // content and its scrollbar come from the nodes under `content_key` /
+    // `vscroll_key`, and the thumb from the bar's own facts. A pane the tree
+    // has no rectangle for is dropped, which is what a zero-size entry meant.
+    let pane_list = editor.window_panes();
+    let panes: Vec<Value> = pane_list
         .iter()
-        .filter_map(|(leaf, bufid, thumb_s, thumb_e)| {
+        .filter_map(|(leaf, bufid)| {
             // Owned, because these are read *out* of the tree rather than
             // borrowed from the vector being iterated.
             let content_rect = editor.pane_content_rect(*leaf)?;
             let scrollbar_rect = editor
                 .pane_vscroll_rect(*leaf)
                 .unwrap_or(Rect::new(0, 0, 0, 0));
+            // The thumb is the bar's own: its facts on the track the tree
+            // gave it, the arithmetic the bar's leaf paints with.
+            let (thumb_s, thumb_e) = editor
+                .bar_thumb(*leaf, fresh_ui::Axis::Vertical)
+                .map(|(s, e, _)| (s, e))
+                .unwrap_or((0, 0));
             Some((leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e))
         })
         .map(
@@ -1957,14 +1953,14 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
                     // painted cells, so markers must travel as data too.
                     // Colours are resolved here — the frontend has no theme-key
                     // resolver.
-                    "vscrollMarkers": scrollbar_markers_json(editor, *bufid, *scrollbar_rect),
+                    "vscrollMarkers": scrollbar_markers_json(editor, *leaf),
                 })
             },
         )
         .collect();
 
-    let separators: Vec<Value> = layout
-        .separator_areas
+    let separators: Vec<Value> = editor
+        .separator_rects()
         .iter()
         .map(|(_id, dir, x, y, len)| {
             json!({

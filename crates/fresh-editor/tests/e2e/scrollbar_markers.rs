@@ -180,14 +180,20 @@ fn markers_follow_their_content_through_edits() {
     let before = plugin_rows(&harness);
     assert_eq!(before.len(), 1, "one marker expected, saw {before:?}");
 
-    // Type a large block of new text at the very top of the buffer. The
+    // Insert a large block of new text at the very top of the buffer. The
     // marked content is now much further down the file, so its mark must
-    // move down the track — with no further plugin commands.
+    // move down the track — with no further plugin commands. Pasted as one
+    // edit: typing it was twelve thousand keys, each a routed key with a
+    // frame's layout behind it, and the test is about the mark, not the
+    // keyboard.
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
     let inserted = long_content(400);
-    harness.type_text(&format!("{inserted}\n")).unwrap();
+    harness
+        .editor_mut()
+        .set_clipboard_for_test(format!("{inserted}\n"));
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     let after = plugin_rows(&harness);

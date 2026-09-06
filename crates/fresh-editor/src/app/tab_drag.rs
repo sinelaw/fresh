@@ -9,7 +9,6 @@
 use super::types::TabDropZone;
 use super::Editor;
 use crate::model::event::{BufferId, LeafId, SplitDirection};
-use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 
@@ -26,17 +25,19 @@ impl Editor {
             };
 
         // Only compute drop zone if we've moved past threshold
-        if !is_dragging {
-            if let Some(ref mut drag_state) = self.active_window_mut().mouse_state.dragging_tab {
-                drag_state.drop_zone = None;
-            }
-            return Ok(());
-        }
-
-        // Compute the drop zone based on mouse position
-        let drop_zone = self.compute_tab_drop_zone(col, row, source_split_id);
+        let drop_zone = match is_dragging {
+            true => self.compute_tab_drop_zone(col, row, source_split_id),
+            false => None,
+        };
+        // The zone is the description's (a wash over the target pane's
+        // content, `splits::drop_zone_node`): a drag move is a
+        // pointer-transient fact, so the move that changes where the tab
+        // would land is the one that marks the description stale.
         if let Some(ref mut drag_state) = self.active_window_mut().mouse_state.dragging_tab {
-            drag_state.drop_zone = drop_zone;
+            if drag_state.drop_zone != drop_zone {
+                drag_state.drop_zone = drop_zone;
+                self.shell_description_stale = true;
+            }
         }
 
         Ok(())
@@ -45,11 +46,11 @@ impl Editor {
     /// Where a dragged tab would land: on a strip, or against an edge of a
     /// pane's content.
     ///
-    /// **Three questions, each asked of the node that owns it.** Which strip
-    /// the pointer is on is `tabs_key(pane)`; where within it is the tab
-    /// renderer's own layout, which is a genuine record of the last paint
-    /// because the columns come from measuring text. Which content it is over
-    /// is `pane_content_at`.
+    /// **Three questions, each asked of the node that owns it.** Which tab
+    /// the pointer is on is the tab's own rectangle (`tab_rects`); which
+    /// strip it is on is `tabs_key(pane)`; which content it is over is
+    /// `pane_content_at`. All three are reads of the tree that laid them
+    /// out.
     ///
     /// The middle question used to be answered by
     /// `content_rect.y.saturating_sub(1)` — "the tab row is *typically* at
@@ -64,13 +65,21 @@ impl Editor {
         source_split_id: LeafId,
     ) -> Option<TabDropZone> {
         // On a tab, in a strip: reorder, or move to that pane.
-        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-            if matches!(
-                tab_layout.hit_test(col, row),
-                Some(TabHit::TabName(_) | TabHit::CloseButton(_))
-            ) {
-                let insert_idx = self.find_tab_insert_index(*split_id, col);
-                return Some(TabDropZone::TabBar(*split_id, insert_idx));
+        let panes: Vec<LeafId> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.visible_leaves().into_iter().map(|(p, _)| p).collect())
+            .unwrap_or_default();
+        for pane in panes {
+            let tabs = self.tab_rects(pane);
+            let on_a_tab = tabs.iter().any(|t| {
+                crate::app::chrome::in_rect(col, row, t.name)
+                    || crate::app::chrome::in_rect(col, row, t.close)
+            });
+            if on_a_tab {
+                let insert_idx = Self::tab_insert_index(&tabs, col);
+                return Some(TabDropZone::TabBar(pane, insert_idx));
             }
         }
 
@@ -110,31 +119,37 @@ impl Editor {
         (split_id != source_split_id).then_some(TabDropZone::SplitCenter(split_id))
     }
 
-    /// Find the index where a tab should be inserted based on mouse x position
-    fn find_tab_insert_index(&self, split_id: LeafId, col: u16) -> Option<usize> {
-        // Get the tab layout for this split
-        let tab_layout = self.active_layout().tab_layouts.get(&split_id)?;
-
-        if tab_layout.tabs.is_empty() {
+    /// Where among `tabs` a tab dropped at `col` goes: before the tab whose
+    /// left half it is over, after the one whose right half, at the end past
+    /// them all.
+    fn tab_insert_index(tabs: &[crate::view::shell::tabs::TabRect], col: u16) -> Option<usize> {
+        if tabs.is_empty() {
             return Some(0);
         }
-
-        // Find the tab we're over and determine if we're in the left or right half
-        for (idx, tab_hit) in tab_layout.tabs.iter().enumerate() {
-            let start_col = tab_hit.tab_area.x;
-            let end_col = start_col + tab_hit.tab_area.width;
+        for (idx, t) in tabs.iter().enumerate() {
+            let start_col = t.name.x;
+            let end_col = t.close.x + t.close.width;
             if col >= start_col && col < end_col {
                 let mid = (start_col + end_col) / 2;
-                if col < mid {
-                    return Some(idx);
-                } else {
-                    return Some(idx + 1);
-                }
+                return Some(if col < mid { idx } else { idx + 1 });
             }
         }
+        Some(tabs.len())
+    }
 
-        // If past all tabs, insert at end
-        Some(tab_layout.tabs.len())
+    /// The pointer was released on a dragged tab: drop it where the drag
+    /// said, if the drag ever passed its threshold. A press that never moved
+    /// that far was a click, and the tab's press already activated it.
+    pub(crate) fn finish_tab_drag(&mut self) {
+        let Some(drag) = self.active_window_mut().mouse_state.dragging_tab.take() else {
+            return;
+        };
+        if !drag.is_dragging() {
+            return;
+        }
+        if let Some(drop_zone) = drag.drop_zone {
+            self.execute_tab_drop(drag.buffer_id, drag.source_split_id, drop_zone);
+        }
     }
 
     /// Execute a tab drop action

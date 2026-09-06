@@ -124,15 +124,15 @@ fn copy_file_path_on_unsaved_buffer_reports_no_path() {
 /// rather than empty header space.
 fn active_tab_position(harness: &EditorTestHarness) -> (u16, u16) {
     let active = harness.editor().active_buffer();
-    for (_split_id, tab_layout) in harness.editor().get_tab_layouts() {
-        for tab in &tab_layout.tabs {
-            if tab.buffer_id() == Some(active) {
-                let center_col = tab.tab_area.x + tab.tab_area.width / 2;
-                return (center_col, tab.tab_area.y);
+    for (pane, ..) in harness.editor().get_split_areas() {
+        for tab in harness.editor().tab_rects(pane) {
+            if tab.target.as_buffer() == Some(active) {
+                let center_col = tab.name.x + tab.name.width / 2;
+                return (center_col, tab.name.y);
             }
         }
     }
-    panic!("active tab not found in tab layouts");
+    panic!("active tab not found on any strip");
 }
 
 #[test]

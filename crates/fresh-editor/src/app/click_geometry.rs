@@ -56,7 +56,7 @@ pub(crate) fn screen_to_buffer_position(
     row: u16,
     content_rect: Rect,
     gutter_width: u16,
-    cached_mappings: &Option<Vec<ViewLineMapping>>,
+    cached_mappings: Option<&[ViewLineMapping]>,
     fallback_position: usize,
     allow_gutter_click: bool,
     compose_width: Option<u16>,
@@ -108,7 +108,7 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
     row: u16,
     content_rect: Rect,
     gutter_width: u16,
-    cached_mappings: &Option<Vec<ViewLineMapping>>,
+    cached_mappings: Option<&[ViewLineMapping]>,
     fallback_position: usize,
     allow_gutter_click: bool,
     compose_width: Option<u16>,
@@ -144,7 +144,7 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
         gutter_width,
         content_col,
         content_row,
-        num_mappings = cached_mappings.as_ref().map(|m| m.len()),
+        num_mappings = cached_mappings.map(|m| m.len()),
         "screen_to_buffer_position"
     );
 
@@ -392,7 +392,7 @@ mod tests {
         let r = Rect::new(0, 0, 100, 20);
         let pos = screen_to_buffer_position(
             /* col */ 5, /* row */ 5, /* content_rect */ r,
-            /* gutter_width */ 3, /* cached_mappings */ &None,
+            /* gutter_width */ 3, /* cached_mappings */ None,
             /* fallback_position */ 42, /* allow_gutter_click */ true,
             /* compose_width */ None,
         );
@@ -403,7 +403,7 @@ mod tests {
     fn screen_to_buffer_position_rejects_gutter_click_when_not_allowed() {
         let r = Rect::new(0, 0, 100, 20);
         // col 1 is inside the 3-wide gutter.
-        let pos = screen_to_buffer_position(1, 2, r, 3, &None, 0, false, None);
+        let pos = screen_to_buffer_position(1, 2, r, 3, None, 0, false, None);
         assert_eq!(pos, None);
     }
 }

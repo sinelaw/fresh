@@ -1076,17 +1076,6 @@ impl Editor {
         self.shell_hover.clone()
     }
 
-    pub(crate) fn active_layout(&self) -> &crate::app::types::WindowLayoutCache {
-        &self.active_window().layout_cache
-    }
-
-    /// Mutable handle to the active window's layout cache. Renderer
-    /// writes split / tab / file-explorer hit-test rects here at the
-    /// end of each frame.
-    pub(crate) fn active_layout_mut(&mut self) -> &mut crate::app::types::WindowLayoutCache {
-        &mut self.active_window_mut().layout_cache
-    }
-
     /// The active window's editor-chrome layout cache (status bar,
     /// menu, popups, prompt overlay, full-frame cell-theme map).
     /// Mouse hit-testing reads from here.

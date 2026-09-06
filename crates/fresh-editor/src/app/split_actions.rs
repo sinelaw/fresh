@@ -410,40 +410,30 @@ impl Editor {
         }
     }
 
-    /// The frame's separator rectangles, for tests.
-    ///
-    /// Reads `WindowLayoutCache::separator_areas`, which is
-    /// `view::shell::splits::separator_rects`' answer — the divider nodes'
-    /// own rectangles — rather than the second layout walk it used to be. The
-    /// e2e drag tests assert against this, so they are now asserting against
-    /// the tree.
+    /// Where the dividers are, read off the tree that placed them: the
+    /// divider nodes' own rectangles (`view::shell::splits::separator_rects`),
+    /// as `(container, direction, x, y, length)`. The e2e drag tests assert
+    /// against this, so they are asserting against the tree.
     pub fn get_separator_areas(
         &self,
-    ) -> &[(
+    ) -> Vec<(
         crate::model::event::ContainerId,
         crate::model::event::SplitDirection,
         u16,
         u16,
         u16,
-    )] {
-        &self.active_layout().separator_areas
+    )> {
+        self.separator_rects()
     }
 
-    /// Get cached tab layouts for testing
-    pub fn get_tab_layouts(
-        &self,
-    ) -> &std::collections::HashMap<LeafId, crate::view::ui::tabs::TabLayout> {
-        &self.active_layout().tab_layouts
-    }
-
-    /// Get cached split content areas for testing
-    /// Returns `(split_id, buffer_id, thumb_start, thumb_end)` tuples.
+    /// The panes the frame places, with the buffer each shows, in paint
+    /// order — for tests that address a pane.
     ///
-    /// The two rectangles this used to carry are the tree's now
-    /// (`pane_content_rect`, `pane_vscroll_rect`); what a *record* keeps is
-    /// the thumb, which is a read of the scroll state at paint time.
-    pub fn get_split_areas(&self) -> &[(LeafId, BufferId, usize, usize)] {
-        &self.active_layout().split_areas
+    /// The rectangles this used to carry are the tree's
+    /// (`pane_content_rect`, `pane_vscroll_rect`), and so is the thumb now
+    /// (`bar_thumb`); what is left is which panes there are.
+    pub fn get_split_areas(&self) -> Vec<(LeafId, BufferId)> {
+        self.window_panes()
     }
 
     /// Get the ratio of a specific split (for testing).

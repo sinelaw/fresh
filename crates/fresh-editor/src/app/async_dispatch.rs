@@ -654,9 +654,12 @@ impl Editor {
         // returning `true` keeps the main loop on its frame cadence so the tail
         // drains at ~60Hz instead of at the 50ms idle poll.
         let backlogged = !self.async_message_backlog.is_empty() || self.plugin_backlog_pending();
+        // A frame the last reconcile owes (`Editor::frame_requested`).
+        let frame_requested = std::mem::take(&mut self.frame_requested);
         needs_render
             || processed_any_commands
             || plugin_render
+            || frame_requested
             || file_changes
             || tree_changes
             || backlogged

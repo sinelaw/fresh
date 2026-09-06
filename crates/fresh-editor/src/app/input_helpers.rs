@@ -160,7 +160,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Switch to tab: ".to_string(),
             PromptType::SwitchToTab,
             suggestions,

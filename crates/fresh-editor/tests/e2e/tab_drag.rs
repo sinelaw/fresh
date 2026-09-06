@@ -27,19 +27,19 @@ impl TabInfo {
 /// Get all tabs as a flat list from the editor's tab layouts
 fn get_all_tabs(harness: &EditorTestHarness) -> Vec<TabInfo> {
     let mut tabs = Vec::new();
-    for (split_id, tab_layout) in harness.editor().get_tab_layouts() {
-        for tab in &tab_layout.tabs {
+    for (split_id, ..) in harness.editor().get_split_areas() {
+        for tab in harness.editor().tab_rects(split_id) {
             // Only include buffer tabs in these tests; group tabs are
             // a separate concern.
-            let Some(buffer_id) = tab.buffer_id() else {
+            let Some(buffer_id) = tab.target.as_buffer() else {
                 continue;
             };
             tabs.push(TabInfo {
-                split_id: *split_id,
+                split_id,
                 buffer_id,
-                tab_row: tab.tab_area.y,
-                start_col: tab.tab_area.x,
-                end_col: tab.tab_area.x + tab.tab_area.width,
+                tab_row: tab.name.y,
+                start_col: tab.name.x,
+                end_col: tab.name.x + tab.name.width,
             });
         }
     }

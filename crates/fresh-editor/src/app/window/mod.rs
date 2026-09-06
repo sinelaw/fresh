@@ -45,7 +45,7 @@ pub mod process_group;
 pub use buffers::WindowBuffers;
 pub use process_group::{LocalSignaller, ProcessGroupEntry, ProcessGroups, Signaller};
 
-use crate::app::types::{ChromeLayout, WindowLayoutCache};
+use crate::app::types::ChromeLayout;
 use crate::app::window_resources::WindowResources;
 use crate::model::event::{Event, LeafId};
 use crate::services::lsp::diagnostics::AnchoredDiagnostic;
@@ -64,7 +64,7 @@ use std::sync::Arc;
 /// outright by the window — there are no warm-swap stashes.
 /// `setActiveWindow` is a pointer write; reads of the active
 /// window's state route through Editor accessors
-/// (`active_layout()`, `split_manager()`, `file_explorer()`, `lsp()`,
+/// (`split_manager()`, `file_explorer()`, `lsp()`,
 /// `panel_ids()`, `file_mod_times()`, …). Cross-window access goes
 /// through `Editor.windows.get(&id)` directly.
 /// A clickable path-link highlighted under a Ctrl+hover in the live terminal
@@ -610,15 +610,13 @@ pub struct Window {
     /// another window's indicator.
     pub remote_reconnect_error: Option<String>,
 
-    /// Window-scoped layout hit-test cache: split-leaf rects, tab
-    /// rects, the file-explorer rect, separators, scrollbars, and
-    /// per-leaf `view_line_mappings` that mouse positioning and
-    /// visual-line motion read. Repopulated by the renderer on every
-    /// frame; stale until the next render after a window switch (the
-    /// post-switch render fills it in before any input handling).
-    /// Editor-chrome rects (status bar, menu, popups, prompt overlay)
-    /// live on `Window::chrome_layout` (also per-window).
-    pub(crate) layout_cache: WindowLayoutCache,
+    /// Each pane's leaf handle, by the pane: the factory the description
+    /// mounts its content and its bars by, and the view of the rows its
+    /// last text pass drew that the content leaf's `text_byte_at` and the
+    /// keyboard's visual-line motion read (`view::shell::buffer_host`). One
+    /// handle per pane for as long as the pane exists, so the leaf is never
+    /// replaced (design §3.7.1).
+    pub(crate) panes: HashMap<LeafId, crate::view::shell::buffer_host::PaneHandle>,
 
     /// Per-window editor-chrome layout cache: status bar, menu,
     /// popups, prompt overlay, full-frame cell-theme map. Each
@@ -2377,7 +2375,7 @@ impl Window {
             grouped_subtrees: HashMap::new(),
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
-            layout_cache: WindowLayoutCache::default(),
+            panes: HashMap::new(),
             chrome_layout: ChromeLayout::default(),
             terminal_width: 80,
             terminal_height: 24,
@@ -2746,9 +2744,273 @@ impl Window {
             },
             groups: self.pane_groups(),
             interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
         };
         self.pane_rects =
             crate::view::shell::geometry::PaneRects::offscreen(&splits, self.editor_content_area());
+    }
+
+    /// Every pane of this window with the buffer it shows — the panes
+    /// *inside* a buffer group included.
+    ///
+    /// A group's leaves are panes of the same grid, dispatched at render time
+    /// into their outer pane's interior, and `SplitManager::visible_leaves`
+    /// does not walk into them because a group's layout lives in a side map.
+    pub(crate) fn panes_with_buffers(&self) -> Vec<(LeafId, BufferId)> {
+        let Some((mgr, _)) = self.buffers.splits() else {
+            return Vec::new();
+        };
+        let mut out = mgr.visible_leaves();
+        for g in self.pane_groups().values() {
+            out.extend(g.visible_leaves());
+        }
+        out
+    }
+
+    /// Each visible pane's leaf handle, for a description of this window's
+    /// grid.
+    ///
+    /// One handle per pane for as long as the pane exists (design §3.7.1):
+    /// a pane seen for the first time gets one, a pane that closed loses
+    /// its. `rowless` names the panes whose content is not the buffer's this
+    /// frame — a described plugin panel, a buffer group's grid — which keep
+    /// their handle but not their rows: nothing draws rows for them, so
+    /// nothing may answer from the rows they drew before.
+    pub(crate) fn pane_hosts(
+        &mut self,
+        rowless: &std::collections::HashSet<LeafId>,
+    ) -> HashMap<LeafId, crate::view::shell::buffer_host::PaneHandle> {
+        // The panes the frame places: the grid's, and the panels of every
+        // active buffer group, which are panes of the same grid mounted in
+        // their outer pane's content slot (`PaneRects` keys them the same
+        // way). A pane keeps its handle while it exists: the whole partition
+        // stays live, a maximized sibling's hidden panes included.
+        let visible: Vec<LeafId> = self
+            .panes_with_buffers()
+            .into_iter()
+            .map(|(leaf, _)| leaf)
+            .collect();
+        let live: Vec<LeafId> = {
+            let Some((mgr, _)) = self.buffers.splits() else {
+                return Default::default();
+            };
+            mgr.root()
+                .visible_leaves()
+                .into_iter()
+                .map(|(l, _)| l)
+                .chain(visible.iter().copied())
+                .collect()
+        };
+        self.retain_pane_handles(|pane| live.contains(&pane));
+        visible
+            .into_iter()
+            .map(|pane| {
+                let h = self.pane_handle_for(pane).clone();
+                if rowless.contains(&pane) {
+                    h.clear_rows();
+                }
+                (pane, h)
+            })
+            .collect()
+    }
+
+    /// Each pane's tab strip, as content — what the tab painter read off the
+    /// window on its way to the cells, read once into a value the tree lays
+    /// out (`shell::tabs::strip`) and the web reads back (`tab_bar_view`).
+    ///
+    /// Only panes with a strip row: an inner leaf of a buffer group has none
+    /// (`PaneChrome::resolve`), and its group's tabs are on the pane that
+    /// holds the group. `hover` is the tab under the pointer, by target,
+    /// pane and whether it is the close button — the frame's, or none for a
+    /// grid nothing points at.
+    pub(crate) fn pane_strips(
+        &self,
+        chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
+        hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
+    ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
+        use crate::view::shell::tabs::{Strip, Tab};
+        use crate::view::split::TabTarget;
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return Default::default();
+        };
+        let group_names: HashMap<LeafId, String> = self
+            .grouped_subtrees
+            .iter()
+            .filter_map(|(leaf, node)| match node {
+                crate::view::split::SplitNode::Grouped { name, .. } => Some((*leaf, name.clone())),
+                _ => None,
+            })
+            .collect();
+        let preview = self.preview.map(|(_, b)| b);
+        let preview_label = fresh_i18n::t!("buffer.preview_indicator").to_string();
+        let active_split = mgr.active_split();
+        let mut out = HashMap::new();
+        for (leaf, buffer_id) in mgr.visible_leaves() {
+            if !chrome.get(&leaf).is_some_and(|c| c.tabs) {
+                continue;
+            }
+            let (targets, offset, active) = match vs_map.get(&leaf) {
+                Some(vs) => (
+                    vs.open_buffers.clone(),
+                    vs.tab_scroll_offset,
+                    vs.active_target(),
+                ),
+                None => (
+                    vec![TabTarget::Buffer(buffer_id)],
+                    0,
+                    TabTarget::Buffer(buffer_id),
+                ),
+            };
+            let names = crate::view::ui::tabs::resolve_tab_names(
+                &targets,
+                self.buffers.as_map(),
+                &self.buffer_metadata,
+                &self.composite_buffers,
+                &group_names,
+            );
+            let tabs = targets
+                .iter()
+                .filter_map(|t| {
+                    let name = names.get(t)?.clone();
+                    let (modified, binary) = match t {
+                        TabTarget::Buffer(id) => (
+                            !self.composite_buffers.contains_key(id)
+                                && self.buffers.get(id).is_some_and(|s| s.buffer.is_modified()),
+                            self.buffer_metadata.get(id).is_some_and(|m| m.binary),
+                        ),
+                        TabTarget::Group(_) => (false, false),
+                    };
+                    Some(Tab {
+                        target: *t,
+                        name,
+                        modified,
+                        preview: matches!(t, TabTarget::Buffer(id) if Some(*id) == preview),
+                        binary,
+                    })
+                })
+                .collect();
+            out.insert(
+                leaf,
+                Strip {
+                    tabs,
+                    active: Some(active),
+                    active_pane: leaf == active_split,
+                    hover: hover.and_then(|(t, pane, close)| (pane == leaf).then_some((t, close))),
+                    offset,
+                    preview_label: preview_label.clone(),
+                },
+            );
+        }
+        out
+    }
+
+    /// The pane's handle, made on first sight of the pane.
+    pub(crate) fn pane_handle_for(
+        &mut self,
+        pane: LeafId,
+    ) -> &crate::view::shell::buffer_host::PaneHandle {
+        self.panes
+            .entry(pane)
+            .or_insert_with(|| crate::view::shell::buffer_host::PaneHandle::new(pane))
+    }
+
+    /// The keyboard context the pane's content resolves keys in, as the
+    /// frame settled it on the pane's leaf (`PaneHandle::set_context`).
+    pub(crate) fn pane_context(
+        &self,
+        pane: LeafId,
+    ) -> Option<crate::input::keybindings::KeyContext> {
+        self.panes.get(&pane).map(|h| h.context())
+    }
+
+    /// The view the pane's last text pass settled.
+    pub(crate) fn pane_view(
+        &self,
+        pane: LeafId,
+    ) -> Option<std::cell::Ref<'_, crate::view::shell::buffer_host::PaneView>> {
+        self.panes.get(&pane).map(|h| h.view())
+    }
+
+    /// The caret's screen cell, from whichever pane's last text pass settled
+    /// one it shows — the active pane's, when the window shows a caret at
+    /// all.
+    pub(crate) fn pane_caret(&self) -> Option<(u16, u16)> {
+        self.panes.values().find_map(|h| {
+            let v = h.view();
+            let (x, y) = v.caret.filter(|_| v.caret_shown)?;
+            Some((v.rect.x + x, v.rect.y + y))
+        })
+    }
+
+    /// Forget the caret of every pane but `settled`: the frame's text pass
+    /// placed a caret in those and in no other.
+    pub(crate) fn clear_carets_except(&self, settled: &[LeafId]) {
+        for (pane, h) in &self.panes {
+            if !settled.contains(pane) {
+                h.clear_caret();
+            }
+        }
+    }
+
+    /// Drop the handles of panes that no longer exist.
+    pub(crate) fn retain_pane_handles(&mut self, live: impl Fn(LeafId) -> bool) {
+        self.panes.retain(|pane, _| live(*pane));
+    }
+
+    /// Forget every pane's rows: a setting changed what a row shows, and the
+    /// next frame draws new ones.
+    pub(crate) fn clear_pane_rows(&self) {
+        for h in self.panes.values() {
+            h.clear_rows();
+        }
+    }
+
+    /// The visual column of a byte position within its visual row, in
+    /// `split_id`'s rows as last drawn.
+    pub fn byte_to_visual_column(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
+        self.pane_view(split_id)?.byte_to_visual_column(byte_pos)
+    }
+
+    /// Move by visual line using the pane's settled rows.
+    /// Returns (new_position, new_visual_column) or None if at boundary
+    pub fn move_visual_line(
+        &self,
+        split_id: LeafId,
+        current_pos: usize,
+        goal_visual_col: usize,
+        direction: i8, // -1 = up, 1 = down
+    ) -> Option<(usize, usize)> {
+        self.pane_view(split_id)?
+            .move_visual_line(current_pos, goal_visual_col, direction)
+    }
+
+    /// Get the start byte position of the visual row containing the given byte position.
+    /// When `allow_advance` is true and the cursor is already at the row start,
+    /// moves to the previous visual row's start.
+    pub fn visual_line_start(
+        &self,
+        split_id: LeafId,
+        byte_pos: usize,
+        allow_advance: bool,
+    ) -> Option<usize> {
+        self.pane_view(split_id)?
+            .visual_line_start(byte_pos, allow_advance)
+    }
+
+    /// Get the end byte position of the visual row containing the given byte position.
+    /// When `allow_advance` is true and the cursor is already at the row end,
+    /// advances to the next visual row's end.
+    pub fn visual_line_end(
+        &self,
+        split_id: LeafId,
+        byte_pos: usize,
+        allow_advance: bool,
+    ) -> Option<usize> {
+        self.pane_view(split_id)?
+            .visual_line_end(byte_pos, allow_advance)
     }
 
     /// The split id whose `SplitViewState` owns the currently-focused
@@ -3168,14 +3430,6 @@ impl Window {
     /// cursor, and status decisions that concern the focused split only.
     pub fn focused_terminal_live(&self) -> bool {
         self.key_context == crate::input::keybindings::KeyContext::Terminal
-    }
-
-    /// Whether the editor pane owns the keyboard, rather than the file
-    /// explorer or a plugin panel beside it. Keyboard-owning overlays are
-    /// turned away before the callers of this, so these two are the whole set.
-    pub fn editor_pane_owns_keyboard(&self) -> bool {
-        use crate::input::keybindings::KeyContext;
-        matches!(self.key_context, KeyContext::Normal | KeyContext::Terminal)
     }
 
     /// Clear the visual search overlays for the active buffer,

@@ -379,7 +379,7 @@ impl Editor {
         // the top — is read off the column that laid the cards out.
         self.refresh_settings_body_window();
         let shell = self.shell_frame((dock_area, chrome_area));
-        self.lay_out_shell_tree(shell.clone(), fresh_ui::Size::new(size.width, size.height));
+        self.lay_out_shell(shell.clone(), fresh_ui::Size::new(size.width, size.height));
         let ui = self
             .shell_ui
             .as_ref()
@@ -421,7 +421,6 @@ impl Editor {
 
         use crate::view::shell::frame::HostRegion;
         let status_bar_area = region(HostRegion::StatusBar);
-        let editor_content_area = region(HostRegion::Body);
 
         // The chrome each pane has, resolved with the shell's description of
         // the same grid — read by the reconcile below and by the body's
@@ -440,51 +439,30 @@ impl Editor {
         // is laid out and `pane_rects` says where every pane is, so each pane
         // is settled once at the content rect it will be painted at — the
         // `lines_changed` hooks below offer the lines the frame will draw,
-        // and the fold's text pass is a read. The `BodyState` here is the
-        // painter's hover and caret state, which the reconcile does not read.
-        let prepared_grid = {
+        // and the fold's text pass is a read. The `BodyState` is the frame's:
+        // whether the active pane shows a caret is decided once, here, and
+        // the content pass below reads it.
+        let lsp_waiting = !self.active_window().pending_completion_requests.is_empty()
+            || self
+                .active_window()
+                .pending_goto_definition_request
+                .is_some();
+        let hide_cursor = self.hide_cursor();
+        let body_state = crate::app::shell_host::BodyState {
+            lsp_waiting,
+            hide_cursor,
+        };
+        let mut prepared_grid = {
             let _s = tracing::info_span!("reconcile_panes").entered();
             crate::app::shell_host::reconcile_body(
                 self,
-                crate::app::shell_host::BodyState::default(),
+                self.active_window,
+                body_state,
                 &pane_rects,
                 size.width,
                 &pane_chrome,
             )
         };
-        // Where the sidebar wants the hardware caret (its selected row) when it
-        // owns the keyboard.
-        //
-        // **This is arithmetic, not a layout query**, whatever the comment here
-        // used to say. `area` is the explorer region's rectangle and the two
-        // `+ 1`s are the border the panel's own box draws, hard-coded here and
-        // stated a second time in the description — so a row of padding added
-        // inside that box moves the caret off the row it is meant to mark, and
-        // nothing fails. The description does place a marker: `file_explorer`'s
-        // row stacks a `▌` cell over the selected row. That node carries no
-        // key, so `shell::cell_of` cannot be asked where it landed, which is
-        // why this reaches for the region origin instead.
-        //
-        // The right shape is in this file already, for the pane caret:
-        // `widgets::caret_key(Slot::Pane(id))` keys the marker,
-        // `Self::shell_cell` reads back the cell layout gave it, and no border
-        // offset appears anywhere (see `Self::described_pane_caret`). Keying
-        // the explorer's marker and reading it back the same way is the fix.
-        // This comment is not the fix; it is the admission that one is owed.
-        //
-        // Committed at the very end of this draw, with the editor's caret, so
-        // overlays painted after the sidebar can suppress it instead of having
-        // it blink through them.
-        let explorer_hardware_cursor =
-            shell
-                .sidebar
-                .as_ref()
-                .and_then(|s| s.explorer())
-                .and_then(|e| {
-                    let area = region(HostRegion::Explorer);
-                    Some((area.x + 1, area.y + 1 + e.caret_row? as u16))
-                });
-
         // Note: Tabs are now rendered within each split by SplitRenderer
 
         // Trigger lines_changed hooks for newly visible lines in all visible buffers
@@ -831,51 +809,6 @@ impl Editor {
             // much a plugin decided to emit mid-paint.
         }
 
-        // Render editor content (same for both layouts)
-        let lsp_waiting = !self.active_window().pending_completion_requests.is_empty()
-            || self
-                .active_window()
-                .pending_goto_definition_request
-                .is_some();
-
-        // Hide the hardware cursor when a covering overlay owns the
-        // screen or another surface places its own cursor. The overlay
-        // half is DERIVED (`cursor_suppressed_by_late_overlay`, the
-        // same set the chrome-caret gate uses — the two hand lists
-        // this replaces disagreed about the calibration wizard, and
-        // neither hid the caret under the centered modal); the named
-        // extras are the non-layer states:
-        // (the file explorer sets its own cursor position when focused)
-        // (terminal mode renders its own cursor via the emulator)
-        // (a dormant remote session's shell renders as a placeholder
-        //  page — no editable buffer, so no text cursor)
-        // This also causes visual cursor indicators in the editor to be dimmed
-        let hide_cursor = self.cursor_suppressed_by_late_overlay()
-            || self.active_window_mut().key_context == KeyContext::FileExplorer
-            || self.active_window().focused_terminal_live()
-            || self.dock.as_ref().is_some_and(|d| d.focused)
-            || self.dormant_remote.contains_key(&self.active_window);
-
-        // Convert HoverTarget to tab hover info for rendering
-        let hovered = self.hovered();
-        let hovered_tab = match &hovered {
-            Some(HoverTarget::TabName(target, split_id)) => Some((*target, *split_id, false)),
-            Some(HoverTarget::TabCloseButton(target, split_id)) => Some((*target, *split_id, true)),
-            _ => None,
-        };
-
-        // Get hovered close split button
-        let hovered_close_split = match &hovered {
-            Some(HoverTarget::CloseSplitButton(split_id)) => Some(*split_id),
-            _ => None,
-        };
-
-        // Get hovered maximize split button
-        let hovered_maximize_split = match &hovered {
-            Some(HoverTarget::MaximizeSplitButton(split_id)) => Some(*split_id),
-            _ => None,
-        };
-
         let _content_span = tracing::info_span!("render_content").entered();
         // **The split grid is painted by the fold, through the seam.**
         //
@@ -895,22 +828,39 @@ impl Editor {
         // a pane needs beyond that rectangle rides on the painter below,
         // because `paint_host` carries a target and a rectangle and nothing
         // else.
-        let body_state = crate::app::shell_host::BodyState {
-            lsp_waiting,
-            hide_cursor,
-            hovered_tab,
-            hovered_close_split,
-            hovered_maximize_split,
-            // Web renders the tab bar natively from `tab_bar_view`; skip
-            // painting it to cells (its `TabLayout` is still computed). Panes
-            // always draw.
-            draw_tab_bar: !self.suppress_chrome_cells,
-        };
-        // The active split's buffer renderer records where the hardware cursor
-        // *wants* to appear; we only commit it to the frame at the very end of
-        // this draw pass, after popups have been rendered, so a popup covering
-        // the cursor cell causes the cursor to be hidden (otherwise the
-        // hardware caret would bleed through the popup).
+        // **The content pass, then the tree's paint.** Every text pane's rows
+        // and caret are laid out here, after the hooks decorated the lines
+        // and before the tree paints, and settled on the pane's leaf — so the
+        // leaf places this frame's caret in this frame's display list, and
+        // the fold below draws the rows from the same layout (design §3.7.3).
+        if let Some(prepared) = prepared_grid.as_mut() {
+            let _s = tracing::info_span!("content_pass").entered();
+            crate::app::shell_host::content_body(
+                self,
+                self.active_window,
+                body_state,
+                size.width,
+                &pane_chrome,
+                prepared,
+            );
+        }
+        // **The overlay card's preview is settled before the paint, because
+        // the paint is what reads it.** Loading the selected match's file and
+        // seeding its cursor is state work, and the card's preview band is a
+        // host the fold below paints through `paint_card_preview`. This ran
+        // after the paint while the chrome was painted in a second pass, and
+        // the band came out blank for a frame — the class of ordering the one
+        // paint removes, so it moves up here with the other settling.
+        if self.bottom_row_flags().prompt_is_overlay {
+            self.prepare_overlay_preview();
+        }
+        // **The layers hanging off the caret are placed before the tree
+        // paints.** The content pass settled every pane's caret; the popups
+        // anchored to it (the completion list, the hover) are placed against
+        // that cell now, so the one paint below carries them where they go.
+        self.publish_popup_carets(size);
+        self.paint_shell();
+
         let palette = self.shell_palette();
         let paints = match self.suppress_chrome_cells {
             true => crate::view::shell::fold::Paints::HostsOnly,
@@ -920,10 +870,6 @@ impl Editor {
             .shell_ui
             .take()
             .expect("the shell tree is taken and returned within one frame");
-        // The caret this band reports is the body's: a native `fresh-ui` field
-        // that placed one is answered by the overlay pass, which runs last and
-        // is the only pass that can know nothing covered it.
-        //
         // A frontend that draws the tree's surfaces itself still gets its host
         // regions painted — the panes are cells even on the web. That used to
         // be "skip the fold and call the split renderer separately", which is
@@ -938,44 +884,35 @@ impl Editor {
         // it is the same map the description above already carries.
         let mut body = crate::app::shell_host::BodyPainter::new(
             self,
+            self.active_window,
             body_state,
             pane_chrome,
             pane_rects,
             prepared_grid,
         );
+        // **The frame's one paint.** Both bands, in one pass, through one
+        // host painter: the tree's own surfaces in display-list order and the
+        // panes, the embeds and the card's preview where their leaves are.
+        // Nothing paints between the in-flow content and the layers any
+        // more — the terminal grid and the edge fade are the pane's own paint,
+        // the placeholder page is described, the modal dimming is a scrim —
+        // and what runs after this is an effect over the finished cells.
         let mut provenance = FoldProvenance { runs: Vec::new() };
-        let pending_hardware_cursor = crate::view::shell::fold::fold_band(
+        crate::view::shell::fold::fold_all(
             ui.spec(),
             frame.buffer_mut(),
             &palette,
             &mut body,
-            crate::view::shell::fold::Band::Background,
             paints,
             Some(&mut provenance),
         );
-        let crate::app::shell_host::BodyOutput {
-            split_areas,
-            pane_rects,
-            tab_layouts,
-            view_line_mappings,
-            horizontal_scrollbar_areas,
-        } = body.finish();
+        drop(body);
         self.shell_ui = Some(ui);
-        // Held until the overlay band has added its own, so the two are
-        // applied together after every described item in the frame has been
-        // seen. Applying the background band here would be overwritten by
-        // nothing, but it would also be a second entry point into the map.
-        self.fold_provenance = provenance.runs;
-
-        // **A described mounted panel's caret is still the pane's caret.**
-        // Before C.5's flip the runtime wrote the panel's focus cursor into
-        // the mirror buffer and `paint_leaf` placed the hardware cursor from
-        // it; the pane's text pass no longer runs, so the cell comes from the
-        // marker node the description put at the caret's byte. It rides the
-        // same slot the buffer's caret did — through the guards that ask
-        // whether a later overlay covered it — because that is what it is.
-        let pending_hardware_cursor =
-            pending_hardware_cursor.or_else(|| self.described_pane_caret());
+        // **F.6: one recorder for every described surface**, applied once
+        // both bands are folded so the overlay's items land on top of the
+        // background's — the paint order the inspector wants.
+        let runs = provenance.runs;
+        self.active_chrome_mut().apply_theme_runs(&runs);
 
         drop(_content_span);
         let _post_content_span = tracing::info_span!("render_post_content").entered();
@@ -992,28 +929,8 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
-
-        // Shade the top and bottom rows of every split, so the text
-        // meets the edge of its pane by fading out rather than being cut
-        // off mid-line. Runs here, after the content pass, because it
-        // reads the rows that pass just painted.
-        self.shade_scroll_edges(frame.buffer_mut(), &pane_rects);
-
-        // A dormant remote session's shell shows a placeholder page instead
-        // of an (empty, uneditable) buffer: nothing can be shown or edited
-        // until the backend connects, so painting a tab bar and a "[No
-        // Name]" scratch buffer misrepresents the state. Painted over the
-        // content area after the split renderer so it composes with the
-        // chrome (menu, dock, status bar) without forking the render flow.
-        if self.dormant_remote.contains_key(&self.active_window) {
-            self.render_dormant_shell_page(frame, editor_content_area);
-        } else if self.preparing_windows.contains_key(&self.active_window) {
-            // Same treatment for a workspace whose worktree/agent is still
-            // being built: it is a real window, it just has nothing to show
-            // yet, so it says so instead of pretending to be an empty editor.
-            self.render_preparing_shell_page(frame, editor_content_area);
-        }
+        let pane_caret = self.active_window().pane_caret();
+        self.maybe_start_cursor_jump_animation(pane_caret, active_split);
 
         // Detect viewport changes and fire hooks
         // Compare against previous frame's viewport state (stored in self.active_window().previous_viewports)
@@ -1193,28 +1110,17 @@ impl Editor {
             }
         }
 
-        // Render terminal content on top of split content for terminal buffers.
-        // Active-window path: cursor blinks normally when terminal_mode is on.
-        self.active_window()
-            .render_terminal_splits(frame.buffer_mut(), &pane_rects, true);
-
-        self.active_layout_mut().split_areas = split_areas;
-        self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
-        self.active_layout_mut().tab_layouts = tab_layouts;
-        self.active_layout_mut().view_line_mappings = view_line_mappings;
-
         // **The buffer answers where its caret is, and the layers hanging off
         // it are placed.** This is the seam the popup wave needed: the chrome's
         // geometry has to exist before the splits can be laid out, the splits
         // before the caret's screen position is known, and the caret before a
-        // popup anchored to it can go anywhere. Below the `split_areas`
-        // assignment for exactly the reason the block above it is.
+        // popup anchored to it can go anywhere. Below the frame's layout,
+        // which retained `Window::pane_rects`, for exactly the reason the
+        // block above it is.
         //
         // When S5 puts the split grid in the tree the buffer's leaf has a
         // rectangle at layout time, the caret becomes an ordinary keyed
         // element, and this call site goes with it.
-        self.publish_popup_carets(size);
-
         // A split that changed size takes any widget panel mounted in it
         // with it: an auto-sized (`visible_rows: None`) list or tree was
         // windowed to the old row budget, and the rects published just
@@ -1222,7 +1128,7 @@ impl Editor {
         // Re-render those panels against it and ask for the frame that
         // shows the result, rather than leaving a grown panel with blank
         // rows under its short list until something else repaints it.
-        // Must stay below the `split_areas` assignment:
+        // Must stay below the frame's layout (`set_pane_rects`):
         // `widget_panels_with_stale_height` reads this frame's rects, and
         // against the previous frame's it would find nothing stale on the
         // one frame that matters.
@@ -1235,33 +1141,15 @@ impl Editor {
         }
 
         // Promote any deferred virtual-buffer animations whose Rect is now
-        // known. Done here (after split_areas is recomputed, before
+        // known. Done here (after the frame's layout retained the pane
+        // rects, before
         // apply_all runs at the end of render) so the first frame of the
         // effect lands on the same paint that made the buffer visible.
         self.drain_pending_vb_animations();
-        // Where the dividers are, read off the tree that placed them. Two
-        // derivations met here: a second layout walk over the split tree
-        // (`get_separators_with_ids`, running `split_rect_ext` again against a
-        // rectangle the caller supplied) for the main grid, and the painter's
-        // own recording for the grouped subtrees, which the first one could not
-        // see. One list now, from the nodes.
-        let separator_areas = match (self.shell_ui.as_ref(), shell.splits.as_ref()) {
-            (Some(ui), Some(splits)) => {
-                crate::view::shell::splits::separator_rects(ui, splits, size)
-            }
-            _ => Vec::new(),
-        };
-        self.active_layout_mut().separator_areas = separator_areas;
-        self.active_layout_mut().last_editor_content_area = Some(editor_content_area);
-
-        // Render hover highlights for separators and scrollbars
-        self.render_hover_highlights(frame);
 
         // Initialize popup/suggestion layout state (rendered after status bar below)
         self.active_chrome_mut().suggestions_area = None;
         self.active_chrome_mut().suggestions_outer_area = None;
-        self.active_chrome_mut().prompt_results_area = None;
-        self.active_chrome_mut().prompt_preview_area = None;
 
         // Clone all immutable values before the mutable borrow
         let display_name = self
@@ -1280,17 +1168,9 @@ impl Editor {
         // browser popup covers the bottom row).
         self.publish_status_bar(status_bar_area, has_suggestions, has_file_browser);
 
-        // Float-overlay preview: load the selected match's file (if
-        // the file changed) and seed the phantom leaf's cursor before
-        // the renderer reaches it. Done before render_prompt_popups
-        // because that path immediately needs the leaf's view state.
-        if self.bottom_row_flags().prompt_is_overlay {
-            self.prepare_overlay_preview();
-        }
-
         // Render file browser popup or suggestions popup AFTER status bar + prompt,
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
-        self.render_prompt_popups(frame, chrome_area);
+        self.settle_prompt_suggestions();
 
         // Cursor-anchored buffer popups (completion, hover, signature help):
         // recompute their areas for hit-testing and paint them.
@@ -1330,8 +1210,6 @@ impl Editor {
 
         // Where a migrated surface asked for the terminal caret, if any. See
         // the commit at the end of this method.
-        let mut shell_caret: crate::view::shell::fold::Caret = None;
-
         // The shell's OVERLAY band: its `Layer`s, painted after every legacy
         // painter because paint order is what puts a menu on top. Its
         // background band was painted at the top of this method, before them,
@@ -1371,156 +1249,32 @@ impl Editor {
         // `render_panels_and_modals` once those cells exist. The modal itself
         // lays into the chrome column beside the dock, so nothing of it is at
         // risk from that later paint.
-        self.render_modal_overlays();
+        self.settle_modal_viewports();
 
-        // The dock's own rows, for the same reason and by the same rule: it
-        // is a legacy painter, and the band goes after every legacy painter.
-        // The dimming that belongs *over* those rows still runs from
-        // `render_panels_and_modals`, after the band, where it always did.
-        if let Some(dock) = dock_area {
-            if self.dock.is_some() {
-                self.render_floating_widget_panel(frame, dock, super::PanelSlot::Dock);
-            }
-        }
-
-        if !self.suppress_chrome_cells {
-            let palette = self.shell_palette();
-            let ui = self
-                .shell_ui
-                .take()
-                .expect("the shell tree is taken and returned within one frame");
-            let mut provenance = FoldProvenance {
-                runs: std::mem::take(&mut self.fold_provenance),
-            };
-            let fold_caret = crate::view::shell::fold::fold_band(
-                ui.spec(),
-                frame.buffer_mut(),
-                &palette,
-                // Not `SkipHosts`: a plugin panel is a `Layer`, so a
-                // `WindowEmbed` inside one is resolved in *this* band. See
-                // `shell_host::EmbedHosts`.
-                &mut crate::app::shell_host::EmbedHosts(self),
-                crate::view::shell::fold::Band::Overlay,
-                crate::view::shell::fold::Paints::All,
-                Some(&mut provenance),
-            );
-            // **F.6: one recorder for every described surface.** Applied after
-            // both bands, so the overlay's items land on top of the
-            // background's — the paint order the inspector wants. What this
-            // replaces is nothing: a described surface simply had no writer,
-            // and Ctrl+Right-click reported "No theme key recorded here" over
-            // the menu bar, the status bar, the explorer, settings, the popups
-            // and the dock.
-            let runs = provenance.runs;
-            self.active_chrome_mut().apply_theme_runs(&runs);
-            // A native widget that placed a cursor — a focused `TextField` —
-            // outranks both the buffer's caret and the sidebar's, which is the
-            // rule §4.4 states and the thing
-            // `cursor_suppressed_by_late_overlay` encodes by hand for the
-            // surfaces that have not migrated. It wins by construction: if a
-            // native field has focus, it set the cursor.
-            //
-            // No migrated surface places one yet, so this is `None` on every
-            // frame today. It is carried to the commit below anyway, because
-            // an unwired seam that is only asserted-about is a seam nobody
-            // finds out is missing until the first field migrates without a
-            // caret.
-            shell_caret = fold_caret;
-            self.shell_ui = Some(ui);
-        }
-
-        // Chrome theme-key provenance. **Every described surface records
-        // through the fold**, in both bands: `FoldProvenance` is installed
-        // above and applied below, and it files each display-list item's rect,
-        // clip and resolved theme keys as it folds. That is defect F.6's fix,
-        // and it is the reason the file explorer, the settings dialog, the
-        // popups and the dock report keys without a fifth hand-written walk.
-        //
-        // Two surfaces still record during a paint instead, because they still
-        // have one: the tab strip threads a `CellThemeRecorder` through
-        // `render_tabs`, and the pane scrollbars are filed by
-        // `record_scrollbar_theme_runs` in `BodyPainter::finish`.
-        //
-        // What is still blank is not a surface but a *tier*: `FoldProvenance::
-        // item` can only file a key, so an item whose ink resolved to literal
-        // colours files nothing. The status bar hard-codes literals for its
-        // separator, and `render_side` falls back to a literal for any element
-        // whose colour does not equal `theme_of(key)` — so provenance is blank
-        // over those cells today, with no plugin involved. That is defect
-        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` §3.3, and
-        // it is wider than "a plugin cannot register a named key".
-
-        // Render tab drag drop zone overlay if dragging a tab
-        let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
-        if let Some(ref drag_state) = drag_state_clone {
-            if drag_state.is_dragging() {
-                self.render_tab_drop_zone(frame, drag_state);
-            }
-        }
+        // Chrome theme-key provenance is the fold's (`FoldProvenance`, applied
+        // above): every described surface files its items' rects and keys as
+        // it folds. What is still blank is a *tier*, not a surface: an item
+        // whose ink resolved to literal colours files nothing — defect
+        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` §3.3.
 
         // Software mouse cursor (GPM) and keyboard-capture dimming — both
         // read already-painted cells, so they run after the main draw.
         self.render_software_cursor_and_capture(frame, size);
 
-        // Commit the active-split hardware cursor (deferred since
-        // `render_content`) unless a popup has been drawn over that cell.
-        // Ratatui draws the hardware caret on top of every cell, so a
-        // popup cannot hide the cursor by painting cells — the only way
-        // to hide it is to leave `Frame::cursor_position` as `None`, which
-        // triggers `Terminal::hide_cursor` at the end of the draw.
-        //
-        // A non-overlay prompt owns the caret: it is the row being typed
-        // into. It used to place it *itself*, with its own
-        // `frame.set_cursor_position`, and this commit skipped whenever any
-        // prompt was up so the buffer's caret could not override it. The
-        // prompt row is painted by the fold now, so its caret arrives on the
-        // same channel as everything else's and wins by writing last — the
-        // display list puts that row after the body. What is left of the old
-        // guard is which of the two the check below applies to: the buffer's,
-        // never the prompt's.
-        //
-        // The focused file explorer's caret rides the same path: the sidebar
-        // paints at the top of the draw, so it can only defer the decision to
-        // here. It additionally drops the caret when a late overlay (menu,
-        // settings, another full-screen modal) owns the screen — those paint
-        // after this point or record no popup rect, so
-        // `cursor_obscured_by_overlay` cannot see them. The editor's own
-        // caret needs no such check: `hide_cursor` above already suppressed
-        // it for every one of those states.
-        let legacy_cursor = pending_hardware_cursor.or_else(|| {
-            explorer_hardware_cursor.filter(|_| !self.cursor_suppressed_by_late_overlay())
-        });
-        match shell_caret {
-            // A caret a migrated surface placed wins outright, and needs none
-            // of the guards below. Those exist to work out whether something
-            // painted later covered the cell; a native field is *in* the tree,
-            // so if it has focus it is on top by construction. That is the
-            // rule §4.4 states, and the reason
-            // `cursor_suppressed_by_late_overlay` retires with the last
-            // unmigrated overlay rather than growing another entry.
-            //
-            // One caveat while the migration runs: `render_panels_and_modals`
-            // paints *after* this commit, so a legacy full-screen modal could
-            // still cover a native caret. That is the same gap the legacy
-            // carets have — it is what `cursor_suppressed_by_late_overlay`
-            // exists for — and it closes when the modals migrate (M7), not
-            // before. No migrated surface places a caret yet, so nothing is
-            // exposed to it today.
-            Some((cx, cy)) => frame.set_cursor_position((cx, cy)),
-            None => {
-                if let Some((cx, cy)) = legacy_cursor {
-                    let prompt = self.active_window().prompt.as_ref();
-                    // The prompt row's own caret, which the fold just placed.
-                    if prompt.is_some_and(|p| !p.overlay) {
-                        frame.set_cursor_position((cx, cy));
-                    } else if prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
-                        // The buffer's, as before: an overlay prompt draws its
-                        // own input row inside its card and places its caret
-                        // there, so the buffer's is not wanted either way.
-                        frame.set_cursor_position((cx, cy));
-                    }
-                }
-            }
+        // **The frame's caret is the display list's cursor.** Every surface
+        // that has one placed it there — the pane's leaf from the caret its
+        // text pass settled, the prompt row's input run, the explorer's row,
+        // a panel's field — and the library resolved them: the last placed
+        // wins, and a layer painted over a cursor ends it. Nothing here asks
+        // whether something covered the cell; that was answered when the
+        // list was painted.
+        if let Some(c) = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| ui.spec().cursor)
+            .filter(|c| c.visible)
+        {
+            frame.set_cursor_position((c.pos.x.max(0) as u16, c.pos.y.max(0) as u16));
         }
 
         // Frame-buffer animations run after the main draw so they mutate the
@@ -1533,11 +1287,6 @@ impl Editor {
         // it out of view. Cloned because ratatui resets the current
         // buffer before the next draw.
         self.last_rendered_frame = Some(frame.buffer_mut().clone());
-
-        // Dock, full-screen modals, floating panel, theme-info popup, and the
-        // workspace-trust modal — the topmost layers, drawn above
-        // prompts/popups/animations.
-        self.render_panels_and_modals(frame, size, chrome_area, dock_area);
 
         // Convert all colors for terminal capability (256/16 color fallback).
         // Dead last, so the layers painted above — dock, full-screen modals,
@@ -1708,45 +1457,30 @@ impl Editor {
             .map(|(_, r)| (r.y, r.x, r.x.saturating_add(r.width)))
     }
 
-    /// Paint the bottom prompt input line into `area`.
-    ///
-    /// **Reached from the fold**, through `HostRegion::PromptLine`. It used to
-    /// be called straight from `render` with the rectangle `region(PromptLine)`
-    /// gave it — the tree owning the geometry and the cells bypassing the
-    /// display list, which is a third arrangement beside "native" and "`Host`"
-    /// and the one that made paint order stop being the list's.
-    ///
-    /// Overlay prompts (e.g. Live Grep) paint their own input row inside their
-    /// centred frame and so skip this; file/folder open prompts use a
-    /// path-colorising renderer.
-    pub(crate) fn render_prompt_line(
-        &mut self,
-        buf: &mut ratatui::buffer::Buffer,
-        area: ratatui::layout::Rect,
-        caret: &mut Option<(u16, u16)>,
-    ) {
-        let theme = self.theme.read().unwrap().clone();
-        let Some(prompt) = self.active_window().prompt.clone() else {
-            return;
-        };
-        // An overlay prompt is a card of its own, not this row.
-        if prompt.overlay {
-            return;
+    /// The prompt row's description: the prompt's message, its query and the
+    /// query's caret and selection — and, for the file-open prompts, the
+    /// directory the query completes in. `None` when no prompt is in the
+    /// row: none is up, or the one that is up is an overlay card of its own.
+    fn prompt_row_description(&self) -> Option<crate::view::shell::prompt_line::PromptRow> {
+        let win = self.active_window();
+        let p = win.prompt.as_ref()?;
+        if p.overlay {
+            return None;
         }
-        // The file/folder open prompt colourises the path it is completing.
-        let file_open = matches!(
-            prompt.prompt_type,
+        let dir = matches!(
+            p.prompt_type,
             crate::view::prompt::PromptType::OpenFile
                 | crate::view::prompt::PromptType::SwitchProject
         )
-        .then(|| self.active_window().file_open_state.clone())
+        .then(|| win.file_open_state.as_ref().map(|s| s.current_dir.clone()))
         .flatten();
-        match file_open {
-            Some(state) => StatusBarRenderer::render_file_open_prompt(
-                buf, area, &prompt, &state, &theme, caret,
-            ),
-            None => StatusBarRenderer::render_prompt(buf, area, &prompt, &theme, caret),
-        }
+        Some(crate::view::shell::prompt_line::PromptRow {
+            message: p.message.clone(),
+            input: p.input_str().to_string(),
+            cursor: p.cursor_byte(),
+            selection: p.selection_range(),
+            dir,
+        })
     }
 
     /// Recompute the on-screen areas of the active buffer's cursor-anchored
@@ -1793,44 +1527,35 @@ impl Editor {
 
     /// The caret's screen position, and the completion word start's.
     ///
-    /// Both are absolute: the split's content rect gives the origin (already
-    /// past the dock, the explorer and the tab bar), the gutter gives where
-    /// text begins inside it, and the viewport turns a buffer position into a
-    /// row and column within that.
+    /// Both off the active pane's view — the caret its text pass settled,
+    /// and the word start projected through the same rows — so the popup is
+    /// anchored where the caret is drawn, not where a second projection of
+    /// the viewport says it should be.
     fn popup_caret_cells(&mut self) -> Option<((u16, u16), (u16, u16))> {
-        let splits = self
+        let active = self.effective_active_split();
+        let primary = self
             .windows
             .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())?;
-        let active_split = splits.0.active_split();
-        let viewport = splits.1.get(&active_split).map(|vs| vs.viewport.clone())?;
-        let primary_cursor = splits
-            .1
-            .get(&active_split)
-            .map(|vs| *vs.cursors.primary())?;
-        let content_rect = self.pane_content_rect(active_split);
-
-        let state = self.active_state_mut();
-        let gutter_width = viewport.gutter_width(&state.buffer) as u16;
-        let caret = viewport.cursor_screen_position(&mut state.buffer, &primary_cursor);
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(_, vs)| vs.get(&active))
+            .map(|vs| vs.cursors.primary().position)?;
         let word_start = {
             use crate::primitives::word_navigation::find_completion_word_start;
-            let at = find_completion_word_start(&state.buffer, primary_cursor.position);
-            let c = crate::model::cursor::Cursor::new(at);
-            viewport.cursor_screen_position(&mut state.buffer, &c)
+            find_completion_word_start(&self.active_state().buffer, primary)
         };
-        // `content_rect.x` is the split's left edge, past everything to its
-        // left; `+ gutter_width` is where the text starts. `content_rect.y` is
-        // below the tab bar.
-        let (base_x, base_y) = content_rect
-            .map(|r| (r.x + gutter_width, r.y))
-            .unwrap_or((gutter_width, 1));
-        Some((
-            (caret.0 + base_x, caret.1 + base_y),
-            // The word start's column, on the caret's row — which is what the
-            // painter's `(word_start.0, cursor.1)` said.
-            (word_start.0 + base_x, caret.1 + base_y),
-        ))
+        let view = self.active_window().pane_view(active)?;
+        let (cx, cy) = view.caret?;
+        let caret = (view.rect.x + cx, view.rect.y + cy);
+        // The word start's column, on the caret's row: as many cells left of
+        // the caret as the rows put between the two bytes.
+        let back = match (
+            view.byte_to_visual_column(primary),
+            view.byte_to_visual_column(word_start),
+        ) {
+            (Some(c), Some(w)) => c.saturating_sub(w) as u16,
+            _ => 0,
+        };
+        Some((caret, (caret.0.saturating_sub(back), caret.1)))
     }
 
     /// How many popups the description carries, and how many of those are the
@@ -1976,89 +1701,6 @@ impl Editor {
                 self.apply_keyboard_capture_dimming(frame, terminal_area);
             }
         }
-    }
-
-    /// Render the topmost layers: the dock and floating widget panel (each in
-    /// its own slot) and the full-screen modals (settings, keybinding editor,
-    /// …). Drawn after every other layer so they sit on top.
-    ///
-    /// The theme-info popup and the workspace-trust prompt used to be here;
-    /// both are layers in the shell's tree now.
-    fn render_panels_and_modals(
-        &mut self,
-        frame: &mut Frame,
-        size: ratatui::layout::Rect,
-        chrome_area: ratatui::layout::Rect,
-        dock_area: Option<ratatui::layout::Rect>,
-    ) {
-        // **The dock's cells are painted before the overlay band now**, by
-        // `render_dock_column`, and what is left here is the dimming that has
-        // to run over them. It was drawn from this method, after everything —
-        // which made it the one legacy painter still exempt from the rule the
-        // band states for all of them, and the exemption showed: a plugin's
-        // anchored context menu is a layer in the tree, its anchor is an
-        // absolute cell that may sit over the dock column, and the dock's own
-        // rows painted straight over it. The menu was mounted, laid out and
-        // folded, and never reached the screen.
-
-        // The settings dialog dims the whole frame from its own layer
-        // (`Scrim::Dim`), the dock included; nothing is owed here.
-
-        if self.floating_widget_panel.is_some() {
-            // A `fullscreen` modal paints over the whole frame, covering the
-            // dock; otherwise it lays into `chrome_area` beside the dock.
-            // The orchestrator's global modals (control room, New-Session
-            // form) opt into fullscreen so they're not cramped into the
-            // narrow region right of their own dock.
-            let fullscreen = self
-                .floating_widget_panel
-                .as_ref()
-                .map(|f| f.fullscreen)
-                .unwrap_or(false);
-            // An anchored context-menu popup is unobtrusive: it neither
-            // dims the dock nor confines itself to `chrome_area` (its
-            // anchor is an absolute screen cell that may sit over the
-            // dock). Treat it like a non-dimming, full-frame placement.
-            let is_anchored = matches!(
-                self.floating_widget_panel.as_ref().map(|f| f.placement),
-                Some(super::PanelPlacement::Anchored { .. })
-            );
-            // A centered modal makes the *whole* UI a passive, dimmed
-            // background — the dock included. The dock was drawn above at
-            // full brightness. A beside-dock modal only dims `chrome_area`,
-            // so dim the dock column explicitly here; a fullscreen modal
-            // dims the whole frame itself (its own `apply_dimming_excluding`
-            // runs over the full area below), so skip the redundant pass.
-            // Either way the dock is blurred + input-inaccessible while a
-            // modal is up (the host blurs it on mount and the modal swallows
-            // keys/clicks/wheel), so dimming it makes that passivity visible
-            // rather than leaving it looking live beside the dialog.
-            if !fullscreen && !is_anchored {
-                if let Some(dock) = dock_area {
-                    if self.dock.is_some() {
-                        crate::view::dimming::apply_dimming(frame, dock);
-                    }
-                }
-            }
-            // Render the centered modal within `chrome_area` (the region to
-            // the right of a left dock) rather than the whole frame, so it
-            // sits beside the dock and dims only the chrome instead of
-            // painting over the dock column. When no dock is up
-            // `chrome_area` is the whole frame, so this is unchanged for the
-            // common case. This is what lets a plugin's Open picker coexist
-            // with the dock — mirroring the settings / keybinding-editor
-            // modals, which already lay into `chrome_area`. A `fullscreen`
-            // panel instead gets the whole frame (`size`).
-            let modal_area = if fullscreen || is_anchored {
-                size
-            } else {
-                chrome_area
-            };
-            self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
-        }
-
-        // The workspace-trust prompt is a layer in the shell's tree; see
-        // `Editor::trust_description` and `view::shell::trust`.
     }
 
     /// The workspace-trust prompt, as the shell describes it.
@@ -3804,157 +3446,6 @@ impl Editor {
         out
     }
 
-    fn render_dormant_shell_page(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let active_id = self.active_window;
-        let window = self.windows.get(&active_id).expect("active window exists");
-        let label = window.label.clone();
-        let detail = window
-            .authority_spec
-            .remote_backend_info(false)
-            .map(|r| {
-                let glyph = if r.kind == "kubernetes" { "⎈" } else { "⇅" };
-                format!("{glyph} {label} — {}", r.detail)
-            })
-            .unwrap_or_else(|| format!("⇅ {label}"));
-        let connecting = self
-            .remote_attach_inflight
-            .contains(&(u64::MAX - active_id.0));
-        let state_line = if connecting {
-            "Connecting…".to_string()
-        } else if let Some(reason) = &window.remote_reconnect_error {
-            format!("Disconnected — {reason}")
-        } else {
-            "Not connected".to_string()
-        };
-        // Soft, state-appropriate hints: while connecting the workspace may
-        // open at any moment; only a recorded failure suggests retrying.
-        let (hint, retry_hint) = if connecting || window.remote_reconnect_error.is_none() {
-            (
-                "The workspace will open as soon as the connection is established.",
-                "",
-            )
-        } else {
-            (
-                "The workspace could not be loaded without its connection.",
-                "Select it again in the dock (or use the status-bar indicator) to reconnect.",
-            )
-        };
-        self.render_placeholder_shell_page(frame, area, &detail, &state_line, hint, retry_hint);
-    }
-
-    /// Placeholder page for a workspace that exists but whose contents are
-    /// still being built — see [`crate::app::PreparingWindow`]. The user
-    /// asked for this workspace and was taken straight into it, so the
-    /// window must say what it is doing rather than show the empty scratch
-    /// buffer it technically holds. Deliberately the *same* page a
-    /// not-yet-connected remote session shows: from the user's side both are
-    /// "this workspace isn't ready yet", and one look should mean one thing.
-    fn render_preparing_shell_page(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let active_id = self.active_window;
-        let Some(prep) = self.preparing_windows.get(&active_id).cloned() else {
-            return;
-        };
-        let label = if prep.label.is_empty() {
-            self.windows
-                .get(&active_id)
-                .map(|w| w.label.clone())
-                .unwrap_or_default()
-        } else {
-            prep.label.clone()
-        };
-        let detail = format!("⛭ {label}");
-        // `failed` covers both a create that errored and one interrupted by
-        // a restart: either way the workspace is stalled and the way forward
-        // is the same, so the copy states the situation and the state line
-        // above it carries the specific reason.
-        let (hint, retry_hint) = if prep.failed {
-            (
-                "This workspace has not been created yet.",
-                "Select it again in the dock to retry, or delete it from the row menu.",
-            )
-        } else {
-            (
-                "The workspace will open as soon as it has been created.",
-                "",
-            )
-        };
-        self.render_placeholder_shell_page(frame, area, &detail, &prep.message, hint, retry_hint);
-    }
-
-    /// Paint a centered "this workspace isn't ready" page over `area`: an
-    /// identity line, a live state line, and up to two dim hint lines, on a
-    /// blanked background. Shared by every not-ready state so they can't
-    /// drift apart visually.
-    fn render_placeholder_shell_page(
-        &mut self,
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-        detail: &str,
-        state_line: &str,
-        hint: &str,
-        retry_hint: &str,
-    ) {
-        use ratatui::style::{Modifier, Style};
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let (bg, fg, dim) = {
-            let theme = self.theme.read().unwrap();
-            (theme.editor_bg, theme.editor_fg, theme.line_number_fg)
-        };
-        let buf = frame.buffer_mut();
-        // Blank the whole content area — over the tab bar and scratch buffer
-        // the split renderer just painted.
-        for y in area.top()..area.bottom() {
-            for x in area.left()..area.right() {
-                if let Some(cell) = buf.cell_mut(ratatui::layout::Position::new(x, y)) {
-                    cell.set_symbol(" ");
-                    cell.set_style(Style::default().bg(bg));
-                }
-            }
-        }
-        // Centered message block.
-        let lines: [(&str, Style); 5] = [
-            (
-                detail,
-                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-            ),
-            ("", Style::default().bg(bg)),
-            (state_line, Style::default().fg(fg).bg(bg)),
-            ("", Style::default().bg(bg)),
-            (hint, Style::default().fg(dim).bg(bg)),
-        ];
-        let block_height = lines.len() as u16 + 1;
-        let top = area.top() + area.height.saturating_sub(block_height) / 2;
-        let draw_centered =
-            |buf: &mut ratatui::buffer::Buffer, y: u16, text: &str, style: Style| {
-                if y >= area.bottom() || text.is_empty() {
-                    return;
-                }
-                // Truncate to the area (char-boundary safe) with an ellipsis.
-                let max = area.width.saturating_sub(2) as usize;
-                let truncated: String = if text.chars().count() > max {
-                    let mut t: String = text.chars().take(max.saturating_sub(1)).collect();
-                    t.push('…');
-                    t
-                } else {
-                    text.to_string()
-                };
-                let w = truncated.chars().count() as u16;
-                let x = area.left() + area.width.saturating_sub(w) / 2;
-                buf.set_string(x, y, &truncated, style);
-            };
-        for (i, (text, style)) in lines.iter().enumerate() {
-            draw_centered(buf, top + i as u16, text, *style);
-        }
-        draw_centered(
-            buf,
-            top + lines.len() as u16,
-            retry_hint,
-            Style::default().fg(dim).bg(bg),
-        );
-    }
-
     /// Returns the cell the sidebar wants the hardware caret parked on (its
     /// selected row) when it owns the keyboard, for the caller to commit at
     /// the end of the draw. See `view::shell::file_explorer`.
@@ -4332,29 +3823,71 @@ impl Editor {
         shell: crate::view::shell::frame::Frame,
         size: fresh_ui::Size,
     ) {
+        self.lay_out_shell(shell, size);
+        self.paint_shell();
+    }
+
+    /// The frame's first half: the tree reconciled, laid out and settled,
+    /// its display list not yet painted. `render` runs the panes' content
+    /// pass between this and [`Self::paint_shell`], so each pane's leaf
+    /// paints — places its caret — from what the pass settled for this frame.
+    pub(crate) fn lay_out_shell(
+        &mut self,
+        shell: crate::view::shell::frame::Frame,
+        size: fresh_ui::Size,
+    ) {
         let mut ui = self
             .shell_ui
             .take()
             .expect("the shell tree is taken and returned within one frame");
         crate::view::shell::geometry::stats::note_shell_layout();
-        ui.frame(crate::view::shell::frame::frame_tree(shell), size);
+        let panes = shell
+            .splits
+            .as_ref()
+            .map(|s| (s.root.count_leaves(), s.active));
+        ui.lay_out(crate::view::shell::frame::frame_tree(shell), size);
+        tracing::debug!(
+            target: "fresh::keys",
+            w = size.w,
+            h = size.h,
+            ?panes,
+            focus = ?ui.focused().and_then(|e| ui.key_of(e)),
+            "shell laid out"
+        );
         self.shell_ui = Some(ui);
         self.shell_description_stale = false;
+    }
+
+    /// The frame's second half: the display list of the tree as
+    /// [`Self::lay_out_shell`] left it.
+    pub(crate) fn paint_shell(&mut self) {
+        let mut ui = self
+            .shell_ui
+            .take()
+            .expect("the shell tree is taken and returned within one frame");
+        ui.paint();
+        self.shell_ui = Some(ui);
     }
 
     /// Lay the tree out from the current description when a write since the
     /// last frame has made it stale — see `Editor::shell_description_stale`.
     ///
     /// The frame builder is the one `render` uses, at the size the tree was
-    /// last laid out for. A tree that has never been laid out has no size to
-    /// lay out at, and nothing to be stale relative to.
+    /// last laid out for — or, for a tree that has never been laid out, the
+    /// size the editor was made at: the tree is the whole keyboard (design
+    /// §3.7.5), so a key that arrives before the first frame (a daemon's
+    /// client typing before its terminal reported a size) is routed over the
+    /// same description a frame would build, not dropped for want of one.
     pub(crate) fn lay_out_shell_if_stale(&mut self) {
         if !self.shell_description_stale {
             return;
         }
-        let Some(size) = self.shell_ui.as_ref().map(|ui| ui.frame_size()) else {
+        let Some(mut size) = self.shell_ui.as_ref().map(|ui| ui.frame_size()) else {
             return;
         };
+        if size.w == 0 || size.h == 0 {
+            size = fresh_ui::Size::new(self.terminal_width, self.terminal_height);
+        }
         if size.w == 0 || size.h == 0 {
             return;
         }
@@ -4440,8 +3973,13 @@ impl Editor {
         // borrowed: a description is a value, and this one is a handful of
         // nodes.
         let pane_chrome = self.pane_chrome();
+        // What every bar shows this frame, settled on the panes' handles for
+        // the bars' leaves to paint (design §3.7.6).
+        self.settle_pane_bars(&pane_chrome);
         let groups = self.active_window().pane_groups();
         let interiors = self.pane_interiors();
+        let strips = self.pane_strips(&pane_chrome);
+        let hosts = self.pane_hosts(&interiors, &groups);
         // **The pane that has the keyboard is the *effective* active split.**
         // A buffer group's host leaf is the window's active split while the
         // keyboard is in one of the group's own panes; the pane the keys
@@ -4451,6 +3989,24 @@ impl Editor {
         // keyboard layer outranks it by declaration order.
         let active_pane = self.effective_active_split();
         let pane_keys = Some(active_pane).filter(|a| interiors.contains_key(a));
+        let contexts = self.pane_contexts(active_pane);
+        // The leaf's settled keyboard facts: its context, which
+        // `get_key_context` reads when the focus chain names the pane's
+        // content, and — the PTY gate's input — whether it takes the keyboard
+        // raw, from which the tree derives whether it is reachable
+        // (`Ui::raw_input`, design §3.7.8).
+        for (pane, h) in &hosts {
+            let context = contexts
+                .get(pane)
+                .cloned()
+                .unwrap_or(crate::input::keybindings::KeyContext::Normal);
+            h.set_raw_input(context == crate::input::keybindings::KeyContext::Terminal);
+            h.set_context(context);
+        }
+        // A window with nothing to show yet — a dormant remote session, a
+        // workspace still being built — describes a placeholder page in the
+        // body instead of its (empty, uneditable) grid.
+        let placeholder = self.placeholder_page();
         let splits = self.active_window().buffers.splits().map(|(mgr, _)| {
             // Which buttons the strips carry, by the painter's own rule. Both
             // are frame-wide: they read "is there more than one pane" and "is
@@ -4468,6 +4024,16 @@ impl Editor {
                 },
                 groups,
                 interiors,
+                strips,
+                hover: self.shell_hover.clone(),
+                drop_zone: self
+                    .active_window()
+                    .mouse_state
+                    .dragging_tab
+                    .as_ref()
+                    .filter(|d| d.is_dragging())
+                    .and_then(|d| d.drop_zone),
+                hosts,
             }
         });
         let trust = self.trust_description(ratatui::layout::Rect {
@@ -4476,7 +4042,12 @@ impl Editor {
             width: self.active_chrome().last_frame.width,
             height: self.active_chrome().last_frame.height,
         });
+        let splits = match placeholder.is_some() {
+            true => None,
+            false => splits,
+        };
         crate::view::shell::frame::Frame {
+            placeholder,
             panel: self.panel_description(),
             // The dock's content, described whenever a panel is mounted in
             // the slot. There is no gate left: `panel_interior` answers
@@ -4512,6 +4083,7 @@ impl Editor {
             search_options,
             status_bar_items,
             prompt_line: prompt_row_visible,
+            prompt_row: self.prompt_row_description(),
             // The keyboard's owner, which is not the same question as the
             // row's: the overlay form of the prompt draws no prompt row and
             // still owns every key. `chrome::Prompt::layers` asked
@@ -4705,8 +4277,42 @@ impl Editor {
         }
         let at = Self::centered_overlay_rect(chrome, 90, 90);
         let toolbar = self.prompt_toolbar_interior();
+        let default_title;
+        let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
+            default_title = self.default_overlay_title();
+            &default_title
+        } else {
+            &prompt.title
+        };
+        let title = crate::view::shell::overlay_prompt::styled_runs(
+            title_segs,
+            "ui.prompt_fg",
+            "ui.suggestion_bg",
+        );
+        let footer_runs = crate::view::shell::overlay_prompt::styled_runs(
+            &prompt.footer,
+            "ui.suggestion_fg",
+            "ui.suggestion_bg",
+        );
+        let count = (!prompt.suggestions.is_empty()).then(|| {
+            (
+                prompt.selected_suggestion.map(|i| i + 1).unwrap_or(0),
+                prompt.suggestions.len(),
+            )
+        });
         Some(Card {
             at: fresh_ui::Rect::new(at.x as i32, at.y as i32, at.width, at.height),
+            title,
+            footer_runs,
+            input: crate::view::shell::prompt_line::PromptRow {
+                message: prompt.message.clone(),
+                input: prompt.input_str().to_string(),
+                cursor: prompt.cursor_byte(),
+                selection: prompt.selection_range(),
+                dir: None,
+            },
+            status: prompt.status.clone(),
+            count,
             // No widget toolbar: the title row takes one, or nothing does.
             title_row: toolbar.is_none() && !prompt.title.is_empty(),
             toolbar,
@@ -5055,7 +4661,86 @@ impl Editor {
     /// placed. Every one of them — settings, the calibration wizard, the
     /// keybinding editor and the event-debug dialog — is drawn by the tree,
     /// scrim included.
-    fn render_modal_overlays(&mut self) {
+    /// The placeholder page the body shows instead of the grid, for a
+    /// window that has nothing to show yet: a dormant remote session (nothing
+    /// can be shown or edited until the backend connects, so a tab bar and a
+    /// "[No Name]" scratch buffer would misrepresent the state) or a
+    /// workspace whose worktree or agent is still being built. Deliberately
+    /// the *same* page for both: from the user's side each is "this
+    /// workspace isn't ready yet", and one look should mean one thing.
+    fn placeholder_page(&self) -> Option<crate::view::shell::frame::Placeholder> {
+        use crate::view::shell::frame::Placeholder;
+        let active_id = self.active_window;
+        let window = self.windows.get(&active_id)?;
+        let pane = window.buffers.splits().map(|(mgr, _)| {
+            crate::model::event::LeafId(fresh_core::SplitId(mgr.active_split().0 .0))
+        });
+        if self.dormant_remote.contains_key(&active_id) {
+            let label = window.label.clone();
+            let detail = window
+                .authority_spec
+                .remote_backend_info(false)
+                .map(|r| {
+                    let glyph = if r.kind == "kubernetes" { "⎈" } else { "⇅" };
+                    format!("{glyph} {label} — {}", r.detail)
+                })
+                .unwrap_or_else(|| format!("⇅ {label}"));
+            let connecting = self
+                .remote_attach_inflight
+                .contains(&(u64::MAX - active_id.0));
+            let state = if connecting {
+                "Connecting…".to_string()
+            } else if let Some(reason) = &window.remote_reconnect_error {
+                format!("Disconnected — {reason}")
+            } else {
+                "Not connected".to_string()
+            };
+            let (hint, retry) = if connecting || window.remote_reconnect_error.is_none() {
+                (
+                    "The workspace will open as soon as the connection is established.",
+                    "",
+                )
+            } else {
+                (
+                    "The workspace could not be loaded without its connection.",
+                    "Select it again in the dock (or use the status-bar indicator) to reconnect.",
+                )
+            };
+            return Some(Placeholder {
+                detail,
+                state,
+                hint: hint.to_string(),
+                retry: retry.to_string(),
+                pane,
+            });
+        }
+        let prep = self.preparing_windows.get(&active_id)?;
+        let label = if prep.label.is_empty() {
+            window.label.clone()
+        } else {
+            prep.label.clone()
+        };
+        let (hint, retry) = if prep.failed {
+            (
+                "This workspace has not been created yet.",
+                "Select it again in the dock to retry, or delete it from the row menu.",
+            )
+        } else {
+            (
+                "The workspace will open as soon as it has been created.",
+                "",
+            )
+        };
+        Some(Placeholder {
+            detail: format!("⛭ {label}"),
+            state: prep.message.clone(),
+            hint: hint.to_string(),
+            retry: retry.to_string(),
+            pane,
+        })
+    }
+
+    fn settle_modal_viewports(&mut self) {
         // The settings dialog is the tree's, box and contents alike
         // (`view::shell::settings`): its ring, its caption, the divider
         // between its columns and the dim over everything behind it are the
@@ -5364,177 +5049,27 @@ impl Editor {
         self.cursor_jump_animation = Some(id);
     }
 
-    /// Rows at each edge of a split that are shaded, and how far the
-    /// shading reaches. The row hard against the edge is painted a third
-    /// of the way up from its background, the one inside it two thirds,
-    /// and the third row in is fully painted.
-    const EDGE_FADE_ROWS: u16 = 2;
-
-    /// Shade the top and bottom rows of every split's content.
+    /// Whether the active pane shows no caret this frame: another surface
+    /// owns the keyboard — the file explorer, the dock, a floating panel, a
+    /// prompt, a live terminal's own cursor, a dormant remote's placeholder —
+    /// or a modal layer is up. The content pass settles a caret on the pane's
+    /// leaf only when this is false, so the leaf places none.
     ///
-    /// A pane cuts text off mid-line at its edges; shading the last
-    /// couple of rows lets it trail off instead, which reads as "this
-    /// continues" and gives a scroll somewhere to come from and go to.
-    /// Constant rather than animated: the same rows are shaded whether
-    /// the view is moving or still, so nothing flickers, nothing has to
-    /// settle, and scrolling stays a plain shift of the text through a
-    /// fixed gradient.
-    ///
-    /// An edge only shades when there is something beyond it to trail
-    /// off into: at the top or bottom of a document the text simply
-    /// ends, and dimming it there would say the opposite. A file that
-    /// fits its pane gets no shading at all.
-    ///
-    /// Above is read off the viewport, which knows exactly. Below needs
-    /// the document's extent, and the scrollbar thumb already carries
-    /// it: a thumb short of the end of its track is content past the
-    /// bottom row. A split rendered without a vertical scrollbar has no
-    /// extent to read, so its bottom edge shades — the affordance is
-    /// the better guess when the answer is unavailable.
-    fn shade_scroll_edges(
-        &mut self,
-        buf: &mut ratatui::buffer::Buffer,
-        panes: &[(
-            crate::model::event::LeafId,
-            BufferId,
-            ratatui::layout::Rect,
-            ratatui::layout::Rect,
-            usize,
-            usize,
-        )],
-    ) {
-        if !self.config.editor.viewport_edge_fade {
-            return;
-        }
-        let editor_bg = self.theme.read().unwrap().editor_bg;
-
-        let window = self.active_window();
-        let Some((_, view_states)) = window.buffers.splits() else {
-            return;
-        };
-        for (leaf, buffer_id, area, scrollbar, _thumb_start, thumb_end) in panes {
-            if area.width == 0 || area.height == 0 {
-                continue;
-            }
-            // A terminal's grid is its own; shading its edges would dim
-            // live process output rather than a document being read
-            // through a window.
-            if window.is_terminal_buffer(*buffer_id) {
-                continue;
-            }
-            let Some(view_state) = view_states.get(leaf) else {
-                continue;
-            };
-            let anchor = view_state.viewport.anchor;
-            let content_above = anchor.byte > 0 || anchor.row_offset != 0;
-            let content_below = scrollbar.height == 0 || *thumb_end < scrollbar.height as usize;
-
-            for row in 0..area.height {
-                let from_top = row;
-                let from_bottom = area.height - 1 - row;
-                let in_top = content_above && from_top < Self::EDGE_FADE_ROWS;
-                let in_bottom = content_below && from_bottom < Self::EDGE_FADE_ROWS;
-                // A pane short enough for the two bands to overlap takes
-                // whichever edge the row is nearer, so it never comes out
-                // brighter for being close to both.
-                let distance = match (in_top, in_bottom) {
-                    (true, true) => from_top.min(from_bottom),
-                    (true, false) => from_top,
-                    (false, true) => from_bottom,
-                    (false, false) => continue,
-                };
-                // Hard against the edge is dimmest; each row inward is a
-                // step brighter, and the row past the band is untouched.
-                let level = (distance + 1) as f32 / (Self::EDGE_FADE_ROWS + 1) as f32;
-                crate::view::animation::shade_row_toward_background(
-                    buf, *area, row, level, editor_bg,
-                );
-            }
-        }
-    }
-
-    /// Returns true if `(x, y)` falls inside any popup-style overlay that
-    /// was rendered this frame. Used to decide whether the hardware cursor
-    /// should be shown or hidden so it does not bleed through a popup.
-    fn cursor_obscured_by_overlay(&self, x: u16, y: u16) -> bool {
-        let inside = |rect: ratatui::layout::Rect| -> bool {
-            x >= rect.x
-                && x < rect.x.saturating_add(rect.width)
-                && y >= rect.y
-                && y < rect.y.saturating_add(rect.height)
-        };
-
-        if self
-            .active_chrome()
-            .popup_areas
-            .iter()
-            .any(|entry| inside(entry.1))
-        {
-            return true;
-        }
-        if self
-            .active_chrome()
-            .global_popup_areas
-            .iter()
-            .any(|entry| inside(entry.1))
-        {
-            return true;
-        }
-        if let Some((rect, _, _, _)) = self.active_chrome().suggestions_area {
-            if inside(rect) {
-                return true;
-            }
-        }
-        // The file-open dialog, where the tree placed it.
-        let frame = self.active_chrome().last_frame;
-        let browser = self.shell_ui.as_ref().and_then(|ui| {
-            crate::view::shell::rect_of(
-                ui,
-                &crate::view::shell::file_browser::key(),
-                ratatui::layout::Rect {
-                    x: 0,
-                    y: 0,
-                    width: frame.width,
-                    height: frame.height,
-                },
-            )
-        });
-        if browser.is_some_and(inside) {
-            return true;
-        }
-        false
-    }
-
-    /// Returns true when a layer that [`Self::cursor_obscured_by_overlay`]
-    /// cannot account for owns the screen: menus and context menus (they
-    /// record menu layouts, not popup rects) and the full-screen modals —
-    /// settings, keybinding editor, calibration wizard, event debug, a
-    /// floating panel, the workspace-trust prompt — which all paint *after*
-    /// the hardware cursor is committed, on a dimmed backdrop.
-    ///
-    /// A hardware caret committed underneath one of these blinks straight
-    /// through it, since the terminal draws the caret on top of every cell.
-    /// The editor's caret is already suppressed for these states via
-    /// `hide_cursor`; this is the equivalent gate for chrome carets that are
-    /// painted before the overlays exist (today: the file explorer's).
-    fn cursor_suppressed_by_late_overlay(&self) -> bool {
-        // DERIVED from the overlay stack (this used to be a seven-item
-        // hand list that had already drifted from `hide_cursor`'s):
-        // every present layer suppresses EXCEPT the ones that don't
-        // paint over a chrome caret's cell — the bottom-row Prompt
-        // (which places its own cursor), the popup band (accounted for
-        // by `cursor_obscured_by_overlay`'s rect math), the dock
-        // (beside the chrome, not over it), and the editor base. A new
-        // modal surface registers a layer and is suppressed here with
-        // no edit.
-        //
-        // The SET, not `overlay_layers`: which layer outranks which for
-        // the keyboard says nothing about whether one paints over a
-        // caret, so this must not be reading a ranked list.
+    /// What covers a caret is not this question: a layer painted over the
+    /// cell ends the cursor in the display list (the library's rule), so no
+    /// list of overlays is kept here.
+    fn hide_cursor(&self) -> bool {
         self.shell_ui.as_ref().is_some_and(|ui| ui.modal_up())
+            || self.active_window().key_context == KeyContext::FileExplorer
+            || self.active_window().focused_terminal_live()
+            || self.dock.as_ref().is_some_and(|d| d.focused)
+            || self
+                .floating_widget_panel
+                .as_ref()
+                .is_some_and(|f| f.focused)
+            || self.is_prompting()
+            || self.dormant_remote.contains_key(&self.active_window)
     }
-
-    /// Render the Quick Open hints line showing available mode prefixes
 
     /// Apply dimming effect to UI elements outside the focused terminal area
     /// This visually indicates that keyboard capture mode is active
@@ -5547,9 +5082,11 @@ impl Editor {
         crate::view::dimming::apply_dimming_excluding(frame, size, Some(terminal_area));
     }
 
-    /// Render file browser or suggestions popup as overlay above the prompt line.
-    /// Called after status bar + prompt so the popup draws on top of both.
-    fn render_prompt_popups(&mut self, frame: &mut Frame, chrome: ratatui::layout::Rect) {
+    /// Settle the open prompt's suggestion list: the selection's window, and
+    /// the rectangles the not-yet-migrated readers ask for, read off the tree
+    /// that placed the list. Nothing is painted here — the list, the bottom
+    /// popup and the overlay card are the tree's.
+    fn settle_prompt_suggestions(&mut self) {
         let Some(prompt) = &self.active_window_mut().prompt else {
             return;
         };
@@ -5559,7 +5096,27 @@ impl Editor {
         // Centre it in the chrome area (right of a left dock) so it never
         // overlaps the dock column.
         if prompt.overlay {
-            self.render_overlay_prompt(frame, chrome);
+            // The card is the tree's; what is left here is the selection's
+            // window. How many rows the list can show is the results band's
+            // height, read off the card rather than counted — so the
+            // selection scrolls only when it genuinely passes the bottom, not
+            // when it crosses the bottom-popup default cap.
+            let visible = crate::view::shell::overlay_prompt::regions_of(
+                self.shell_ui.as_ref().expect("the shell tree is in place"),
+            )
+            .iter()
+            .find(|(k, _)| *k == crate::view::shell::overlay_prompt::CardRegion::Results)
+            .map(|(_, r)| r.height as usize)
+            .unwrap_or(0);
+            if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
+                // Skip when the user has wheel-scrolled the list — keeping
+                // the selection pinned in view would undo their scroll
+                // (issue #2119).
+                if !prompt.manual_scroll {
+                    prompt.ensure_selected_visible_within(visible);
+                }
+            }
+            self.record_suggestions_geometry();
             return;
         }
 
@@ -5630,231 +5187,6 @@ impl Editor {
     /// reuse the regular per-leaf renderer (with syntax highlighting,
     /// gutter, scrollbars, folding). No-op when the prompt has no
     /// selection or its label is not a `path:line[:col]` triple.
-    /// Render the entire stashed split tree of `self.preview_window_id`
-    /// into `inner` — Primitive #1 of
-    /// `docs/internal/orchestrator-sessions-design.md`'s "Rich
-    /// Control Room rendering". Reuses the editor's existing
-    /// `render_content` path against the previewed session's
-    /// stashed `(SplitManager, view_states)` so syntax
-    /// highlighting, terminal grids, decorations, and folding
-    /// all surface natively in the preview pane.
-    ///
-    /// The previewed session's splits stash is `take`n out for
-    /// the duration of the call (so we can pass `&mut` through
-    /// the renderer without re-entering `self.windows`) and put
-    /// back after. `pending_hardware_cursor` and
-    /// `cell_theme_map` use scratch locals so the active editor
-    /// area's hit-testing isn't clobbered by the preview pass.
-    pub(crate) fn render_session_preview_into_rect(
-        &mut self,
-        buf: &mut ratatui::buffer::Buffer,
-        inner: ratatui::layout::Rect,
-        theme: &crate::view::theme::Theme,
-    ) {
-        let Some(sid) = self.preview_window_id else {
-            return;
-        };
-
-        // Lazy materialization: a previewed session whose workspace
-        // hasn't been restored yet gets restored on its first preview
-        // frame, so the embed paints real content. No-op once
-        // materialized (cleared from `materialize_pending`).
-        self.materialize_window(sid);
-
-        // Terminal grid → buffer text "sync" was previously a
-        // multi-step append/reload/truncate dance that mutated the
-        // backing file on every preview-render frame just to make
-        // the live screen visible inside the embed. That worked
-        // around `render_terminal_splits` being hard-coded to the
-        // active window's `terminal_buffers` map — during preview
-        // the active window is the *caller's* session, so the
-        // overlay couldn't find the previewed terminal.
-        //
-        // `render_terminal_splits` is now an `impl Window` method,
-        // so the preview path can ask the previewed window
-        // directly. The overlay paints the live PTY grid (with
-        // colors, attributes, no cursor) on top of `SplitRenderer`'s
-        // text rendering for every terminal buffer in the embed —
-        // no file mutation, no reload, no truncate. The buffer's
-        // backing file stays untouched between frames.
-
-        // Pull the previewed window's split stash and sub-fields
-        // out under one `&mut Window` borrow. Multiple disjoint
-        // sub-borrows (`buffers`, `event_logs`, `splits`) coexist
-        // on the same `Window`, so the renderer call can take all
-        // three by `&mut` while the rest of `&mut self` stays
-        // available for `composite_buffers` / `config` / etc.
-        //
-        // Step 0h: previously this used `splits.take()` + restore
-        // because the inline-borrow patterns elsewhere couldn't
-        // co-exist with a held `&mut sid.splits`. Now that all
-        // per-window state lives on `Window`, we destructure
-        // `splits.as_mut()` directly — no transient swap, no
-        // side-effect plumbing — matching design Primitive #1.
-        // Bail if the session has no stash yet (never been
-        // activated and never had a terminal / file routed in via
-        // createTerminal({windowId})), or has been closed under us
-        // — e.g. an Orchestrator Archive / Delete completes between
-        // the floating panel's spec being rebuilt and the next
-        // render, so the embed's `windowId` momentarily points to
-        // a window the host already removed. Early-return rather
-        // than panic; the next plugin refresh re-emits the spec
-        // without the dead embed.
-        let preview_draw_tab_bar = !self.suppress_chrome_cells;
-        // Same immutable render settings as the live editor, but with
-        // scrollbars and tildes suppressed — they're noisy in a small
-        // preview rect where the active session's chrome is authoritative.
-        // Built before the `&mut self.windows` borrow (it only borrows
-        // `self.config`).
-        let preview_cfg = crate::view::ui::EditorRenderConfig {
-            show_vertical_scrollbar: false,
-            show_horizontal_scrollbar: false,
-            show_tilde: false,
-            ..crate::view::ui::EditorRenderConfig::new(
-                &self.config.editor,
-                self.background_fade,
-                self.software_cursor_only,
-            )
-        };
-        // Group the appearance inputs for the preview pass. `theme` is the
-        // caller-supplied borrow; built before the `&mut self.windows` borrow.
-        let preview_style = crate::view::ui::RenderStyle {
-            theme,
-            ansi_background: self.ansi_background.as_ref(),
-            cfg: preview_cfg,
-        };
-        let Some(__win_for_preview) = self.windows.get_mut(&sid) else {
-            return;
-        };
-        // Terminal splits shown in read-only scrollback in the previewed
-        // window (computed before the mutable field borrows below). Mirrors the
-        // active-window path so the preview's scrollbar suppression matches.
-        let __preview_scrollback_splits: std::collections::HashSet<crate::model::event::LeafId> =
-            __win_for_preview
-                .buffers
-                .splits()
-                .map(|(_, vs_map)| {
-                    vs_map
-                        .iter()
-                        .filter(|(leaf, svs)| {
-                            __win_for_preview.split_terminal_scrollback(**leaf, svs.active_buffer)
-                        })
-                        .map(|(leaf, _)| *leaf)
-                        .collect()
-                })
-                .unwrap_or_default();
-        // The preview's panes, through the same rule against a narrowed offer:
-        // `preview_cfg` turns both scrollbars off because they are noisy in a
-        // small embed and the active session's chrome is the authoritative one.
-        let __preview_pane_chrome =
-            __win_for_preview.pane_chrome(crate::view::shell::splits::PaneChrome {
-                tabs: __win_for_preview.tab_bar_visible,
-                vscroll: false,
-                hscroll: false,
-            });
-        let __preview_metadata = &__win_for_preview.buffer_metadata;
-        let __preview_buffer_id = __win_for_preview.preview.map(|(_, b)| b);
-        let __preview_event_logs = &mut __win_for_preview.event_logs;
-        let __preview_composite_buffers = &mut __win_for_preview.composite_buffers;
-        let __preview_composite_view_states = &mut __win_for_preview.composite_view_states;
-        // Issue #2035: pass the previewed window's actual
-        // `grouped_subtrees` map. The previous code allocated an
-        // empty HashMap here, which made the split renderer unable
-        // to resolve any `active_group_tab` to its panel layout —
-        // so a session whose active tab was a buffer group (e.g.
-        // git_log's log/detail panels) silently fell through to
-        // rendering the split's underlying pre-group buffer.
-        let __preview_grouped_subtrees = &__win_for_preview.grouped_subtrees;
-        let preview_tab_bar_visible = __win_for_preview.tab_bar_visible;
-
-        // Per-call scratch — keeps the preview pass from
-        // clobbering the active editor area's hit-testing /
-        // hardware-cursor placement.
-        let mut scratch_cell_theme_map: Vec<crate::app::types::CellThemeInfo> = Vec::new();
-        let mut scratch_pending_cursor: Option<(u16, u16)> = None;
-        let lsp_waiting = false; // preview never shows LSP-waiting chrome
-
-        // The preview paints *another window's* grid offscreen, where this
-        // window's tree has no nodes — so its rectangles are the painter's
-        // and travel within the frame, like `pane_rects`.
-        let mut preview_pane_rects: Vec<(
-            crate::model::event::LeafId,
-            fresh_core::BufferId,
-            ratatui::layout::Rect,
-            ratatui::layout::Rect,
-            usize,
-            usize,
-        )> = Vec::new();
-        __win_for_preview
-            .buffers
-            .with_all_mut(|preview_buffers, mgr, view_states| {
-                let result = crate::view::ui::SplitRenderer::render_content(
-                    buf,
-                    inner,
-                    &*mgr,
-                    preview_buffers,
-                    __preview_metadata,
-                    __preview_buffer_id,
-                    __preview_event_logs,
-                    __preview_composite_buffers,
-                    __preview_composite_view_states,
-                    preview_style,
-                    lsp_waiting,
-                    Some(view_states),
-                    __preview_grouped_subtrees,
-                    true, // hide_cursor — the active session owns the hardware caret
-                    None, // no tab-hover routing in the preview
-                    None,
-                    None,
-                    false, // not maximized
-                    preview_tab_bar_visible,
-                    self.session_mode || !self.software_cursor_only,
-                    &__preview_scrollback_splits,
-                    // The preview embed suppresses both bars, so its panes'
-                    // chrome is the same rule resolved against a narrowed
-                    // offer — not a second rule.
-                    &__preview_pane_chrome,
-                    &mut scratch_cell_theme_map,
-                    inner.width,
-                    &mut scratch_pending_cursor,
-                    preview_draw_tab_bar,
-                );
-                preview_pane_rects = result.1;
-            });
-
-        // Resize the previewed window's terminal PTYs to fit the
-        // preview embed before painting their grids. Without this,
-        // the PTY child (e.g. `top`, `htop`, `vim`, claude) keeps
-        // drawing at the dimensions it had when last active — often
-        // the full terminal height — so the preview embed only
-        // shows the top slice of a much taller frame. Resizing
-        // SIGWINCHes the PTY, which redraws at the new size, and
-        // the next render frame paints the correctly-sized grid.
-        // When the user dives into the session,
-        // `Window::resize_visible_terminals` will resize back up to
-        // the dive view's split rect.
-        if let Some(win) = self.windows.get_mut(&sid) {
-            for (_split_id, buffer_id, content_rect, _scrollbar_rect, _, _) in &preview_pane_rects {
-                if win.terminal_buffers.contains_key(buffer_id)
-                    && content_rect.width > 0
-                    && content_rect.height > 0
-                {
-                    win.resize_terminal(*buffer_id, content_rect.width, content_rect.height);
-                }
-            }
-        }
-
-        // Overlay live PTY grids for terminal buffers in the
-        // previewed window's splits — paints colors, attributes,
-        // and the visible screen on top of `SplitRenderer`'s text
-        // rendering. `cursor_visible_if_active = false` keeps the
-        // preview read-only: no blinking cursor over a session
-        // the user isn't currently driving.
-        if let Some(win) = self.windows.get(&sid) {
-            win.render_terminal_splits(buf, &preview_pane_rects, false);
-        }
-    }
-
     fn prepare_overlay_preview(&mut self) {
         use crate::input::quick_open::parse_path_line_col;
 
@@ -6258,747 +5590,158 @@ impl Editor {
         }
     }
 
-    /// Render the active prompt as a centred floating overlay
-    /// (issue #1796). Layout, top-down inside the overlay frame:
-    ///
-    /// ```text
-    /// ┌─ Live Grep ──────────────────────────────────[Esc to close]┐
-    /// │ Search: split_active|                           12 / 142    │  ← input row
-    /// │ ─────────────────────────────────────────────────────────── │
-    /// │  src/view/split.rs:1117  pub fn split_active(    │ preview │  ← results
-    /// │  src/view/split.rs:1123  self.split_active_pos…  │  pane   │     (+ optional
-    /// │ …                                                │         │      preview)
-    /// └────────────────────────────────────────────────────────────┘
-    /// ```
-    ///
-    /// The overlay does *not* mutate the split tree; it is a pure
-    /// `ratatui` overdraw, so dismissing leaves the user's underlying
-    /// layout exactly as it was (the issue-#1796 acceptance test).
-    fn render_overlay_prompt(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        use ratatui::layout::Rect;
-        use ratatui::style::{Modifier, Style};
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-
-        // Compute the overlay rect via the same percentage logic the
-        // popup engine uses. 90% × 90% of the terminal, centred.
-        let overlay_rect = Self::centered_overlay_rect(area, 90, 90);
-
-        // Snapshot view-relevant state before any mutable borrows.
-        let theme = self.theme.read().unwrap().clone();
-        // The suggestion list inside the overlay can be ~30 rows
-        // tall on a typical terminal. Pass the *actual* visible
-        // count to `ensure_selected_visible_within` so the scroll
-        // offset only advances when the selection genuinely passes
-        // the bottom of the visible window — not when it crosses
-        // the bottom-popup default cap of `MAX_VISIBLE_SUGGESTIONS`
-        // (= 10), which would scroll prematurely.
-        //
-        // Geometry: overlay frame border (2) + input row (1) +
-        // optional toolbar row (1, when `prompt.title` is non-empty)
-        // + separator (1). The suggestions popup is rendered
-        // borderless inside the overlay (the outer frame already
-        // provides a border, so adding a nested one creates a
-        // double-frame). Inner content height = overlay.height -
-        // chrome.
-        // Toolbar height must be the *actual* rendered row count — a widget
-        // toolbar is ≥2 rows (e.g. "Search in:" + "Match:") and wraps to more
-        // on a narrow terminal. Measuring it (vs assuming 1) keeps
-        // `suggestions_visible_rows` honest, so `ensure_selected_visible`
-        // doesn't let the selection scroll just past the real list bottom.
-        // How many rows the list can actually show, so the selection only
-        // scrolls when it genuinely passes the bottom — not when it crosses
-        // the bottom-popup default cap of `MAX_VISIBLE_SUGGESTIONS`, which
-        // would scroll prematurely.
-        //
-        // Read off the card, not counted here. This was
-        // `4 + toolbar_rows + footer` — border, input, separator, toolbar,
-        // footer — with the toolbar measured a second time to get its row
-        // count, and it had to be kept in step with the band arithmetic two
-        // hundred lines below that produced the list's actual rectangle. The
-        // description states the bands once and this is the height of one of
-        // them.
-        let suggestions_visible_rows = crate::view::shell::overlay_prompt::regions_of(
-            self.shell_ui.as_ref().expect("the shell tree is in place"),
-        )
-        .iter()
-        .find(|(k, _)| *k == crate::view::shell::overlay_prompt::CardRegion::Results)
-        .map(|(_, r)| r.height as usize)
-        .unwrap_or(0);
-        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            // Skip when the user has wheel-scrolled the list — keeping the
-            // selection pinned in view would undo their scroll (issue #2119).
-            if !prompt.manual_scroll {
-                prompt.ensure_selected_visible_within(suggestions_visible_rows);
-            }
-        }
-        let Some(prompt) = self.active_window().prompt.as_ref() else {
-            return;
-        };
-        let prompt = prompt.clone();
-
-        // Layout-vs-draw seam: when a frontend renders this overlay itself
-        // (the web renders it natively from `PaletteView`), we still compute all
-        // geometry/caches below but paint NO cells — so there's nothing to bleed
-        // behind the native card. For the TUI `draw` is always true, so its path
-        // is unchanged (every guard below is a no-op).
-        let draw = !self.suppress_chrome_cells;
-
-        // Dim everything outside the overlay rect so the user's
-        // focus visibly belongs to the popup. Reuses the same RGB-
-        // darkening pass the Settings modal uses (`view::dimming`)
-        // — Modifier::DIM alone is barely visible on most terminals.
-        if draw {
-            crate::view::dimming::apply_dimming_excluding(frame, frame.area(), Some(overlay_rect));
-        }
-
-        // Clear and frame. Plugin-owned prompts can publish their
-        // own title via `editor.setPromptTitle(...)`; falls back to
-        // " Live Grep " plus shortcut hints when unset (so a
-        // Resume-replay prompt and freshly-opened plugin prompt look
-        // similar even though they take different code paths).
-        if draw {
-            frame.render_widget(Clear, overlay_rect);
-        }
-        let default_title: Vec<fresh_core::api::StyledText> = {
-            // Mirrors `updateOverlayTitle` in live_grep.ts (kept in
-            // sync deliberately so a Resume-replay overlay and a
-            // freshly-opened plugin overlay look identical). The
-            // input row's prefix already says "Live grep:", so the
-            // frame title doesn't repeat the feature name — it
-            // shows shortcut hints only. `resume_live_grep` is
-            // intentionally NOT shown here; that shortcut only
-            // matters once the overlay is closed.
-            use crate::input::keybindings::KeyContext;
-            use fresh_core::api::{OverlayColorSpec, OverlayOptions, StyledText};
-            let keybindings = self.keybindings.read().unwrap();
-            let mut hints: Vec<(String, &str)> = Vec::new();
-            if let Some(k) = keybindings
-                .find_keybinding_for_action("cycle_live_grep_provider", KeyContext::Prompt)
-            {
-                hints.push((k, "switch grep provider"));
-            }
-            if let Some(k) = keybindings
-                .find_keybinding_for_action("live_grep_export_quickfix", KeyContext::Prompt)
-            {
-                hints.push((k, "save matches"));
-            }
-            if hints.is_empty() {
-                Vec::new()
-            } else {
-                let hint_style = Some(OverlayOptions {
-                    fg: Some(OverlayColorSpec::ThemeKey("ui.help_key_fg".into())),
-                    ..OverlayOptions::default()
-                });
-                let sep_style = Some(OverlayOptions {
-                    fg: Some(OverlayColorSpec::ThemeKey("ui.popup_border_fg".into())),
-                    ..OverlayOptions::default()
-                });
-                let mut segs: Vec<StyledText> = Vec::new();
-                for (i, (k, verb)) in hints.into_iter().enumerate() {
-                    if i > 0 {
-                        segs.push(StyledText {
-                            text: " · ".into(),
-                            style: sep_style.clone(),
-                        });
-                    }
-                    segs.push(StyledText {
-                        text: k,
-                        style: hint_style.clone(),
-                    });
-                    segs.push(StyledText {
-                        text: format!(" {verb}"),
-                        style: None,
-                    });
-                }
-                segs
-            }
-        };
-        let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
-            &default_title
-        } else {
-            &prompt.title
-        };
-        let normal_title_style = Style::default()
-            .fg(theme.prompt_fg)
-            .add_modifier(Modifier::BOLD);
-        let title_spans: Vec<Span> = title_segs
-            .iter()
-            .map(|seg| {
-                let style = match &seg.style {
-                    Some(opts) => Self::resolve_overlay_style(opts, &theme),
-                    None => normal_title_style,
-                };
-                Span::styled(seg.text.clone(), style)
-            })
-            .collect();
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.popup_border_fg))
-            .style(Style::default().bg(theme.suggestion_bg));
-        let inner = block.inner(overlay_rect);
-        if draw {
-            frame.render_widget(block, overlay_rect);
-        }
-
+    /// Paint the overlay prompt card's preview pane into `inner`: a real
+    /// buffer rendered by the same per-leaf pipeline regular splits use, or
+    /// another session's whole window when a plugin asked for one. The pane
+    /// is the card's one host band (`HostTarget::Card(CardRegion::Preview)`);
+    /// the fold hands it the rectangle layout gave the band. Buffer and
+    /// cursor are seeded by `prepare_overlay_preview`, earlier in the frame.
+    pub(crate) fn paint_card_preview(
+        &mut self,
+        buf: &mut ratatui::buffer::Buffer,
+        inner: ratatui::layout::Rect,
+    ) {
         if inner.height == 0 || inner.width == 0 {
             return;
         }
-
-        // Layout: a full-width HEADER band (input + toolbar + separator)
-        // spans the whole inner width at the top; the BODY below it splits
-        // into results | preview; a full-width FOOTER (when the plugin set
-        // one) sits at the very bottom. This gives the toolbar the entire
-        // pane width — the scope checkboxes don't fit when squeezed into the
-        // left half beside the preview — and places the preview *under* the
-        // toolbar, side-by-side with the result list. See
-        // docs/internal/global-search-ux.md §12.
-        // The bands, read off the tree that placed them. This block used to
-        // compute them: `header_h = 2 + toolbar_h`, a `body` rect, and a
-        // `body.width / 2` split above 120 columns — with `chrome_rows =
-        // 4 + toolbar_rows + footer` forty lines above saying the same thing a
-        // second way, and `chrome::Prompt::collect` re-deriving the preview's
-        // rectangle from the cached copy. See `view::shell::overlay_prompt`.
-        let bands = crate::view::shell::overlay_prompt::regions_of(
-            self.shell_ui.as_ref().expect("the shell tree is in place"),
-        );
-        let band = |r: crate::view::shell::overlay_prompt::CardRegion| {
-            bands
-                .iter()
-                .find(|(k, _)| *k == r)
-                .map(|(_, rect)| *rect)
-                .unwrap_or_default()
-        };
-        use crate::view::shell::overlay_prompt::CardRegion;
-        let toolbar_h: u16 = band(CardRegion::Toolbar).height;
-        let footer_h: u16 = band(CardRegion::Footer).height;
-        let results_area = band(CardRegion::Results);
-        let preview = band(CardRegion::Preview);
-        let preview_area = (preview.width > 0 && preview.height > 0).then_some(preview);
-
-        // Cache the result/preview rects so the mouse-wheel handler can route
-        // the wheel to the pane under the pointer (issue #2119).
-        self.active_chrome_mut().prompt_results_area = Some(results_area);
-        self.active_chrome_mut().prompt_preview_area = preview_area;
-
-        // The prompt input is the full-width top row of the header band.
-        let input_row = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: 1,
-        };
-        // Two distinct styles on this row so the user can tell
-        // the static title (`prompt.message`) apart from the
-        // editable input field. Title gets the popup-chrome bg
-        // (matching the toolbar/footer); input + right-side
-        // padding + count get the editor bg so they read as one
-        // contiguous text field. All colours from theme keys.
-        let title_style = Style::default()
-            .fg(theme.suggestion_fg)
-            .bg(theme.suggestion_bg);
-        let input_style = Style::default().fg(theme.editor_fg).bg(theme.editor_bg);
-        let count_str = if prompt.suggestions.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "{} / {}",
-                prompt.selected_suggestion.map(|i| i + 1).unwrap_or(0),
-                prompt.suggestions.len()
-            )
-        };
-        use crate::primitives::display_width::str_width;
-        let count_w = str_width(&count_str);
-        // Reserve one trailing column so the count doesn't sit
-        // flush against the right border.
-        let right_gap: usize = if count_w > 0 { 1 } else { 0 };
-        // Right cluster: "<status>  <count>" — the plugin's search status
-        // (e.g. "Searching…", "No matches") sits just left of the count, so
-        // it's on the same row the user is typing on rather than a wasted
-        // chrome row. Two-space gap between status and count when both show.
-        let status_str = prompt.status.clone();
-        let status_w = str_width(&status_str);
-        let status_gap: usize = if status_w > 0 && count_w > 0 { 2 } else { 0 };
-        let right_cluster_w = status_w + status_gap + count_w + right_gap;
-        let visible_input_width = (input_row.width as usize).saturating_sub(right_cluster_w);
-        let truncated_input: String = prompt
-            .input_str()
-            .chars()
-            .take(visible_input_width.saturating_sub(str_width(&prompt.message)))
-            .collect();
-        // Pad between the typed input and the right cluster so the count is
-        // right-aligned (with `right_gap` empty cols at the very edge),
-        // independent of how much the user has typed.
-        let used = str_width(&prompt.message) + str_width(&truncated_input) + right_cluster_w;
-        let pad = (input_row.width as usize).saturating_sub(used);
-        let dim = Style::default()
-            .fg(theme.popup_border_fg)
-            .bg(theme.editor_bg);
-        let line = Line::from(vec![
-            Span::styled(prompt.message.clone(), title_style),
-            Span::styled(truncated_input, input_style),
-            Span::styled(" ".repeat(pad), input_style),
-            Span::styled(status_str, dim),
-            Span::styled(" ".repeat(status_gap), input_style),
-            Span::styled(count_str, dim),
-        ]);
-        if draw {
-            frame.render_widget(Paragraph::new(line).style(input_style), input_row);
-        }
-
-        // Cursor position on the input row — only when the input is focused.
-        // When a toolbar control owns focus, the highlighted toggle is the
-        // focus indicator and the input caret would be misleading.
-        let input_focused = !self.prompt_toolbar_holds_keyboard();
-        let cursor_x = (str_width(&prompt.message)
-            + str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]))
-            as u16;
-        if draw && input_focused && cursor_x < input_row.width {
-            frame.set_cursor_position((input_row.x + cursor_x, input_row.y));
-        }
-
-        // Optional toolbar row (the styled segments the plugin set
-        // via setPromptTitle, e.g. "Provider: rg · Alt+P switch
-        // grep provider · …"). Sits between the input row and the
-        // separator so the user sees feature-scoped controls right
-        // under what they're typing — not on the frame border
-        // where shortcut hints get visually lost. A plugin's *widget*
-        // toolbar is the tree's: described in the card's header band
-        // (`overlay_prompt::toolbar_band`) and painted with the card's
-        // layer, over this ground.
-        if toolbar_h > 0
-            && prompt.toolbar.is_none()
-            && draw
-            && !prompt.title.is_empty()
-            && inner.height >= 2
+        let theme = self.theme.read().unwrap().clone();
+        if let Some(sid) = self
+            .preview_window_id
+            .filter(|sid| *sid != self.active_window && self.windows.contains_key(sid))
         {
-            let toolbar = Rect {
-                x: inner.x,
-                y: inner.y + 1,
-                width: inner.width,
-                height: 1,
-            };
-            frame.render_widget(
-                Paragraph::new(Line::from(title_spans))
-                    .style(Style::default().bg(theme.suggestion_bg)),
-                toolbar,
-            );
+            // Another window's whole grid, as an embed paints it.
+            crate::app::shell_host::paint_embed(self, sid, inner, buf);
+            return;
         }
-
-        // Separator row (full width), closing the header band.
-        if draw && inner.height >= 2 + toolbar_h {
-            let sep = Rect {
-                x: inner.x,
-                y: inner.y + 1 + toolbar_h,
-                width: inner.width,
-                height: 1,
-            };
-            let sep_style = Style::default()
-                .fg(theme.popup_border_fg)
-                .bg(theme.suggestion_bg);
-            let sep_text = "─".repeat(inner.width as usize);
-            frame.render_widget(Paragraph::new(sep_text).style(sep_style), sep);
-        }
-
-        // Suggestions list fills `results_area` (the left half of the body)
-        // entirely — the input, toolbar and separator now live in the header
-        // band above, and the footer is a separate full-width row below, so
-        // there's no in-column chrome to subtract here. Carve off the
-        // rightmost 1-column lane for a scrollbar so the user can see how far
-        // through the result set the selection is — only when the result set
-        // actually exceeds the visible rows; otherwise the scrollbar is
-        // visual noise.
-        // The list is the layer's, filling the results band. Gone with the
-        // painter's call: the carved scrollbar lane and its `needs_scrollbar`
-        // test (a viewport emits a bar exactly when its content overflows, and
-        // reserves the lane itself), and the three `ChromeLayout` rectangles
-        // recorded here — `record_suggestions_geometry` reads all three off the
-        // tree for both prompt forms now.
-        self.record_suggestions_geometry();
-
-        // Plugin-supplied footer chrome row (Primitive #2 chrome
-        // region). Each segment is a `StyledText` — same styling
-        // primitive used by `setPromptTitle` and inline overlays,
-        // so plugins can theme hotkey hints with `ui.help_key_fg`,
-        // separators with `ui.popup_border_fg`, etc.
-        if draw && footer_h == 1 && inner.height >= 1 {
-            let footer_row = Rect {
-                x: inner.x,
-                y: inner.y + inner.height - 1,
-                width: inner.width,
-                height: 1,
-            };
-            let footer_default_style = Style::default()
-                .fg(theme.suggestion_fg)
-                .bg(theme.suggestion_bg);
-            let footer_spans: Vec<Span> = prompt
-                .footer
-                .iter()
-                .map(|seg| {
-                    let style = match &seg.style {
-                        Some(opts) => Self::resolve_overlay_style(opts, &theme),
-                        None => footer_default_style,
-                    };
-                    Span::styled(seg.text.clone(), style)
-                })
-                .collect();
-            frame.render_widget(
-                Paragraph::new(Line::from(footer_spans))
-                    .style(Style::default().bg(theme.suggestion_bg)),
-                footer_row,
-            );
-        }
-
-        // Right-half preview pane: a real Buffer rendered via the
-        // same per-leaf pipeline regular splits use. Buffer + cursor
-        // are already seeded by `prepare_overlay_preview` (called
-        // earlier in the render flow). Borrows are split here so we
-        // can hand out independent `&mut` references to the
-        // renderer's internals without going back through `&mut self`.
-        if let Some(preview_rect) = preview_area {
-            // Frame the preview area (vertical separator) so the renderer fills
-            // the inner rect. The frame is *chrome* — drawn only for the TUI;
-            // the web draws its own border in HTML. The buffer *content* below,
-            // however, is real rendered cells (like a pane interior), so it is
-            // drawn for both frontends and the web slices it from the buffer.
-            use ratatui::widgets::{Block, Borders, Clear};
-            let block = Block::default()
-                .borders(Borders::LEFT)
-                .border_style(Style::default().fg(theme.popup_border_fg))
-                .style(Style::default().bg(theme.suggestion_bg));
-            let inner = block.inner(preview_rect);
-            if draw {
-                frame.render_widget(Clear, preview_rect);
-                frame.render_widget(block, preview_rect);
-            }
-
-            // Primitive #1: if the active plugin asked us to
-            // preview a specific (inactive) session in this
-            // rect, render that session's entire stashed split
-            // tree natively into `inner`. Falls back to the
-            // existing path-based phantom-leaf preview when no
-            // session override is set.
-            if inner.height > 0
-                && inner.width > 0
-                && self
-                    .preview_window_id
-                    .is_some_and(|sid| sid != self.active_window && self.windows.contains_key(&sid))
-            {
-                self.render_session_preview_into_rect(frame.buffer_mut(), inner, &theme);
-            } else if inner.height > 0 && inner.width > 0 {
-                // Snapshot the per-split scalars and group the appearance
-                // inputs into one `RenderStyle`, all before the `&mut
-                // self.windows` borrow below — they touch only
-                // `self.config`/`self.theme`/`self.ansi_background`, which Rust
-                // splits from `self.windows` as distinct fields.
-                let session_mode = self.session_mode || !self.software_cursor_only;
-                let show_tilde = false; // preview hides tilde markers
-                let highlight_current_column = self.config.editor.highlight_current_column;
-                let screen_width = frame.area().width;
-                let style = crate::view::ui::RenderStyle {
-                    theme: &theme,
-                    ansi_background: self.ansi_background.as_ref(),
-                    cfg: crate::view::ui::EditorRenderConfig::new(
-                        &self.config.editor,
-                        self.background_fade,
-                        self.software_cursor_only,
-                    ),
-                };
-                let __win = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .expect("active window present");
-                let buffers = &mut __win.buffers;
-                let event_logs = &mut __win.event_logs;
-                let cell_theme_map = &mut __win.chrome_layout.cell_theme_map;
-                let Some(preview_state) = __win.overlay_preview_state.as_mut() else {
-                    return;
-                };
-                // Blanked: the current query has no selectable result, so
-                // leave the framed pane empty rather than rendering a stale
-                // match.
-                if preview_state.blanked {
-                    return;
-                }
-                preview_state
-                    .view_state
-                    .viewport
-                    .resize(inner.width, inner.height);
-                let buffer_id = preview_state.buffer_id;
-
-                if let Some(state) = buffers.get_mut(&buffer_id) {
-                    // Deref the SplitViewState once to a concrete
-                    // `&mut BufferViewState` so disjoint field
-                    // splits (`viewport` + `folds`) are visible
-                    // to the borrow checker.
-                    let buf_state = preview_state.view_state.active_state_mut();
-                    let cursors = buf_state.cursors.clone();
-                    let view_mode = buf_state.view_mode.clone();
-                    let compose_width = buf_state.compose_width;
-                    let compose_column_guides = buf_state.compose_column_guides.clone();
-                    let rulers = buf_state.rulers.clone();
-                    let show_line_numbers = buf_state.show_line_numbers;
-                    let highlight_current_line = buf_state.highlight_current_line;
-                    let viewport_ref = &mut buf_state.viewport;
-                    let folds_ref = &mut buf_state.folds;
-                    let event_log = event_logs.get_mut(&buffer_id);
-                    let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
-                        frame.buffer_mut(),
-                        state,
-                        &cursors,
-                        viewport_ref,
-                        folds_ref,
-                        event_log,
-                        inner,
-                        style,
-                        view_mode,
-                        compose_width,
-                        compose_column_guides,
-                        buffer_id,
-                        session_mode,
-                        &rulers,
-                        show_line_numbers,
-                        highlight_current_line,
-                        show_tilde,
-                        highlight_current_column,
-                        cell_theme_map,
-                        screen_width,
-                    );
-                }
-            }
-        }
-    }
-
-    /// Render hover highlights for interactive elements (separators, scrollbars)
-    pub(super) fn render_hover_highlights(&self, frame: &mut Frame) {
-        use ratatui::style::Style;
-        use ratatui::text::Span;
-        use ratatui::widgets::Paragraph;
-
-        match &self.hovered() {
-            Some(HoverTarget::SplitSeparator(split_id, direction)) => {
-                // Highlight the separator with hover color
-                for (sid, dir, x, y, length) in &self.active_layout().separator_areas {
-                    if sid == split_id && dir == direction {
-                        let (hover_fg, editor_bg) = {
-                            let theme = self.theme.read().unwrap();
-                            (theme.split_separator_hover_fg, theme.editor_bg)
-                        };
-                        let hover_style = Style::default().fg(hover_fg).bg(editor_bg);
-                        match dir {
-                            SplitDirection::Horizontal => {
-                                let line_text = "─".repeat(*length as usize);
-                                let paragraph =
-                                    Paragraph::new(Span::styled(line_text, hover_style));
-                                frame.render_widget(
-                                    paragraph,
-                                    ratatui::layout::Rect::new(*x, *y, *length, 1),
-                                );
-                            }
-                            SplitDirection::Vertical => {
-                                for offset in 0..*length {
-                                    let paragraph = Paragraph::new(Span::styled("│", hover_style));
-                                    frame.render_widget(
-                                        paragraph,
-                                        ratatui::layout::Rect::new(*x, y + offset, 1, 1),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Some(HoverTarget::ScrollbarThumb(split_id)) => {
-                // Highlight scrollbar thumb. The bar is where the tree put
-                // it; the thumb's extent is the recorded read of the scroll
-                // state, which is what the record is for.
-                let bar = self.pane_vscroll_rect(*split_id);
-                for (sid, _buffer_id, thumb_start, thumb_end) in &self.active_layout().split_areas {
-                    if let (true, Some(scrollbar_rect)) = (sid == split_id, bar) {
-                        let hover_style = Style::default().bg(self
-                            .theme
-                            .read()
-                            .unwrap()
-                            .scrollbar_thumb_hover_fg);
-                        for row_offset in *thumb_start..*thumb_end {
-                            let paragraph = Paragraph::new(Span::styled(" ", hover_style));
-                            frame.render_widget(
-                                paragraph,
-                                ratatui::layout::Rect::new(
-                                    scrollbar_rect.x,
-                                    scrollbar_rect.y + row_offset as u16,
-                                    1,
-                                    1,
-                                ),
-                            );
-                        }
-                    }
-                }
-            }
-            Some(HoverTarget::ScrollbarTrack(split_id, hovered_row)) => {
-                // Highlight only the hovered cell on the scrollbar track.
-                let bar = self.pane_vscroll_rect(*split_id);
-                for (sid, _buffer_id, _thumb_start, _thumb_end) in &self.active_layout().split_areas
-                {
-                    if let (true, Some(scrollbar_rect)) = (sid == split_id, bar) {
-                        let track_hover_style = Style::default().bg(self
-                            .theme
-                            .read()
-                            .unwrap()
-                            .scrollbar_track_hover_fg);
-                        let paragraph = Paragraph::new(Span::styled(" ", track_hover_style));
-                        frame.render_widget(
-                            paragraph,
-                            ratatui::layout::Rect::new(
-                                scrollbar_rect.x,
-                                scrollbar_rect.y + hovered_row,
-                                1,
-                                1,
-                            ),
-                        );
-                    }
-                }
-            }
-            // The explorer's grip highlights itself: it is a node in the
-            // shell's tree and paints its own column, so there is nothing to
-            // re-derive here. See `view::shell::file_explorer::grip_ink`.
-            Some(HoverTarget::FileExplorerBorder) => {}
-            // The menu's hover is the tree's: its labels and rows report
-            // enter and leave, and the description reads the hover back.
-            _ => {}
-        }
-    }
-
-    /// Render the tab drag drop zone overlay
-    fn render_tab_drop_zone(&self, frame: &mut Frame, drag_state: &super::types::TabDragState) {
-        use ratatui::style::Modifier;
-
-        let Some(ref drop_zone) = drag_state.drop_zone else {
+        // Snapshot the per-split scalars and group the appearance inputs
+        // into one `RenderStyle`, all before the `&mut self.windows` borrow
+        // below — they touch only `self.config`/`self.theme`/
+        // `self.ansi_background`, which Rust splits from `self.windows` as
+        // distinct fields.
+        let session_mode = self.session_mode || !self.software_cursor_only;
+        let show_tilde = false; // preview hides tilde markers
+        let highlight_current_column = self.config.editor.highlight_current_column;
+        let screen_width = buf.area.width;
+        let style = crate::view::ui::RenderStyle {
+            theme: &theme,
+            ansi_background: self.ansi_background.as_ref(),
+            cfg: crate::view::ui::EditorRenderConfig::new(
+                &self.config.editor,
+                self.background_fade,
+                self.software_cursor_only,
+            ),
+        };
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present");
+        let buffers = &mut __win.buffers;
+        let event_logs = &mut __win.event_logs;
+        let cell_theme_map = &mut __win.chrome_layout.cell_theme_map;
+        let Some(preview_state) = __win.overlay_preview_state.as_mut() else {
             return;
         };
-
-        let split_id = drop_zone.split_id();
-
-        // Where the target pane's content is.
-        let Some(content_rect) = self.pane_content_rect(split_id) else {
+        // Blanked: the current query has no selectable result, so leave the
+        // pane empty rather than rendering a stale match.
+        if preview_state.blanked {
+            return;
+        }
+        preview_state
+            .view_state
+            .viewport
+            .resize(inner.width, inner.height);
+        let buffer_id = preview_state.buffer_id;
+        let Some(state) = buffers.get_mut(&buffer_id) else {
             return;
         };
+        // Deref the SplitViewState once to a concrete `&mut BufferViewState`
+        // so disjoint field splits (`viewport` + `folds`) are visible to the
+        // borrow checker.
+        let buf_state = preview_state.view_state.active_state_mut();
+        let cursors = buf_state.cursors.clone();
+        let view_mode = buf_state.view_mode.clone();
+        let compose_width = buf_state.compose_width;
+        let compose_column_guides = buf_state.compose_column_guides.clone();
+        let rulers = buf_state.rulers.clone();
+        let show_line_numbers = buf_state.show_line_numbers;
+        let highlight_current_line = buf_state.highlight_current_line;
+        let viewport_ref = &mut buf_state.viewport;
+        let folds_ref = &mut buf_state.folds;
+        let event_log = event_logs.get_mut(&buffer_id);
+        let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
+            buf,
+            state,
+            &cursors,
+            viewport_ref,
+            folds_ref,
+            event_log,
+            inner,
+            style,
+            view_mode,
+            compose_width,
+            compose_column_guides,
+            buffer_id,
+            session_mode,
+            &rulers,
+            show_line_numbers,
+            highlight_current_line,
+            show_tilde,
+            highlight_current_column,
+            cell_theme_map,
+            screen_width,
+        );
+    }
 
-        // Determine the highlight area based on drop zone type
-        use super::types::TabDropZone;
-
-        let highlight_area = match drop_zone {
-            TabDropZone::TabBar(_, _) | TabDropZone::SplitCenter(_) => {
-                // For tab bar and center drops, highlight the entire split area
-                // This indicates the tab will be added to this split's tab bar
-                content_rect
-            }
-            TabDropZone::SplitLeft(_) => {
-                // Left 50% of the split (matches the actual split size created)
-                let width = (content_rect.width / 2).max(3);
-                ratatui::layout::Rect::new(
-                    content_rect.x,
-                    content_rect.y,
-                    width,
-                    content_rect.height,
-                )
-            }
-            TabDropZone::SplitRight(_) => {
-                // Right 50% of the split (matches the actual split size created)
-                let width = (content_rect.width / 2).max(3);
-                let x = content_rect.x + content_rect.width - width;
-                ratatui::layout::Rect::new(x, content_rect.y, width, content_rect.height)
-            }
-            TabDropZone::SplitTop(_) => {
-                // Top 50% of the split (matches the actual split size created)
-                let height = (content_rect.height / 2).max(2);
-                ratatui::layout::Rect::new(
-                    content_rect.x,
-                    content_rect.y,
-                    content_rect.width,
-                    height,
-                )
-            }
-            TabDropZone::SplitBottom(_) => {
-                // Bottom 50% of the split (matches the actual split size created)
-                let height = (content_rect.height / 2).max(2);
-                let y = content_rect.y + content_rect.height - height;
-                ratatui::layout::Rect::new(content_rect.x, y, content_rect.width, height)
-            }
-        };
-
-        // Draw the overlay with the drop zone color
-        // We apply a semi-transparent effect by modifying existing cells
-        let buf = frame.buffer_mut();
-        let drop_zone_bg = self.theme.read().unwrap().tab_drop_zone_bg;
-        let drop_zone_border = self.theme.read().unwrap().tab_drop_zone_border;
-
-        // Fill the highlight area with a semi-transparent overlay
-        for y in highlight_area.y..highlight_area.y + highlight_area.height {
-            for x in highlight_area.x..highlight_area.x + highlight_area.width {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    // Blend the drop zone color with the existing background
-                    // For a simple effect, we just set the background
-                    cell.set_bg(drop_zone_bg);
-
-                    // Draw border on edges
-                    let is_border = x == highlight_area.x
-                        || x == highlight_area.x + highlight_area.width - 1
-                        || y == highlight_area.y
-                        || y == highlight_area.y + highlight_area.height - 1;
-
-                    if is_border {
-                        cell.set_fg(drop_zone_border);
-                        cell.set_style(cell.style().add_modifier(Modifier::BOLD));
-                    }
-                }
-            }
+    /// The live-grep card's caption when the plugin set no title: shortcut
+    /// hints only, since the input row's prefix already names the feature.
+    /// Mirrors `updateOverlayTitle` in live_grep.ts, so a Resume-replay
+    /// overlay and a freshly-opened plugin overlay look identical;
+    /// `resume_live_grep` is left out because it matters once the overlay is
+    /// closed.
+    fn default_overlay_title(&self) -> Vec<fresh_core::api::StyledText> {
+        use crate::input::keybindings::KeyContext;
+        use fresh_core::api::{OverlayColorSpec, OverlayOptions, StyledText};
+        let keybindings = self.keybindings.read().unwrap();
+        let mut hints: Vec<(String, &str)> = Vec::new();
+        if let Some(k) =
+            keybindings.find_keybinding_for_action("cycle_live_grep_provider", KeyContext::Prompt)
+        {
+            hints.push((k, "switch grep provider"));
         }
-
-        // Draw a border indicator based on the zone type
-        match drop_zone {
-            TabDropZone::SplitLeft(_) => {
-                // Draw vertical indicator on left edge
-                for y in highlight_area.y..highlight_area.y + highlight_area.height {
-                    if let Some(cell) = buf.cell_mut((highlight_area.x, y)) {
-                        cell.set_symbol("▌");
-                        cell.set_fg(drop_zone_border);
-                    }
-                }
-            }
-            TabDropZone::SplitRight(_) => {
-                // Draw vertical indicator on right edge
-                let x = highlight_area.x + highlight_area.width - 1;
-                for y in highlight_area.y..highlight_area.y + highlight_area.height {
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_symbol("▐");
-                        cell.set_fg(drop_zone_border);
-                    }
-                }
-            }
-            TabDropZone::SplitTop(_) => {
-                // Draw horizontal indicator on top edge
-                for x in highlight_area.x..highlight_area.x + highlight_area.width {
-                    if let Some(cell) = buf.cell_mut((x, highlight_area.y)) {
-                        cell.set_symbol("▀");
-                        cell.set_fg(drop_zone_border);
-                    }
-                }
-            }
-            TabDropZone::SplitBottom(_) => {
-                // Draw horizontal indicator on bottom edge
-                let y = highlight_area.y + highlight_area.height - 1;
-                for x in highlight_area.x..highlight_area.x + highlight_area.width {
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_symbol("▄");
-                        cell.set_fg(drop_zone_border);
-                    }
-                }
-            }
-            TabDropZone::SplitCenter(_) | TabDropZone::TabBar(_, _) => {
-                // For center and tab bar, the filled background is sufficient
-            }
+        if let Some(k) =
+            keybindings.find_keybinding_for_action("live_grep_export_quickfix", KeyContext::Prompt)
+        {
+            hints.push((k, "save matches"));
         }
+        if hints.is_empty() {
+            return Vec::new();
+        }
+        let hint_style = Some(OverlayOptions {
+            fg: Some(OverlayColorSpec::ThemeKey("ui.help_key_fg".into())),
+            ..OverlayOptions::default()
+        });
+        let sep_style = Some(OverlayOptions {
+            fg: Some(OverlayColorSpec::ThemeKey("ui.popup_border_fg".into())),
+            ..OverlayOptions::default()
+        });
+        let mut segs: Vec<StyledText> = Vec::new();
+        for (i, (k, verb)) in hints.into_iter().enumerate() {
+            if i > 0 {
+                segs.push(StyledText {
+                    text: " · ".into(),
+                    style: sep_style.clone(),
+                });
+            }
+            segs.push(StyledText {
+                text: k,
+                style: hint_style.clone(),
+            });
+            segs.push(StyledText {
+                text: format!(" {verb}"),
+                style: None,
+            });
+        }
+        segs
     }
 
     /// Recompute the view_line_mappings layout without drawing.
@@ -7061,42 +5804,31 @@ impl Editor {
             .layout_panes(size)
             .expect("the shell tree is taken and returned within one call");
 
-        // Compute layout for all visible splits and update cached view_line_mappings.
-        // Take one &mut borrow on the active window's splits; destructure into
-        // (&SplitManager, &mut HashMap<...>) so both arguments come from the
-        // same `&mut self.windows` borrow.
-        let active_window_id = self.active_window;
-        let __win_l = self
-            .windows
-            .get_mut(&active_window_id)
-            .expect("active window must exist");
-        let theme = self.theme.read().unwrap().clone();
-        let view_line_mappings = __win_l
-            .buffers
-            .with_all_mut(|buffers, mgr, vs_map| {
-                SplitRenderer::compute_content_layout(
-                    &pane_rects,
-                    &*mgr,
-                    buffers,
-                    vs_map,
-                    &theme,
-                    false, // lsp_waiting — not relevant for layout
-                    self.config.editor.estimated_line_length,
-                    self.config.editor.highlight_context_bytes,
-                    self.config.editor.relative_line_numbers,
-                    self.config.editor.use_terminal_bg,
-                    self.session_mode || !self.software_cursor_only,
-                    self.software_cursor_only,
-                    self.config.editor.diagnostics_inline_text,
-                    self.config.editor.show_tilde,
-                    crate::view::bracket_highlight_overlay::BracketHighlightSettings::from_config(
-                        &self.config.editor,
-                    ),
-                )
-            })
-            .expect("active window must have a populated split layout");
-
-        self.active_layout_mut().view_line_mappings = view_line_mappings;
+        // Every text pane reconciled and laid out at the content rect the
+        // layout placed it at, and settled on its leaf with its rows and its
+        // caret — the frame's own steps, without the frame.
+        let pane_chrome = self.pane_chrome();
+        let body_state = crate::app::shell_host::BodyState {
+            lsp_waiting: false,
+            hide_cursor: self.hide_cursor(),
+        };
+        if let Some(mut prepared) = crate::app::shell_host::reconcile_body(
+            self,
+            self.active_window,
+            body_state,
+            &pane_rects,
+            size.width,
+            &pane_chrome,
+        ) {
+            crate::app::shell_host::content_body(
+                self,
+                self.active_window,
+                body_state,
+                size.width,
+                &pane_chrome,
+                &mut prepared,
+            );
+        }
     }
 
     /// The frame's geometry pass without the frame: build the shell's
@@ -7223,7 +5955,7 @@ impl Editor {
     /// styled spans inline.
     /// Compute a centered overlay rect of `width_pct` × `height_pct`
     /// of the given area. Mirrors `PopupPosition::CenteredOverlay`
-    /// math used by `render_overlay_prompt`; minimum 20×8 cells so
+    /// math the overlay card is placed by; minimum 20×8 cells so
     /// content stays legible on tiny terminals.
     pub(super) fn centered_overlay_rect(
         area: ratatui::layout::Rect,
@@ -7288,233 +6020,6 @@ impl Editor {
         };
         (Some(dock), chrome)
     }
-
-    pub(super) fn render_floating_widget_panel(
-        &mut self,
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-        slot: super::PanelSlot,
-    ) {
-        use ratatui::widgets::{Block, Borders, Clear};
-
-        // `width_pct`, `height_pct`, `title` and `closable` are gone from
-        // here: they describe the *box*, and the box is the tree's
-        // (`Editor::panel_description`). What is left is what the interior
-        // needs.
-        // **Two facts, where there were ten.** This used to lift the whole of
-        // the runtime's per-panel output — the rows, the caret, the embed
-        // rectangles, the floated overlay rows, the box arena, the open
-        // pop-over — because it painted every one of them. The tree does that
-        // now, so what is left for the painter is where the panel sits and
-        // whether it wears the focused ring.
-        let (placement, panel_focused) = match self.panel(slot) {
-            Some(fwp) => (fwp.placement, fwp.focused),
-            None => return,
-        };
-        let theme = self.theme.read().unwrap().clone();
-        // Compute the requested rect from width%/height%, then
-        // shrink the height to fit the rendered content (Bug 7).
-        // Plugins call `mount({widthPct, heightPct})` mostly because
-        // they don't know how tall their content is up front; the
-        // requested height should act as a *max*, not a fixed
-        // canvas. Without this shrink, the new-session form's 10
-        // content rows leave ~20 blank rows under "Tab next  S-Tab
-        // prev  Enter submit  Esc cancel" inside a 90%-of-screen
-        // panel.
-        //
-        // Entries include every row the spec produces — including
-        // WindowEmbed reservations (each `windowEmbed({rows: N})`
-        // contributes N blank entries plus an EmbedRect that paints
-        // over them at draw time). So `entries.len() + 2` (top
-        // border + content + bottom border) is the natural fit.
-        // A left-dock panel fills its carved column (`area` is already
-        // the dock rect) at full height and does NOT dim the chrome —
-        // it's a persistent, non-modal companion to the editor, not a
-        // modal overlay. The centered placement keeps the historical
-        // fit-to-content + background-dim behaviour.
-        let is_dock = matches!(placement, super::PanelPlacement::LeftDock { .. });
-        // Whether the tree describes this panel's interior. One question, one
-        // answer, asked where the description was built — `panel_description`
-        // put the same interior in the frame.
-        // **The dock is no longer an exception.** It was excluded because its
-        // content was the one panel the tree did not describe; now that
-        // `view::shell::dock` carries the same interior the floating panel
-        // does, the gate is the same question for both.
-        let described = self.panel_is_described(slot);
-        // **The box is the tree's.** `view::shell::panel` describes it and
-        // layout places it; this reads the answer. What was here was the
-        // placement arithmetic — a percentage of the area for the width, the
-        // content row count plus borders for the height, a clamp so an
-        // anchored popup stays on screen — computed by the painter and then
-        // recomputed, in part, by a mouse handler.
-        //
-        // The dock keeps its own: its placement is the carved column it was
-        // handed, and its frame is one divider rather than a box (C.5b).
-        let overlay_rect = match is_dock {
-            true => area,
-            false => match self.panel_rect(&crate::view::shell::panel::key()) {
-                Some(r) => r,
-                // The description is built and laid out earlier in this same
-                // frame, so this is unreachable while a panel is mounted. No
-                // fallback arithmetic: a second derivation kept "just in case"
-                // is the thing being removed, and it would be the copy nobody
-                // notices going stale.
-                None => return,
-            },
-        };
-
-        // The web paints no chrome cells; nothing below is for it.
-        let draw = !self.suppress_chrome_cells;
-        if !draw {
-            return;
-        }
-        // Only the centered modal dims the background; the dock and the
-        // anchored context-menu popup paint over the editor without it.
-        //
-        // Still here rather than a `Scrim` on the panel's layer, and the
-        // reason is paint order: the dock's own panel is painted *after* the
-        // tree's overlay band, so a scrim declared in the tree would be
-        // overpainted by the dock and the frame would read half-dimmed. It
-        // moves when the dock's content does.
-        if draw && matches!(placement, super::PanelPlacement::Centered) {
-            crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
-        }
-        // **The dock's frame only.** It draws ONLY a right border (a thin
-        // draggable divider) — no top/left/bottom — so it reclaims those
-        // rows/cols for content and reads as a panel attached to the left
-        // edge. A focused dock lights that divider with the accent
-        // `theme.cursor`, the same colour the file explorer's focused border
-        // wears, so exactly one chrome region wears it at a time.
-        //
-        // The floating panel's ring, its ground and its title are the tree's
-        // now (`view::shell::panel`), painted in the overlay band before this
-        // runs. What is left here is the dock, and the content rectangle both
-        // of them need.
-        let dock_border_fg = match is_dock && panel_focused {
-            true => theme.cursor,
-            false => theme.popup_border_fg,
-        };
-        let inner = match is_dock {
-            false => match self.panel_rect(&crate::view::shell::panel::body_key()) {
-                Some(r) => r,
-                None => return,
-            },
-            true => {
-                let block = Block::default()
-                    .borders(Borders::RIGHT)
-                    .border_style(ratatui::style::Style::default().fg(dock_border_fg));
-                // **A described dock's ground is already on the screen.** Its
-                // content is the tree's now (C.5b) and the tree's *background*
-                // band folds before this painter runs — so clearing here, or
-                // filling with the panel ground, wipes exactly what was just
-                // drawn, and the `described` early-out below means nothing
-                // paints it again. That is a blank dock: the column opens, the
-                // display list carries every row of it, and the screen shows
-                // nothing.
-                //
-                // The right border is still this painter's, because it is the
-                // draggable divider's *appearance* and the tree carries only
-                // its hit target. Drawn without a fill, over content that is
-                // already correct.
-                let block = match described {
-                    true => block,
-                    false => block.style(ratatui::style::Style::default().bg(theme.suggestion_bg)),
-                };
-                let inner = block.inner(overlay_rect);
-                // **The divider goes with the content.** For a described dock
-                // it is `dock::grip_ink`'s, drawn in the background band; this
-                // painter runs after the overlay band folds, so the border it
-                // used to draw here came back through the middle of any modal
-                // open over the dock. What is left for the described case is
-                // the rectangle, which the callers below still need.
-                if draw && !described {
-                    frame.render_widget(Clear, overlay_rect);
-                    frame.render_widget(block, overlay_rect);
-                }
-                inner
-            }
-        };
-        if inner.width == 0 || inner.height == 0 {
-            return;
-        }
-
-        // **Described panels stop here.** Everything below paints the
-        // interior — the rows, the scrollbars, the floated overlays, the open
-        // dropdown's pop-over — and for a described panel the tree already
-        // did, in the overlay band. Painting it twice would be the duplicate
-        // this migration removes, arriving by the back door.
-        if described {
-            // **The caret's cell is layout's answer.** The runtime reported a
-            // row and a byte and this turned it into a screen cell with
-            // `inner.x + byte_to_screen_col(...)` — measuring text the row had
-            // already measured to paint it. The description carries a
-            // zero-width marker at the caret's byte, so the cell is where the
-            // glyphs put it. A focused panel with no field still parks the
-            // caret in its corner, for the same reason as below.
-            let caret_slot = match is_dock {
-                true => crate::view::shell::widgets::Slot::Dock,
-                false => crate::view::shell::widgets::Slot::Floating,
-            };
-            match self.shell_cell(&crate::view::shell::widgets::caret_key(caret_slot)) {
-                Some(at) => frame.set_cursor_position(at),
-                None if panel_focused => frame.set_cursor_position((
-                    inner.x + inner.width.saturating_sub(1),
-                    inner.y + inner.height.saturating_sub(1),
-                )),
-                None => {}
-            }
-        }
-    }
-
-    fn resolve_overlay_style(
-        opts: &fresh_core::api::OverlayOptions,
-        theme: &crate::view::theme::Theme,
-    ) -> ratatui::style::Style {
-        use crate::view::theme::named_color_from_str;
-        use fresh_core::api::OverlayColorSpec;
-        use ratatui::style::{Color, Modifier, Style};
-
-        let resolve = |spec: &OverlayColorSpec| -> Option<Color> {
-            match spec {
-                OverlayColorSpec::Rgb(r, g, b) => Some(Color::Rgb(*r, *g, *b)),
-                OverlayColorSpec::ThemeKey(k) => {
-                    named_color_from_str(k).or_else(|| theme.resolve_theme_key(k))
-                }
-            }
-        };
-
-        let mut style = Style::default();
-        if let Some(ref fg) = opts.fg {
-            if let Some(c) = resolve(fg) {
-                style = style.fg(c);
-            }
-        }
-        if let Some(ref bg) = opts.bg {
-            if let Some(c) = resolve(bg) {
-                style = style.bg(c);
-            }
-        }
-        let mut m = Modifier::empty();
-        if opts.bold {
-            m |= Modifier::BOLD;
-        }
-        if opts.italic {
-            m |= Modifier::ITALIC;
-        }
-        if opts.underline {
-            m |= Modifier::UNDERLINED;
-        }
-        if opts.strikethrough {
-            m |= Modifier::CROSSED_OUT;
-        }
-        if opts.reversed {
-            m |= Modifier::REVERSED;
-        }
-        if !m.is_empty() {
-            style = style.add_modifier(m);
-        }
-        style
-    }
 }
 
 /// Building the floating plugin panel's frame from live state.
@@ -7541,16 +6046,6 @@ impl Editor {
         crate::view::shell::rect_of(ui, key, ratatui::layout::Rect::new(0, 0, f.width, f.height))
     }
 
-    /// The cell a keyed element of the shell tree starts at, zero-size
-    /// included. See [`crate::view::shell::cell_of`] — the caret's marker is
-    /// zero-width by construction, so [`Self::panel_rect`] answers `None` for
-    /// every one of them.
-    pub(crate) fn shell_cell(&self, key: &fresh_ui::Key) -> Option<(u16, u16)> {
-        let ui = self.shell_ui.as_ref()?;
-        let f = self.active_chrome().last_frame;
-        crate::view::shell::cell_of(ui, key, ratatui::layout::Rect::new(0, 0, f.width, f.height))
-    }
-
     /// The mounted panel a pane is showing, if it is showing one.
     ///
     /// **A pane is one buffer, and a buffer names its panel.** That is the
@@ -7566,18 +6061,6 @@ impl Editor {
             .panels_for_buffer(buffer)
             .into_iter()
             .next()
-    }
-
-    /// Whether the tree describes this panel's interior, without building it.
-    ///
-    /// [`Self::panel_interior`] clones the spec and the whole instance-state
-    /// map, which is the right price once a frame and the wrong one on every
-    /// motion event — and the hover path asks this question per event. Same
-    /// answer, no copies.
-    pub(crate) fn panel_is_described(&self, slot: crate::app::PanelSlot) -> bool {
-        self.panel(slot)
-            .and_then(|p| self.widget_registry.get(&p.panel_key))
-            .is_some()
     }
 
     /// The described mounted panel each visible pane is showing.
@@ -7600,26 +6083,74 @@ impl Editor {
         out
     }
 
-    /// The cell the *active* pane's described panel put its caret in.
-    ///
-    /// Only the active pane's, and that is the whole subtlety: a panel reports
-    /// a focused field from its own plugin state, which does not stop being
-    /// true because the keyboard went somewhere else. The search panel in the
-    /// pane below goes on saying its query field is focused while you type in
-    /// the buffer above it, so asking any pane would park the hardware cursor
-    /// in a panel nobody is editing. `caret_key` is keyed per pane so the
-    /// question can be asked of one.
-    fn described_pane_caret(&self) -> Option<(u16, u16)> {
-        // The effective split: inside a buffer group the window's active
-        // split is the group's host leaf, and the pane with the keyboard is
-        // the inner one. See `shell_frame`'s `active_pane`.
-        let active = self.effective_active_split();
-        if !self.described_panes().contains(&active) {
-            return None;
-        }
-        let key =
-            crate::view::shell::widgets::caret_key(crate::view::shell::widgets::Slot::Pane(active));
-        self.shell_cell(&key)
+    /// Each pane's tab strip, as content — the active window's
+    /// (`Window::pane_strips`), with the frame's hover.
+    pub(crate) fn pane_strips(
+        &self,
+        chrome: &std::collections::HashMap<
+            crate::model::event::LeafId,
+            crate::view::shell::splits::PaneChrome,
+        >,
+    ) -> std::collections::HashMap<crate::model::event::LeafId, crate::view::shell::tabs::Strip>
+    {
+        let hover = match &self.shell_hover {
+            Some(crate::app::types::HoverTarget::TabName(t, pane)) => Some((*t, *pane, false)),
+            Some(crate::app::types::HoverTarget::TabCloseButton(t, pane)) => {
+                Some((*t, *pane, true))
+            }
+            _ => None,
+        };
+        self.active_window().pane_strips(chrome, hover)
+    }
+
+    /// Each visible pane's leaf handle, for the frame's description — the
+    /// active window's (`Window::pane_hosts`), with the panes whose content
+    /// is not the buffer's this frame, a described plugin panel's or a
+    /// buffer group's grid, named so they keep no rows.
+    pub(crate) fn pane_hosts(
+        &mut self,
+        interiors: &std::collections::HashMap<
+            crate::model::event::LeafId,
+            crate::view::shell::panel::Interior,
+        >,
+        groups: &std::collections::HashMap<
+            crate::model::event::LeafId,
+            crate::view::split::SplitNode,
+        >,
+    ) -> std::collections::HashMap<
+        crate::model::event::LeafId,
+        crate::view::shell::buffer_host::PaneHandle,
+    > {
+        let rowless: std::collections::HashSet<_> =
+            interiors.keys().chain(groups.keys()).copied().collect();
+        self.active_window_mut().pane_hosts(&rowless)
+    }
+
+    /// Each visible pane's keyboard context when it is not the editor's
+    /// plain one: the active pane's is `Terminal` while its live terminal
+    /// takes the keyboard (the window's mode, which the leaf now states),
+    /// and a pane showing a composite buffer resolves in the composite's
+    /// section.
+    fn pane_contexts(
+        &self,
+        active: crate::model::event::LeafId,
+    ) -> std::collections::HashMap<crate::model::event::LeafId, crate::input::keybindings::KeyContext>
+    {
+        use crate::input::keybindings::KeyContext;
+        let win = self.active_window();
+        let terminal = win.key_context == KeyContext::Terminal;
+        self.window_panes()
+            .into_iter()
+            .filter_map(|(pane, buffer)| {
+                if pane == active && terminal {
+                    Some((pane, KeyContext::Terminal))
+                } else if win.is_composite_buffer(buffer) {
+                    Some((pane, KeyContext::CompositeBuffer))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// The panes the shell tree describes rather than paints.
@@ -7643,15 +6174,58 @@ impl Editor {
     /// does not walk into them because a group's layout lives in a side map.
     /// Both halves of C.5 need the same list, so it is stated once.
     pub(crate) fn window_panes(&self) -> Vec<(crate::model::event::LeafId, fresh_core::BufferId)> {
-        let win = self.active_window();
-        let Some((mgr, _)) = win.buffers.splits() else {
-            return Vec::new();
+        self.active_window().panes_with_buffers()
+    }
+
+    /// An embedded window's grid, described as the frame describes the
+    /// active window's — for the tree an embed lays out (`shell_host::paint_embed`).
+    ///
+    /// Without its bars: they are noise in a small box, and the frame's own
+    /// chrome is the one that answers. Without the plugin panels the editor
+    /// would mount in it, and with no keyboard context: nothing of it is
+    /// interactive through the embed. Its panes are leaves on that window's
+    /// own handles, kept for as long as the panes exist.
+    pub(crate) fn embed_grid(
+        &mut self,
+        window: fresh_core::WindowId,
+    ) -> Option<std::rc::Rc<crate::view::shell::splits::Splits>> {
+        use crate::view::shell::splits::{PaneChrome, PaneControls, Splits};
+        let win = self.windows.get_mut(&window)?;
+        let (root, maximized, active, several, is_maximized) = {
+            let (mgr, _) = win.buffers.splits()?;
+            (
+                mgr.root().clone(),
+                mgr.maximized_split().map(crate::model::event::LeafId),
+                mgr.active_split(),
+                mgr.visible_leaves().len() > 1,
+                mgr.is_maximized(),
+            )
         };
-        let mut out = mgr.visible_leaves();
-        for g in win.pane_groups().values() {
-            out.extend(g.visible_leaves());
-        }
-        out
+        let chrome = win.pane_chrome(PaneChrome {
+            tabs: win.tab_bar_visible,
+            vscroll: false,
+            hscroll: false,
+        });
+        let groups = win.pane_groups();
+        let strips = win.pane_strips(&chrome, None);
+        let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
+        let hosts = win.pane_hosts(&rowless);
+        Some(std::rc::Rc::new(Splits {
+            root,
+            maximized,
+            active: Some(active),
+            chrome,
+            controls: PaneControls {
+                maximize: several || is_maximized,
+                close: several && !is_maximized,
+            },
+            groups,
+            interiors: Default::default(),
+            strips,
+            hover: None,
+            drop_zone: None,
+            hosts,
+        }))
     }
 
     /// The `Interior` for the panel a pane's buffer holds, when it is one the

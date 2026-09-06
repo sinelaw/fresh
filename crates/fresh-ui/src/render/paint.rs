@@ -11,7 +11,7 @@
 use crate::desc::{resolve, Scrim};
 use crate::render::geom::{Rect, Size};
 use crate::render::object::{Geom, RenderId};
-use crate::render::spec::{Draw, DrawList, Item, LayoutSpec, ThemeKey};
+use crate::render::spec::{CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};
 use crate::schedule::Ui;
 
 impl<M: 'static> Ui<M> {
@@ -43,6 +43,18 @@ impl<M: 'static> Ui<M> {
         let Some(scrim) = self.layer_geom(lr).map(|g| g.scrim) else {
             return;
         };
+        // **A cursor under a layer is not on screen.** The terminal draws its
+        // one cursor on top of every cell, so a caret an in-flow surface
+        // placed — a text pane's, a field's in the tree below — would blink
+        // through whatever a layer paints over it. The cursor placed so far
+        // is set aside while the layer paints; afterwards the layer's own
+        // cursor stands if it placed one, and otherwise the one set aside
+        // comes back unless an item the layer painted — a scrim, a box, a
+        // run — lies over its cell. A layer that paints nothing there (a
+        // keyboard layer with no surface, a popup beside the caret) leaves
+        // it alone.
+        let under: Option<CursorSpec> = spec.cursor.take();
+        let painted_from = spec.items.len();
         if let Some(kind) = scrim {
             if kind == Scrim::Opaque {
                 // Everything under an opaque full-frame scrim is invisible;
@@ -63,6 +75,13 @@ impl<M: 'static> Ui<M> {
             });
         }
         self.paint_render(lr, spec);
+        if spec.cursor.is_none() {
+            spec.cursor = under.filter(|c| {
+                !spec.items[painted_from..]
+                    .iter()
+                    .any(|i| i.rect.intersect(i.clip).contains(c.pos))
+            });
+        }
     }
 
     fn paint_render(&mut self, r: RenderId, spec: &mut LayoutSpec) {
@@ -93,13 +112,23 @@ impl<M: 'static> Ui<M> {
         // A region that names its own appearance is a region that paints: the
         // backend decides what the name looks like. Emitted before the node's
         // own content, so anything drawn inside it wins.
-        let names_itself = self
+        let (names_itself, wash) = self
             .arena
             .get(element)
-            .map(|e| e.desc.theme.is_some() || resolve(&e.desc).theme.is_some())
-            .unwrap_or(false);
+            .map(|e| {
+                let d = resolve(&e.desc);
+                (
+                    e.desc.theme.is_some() || d.theme.is_some(),
+                    matches!(&d.desc, crate::desc::Desc::Box(b) if b.wash),
+                )
+            })
+            .unwrap_or((false, false));
         if names_itself && !rect.is_empty() {
-            list.push(Draw::Fill, Geom { rect, clip });
+            let ground = match wash {
+                true => Draw::Wash,
+                false => Draw::Fill,
+            };
+            list.push(ground, Geom { rect, clip });
         }
 
         if let Some(obj) = self.render.get(r).and_then(|n| n.obj.as_ref()) {

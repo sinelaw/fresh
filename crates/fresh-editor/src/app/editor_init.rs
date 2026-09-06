@@ -656,6 +656,7 @@ impl Editor {
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
+            frame_requested: false,
             last_rendered_frame: None,
             #[cfg(feature = "plugins")]
             plugin_command_backlog: std::collections::VecDeque::new(),
@@ -670,7 +671,6 @@ impl Editor {
             async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
-            fold_provenance: Vec::new(),
             shell_frame_status_bar: None,
             shell_hover: None,
             shell_store: shell_store.clone(),
@@ -682,7 +682,9 @@ impl Editor {
                 ui.set_store(shell_store);
                 ui
             }),
-            shell_description_stale: false,
+            // Never laid out: the first input lays the tree out from the
+            // description before it is routed (`lay_out_shell_if_stale`).
+            shell_description_stale: true,
             shell_pointer_event: None,
             shell_key_event: None,
             page_anchors: HashMap::new(),

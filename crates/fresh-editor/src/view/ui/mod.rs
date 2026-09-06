@@ -54,5 +54,3 @@ pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]
 pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
-#[cfg(feature = "runtime")]
-pub use tabs::{TabHit, TabHitArea, TabLayout, TabsRenderer};

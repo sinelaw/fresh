@@ -289,6 +289,7 @@ impl<M: 'static> Ui<M> {
             local: Point::ZERO,
             // A focus change is not a pointer event; there is no cell.
             text_byte: None,
+            captured: false,
             button: MouseButton::Left,
             mods: key.map(|k| k.mods).unwrap_or(Mods::NONE),
             clicks: 1,
@@ -733,12 +734,14 @@ impl<M: 'static> Ui<M> {
     /// last settled.
     ///
     /// **Change-detected against the previous mark, never against focus.**
-    /// A scope the tree has never settled records its mark and moves
-    /// nothing: a mark that was already there when the scope came into view
-    /// is not a decision made since. A mark that moved onto an element lands
-    /// there. A mark that went away rests focus on the scope's own element —
-    /// what an empty scope already does below — so "nothing marked" is a
-    /// state the tree can hold rather than a disagreement it carries.
+    /// A scope the tree has never settled takes its mark as the entry
+    /// landing it never got — a confinement that appears around a focus
+    /// already inside it puts that focus where the description says — and
+    /// one that marks nothing leaves focus where it found it. After that a
+    /// mark that moved onto an element lands there, and a mark that went
+    /// away rests focus on the scope's own element — what an empty scope
+    /// already does below — so "nothing marked" is a state the tree can hold
+    /// rather than a disagreement it carries.
     ///
     /// The scope is the active confinement, or the whole tree when nothing
     /// confines focus — the root is a scope like any other, and a mark that
@@ -918,7 +921,7 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    fn is_within(&self, mut id: ElementId, root: ElementId) -> bool {
+    pub(crate) fn is_within(&self, mut id: ElementId, root: ElementId) -> bool {
         loop {
             if id == root {
                 return true;
@@ -944,9 +947,6 @@ impl<M: 'static> Ui<M> {
         };
         match self.propagate_key(&chain, k, out) {
             Flow::Stop => return true,
-            // Observed: the tree resolves nothing more from this key, and it
-            // is the host's to act on. See `Flow::Observe`.
-            Flow::Observe => return false,
             Flow::Continue => {}
         }
         if let Some(intent) = self.resolve_intent(&chain, k) {

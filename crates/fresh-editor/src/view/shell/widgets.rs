@@ -70,7 +70,7 @@
 
 use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::TextPropertyEntry;
-use fresh_ui::{col, row, text_runs, Node, Run, Sizing};
+use fresh_ui::{col, row, text, text_runs, Node, Run, Sizing};
 
 use crate::app::shell_host::shell_theme::{pair, Attrs, Ink, Paint};
 
@@ -1968,6 +1968,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 let (doc, geom) = (doc.clone(), geom.clone());
                 let widget_key = k.unwrap_or("").to_string();
                 let (slot, surface) = (cx.slot, cx.surface.clone());
+                let places = places_cursor(cx);
                 let block_caret = *block_caret;
                 move |i| {
                     let (mut e, caret) = fmt::text_area_row(&doc, &geom, i);
@@ -2002,7 +2003,9 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         };
                     match mine.is_empty() && caret.is_none() {
                         true => entry_row(&e, &surface),
-                        false => row_pieces(&e, slot, &surface, &mine, caret, Fill::ToRowEnd),
+                        false => {
+                            row_pieces(&e, slot, &surface, &mine, caret, Fill::ToRowEnd, places)
+                        }
                     }
                 }
             })
@@ -2180,9 +2183,15 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     // inline overlay on the row.
                     match mine.is_empty() {
                         true => entry_row(&rows_src[i], &surface),
-                        false => {
-                            row_pieces(&rows_src[i], slot, &surface, &mine, None, Fill::ToRowEnd)
-                        }
+                        false => row_pieces(
+                            &rows_src[i],
+                            slot,
+                            &surface,
+                            &mine,
+                            None,
+                            Fill::ToRowEnd,
+                            false,
+                        ),
                     }
                 }
             })
@@ -2428,6 +2437,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // cursor into.
             let field = {
                 let (slot, surface) = (cx.slot, cx.surface.clone());
+                let places = places_cursor(cx);
                 windowed(
                     state_key(&key.map(|k| k.to_string())),
                     st.scroll,
@@ -2448,6 +2458,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                 &hits,
                                 line.caret,
                                 Fill::ToRowEnd,
+                                places,
                             ),
                         };
                         (node, next)
@@ -3342,7 +3353,15 @@ fn entry_row_hit_boxed(
     surface: &Ink,
     hit: crate::widgets::WidgetEvent,
 ) -> Node<UiMsg> {
-    row_pieces(entry, slot, surface, &[(range, hit)], None, Fill::ToText)
+    row_pieces(
+        entry,
+        slot,
+        surface,
+        &[(range, hit)],
+        None,
+        Fill::ToText,
+        false,
+    )
 }
 
 /// One styled row carrying several hits, each over the bytes it names.
@@ -3358,11 +3377,18 @@ pub fn entry_row_hits(
     surface: &Ink,
     hits: &[((usize, usize), crate::widgets::WidgetEvent)],
 ) -> Node<UiMsg> {
-    row_pieces(entry, slot, surface, hits, None, Fill::ToRowEnd)
+    row_pieces(entry, slot, surface, hits, None, Fill::ToRowEnd, false)
 }
 
-/// The key of the caret's cell, for the host that has to place a hardware
-/// cursor there.
+/// Whether a surface's caret marker places the hardware cursor: the surface
+/// owns the keyboard, and it is one whose field takes a terminal caret — a
+/// pane's panel, the dock's, the floating panel's. The settings surfaces and
+/// the prompt's toolbar draw their carets as a reversed cell instead.
+fn places_cursor(cx: &Ctx<'_>) -> bool {
+    cx.keyboard && matches!(cx.slot, Slot::Pane(_) | Slot::Dock | Slot::Floating)
+}
+
+/// The key of the caret's cell, for the readers that anchor to it.
 ///
 /// **The caret is a node, because its cell is layout's answer.** The runtime
 /// reported a row and a byte offset and the painter turned that into a screen
@@ -3420,6 +3446,7 @@ fn row_pieces(
     hits: &[((usize, usize), crate::widgets::WidgetEvent)],
     caret: Option<usize>,
     fill: Fill,
+    places_cursor: bool,
 ) -> Node<UiMsg> {
     let mut cuts: Vec<usize> = Vec::with_capacity(hits.len() * 2 + 1);
     for ((a, b), _) in hits {
@@ -3435,11 +3462,20 @@ fn row_pieces(
         hits.iter()
             .position(|((a, b), _)| at.start >= *a && at.end <= *b && b > a)
     };
+    // The caret's marker: an empty run at the caret's byte, keyed for the
+    // readers that anchor to it. When this surface owns the keyboard the
+    // run carries the caret too (`cursor_byte(0)` of an empty run is its
+    // own origin), so the hardware cursor is the display list's and no host
+    // reads the marker's cell back to place one.
     let marker = || {
-        row()
+        let m = text("")
             .key(caret_key(slot))
             .w(Sizing::Cells(0))
-            .h(Sizing::Cells(1))
+            .h(Sizing::Cells(1));
+        match places_cursor {
+            true => m.cursor_byte(0),
+            false => m,
+        }
     };
     let mut kids: Vec<Node<UiMsg>> = Vec::new();
     let mut group: Vec<Run> = Vec::new();
@@ -6059,6 +6095,7 @@ mod tests {
                     offset,
                     content,
                     window,
+                    ..
                 } => Some((offset, content, window)),
                 _ => None,
             })
@@ -6299,6 +6336,7 @@ mod tests {
                     offset,
                     content,
                     window,
+                    ..
                 } => Some((offset, content, window)),
                 _ => None,
             })

@@ -12,3 +12,8 @@
 .tree-line{position:absolute;white-space:pre;color:inherit}
 .tree-thumb{position:absolute;left:0;right:0;border-radius:3px}
 .tree-caret{position:absolute;pointer-events:none;border-left:2px solid var(--accent, #fff);opacity:.9}
+/* A mark on a scrollbar's track: half the cell's width in the mark's colour
+   over the thumb or the track (the TUI's half-block glyph); a full mark takes
+   the cell. */
+.tree-mark{position:absolute;left:0;width:50%}
+.tree-mark-full{position:absolute;left:0;right:0}

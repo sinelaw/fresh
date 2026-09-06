@@ -164,20 +164,43 @@ pub fn header_key(index: usize) -> Key {
     Key::Pair("sidebar_header".into(), index as u64)
 }
 
-/// The header's keyboard, while a collapsed section owns it.
+/// The explorer section's header — the node its keyboard layer names as
+/// its scope while the explorer holds the keyboard, collapsed or not, and
+/// the key `frame::key_context_of` reads `KeyContext::FileExplorer` from.
+pub fn explorer_header_key(index: usize) -> Key {
+    Key::Pair("explorer_header".into(), index as u64)
+}
+
+/// The key of the header that holds focus for a section with the keyboard:
+/// the explorer's own, or a collapsed section's.
+fn scope_key(sec: &Section, index: usize) -> Key {
+    match sec.kind {
+        SectionKind::Explorer(_) => explorer_header_key(index),
+        _ => header_key(index),
+    }
+}
+
+/// Whether a section's header is where the keyboard rests: the explorer
+/// while it is focused, or any focused section while it is collapsed. A
+/// focused plugin section that is open rests on its interior instead.
+pub fn header_holds_keyboard(sec: &Section) -> bool {
+    sec.focused && (sec.collapsed || matches!(sec.kind, SectionKind::Explorer(_)))
+}
+
+/// The header's keyboard, while its section owns it.
 ///
 /// The same shape as [`super::panel::keys_layer`]: a `Modality::Focus` layer
 /// that paints nothing, takes no pointer, and confines traversal to the
-/// header without swallowing what the header declines — so every key but
-/// Enter and Space continues to the editor's own resolution, where the
-/// explorer's `KeyContext` still answers.
-pub fn keys_layer(index: usize) -> Node<UiMsg> {
+/// header. What the header does not act on itself — Enter and Space re-open
+/// a collapsed section — it hands to the editor's own resolution as
+/// [`UiFact::SidebarKey`], where the chain names the explorer's context.
+pub fn keys_layer(sec: &Section, index: usize) -> Node<UiMsg> {
     layer()
         .anchor(Anchor::Screen(Align::Start))
         .place(Place::Fill)
         .pointer_mode(PointerMode::Ignore)
         .modality(Modality::Focus)
-        .scope_at(header_key(index))
+        .scope_at(scope_key(sec, index))
 }
 
 fn hover_msg(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
@@ -470,25 +493,28 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
         .h(Sizing::Cells(1))
         .pointer_mode(PointerMode::Transparent)
         .children(layers);
-    if !(sec.focused && sec.collapsed) {
+    if !header_holds_keyboard(sec) {
         return header;
     }
-    // The header *is* the section while it is collapsed, so it is what holds
-    // the keyboard: Enter and Space re-open it, and everything else is
-    // declined so the host's own resolution still sees it.
+    // The header is what holds the keyboard for its section: Enter and
+    // Space re-open a collapsed one, and every other key is the editor's to
+    // resolve in the section's context — claimed as a fact rather than left
+    // for a pipeline behind the tree to pick up (design §3.7.5).
+    let collapsed = sec.collapsed;
     focusable(header)
         .h(Sizing::Cells(1))
-        .key(header_key(i))
+        .key(scope_key(sec, i))
+        .skip_traversal()
         .autofocus()
         .on_key(move |e: &Event| {
-            let toggles = e
-                .key
-                .is_some_and(|k| matches!(k.code, KeyCode::Enter | KeyCode::Char(' ')));
-            if !toggles {
-                return None;
-            }
+            let toggles = collapsed
+                && e.key
+                    .is_some_and(|k| matches!(k.code, KeyCode::Enter | KeyCode::Char(' ')));
             e.stop();
-            Some(UiMsg::Ui(UiFact::SectionToggle { index: i }))
+            Some(UiMsg::Ui(match toggles {
+                true => UiFact::SectionToggle { index: i },
+                false => UiFact::SidebarKey,
+            }))
         })
 }
 
@@ -992,8 +1018,8 @@ mod tests {
     }
 
     /// Enter or Space on a collapsed section that has the keyboard re-opens
-    /// it, and any other key is declined so the host's own resolution still
-    /// sees it.
+    /// it, and any other key is the editor's to resolve — handed over as a
+    /// fact, claimed, so no pipeline behind the tree has to catch it.
     #[test]
     fn enter_on_a_focused_collapsed_header_toggles_and_other_keys_pass() {
         let mut s = two(20);
@@ -1012,14 +1038,44 @@ mod tests {
         let got = ui.dispatch(key(KeyCode::Char(' ')));
         assert_eq!(facts(got), vec![UiFact::SectionToggle { index: 0 }]);
         let got = ui.dispatch(key(KeyCode::Esc));
-        assert!(!got.claimed, "declined, so the explorer's context answers");
-        assert!(facts(got).is_empty());
+        assert!(
+            got.claimed,
+            "claimed as the editor's, in the explorer's context"
+        );
+        assert_eq!(facts(got), vec![UiFact::SidebarKey]);
+    }
 
-        // Not collapsed: no layer, no header keys — the rows have them.
+    /// **The explorer holds focus while it has the keyboard.** Open or
+    /// collapsed, its header is the focus holder its keys layer names, every
+    /// key reaching it is the editor's as `SidebarKey` — Tab included, which
+    /// the explorer binds — and the chain names the explorer's context.
+    #[test]
+    fn a_focused_open_explorer_holds_focus_on_its_header_and_hands_keys_on() {
         let mut s = two(20);
         s.sections[0].focused = true;
         let mut ui = laid_out(s, 20, 8);
-        let got = ui.dispatch(key(KeyCode::Enter));
-        assert!(facts(got).is_empty());
+        let header = ui
+            .find_by_key(&explorer_header_key(0))
+            .expect("the explorer's header is in the tree");
+        assert_eq!(ui.focused(), Some(header), "the header holds focus");
+        let context = ui
+            .path_to(header)
+            .into_iter()
+            .rev()
+            .filter_map(|e| ui.key_of(e))
+            .find_map(|k| crate::view::shell::frame::key_context_of(&k));
+        assert_eq!(
+            context,
+            Some(crate::input::keybindings::KeyContext::FileExplorer),
+            "the chain names the explorer's context"
+        );
+        for code in [KeyCode::Down, KeyCode::Tab, KeyCode::Enter, KeyCode::Esc] {
+            let got = ui.dispatch(Input::Key(KeyPress {
+                code,
+                mods: Mods::NONE,
+            }));
+            assert!(got.claimed, "{code:?} is claimed");
+            assert_eq!(facts(got), vec![UiFact::SidebarKey], "{code:?}");
+        }
     }
 }

@@ -21,13 +21,6 @@ pub enum Flow {
     /// The handler claimed the event: propagation ends, the tree resolves
     /// nothing further, and a host behind the tree does not act on it.
     Stop,
-    /// **Observed, not claimed.** The handler acted, propagation ends and
-    /// the tree resolves no intent from the key — but the key is still the
-    /// host's, and is reported unclaimed so a pipeline behind the tree acts
-    /// on it. The disposition a surface whose keys are bound *outside* the
-    /// tree needs: without it, a subtree could only swallow every key
-    /// (`Stop`) or let the tree's own traversal have it (`Continue`).
-    Observe,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -300,6 +293,13 @@ pub struct Event {
     /// deliberately, so a press and the caret it moves cannot disagree about
     /// where the wrap broke.
     pub text_byte: Option<usize>,
+    /// The pointer came here by capture: an element took it on a press
+    /// (`capture_pointer`) and this move or release was routed to that
+    /// element rather than by what is under the pointer. A listener that
+    /// treats a move as a drag reads this, so a bare motion across it is
+    /// not one — a fact returned for every hover would ask for a frame per
+    /// pointer sample.
+    pub captured: bool,
     pub key: Option<KeyPress>,
     /// Which press in a run produced this, as the host reported it: `1` for a
     /// single, `2` for a double, `3` for a triple. `1` for everything that is
@@ -330,6 +330,7 @@ impl Event {
             pos: Point::ZERO,
             local: Point::ZERO,
             text_byte: None,
+            captured: false,
             button: MouseButton::Left,
             mods: Mods::NONE,
             delta: 0,
@@ -347,14 +348,6 @@ impl Event {
     /// Claim the event: propagation stops after this listener.
     pub fn stop(&self) {
         self.ctl.flow.set(Flow::Stop);
-    }
-
-    /// End propagation and the tree's own resolution of this key without
-    /// claiming it — see [`Flow::Observe`]. A stop already recorded stands.
-    pub fn observe(&self) {
-        if self.ctl.flow.get() != Flow::Stop {
-            self.ctl.flow.set(Flow::Observe);
-        }
     }
 
     /// Suppress whatever the framework would otherwise do. Orthogonal to

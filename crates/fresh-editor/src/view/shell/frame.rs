@@ -1,29 +1,33 @@
 //! The editor frame as a `fresh-ui` description.
 //!
-//! Every region is a `Host` leaf: the shell owns the *layout*, the existing
-//! painters keep owning the *content*. Regions are then replaced by native
-//! descriptions one at a time (stages S2–S5 of the migration doc).
+//! Every region is native: the tree owns the layout and the content of the
+//! menu bar, the explorer, the status bar, the prompt row, the dock and the
+//! split grid alike. The cells the editor still paints itself are inside
+//! host leaves — a pane's content, an embedded window — resolved by id
+//! ([`HostTarget`]); a region's name is a key on its node ([`region_key`]),
+//! which is how its rectangle is found.
 //!
 //! The rectangles this produces are asserted equal to the ones
 //! `Editor::render`'s ratatui `Layout` calls produce, over a sweep of sizes and
 //! visibility combinations, in `tests/ui_shell_frame_parity.rs`.
 
-use fresh_ui::{col, host, row, HostId, Node, Sizing};
+use fresh_ui::{col, row, HostId, Node, Sizing};
 
 use super::msg::UiMsg;
 
-/// A region of the frame the host still paints itself.
+/// A named region of the frame: what [`region_key`] names, and what
+/// [`regions_of`] reads a rectangle for.
 ///
-/// The discriminants are the `HostId` values carried in `Draw::Host`, so the
-/// fold can map an item straight back to the painter that owns it.
+/// The discriminants are the keys' numbers; no region is a `Host` any more,
+/// so none of them is a `HostId`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u64)]
 pub enum HostRegion {
     Dock = 1,
     MenuBar = 2,
     Explorer = 3,
-    /// The split grid: buffers, terminals, tabs, scrollbars. The last region
-    /// that will still be a `Host` when the migration finishes.
+    /// The split grid: its panes are the host leaves the frame paints
+    /// cells into.
     Body = 4,
     StatusBar = 5,
     SearchOptions = 6,
@@ -41,73 +45,51 @@ impl HostRegion {
         HostRegion::PromptLine,
     ];
 
-    pub fn from_host_id(id: HostId) -> Option<HostRegion> {
-        HostRegion::ALL.into_iter().find(|r| r.id() == id.0)
-    }
-
     pub fn id(self) -> u64 {
         self as u64
     }
 }
 
-impl From<HostRegion> for HostId {
-    fn from(r: HostRegion) -> HostId {
-        HostId(r.id())
-    }
-}
-
-/// What a `Draw::Host` in this frame addresses.
+/// What a `Draw::Host` in this frame addresses: a leaf, by id.
 ///
-/// A region is one of the seven fixed slots above. A **pane** is not: there is
-/// one per visible leaf, they come and go as the user splits and closes, and
-/// each paints only its own buffer. So the id space is split — regions keep
-/// the small discriminants they always had, and a pane's id is its `LeafId`
-/// tagged into the high half, which cannot collide with them.
-///
-/// This is what lets the fold keep its "a host id with no region" assertion
-/// honest: an id that resolves to neither is still a painter that would draw
-/// nothing, in silence.
+/// A **pane** is one per visible leaf; they come and go as the user splits
+/// and closes, and each paints only its own buffer. An **embed** is an editor
+/// window inside a plugin panel, painted as its own grid. A **card band** is
+/// the overlay prompt's preview. Each id space carries its own tag bit, so an
+/// id resolves to exactly one of them — which is what lets the fold keep its
+/// "a host id that names nothing" assertion honest: such an id is a painter
+/// that would draw nothing, in silence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostTarget {
-    Region(HostRegion),
     /// One pane's content, by the leaf showing it.
     Pane(crate::model::event::LeafId),
     /// An editor window embedded in a plugin panel, by its window id.
     ///
-    /// **This is what `WindowEmbed` is, and it was the last thing keeping a
-    /// whole second panel painter alive.** The variant is a real editor window
-    /// inside a panel — cells, and permanently so — and the adapter read that
-    /// as "this panel cannot be described", which sent every panel containing
-    /// one down the runtime's paint path. But "paints its own cells" is
-    /// precisely what a `Host` leaf *is*; the two were never in tension. The
-    /// panel is described, the embed is a hole in it, and the fold hands the
-    /// window painter the rectangle layout worked out.
+    /// **This is what `WindowEmbed` is**: a real editor window inside a
+    /// panel — cells, and permanently so — which is precisely what a `Host`
+    /// leaf *is*. The panel is described, the embed is a leaf in it, and the
+    /// fold hands the painter the rectangle layout worked out; the painter
+    /// lays that window's own grid out in a tree of its own at that size and
+    /// folds it the way the frame folds the active window's
+    /// (`shell_host::paint_embed`, design §3.7.8).
     Embed(u32),
-    /// One band of the overlay prompt's card, by which band.
-    ///
-    /// **A band names a rectangle, not a painter.** `render_overlay_prompt`
-    /// draws the whole card in one pass between the two fold bands; the tree
-    /// states where each band sits so that painter, and the read-backs, agree
-    /// on one set of rectangles. So this resolves to a target that paints
-    /// nothing — but it has to *resolve*, because the alternative is what it
-    /// replaced: raw ids 1..=5 that `HostRegion::from_host_id` answered with
-    /// `Dock`, `MenuBar`, `Explorer`, `Body` and `StatusBar`.
+    /// One band of the overlay prompt's card, by which band. The preview
+    /// band is the card's one host — a buffer the text pipeline renders into
+    /// the band's rectangle, or another window's grid as an embed paints it.
     Card(super::overlay_prompt::CardRegion),
 }
 
-/// The bit that separates a pane's id from a region's.
-///
-/// Regions are 1..=7 and `LeafId`s are dense small integers from the same
-/// counter, so the two would otherwise overlap immediately.
+/// The bit that names a pane's id. `LeafId`s are dense small integers from
+/// a per-window counter.
 const PANE_TAG: u64 = 1 << 32;
 
-/// The same, for an embedded window. Window ids come from a third counter that
-/// collides with both, so each id space gets its own bit rather than a range.
+/// The same, for an embedded window. Window ids come from another counter
+/// that collides with leaf ids, so each id space gets its own bit rather than
+/// a range.
 const EMBED_TAG: u64 = 1 << 33;
 
-/// The same, for the overlay prompt's card bands. Their discriminants are
-/// 1..=5 and would otherwise *be* `Dock`, `MenuBar`, `Explorer`, `Body` and
-/// `StatusBar`.
+/// The same, for the overlay prompt's card bands, whose discriminants are
+/// 1..=5.
 const CARD_TAG: u64 = 1 << 34;
 
 /// The `HostId` a pane's content leaf carries.
@@ -132,7 +114,7 @@ pub fn card_host_id(region: super::overlay_prompt::CardRegion) -> HostId {
 }
 
 impl HostTarget {
-    /// Which painter owns this id, or `None` when it names neither — which is
+    /// Which leaf this id names, or `None` when it names none — which is
     /// the fold's assertion, not a case to handle.
     pub fn from_host_id(id: HostId) -> Option<HostTarget> {
         if id.0 & CARD_TAG != 0 {
@@ -148,7 +130,7 @@ impl HostTarget {
                 fresh_core::SplitId(leaf),
             )));
         }
-        HostRegion::from_host_id(id).map(HostTarget::Region)
+        None
     }
 }
 
@@ -173,6 +155,9 @@ impl HostTarget {
 // written.
 #[derive(Clone, Debug)]
 pub struct Frame {
+    /// A page the body shows instead of the grid, for a window with nothing
+    /// to show yet (`Editor::placeholder_page`). `splits` is `None` then.
+    pub placeholder: Option<Placeholder>,
     pub menu_bar: bool,
     pub status_bar: bool,
     /// The search-options row's toggles, or `None` when the row is hidden.
@@ -192,6 +177,10 @@ pub struct Frame {
     /// bool.)
     pub status_bar_items: Option<super::status_bar::StatusBar>,
     pub prompt_line: bool,
+    /// What the prompt row shows, when a prompt is up in it: its message,
+    /// its query and the query's caret. `None` with `prompt_line: true` is
+    /// the row reserved and empty. See [`super::prompt_line`].
+    pub prompt_row: Option<super::prompt_line::PromptRow>,
     /// Whether a prompt is up, and so whether the keyboard's owner is the
     /// prompt. Separate from `prompt_line` — the overlay form of the prompt
     /// draws no row and still owns the keyboard. See
@@ -334,11 +323,13 @@ pub struct Frame {
 impl Default for Frame {
     fn default() -> Self {
         Frame {
+            placeholder: None,
             menu_bar: true,
             status_bar: true,
             search_options: None,
             status_bar_items: None,
             prompt_line: false,
+            prompt_row: None,
             prompt_keys: false,
             search_prompt: false,
             dock_keys: false,
@@ -468,19 +459,25 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     let sidebar = |s: &super::sidebar::Sidebar| {
         named(HostRegion::Explorer, super::sidebar::sidebar(s)).w(Sizing::Cells(s.cols))
     };
-    // The body: the grid, with a `Host` under it for what belongs to no pane.
-    // Each pane carries its own `Host` (see `splits::live_pane`), so the
-    // rectangle a pane is painted at is the rectangle layout gave it. What
-    // this one is left is the panes' shared preamble and the separators
-    // between them — the gaps, which belong to neither side.
+    // The body: the grid. Every pane's content and bars are leaves of its
+    // own (see `splits::live_pane`), and the dividers between the panes draw
+    // their own lines, so nothing here is a `Host` any more — the region is
+    // named for the readers that ask where the body is. It is named on a
+    // node of its own: with one pane the grid *is* that pane, and naming it
+    // directly would replace the pane's key with the region's.
     let body_region = |f: &Frame| -> Node<UiMsg> {
-        match &f.splits {
-            Some(s) => named(
+        match (&f.placeholder, &f.splits) {
+            // On a node of its own, like the grid: the page carries the
+            // pane's content key, and the region's name must not rename it.
+            (Some(p), _) => named(
                 HostRegion::Body,
-                fresh_ui::stack()
-                    .children([host(HostRegion::Body.id()), super::splits::overlay(s)]),
+                fresh_ui::stack().child(placeholder_page(p)),
             ),
-            None => region(HostRegion::Body),
+            (None, Some(s)) => named(
+                HostRegion::Body,
+                fresh_ui::stack().child(super::splits::overlay(s)),
+            ),
+            (None, None) => region(HostRegion::Body),
         }
     };
     let body: Node<UiMsg> = match &f.sidebar {
@@ -529,7 +526,18 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
                 ),
             )
             .h(cells(f.search_options.is_some())),
-            region(HostRegion::PromptLine).h(cells(f.prompt_line)),
+            // Native: the prompt row is runs, with the query's caret stated
+            // as a byte of the input run (`prompt_line`). Named so every
+            // reader that asks where the row is still gets a rectangle,
+            // reserved or not.
+            named(
+                HostRegion::PromptLine,
+                match &f.prompt_row {
+                    Some(p) => super::prompt_line::prompt_line(p),
+                    None => row(),
+                },
+            )
+            .h(cells(f.prompt_line)),
         ]),
     ]);
     // Overlays, in paint order — which is declaration order, and is decided
@@ -590,9 +598,10 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     let chrome = match f.sidebar.as_ref().and_then(|s| {
         s.sections
             .iter()
-            .position(|sec| sec.focused && sec.collapsed)
+            .enumerate()
+            .find(|(_, sec)| super::sidebar::header_holds_keyboard(sec))
     }) {
-        Some(i) => chrome.child(super::sidebar::keys_layer(i)),
+        Some((i, sec)) => chrome.child(super::sidebar::keys_layer(sec, i)),
         None => chrome,
     };
     // A focused plugin section: the dock's case with a different slot, and
@@ -799,17 +808,71 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     }
 }
 
-fn region(r: HostRegion) -> Node<UiMsg> {
-    named(r, host(r.id()))
+/// What the body shows instead of the grid for a window with nothing to
+/// show yet: a few centred lines on the editor's ground.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placeholder {
+    /// The window's name, with its kind's glyph.
+    pub detail: String,
+    /// What it is doing — connecting, building, or why it could not.
+    pub state: String,
+    pub hint: String,
+    /// What to do about it, when there is something; empty otherwise.
+    pub retry: String,
+    /// The window's active pane, whose content this page stands in for: the
+    /// page is the base's focus holder and hands its keys to the editor as
+    /// that pane's, so the keyboard still reaches the editor's own bindings
+    /// over a window that cannot be edited.
+    pub pane: Option<crate::model::event::LeafId>,
 }
 
-/// Tag a region's node with the region's name, whether it is still a `Host`
-/// leaf or has gone native.
+/// The placeholder page as nodes: the lines centred on the ground, the
+/// page focusable in the pane's stead.
+fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
+    use crate::app::shell_host::shell_theme::{attrs, pair};
+    use fresh_ui::{text, Align};
+    let plain = pair("editor.fg", "editor.bg");
+    let dim = pair("editor.line_number_fg", "editor.bg");
+    let line = |s: &str, theme: String| -> Node<UiMsg> {
+        match s.is_empty() {
+            true => row().h(Sizing::Cells(1)),
+            false => text(s).theme(theme),
+        }
+    };
+    let page = col().theme(plain.clone()).align(Align::Center).children([
+        row().flex(1),
+        line(&p.detail, attrs("editor.fg", "editor.bg", &["bold"])),
+        row().h(Sizing::Cells(1)),
+        line(&p.state, plain),
+        row().h(Sizing::Cells(1)),
+        line(&p.hint, dim.clone()),
+        line(&p.retry, dim),
+        row().flex(1),
+    ]);
+    match p.pane {
+        Some(pane) => fresh_ui::focusable(page)
+            .key(super::splits::content_key(pane))
+            .skip_traversal()
+            .autofocus()
+            .on_key(move |e: &fresh_ui::Event| {
+                e.stop();
+                Some(UiMsg::Ui(super::msg::UiFact::PaneKey { pane }))
+            }),
+        None => page,
+    }
+}
+
+/// A region with nothing in it — a hidden row, an empty column — as a named
+/// node with no content, so its rectangle is still a layout query.
+fn region(r: HostRegion) -> Node<UiMsg> {
+    named(r, row())
+}
+
+/// Tag a region's node with the region's name.
 ///
-/// The name is what [`regions_of`] looks up, so migrating a region does not
-/// change how its rectangle is found: it is a layout query either way, and a
-/// region that paints nothing at all — a hidden row, a bar with no labels —
-/// still has one.
+/// The name is what [`regions_of`] looks up: a region's rectangle is a
+/// layout query, and a region that paints nothing at all — a hidden row, a
+/// bar with no labels — still has one.
 fn named(r: HostRegion, n: Node<UiMsg>) -> Node<UiMsg> {
     n.key(region_key(r))
 }
@@ -890,6 +953,10 @@ mod tests {
                 },
                 groups: Default::default(),
                 interiors: Default::default(),
+                strips: Default::default(),
+                hover: None,
+                drop_zone: None,
+                hosts: Default::default(),
             }),
             ..Frame::default()
         }
@@ -997,6 +1064,210 @@ mod tests {
             "and the dock's does not also get it: {:?}",
             got.msgs
         );
+    }
+
+    /// **The base key dispatcher is reached only through the tree.** With
+    /// nothing above it, the active pane's content is the focus holder, and
+    /// every key that reaches it — Tab, which is the buffer's indent, as
+    /// much as a letter — is claimed as `PaneKey` for the editor to resolve.
+    /// **The first layout of a two-pane frame holds focus on the active
+    /// pane, whichever it is.** A restored session's first frame is exactly
+    /// this: two panes, the second active, no frame before it.
+    #[test]
+    fn the_first_layout_focuses_the_active_pane_even_when_it_is_not_the_first() {
+        use fresh_core::SplitDirection;
+        for active in [1u64, 3] {
+            let mut f = one_pane_in(Some(1));
+            let s = f.splits.as_mut().unwrap();
+            s.root = SplitNode::split(
+                SplitDirection::Vertical,
+                SplitNode::leaf(BufferId(1), SplitId(1)),
+                SplitNode::leaf(BufferId(2), SplitId(3)),
+                0.5,
+                SplitId(2),
+            );
+            let leaf = crate::model::event::LeafId(SplitId(active as usize));
+            s.active = Some(leaf);
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(frame_tree(f), Size::new(80, 24));
+            let focused = ui.focused().and_then(|e| ui.key_of(e));
+            assert_eq!(
+                focused,
+                Some(crate::view::shell::splits::content_key(leaf)),
+                "active pane {active} holds focus on the first layout"
+            );
+        }
+    }
+
+    /// **A terminal pane's context is its leaf's settled fact, and it takes
+    /// raw input.** The handle says which context the pane's content resolves
+    /// keys in and whether it takes the keyboard raw; the chain names the
+    /// content and nothing above it names a mode, so `Ui::raw_input` — the
+    /// PTY gate — is true exactly when that pane holds the keyboard with
+    /// nothing exclusive above it, and the leaf's element is the same in
+    /// every mode.
+    #[test]
+    fn a_terminal_pane_names_its_context_and_takes_raw_input() {
+        use crate::input::keybindings::KeyContext;
+        let leaf = crate::model::event::LeafId(SplitId(1));
+        let handle = crate::view::shell::buffer_host::PaneHandle::new(leaf);
+        let content = crate::view::shell::splits::content_key(leaf);
+        let framed = |handle: &crate::view::shell::buffer_host::PaneHandle| {
+            let mut f = one_pane_in(Some(1));
+            let s = f.splits.as_mut().unwrap();
+            s.active = Some(leaf);
+            s.hosts.insert(leaf, handle.clone());
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(frame_tree(f), Size::new(80, 24));
+            ui
+        };
+
+        let ui = framed(&handle);
+        assert_eq!(handle.context(), KeyContext::Normal, "a plain pane");
+        assert!(!ui.raw_input(), "and takes nothing raw");
+        let plain = ui.find_by_key(&content).expect("the content");
+        assert_eq!(ui.focused(), Some(plain), "focus rests on the content");
+
+        handle.set_raw_input(true);
+        handle.set_context(KeyContext::Terminal);
+        let ui = framed(&handle);
+        assert_eq!(handle.context(), KeyContext::Terminal);
+        assert!(ui.raw_input(), "the terminal's leaf takes raw input");
+        let chain: Vec<_> = ui
+            .focused()
+            .map(|f| {
+                ui.path_to(f)
+                    .into_iter()
+                    .filter_map(|e| ui.key_of(e))
+                    .filter_map(|k| key_context_of(&k))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            chain.is_empty(),
+            "no node on the chain names a mode; the handle does: {chain:?}"
+        );
+    }
+
+    /// **A placeholder page stands in for the grid, and for the pane.** A
+    /// window with nothing to show yet describes a page in the body instead
+    /// of its grid: no pane host reaches a painter, the page is the base's
+    /// focus holder in the active pane's stead, and a key it takes is handed
+    /// on as that pane's — so the editor's own bindings still work over a
+    /// window that cannot be edited.
+    #[test]
+    fn a_placeholder_page_stands_in_for_the_grid_and_the_pane() {
+        let pane = crate::model::event::LeafId(SplitId(1));
+        let f = Frame {
+            placeholder: Some(Placeholder {
+                detail: "⇅ remote".into(),
+                state: "Not connected".into(),
+                hint: "The workspace will open as soon as the connection is established.".into(),
+                retry: String::new(),
+                pane: Some(pane),
+            }),
+            splits: None,
+            ..Frame::default()
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(frame_tree(f), Size::new(80, 24));
+        let body = ui
+            .find_by_key(&region_key(HostRegion::Body))
+            .expect("the body");
+        assert!(
+            ui.rect_of(body).h > 20,
+            "the page fills the body: {:?}",
+            ui.rect_of(body)
+        );
+        assert!(
+            !ui.spec()
+                .items
+                .iter()
+                .any(|i| matches!(i.draw, fresh_ui::Draw::Host(_))),
+            "nothing reaches a painter"
+        );
+        let content = crate::view::shell::splits::content_key(pane);
+        let page = ui
+            .find_by_key(&content)
+            .expect("the page, as the pane's content");
+        assert_eq!(ui.focused(), Some(page), "the page holds the keyboard");
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Char('p'),
+            mods: fresh_ui::Mods::CTRL,
+        }));
+        assert!(got.claimed, "a key is the page's to hand on");
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PaneKey { pane: p }) if *p == pane)),
+            "and it is handed on as the pane's: {:?}",
+            got.msgs
+        );
+    }
+
+    /// **A pane's leaf keeps its element across a mode change.** A drag on a
+    /// live terminal parks it in scroll-back mid-gesture; the leaf that took
+    /// the capture must be the leaf the next frame mounts, or the rest of
+    /// the drag goes nowhere.
+    #[test]
+    fn a_panes_leaf_keeps_its_element_across_a_mode_change() {
+        use crate::input::keybindings::KeyContext;
+        let leaf = crate::model::event::LeafId(SplitId(1));
+        let handle = crate::view::shell::buffer_host::PaneHandle::new(leaf);
+        let content = crate::view::shell::splits::content_key(leaf);
+        let frame_with = |handle: &crate::view::shell::buffer_host::PaneHandle| {
+            let mut f = one_pane_in(Some(1));
+            let s = f.splits.as_mut().unwrap();
+            s.active = Some(leaf);
+            s.hosts.insert(leaf, handle.clone());
+            f
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        handle.set_raw_input(true);
+        handle.set_context(KeyContext::Terminal);
+        ui.frame(frame_tree(frame_with(&handle)), Size::new(80, 24));
+        let live = ui.find_by_key(&content).expect("the content");
+
+        handle.set_raw_input(false);
+        handle.set_context(KeyContext::Normal);
+        ui.frame(frame_tree(frame_with(&handle)), Size::new(80, 24));
+        let parked = ui.find_by_key(&content).expect("the content");
+        assert_eq!(live, parked, "the same leaf, live and in scroll-back");
+        assert!(!ui.raw_input());
+    }
+
+    #[test]
+    fn a_key_with_no_chrome_up_is_the_active_panes_to_hand_on() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let mut f = one_pane_in(Some(1));
+        f.splits.as_mut().unwrap().active = Some(crate::model::event::LeafId(SplitId(1)));
+        ui.frame(frame_tree(f), Size::new(80, 24));
+        for code in [
+            fresh_ui::KeyCode::Char('a'),
+            fresh_ui::KeyCode::Tab,
+            fresh_ui::KeyCode::Esc,
+        ] {
+            let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+                code,
+                mods: fresh_ui::Mods::NONE,
+            }));
+            assert!(got.claimed, "{code:?} is claimed");
+            let facts: Vec<UiFact> = got
+                .msgs
+                .into_iter()
+                .filter_map(|m| match m {
+                    UiMsg::Ui(f) => Some(f),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                facts,
+                vec![UiFact::PaneKey {
+                    pane: crate::model::event::LeafId(SplitId(1))
+                }],
+                "{code:?}"
+            );
+        }
     }
 
     /// The partner: with no panel up, the focused dock's layer is the one
@@ -1266,6 +1537,7 @@ pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::Ke
         Key::Pair(name, _) => match &**name {
             "settings_entry" => Some(C::Settings),
             "menu_dropdown" => Some(C::Menu),
+            "explorer_header" => Some(C::FileExplorer),
             "keys:sidebar" | "sidebar_header" => Some(C::Dock),
             "panel_interior" => {
                 if *k == super::panel::interior_key(super::widgets::Slot::Dock) {
