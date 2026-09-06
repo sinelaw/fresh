@@ -1043,8 +1043,10 @@ console.log('\n[web-UI theme system: switch chrome look without touching the buf
 // The web theme is a FRONTEND view preference (like zoom / palette placement):
 // it re-skins the native chrome and never reaches the editor. Default is Cosmos
 // (the hardware-bezel shell); macOS and Compact are the added looks.
+// The count pins the roster: adding a theme without adding its checks below
+// should fail here rather than slip through unexercised.
 check('theme API is exposed (setWebTheme / webTheme / webThemes)', await page.evaluate(() =>
-  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 5));
+  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 6));
 check('default theme is Cosmos with the hardware bezel on', await page.evaluate(() =>
   window.fresh.webTheme === 'cosmos' && document.body.classList.contains('theme-cosmos') && document.getElementById('device').classList.contains('on')));
 // The buffer stays the TUI monospace stack regardless of the chrome font.
