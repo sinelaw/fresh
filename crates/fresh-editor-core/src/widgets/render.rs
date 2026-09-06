@@ -783,51 +783,6 @@ fn carry_instance_states(
     }
 }
 
-/// The Tab ring visible from `current_key`, walked over the **spec**.
-///
-/// It replaced `layout_box::focus_ring_scoped`, which read the same two facts
-/// — focusable, and the nearest enclosing `focus_trap` — off the boxes a paint
-/// left behind. A described panel has no boxes, and it does not need any: both
-/// facts are `box_meta`'s, and `box_meta` is a function of the spec, so a walk
-/// of the spec answers for the painted panel too.
-///
-/// With no enclosing trap (or no current focus) the ring is the whole spec's,
-/// exactly as the arena's is the whole tree's.
-pub fn focus_ring_scoped_in_spec(spec: &WidgetSpec, current_key: &str) -> Vec<String> {
-    let scope = trap_around(spec, current_key, None).unwrap_or(spec);
-    let mut out = Vec::new();
-    collect_tabbable(scope, &mut out);
-    out
-}
-
-/// The nearest `focus_trap` ancestor of the node keyed `current_key`,
-/// excluding that node itself — `None` when the key names nothing, or when
-/// nothing above it traps.
-fn trap_around<'a>(
-    node: &'a WidgetSpec,
-    current_key: &str,
-    nearest: Option<&'a WidgetSpec>,
-) -> Option<&'a WidgetSpec> {
-    let meta = super::kinds::behavior(node).box_meta(node);
-    if meta.focusable && meta.key.as_deref() == Some(current_key) {
-        return nearest;
-    }
-    let inner = match meta.focus_trap {
-        true => Some(node),
-        false => nearest,
-    };
-    // A `find_map` would stop at the first child that answers `None`, which
-    // every child that does not contain the key does. The loop distinguishes
-    // "found it, no trap above" from "not here" the only way the return type
-    // allows: by asking whether the subtree contains the key at all.
-    for c in node.children() {
-        if super::find_widget_by_key(c, current_key).is_some() {
-            return trap_around(c, current_key, inner);
-        }
-    }
-    None
-}
-
 /// Render a spec with the default options: keyboard focus only, no
 /// hover, no marker gutter, auto-focusing the first tabbable when
 /// `prev_focus_key` matches nothing.
@@ -8373,7 +8328,6 @@ pub mod tests {
             hits: out.hits,
             instance_states: out.instance_states,
             focus_key: out.focus_key,
-            tabbable: out.tabbable,
             painted: out.painted,
             boxes: out.boxes,
             auto_focus_first: true,
@@ -8675,72 +8629,6 @@ pub mod tests {
         assert!(pb.z > 0, "promotion bumps z so the opacity probe sees it");
     }
 
-    #[test]
-    fn component_is_a_transparent_focus_trap() {
-        let btn = |k: &str| WidgetSpec::Button {
-            label: k.to_uppercase(),
-            focused: false,
-            intent: ButtonKind::Normal,
-            key: Some(k.into()),
-            disabled: false,
-            focusable: true,
-            bare: false,
-            full_width: false,
-            hover_style: None,
-            style: None,
-        };
-        let spec = WidgetSpec::Col {
-            key: None,
-            children: vec![
-                btn("outside"),
-                WidgetSpec::Component {
-                    key: Some("dialog".into()),
-                    child: Box::new(WidgetSpec::Col {
-                        key: None,
-                        children: vec![btn("ok"), btn("cancel")],
-                    }),
-                },
-            ],
-        };
-        let out = render_spec(&spec, &HashMap::new(), "", 40);
-        // Transparent: rows identical to rendering without the wrapper,
-        // and the published ring still sees every focusable.
-        assert_eq!(out.tabbable, vec!["outside", "ok", "cancel"]);
-        let comp = out
-            .boxes
-            .iter()
-            .find(|b| b.kind == "component")
-            .expect("component box");
-        assert!(comp.focus_trap);
-        assert_eq!(comp.key.as_deref(), Some("dialog"));
-        // Tab cycling from inside the component stays inside it; from
-        // outside, the whole panel ring applies. Asked of the spec, because
-        // that is what the advance asks now — a described panel has the trap
-        // and no boxes.
-        assert_eq!(focus_ring_scoped_in_spec(&spec, "ok"), vec!["ok", "cancel"]);
-        assert_eq!(
-            focus_ring_scoped_in_spec(&spec, "outside"),
-            vec!["outside", "ok", "cancel"]
-        );
-        // No trap in the path, and an unknown / empty focus, both give the
-        // whole ring — the two fallbacks the arena's version also had.
-        let flat = WidgetSpec::Col {
-            key: None,
-            children: vec![btn("outside"), btn("ok"), btn("cancel")],
-        };
-        assert_eq!(
-            focus_ring_scoped_in_spec(&flat, "ok"),
-            vec!["outside", "ok", "cancel"]
-        );
-        assert_eq!(
-            focus_ring_scoped_in_spec(&spec, ""),
-            vec!["outside", "ok", "cancel"]
-        );
-        assert_eq!(
-            focus_ring_scoped_in_spec(&spec, "nosuch"),
-            vec!["outside", "ok", "cancel"]
-        );
-    }
     #[test]
     fn col_flex_spacer_absorbs_leftover_height() {
         // col(button, flexSpacer, button) with a 6-row budget: the

@@ -1,67 +1,6 @@
 //! The left dock column (orchestrator sessions panel).
 
-use super::{ChromeComponent, Editor};
-
-pub(crate) struct Dock;
-
-impl ChromeComponent for Dock {
-    // **No `on_pointer_moved` either, and the reason is the same shape.**
-    // The dock's overlay scrollbar reveals itself while the pointer is over
-    // the column, and this arm answered that by testing every motion event's
-    // cell against `scrollbar_hover_zones` — rectangles the painter's
-    // scrollbar pass recorded on its way past, so the reveal only worked
-    // while there was a painter to record them.
-    //
-    // The column is a node, and a node knows when the pointer crosses its
-    // edge: `view::shell::dock::column` reports it as `UiFact::DockHover`,
-    // for a painted interior exactly as for a described one, because the
-    // gesture wraps the `Host` leaf and the description alike.
-    // **No `on_layer_key`.** A focused dock's keys are the tree's now
-    // (`view::shell::panel::keys_layer`): a `Modality::Focus` layer confines
-    // the keyboard to the panel without swallowing the shortcuts it does not
-    // bind, which is what let this arm return `false` and blur instead. The
-    // `ToggleDockFocus` pre-resolution that had to run ahead of the panel's
-    // own dispatch — so the toggle stays symmetric once you have dived in —
-    // went with it, into the fact's applier.
-    //
-    // The layer below still exists: `get_key_context` and the PTY gate read
-    // it. What is gone is the rank, which said an open prompt, popup, menu or
-    // modal takes a key before this does — and which the frame now says by
-    // declaring this layer first, under all four.
-
-    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
-        use crate::app::overlay::{Layer, LayerKind};
-        // Owns the keyboard only while focused; a blurred dock stays
-        // visible but lets the buffer underneath keep the keyboard
-        // AND receive PTY routing (the dock lives beside the chrome,
-        // not over it).
-        if let Some(d) = ed.dock.as_ref() {
-            out.push((
-                super::layer_rank::DOCK,
-                Layer {
-                    kind: LayerKind::Dock,
-                    owns_keyboard: d.focused,
-                    key_context: Some(crate::input::keybindings::KeyContext::Dock),
-                    blocks_terminal_input: d.focused,
-                },
-            ));
-        }
-        // A focused sidebar plugin section is the dock's case with a
-        // different slot (`app::sidebar`): the same non-modal layer, the same
-        // context for the keys its widgets decline.
-        if ed.focused_sidebar_panel().is_some() {
-            out.push((
-                super::layer_rank::DOCK,
-                Layer {
-                    kind: LayerKind::Dock,
-                    owns_keyboard: true,
-                    key_context: Some(crate::input::keybindings::KeyContext::Dock),
-                    blocks_terminal_input: true,
-                },
-            ));
-        }
-    }
-}
+use super::Editor;
 
 /// Behavior owned by this component — the drag half of the
 /// width-resize grab; the press half arms it in `on_pointer`, and the

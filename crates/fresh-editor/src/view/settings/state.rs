@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::config_io::ConfigLayer;
 use crate::view::controls::text_input::TextInputState;
 use crate::view::controls::FocusState;
-use crate::view::ui::{FocusManager, ScrollablePanel};
+use crate::view::ui::ScrollablePanel;
 use std::collections::HashMap;
 
 /// Set a value at a JSON pointer path, creating intermediate objects as
@@ -62,6 +62,17 @@ enum NestedDialogInfo {
         path: String,
         is_new: bool,
     },
+}
+
+/// A node of the dialog the focus fact can name — see
+/// [`SettingsState::focus_on`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusTarget {
+    Categories,
+    /// A card of the current page, by item index.
+    Card(usize),
+    /// A footer button, by `shell::settings::Button::index`.
+    Footer(usize),
 }
 
 /// Which panel currently has keyboard focus
@@ -114,9 +125,15 @@ pub struct SettingsState {
     pub selected_category: usize,
     /// Currently selected item index within the category
     pub selected_item: usize,
-    /// Which panel currently has keyboard focus
-    pub focus: FocusManager<FocusPanel>,
-    /// Selected footer button index (0=Reset, 1=Save, 2=Cancel)
+    /// Which panel has the keyboard.
+    ///
+    /// **One third of the dialog's focus fact**, with `selected_item` and
+    /// `footer_button_index`; [`Self::focus_on`] is its one writer. The
+    /// tree's ring is the fact's projection — the description marks the node
+    /// the fact names, and a landing the tree makes on its own (Tab, a press)
+    /// comes back through `focus_on` like every other decision.
+    focus_panel: FocusPanel,
+    /// Selected footer button index — `shell::settings::Button::index`.
     pub footer_button_index: usize,
     /// Pending changes (path -> new value)
     pub pending_changes: HashMap<String, serde_json::Value>,
@@ -388,11 +405,7 @@ impl SettingsState {
             pages,
             selected_category: 0,
             selected_item: 0,
-            focus: FocusManager::new(vec![
-                FocusPanel::Categories,
-                FocusPanel::Settings,
-                FocusPanel::Footer,
-            ]),
+            focus_panel: FocusPanel::Categories,
             footer_button_index: 2, // Default to Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
             pending_changes: HashMap::new(),
             original_config: config_value,
@@ -442,7 +455,58 @@ impl SettingsState {
     /// Get the currently focused panel
     #[inline]
     pub fn focus_panel(&self) -> FocusPanel {
-        self.focus.current().unwrap_or_default()
+        self.focus_panel
+    }
+
+    /// The node of the dialog the focus fact names.
+    pub fn focus_target(&self) -> FocusTarget {
+        match self.focus_panel {
+            FocusPanel::Categories => FocusTarget::Categories,
+            FocusPanel::Settings => FocusTarget::Card(self.selected_item),
+            FocusPanel::Footer => FocusTarget::Footer(self.footer_button_index),
+        }
+    }
+
+    /// **The one writer of the dialog's focus fact.** Every decider goes
+    /// through here: the keys that move between the panels, a click on a
+    /// card or a button, the tree's ring landing on a stop
+    /// (`UiFact::SettingsFocus`), the category tree's jump to a section.
+    ///
+    /// Leaving the body drops the control's own focus state, entering it
+    /// takes the control's (a Map's first entry, the `[Enter to edit]`
+    /// hints); the selection is kept in range; and the window follows.
+    pub fn focus_on(&mut self, target: FocusTarget) {
+        // **Deciding what already holds is not a change.** A press on a row
+        // inside a card names the card (`SettingsItem`) and the row
+        // (`ControlMapRow`) alike, and the tree's landing echoes the card
+        // again; only the first of those may re-seed the control's own
+        // cursor, or the row the user clicked is lost to the card's first.
+        if self.focus_target() == target {
+            return;
+        }
+        let was = self.focus_panel;
+        if was == FocusPanel::Settings {
+            self.update_control_focus(false);
+        }
+        self.sub_focus = None;
+        match target {
+            FocusTarget::Categories => self.focus_panel = FocusPanel::Categories,
+            FocusTarget::Card(i) => {
+                self.focus_panel = FocusPanel::Settings;
+                let n = self.current_page().map_or(0, |p| p.items.len());
+                self.selected_item = match n {
+                    0 => 0,
+                    _ => i.min(n - 1),
+                };
+                self.init_map_focus(true);
+                self.update_control_focus(true);
+            }
+            FocusTarget::Footer(i) => {
+                self.focus_panel = FocusPanel::Footer;
+                self.footer_button_index = i;
+            }
+        }
+        self.ensure_visible();
     }
 
     /// Whether Nerd Font icons are enabled (`editor.nerd_font_icons`).
@@ -462,7 +526,7 @@ impl SettingsState {
     /// Show the settings panel
     pub fn show(&mut self) {
         self.visible = true;
-        self.focus.set(FocusPanel::Categories);
+        self.focus_panel = FocusPanel::Categories;
         self.footer_button_index = 2; // Default to Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
         self.selected_category = 0;
         self.selected_item = 0;
@@ -802,7 +866,7 @@ impl SettingsState {
         self.selected_item = target_item;
         self.tree_cursor_section = Some(section_idx);
         self.cursor_drove_body = true;
-        self.focus.set(FocusPanel::Settings);
+        self.focus_panel = FocusPanel::Settings;
         // Take the body to the top of the section. Revealing it would move
         // just enough to bring the target into view, which puts it at the
         // *bottom* of the window — and on a tight one clips its body below
@@ -1021,52 +1085,6 @@ impl SettingsState {
         for _ in 0..page_size {
             self.select_prev();
         }
-    }
-
-    /// Switch focus between panels: Categories -> Settings -> Footer -> Categories
-    pub fn toggle_focus(&mut self) {
-        let old_panel = self.focus_panel();
-        self.focus.focus_next();
-        self.on_panel_changed(old_panel, true);
-    }
-
-    /// Switch focus to the previous panel: Categories <- Settings <- Footer <- Categories
-    pub fn toggle_focus_backward(&mut self) {
-        let old_panel = self.focus_panel();
-        self.focus.focus_prev();
-        self.on_panel_changed(old_panel, false);
-    }
-
-    /// Common logic after panel focus changes
-    fn on_panel_changed(&mut self, old_panel: FocusPanel, forward: bool) {
-        // Unfocus control when leaving Settings panel
-        if old_panel == FocusPanel::Settings {
-            self.update_control_focus(false);
-        }
-
-        // Reset item selection when switching to settings
-        if self.focus_panel() == FocusPanel::Settings
-            && self.selected_item >= self.current_page().map_or(0, |p| p.items.len())
-        {
-            self.selected_item = 0;
-        }
-        self.sub_focus = None;
-
-        if self.focus_panel() == FocusPanel::Settings {
-            self.init_map_focus(forward); // entering from above if forward
-            self.update_control_focus(true); // Focus the control
-        }
-
-        // Reset footer button when entering Footer panel
-        if self.focus_panel() == FocusPanel::Footer {
-            self.footer_button_index = if forward {
-                0 // Start at first button (Layer) when tabbing forward
-            } else {
-                4 // Start at last button (Edit) when tabbing backward
-            };
-        }
-
-        self.ensure_visible();
     }
 
     /// Toggle the visual style applied to every item.
@@ -1612,7 +1630,7 @@ impl SettingsState {
         self.update_control_focus(false);
         self.selected_category = page_index;
         self.selected_item = item_index;
-        self.focus.set(FocusPanel::Settings);
+        self.focus_panel = FocusPanel::Settings;
         // Reset scroll offset but preserve viewport for ensure_visible
         self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
         self.sub_focus = None;
@@ -3449,8 +3467,8 @@ mod tests {
         // Start in category focus
         assert_eq!(state.focus_panel(), FocusPanel::Categories);
 
-        // Toggle to settings
-        state.toggle_focus();
+        // Into the body
+        state.focus_on(FocusTarget::Card(0));
         assert_eq!(state.focus_panel(), FocusPanel::Settings);
 
         // Navigate items
@@ -3650,7 +3668,7 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_THEME_DEFAULT, &config).unwrap();
         state.show();
-        state.toggle_focus();
+        state.focus_on(FocusTarget::Card(0));
         state
     }
 
@@ -3659,7 +3677,7 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         state.show();
-        state.toggle_focus(); // Move to settings
+        state.focus_on(FocusTarget::Card(0)); // Move to settings
 
         // Items are sorted alphabetically: line_numbers, tab_size, theme
         // Navigate to theme (dropdown) at index 2
@@ -3679,7 +3697,7 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         state.show();
-        state.toggle_focus();
+        state.focus_on(FocusTarget::Card(0));
 
         // Items are sorted alphabetically: line_numbers, tab_size, theme
         // Navigate to theme (dropdown) at index 2
@@ -3729,7 +3747,7 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         state.show();
-        state.toggle_focus();
+        state.focus_on(FocusTarget::Card(0));
 
         // Open dropdown
         state.dropdown_toggle();
@@ -3798,7 +3816,7 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         state.show();
-        state.toggle_focus();
+        state.focus_on(FocusTarget::Card(0));
 
         // Navigate to tab_size (second item)
         state.select_next();
@@ -3823,7 +3841,7 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         state.show();
-        state.toggle_focus();
+        state.focus_on(FocusTarget::Card(0));
 
         // Navigate to tab_size
         state.select_next();
@@ -3863,7 +3881,7 @@ mod tests {
         let config = test_config();
         let mut state = SettingsState::new(TEST_SCHEMA_CONTROLS, &config).unwrap();
         state.show();
-        state.toggle_focus();
+        state.focus_on(FocusTarget::Card(0));
         state.select_next();
 
         state.start_number_editing();

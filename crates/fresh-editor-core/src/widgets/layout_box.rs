@@ -227,9 +227,9 @@ pub fn focus_ring(boxes: &[LayoutBox]) -> Vec<String> {
 // `focus_trap` ancestor of the focused box. It recovered two facts from the
 // rectangles a paint left behind, `focusable` and `focus_trap`, and both are
 // `box_meta`'s and so functions of the spec. Its one caller
-// (`Editor::handle_widget_focus_advance`) now walks the spec through
-// `render::focus_ring_scoped_in_spec`, which a panel the tree describes — and
-// which therefore has no boxes at all — can also answer.
+// (`Editor::handle_widget_focus_advance`) now reads the ring off the tree's
+// own registrations (`Ui::next_in`), which a panel the tree describes — and
+// which therefore has no boxes at all — answers directly.
 
 #[cfg(test)]
 mod tests {

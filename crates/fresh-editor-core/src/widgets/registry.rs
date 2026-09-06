@@ -431,17 +431,14 @@ pub struct WidgetPanelState {
     /// Widget instance state by widget `key`. Survives re-renders —
     /// see `WidgetInstanceState` for what's stored.
     pub instance_states: HashMap<String, WidgetInstanceState>,
-    /// Currently-focused widget key within this panel. Empty when
-    /// the panel has no focusable widgets, or before the first
-    /// render. Maintained by the renderer (clamps to a valid
-    /// tabbable key on every render) and by `widget_focus_advance`
-    /// (cycles through tabbables on Tab / Shift+Tab).
+    /// Which widget holds this panel's focus — **the fact**, with one writer
+    /// ([`WidgetRegistry::decide_focus`]) and the tree as its projection.
+    /// Empty when nothing is focused: a panel with no focusable widgets, or
+    /// one that declared `autoFocusFirst: false` and has not been given a
+    /// focus, in which case the description marks its own interior and the
+    /// tree rests there. Re-clamped onto a widget the spec still has when
+    /// the spec changes (`resolve_panel`).
     pub focus_key: String,
-    /// Tabbable widget keys collected from the most recent render,
-    /// in declaration order. The Tab-cycle command finds the
-    /// current `focus_key`'s position in this list and advances by
-    /// the requested delta (with wraparound).
-    pub tabbable: Vec<String>,
     /// The window each keyed `List`/`Tree` was last painted into, by
     /// widget key — see [`PaintedWindow`]. The scroll fold's own previous
     /// value lives here, and so does one of the three answers to "how big is
@@ -458,7 +455,7 @@ pub struct WidgetPanelState {
     /// **Empty for a described panel**, which never had a use for it: its
     /// rectangles are the tree's, the wheel router declines it outright, and
     /// the Tab ring it used to supply is now a walk of the spec
-    /// (`render::focus_ring_scoped_in_spec`) — the same two `box_meta` facts,
+    /// (`Ui::next_in` over the interior's registrations) — the same two `box_meta` facts,
     /// asked of the thing that states them.
     pub boxes: Vec<crate::widgets::LayoutBox>,
     /// This panel's [`WidgetPanelOptions::auto_focus_first`], kept so
@@ -648,13 +645,8 @@ pub struct WidgetRegistry {
     panels: HashMap<PanelKey, WidgetPanelState>,
 }
 
-/// How far `col` is from `hit`'s own span, in bytes of the row's text —
-/// zero when it is inside it.
-///
-/// Shared by the click path and the caret path, which ask the same
-/// question about the same coordinates: two side-by-side controls on one
-/// row are resolved by which of them the column is nearer, so the seam
-/// between them belongs to the one you are visibly on.
+/// How far `col` is from `hit`'s own span: zero inside it, and the distance
+/// to the nearer edge outside.
 fn column_distance(hit: &HitArea, col: usize) -> usize {
     if col < hit.byte_start {
         hit.byte_start - col
@@ -688,7 +680,6 @@ impl WidgetRegistry {
         hits: Vec<HitArea>,
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
-        tabbable: Vec<String>,
         painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
         auto_focus_first: bool,
@@ -709,7 +700,6 @@ impl WidgetRegistry {
                 hits,
                 instance_states,
                 focus_key,
-                tabbable,
                 painted,
                 boxes,
                 auto_focus_first,
@@ -758,7 +748,6 @@ impl WidgetRegistry {
         hits: Vec<HitArea>,
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
-        tabbable: Vec<String>,
         painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Result<BufferId, ()> {
@@ -768,7 +757,6 @@ impl WidgetRegistry {
                 state.hits = hits;
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
-                state.tabbable = tabbable;
                 state.painted = painted;
                 state.boxes = boxes;
                 Ok(state.buffer_id)
@@ -792,10 +780,20 @@ impl WidgetRegistry {
         self.panels.get(panel_key).map(|s| s.focus_key.as_str())
     }
 
-    /// Set the focus key directly (used by `widget_focus_advance`
-    /// and click-driven focus moves). Updates the in-place state;
-    /// the next render reads it via `focus_key()`.
-    pub fn set_focus_key(&mut self, panel_key: &PanelKey, key: String) {
+    /// Decide which widget holds this panel's focus.
+    ///
+    /// **The one writer of the fact, for every decision.** Two callers, each
+    /// a decision and not a mirror: `Editor::set_panel_focus_and_notify` —
+    /// the host's door for a Tab, a click, a key policy, a `FocusAdvance`,
+    /// and the tree's own ring reporting a landing — and the plugin's
+    /// `WidgetMutation::SetFocusKey`. The third way the fact changes is a
+    /// spec change re-clamping it (`resolve_panel`, through `update`), which
+    /// is the same fact sanitised against a new spec, not a new decision.
+    ///
+    /// The tree follows: the description marks the widget this names
+    /// `autofocus`, and `fresh_ui` re-settles focus onto a mark that moved.
+    /// Nothing else writes `focus_key`, and nothing writes the tree.
+    pub fn decide_focus(&mut self, panel_key: &PanelKey, key: String) {
         if let Some(state) = self.panels.get_mut(panel_key) {
             state.focus_key = key;
         }
@@ -837,7 +835,7 @@ impl WidgetRegistry {
         None
     }
 
-    /// Update side-effects (hits, instance_states, focus_key, tabbable)
+    /// Update side-effects (hits, instance_states, focus_key)
     /// without taking ownership of the spec. Used by `rerender_widget_panel`
     /// after an in-place spec mutation: the spec in the registry is already
     /// current (mutation helpers like `append_tree_nodes_in_spec` mutate it
@@ -850,7 +848,6 @@ impl WidgetRegistry {
         hits: Vec<HitArea>,
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
-        tabbable: Vec<String>,
         painted: HashMap<String, PaintedWindow>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<BufferId> {
@@ -858,7 +855,6 @@ impl WidgetRegistry {
         state.hits = hits;
         state.instance_states = instance_states;
         state.focus_key = focus_key;
-        state.tabbable = tabbable;
         // Host-driven rerenders (focus moves, hover, wheel) refresh the
         // painted windows and geometry too — previously the window
         // sizes were only written on the plugin-driven mount/update
@@ -1087,148 +1083,6 @@ impl WidgetRegistry {
             found = Some(key);
         }
         found.cloned()
-    }
-
-    /// The widget in `panel_key` that a caret at `(row, col_byte)` is on,
-    /// or `""` for none.
-    ///
-    /// **The row is the region; the column decides which control on it.**
-    /// That is a weaker rule than "a focus region is a widget's own
-    /// painted span", and the weaker one is the one that works: a caret
-    /// reading down a page keeps whatever column it was in, and on this
-    /// editor's own pages that column is very often a framed card's
-    /// border or the page margin left of an inset card. Requiring
-    /// containment would mean arrowing down through a card focuses
-    /// nothing in it — including its text field, which then does not
-    /// take what you type.
-    ///
-    /// So: containment wins where it applies (distance zero), and
-    /// otherwise the nearest control **on the same row**, ties leftmost,
-    /// by the same [`column_distance`] the click path uses for two
-    /// side-by-side lists. There is no distance cap, which has a
-    /// consequence worth stating rather than discovering: on a row
-    /// carrying exactly one control, that control is the answer for
-    /// every column of the row. A caret anywhere on the welcome screen's
-    /// top row is on its "show this on startup" switch.
-    ///
-    /// The column earns its keep where a row carries *several* controls
-    /// — three door cards side by side, three verbs on one line — which
-    /// a row-granular rule cannot tell apart at all, and which would
-    /// make Tab between two of them impossible (the move to the second
-    /// seats the caret on the row they share, and the row hands focus
-    /// back to the first).
-    ///
-    /// An empty string is an answer, not the absence of one: a caret on
-    /// a row with no control at all means *nothing* is focused, and a
-    /// caller that read it as "leave focus alone" would keep the last
-    /// Tab's target armed under an Enter aimed at prose.
-    ///
-    /// **Focusability is per key, not per hit.** `tabbable` holds widget
-    /// *keys*, so a widget declared `focusable: false` that shares a key
-    /// with a focusable sibling is a focus region too. That is not an
-    /// accident to be tidied away — it is how a card several rows tall
-    /// becomes one region: the welcome screen's door cards emit a button
-    /// per row, all under one key, with `focusable` set on the row that
-    /// names the action. A caret anywhere in the card is on the card.
-    /// Give those rows separate keys and each stops being a region;
-    /// `focus_regions_are_per_key_not_per_hit` pins it.
-    pub fn focus_target_at(
-        &self,
-        panel_key: &PanelKey,
-        row: u32,
-        col_byte: usize,
-    ) -> Option<String> {
-        let panel = self.get(panel_key)?;
-        let mut best: Option<(&HitArea, usize)> = None;
-        for hit in &panel.hits {
-            if hit.buffer_row != row || !panel.tabbable.contains(&hit.event.widget_key) {
-                continue;
-            }
-            let d = column_distance(hit, col_byte);
-            if best.is_none_or(|(b, bd)| d < bd || (d == bd && hit.byte_start < b.byte_start)) {
-                best = Some((hit, d));
-            }
-        }
-        Some(
-            best.map(|(h, _)| h.event.widget_key.clone())
-                .unwrap_or_default(),
-        )
-    }
-
-    /// The first cell `key` was painted on, as `(row, byte in that row)`.
-    ///
-    /// [`Self::row_of_widget`] answers the same question one dimension
-    /// coarser, for callers that only want to scroll to a widget. This
-    /// one is for seating a caret *on* it: a widget several rows tall
-    /// anchors at its top row, and one sharing a row with its siblings
-    /// anchors at its own first column rather than at the row's.
-    pub fn anchor_of_widget(&self, panel_key: &PanelKey, key: &str) -> Option<(u32, usize)> {
-        self.get(panel_key)?
-            .hits
-            .iter()
-            .filter(|h| h.event.widget_key == key)
-            .map(|h| (h.buffer_row, h.byte_start))
-            .min()
-    }
-
-    /// Where a Tab ring should start when nothing is focused and the
-    /// caret is at `(row, col_byte)`: the first focusable at or after
-    /// that point in paint order (`forward`), or the last at or before
-    /// it.
-    ///
-    /// Without this, "nothing focused" — which
-    /// [`WidgetPanelOptions::focus_follows_cursor`](fresh_core::api::WidgetPanelOptions)
-    /// produces every time the caret lands on prose, so most of the time
-    /// on a page that is mostly prose — sends the next Tab to the ring's
-    /// first entry, which on a long document means the top of the page.
-    /// Reading down to the last card and pressing Tab would yank you
-    /// back to the first.
-    ///
-    /// Wraps: past the last focusable, forward starts again at the
-    /// first. `restrict_to` is the caller's own ring (the spec's, scoped
-    /// to the focus trap the caret is in), so a seed can never be a
-    /// widget Tab could not have reached.
-    pub fn tabbable_from_caret(
-        &self,
-        panel_key: &PanelKey,
-        row: u32,
-        col_byte: usize,
-        forward: bool,
-        restrict_to: &[String],
-    ) -> Option<String> {
-        let panel = self.get(panel_key)?;
-        // One entry per widget, at its anchor, in paint order.
-        let mut anchors: Vec<(u32, usize, &str)> = Vec::new();
-        for hit in &panel.hits {
-            let key = hit.event.widget_key.as_str();
-            if !restrict_to.iter().any(|k| k == key) {
-                continue;
-            }
-            let anchor = (hit.buffer_row, hit.byte_start, key);
-            match anchors.iter_mut().find(|(_, _, k)| *k == key) {
-                Some(existing) => {
-                    if anchor < *existing {
-                        *existing = anchor;
-                    }
-                }
-                None => anchors.push(anchor),
-            }
-        }
-        anchors.sort();
-        let at = (row, col_byte);
-        let found = if forward {
-            anchors
-                .iter()
-                .find(|(r, c, _)| (*r, *c) >= at)
-                .or_else(|| anchors.first())
-        } else {
-            anchors
-                .iter()
-                .rev()
-                .find(|(r, c, _)| (*r, *c) <= at)
-                .or_else(|| anchors.last())
-        };
-        found.map(|(_, _, k)| (*k).to_string())
     }
 
     pub fn hit_test_row_aware(
@@ -1572,7 +1426,6 @@ mod tests {
             vec![make_hit(0, 0, 5, "a"), make_hit(0, 7, 12, "b")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1593,7 +1446,6 @@ mod tests {
             vec![make_hit(0, 0, 5, "a")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1640,7 +1492,6 @@ mod tests {
             vec![make_row_select_hit(0, 10, "session-a")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1683,7 +1534,6 @@ mod tests {
             vec![make_hit(0, 0, 20, "search"), make_hit(0, 20, 40, "replace")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1714,7 +1564,6 @@ mod tests {
             vec![make_hit(0, 0, 5, "btn"), make_row_select_hit(0, 12, "row")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1739,7 +1588,6 @@ mod tests {
             vec![make_row_select_hit(0, 8, "only-row")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1763,7 +1611,6 @@ mod tests {
             vec![base, popup],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1811,7 +1658,6 @@ mod tests {
             Vec::new(),
             states,
             String::new(),
-            Vec::new(),
             painted,
             Vec::new(),
             true,
@@ -1876,7 +1722,6 @@ mod tests {
             vec![make_hit(0, 0, 5, "a-btn")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1889,7 +1734,6 @@ mod tests {
             vec![make_hit(0, 0, 5, "b-btn")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1920,7 +1764,6 @@ mod tests {
             vec![make_hit(0, 0, 3, "x")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1941,7 +1784,6 @@ mod tests {
             vec![make_hit(0, 0, 3, "old")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
             true,
@@ -1953,7 +1795,6 @@ mod tests {
             vec![make_hit(1, 4, 9, "new")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         )

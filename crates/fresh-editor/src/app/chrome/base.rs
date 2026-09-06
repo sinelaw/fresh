@@ -12,44 +12,7 @@
 
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, Editor};
-
-pub(crate) struct Base;
-
-impl ChromeComponent for Base {
-    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
-        use crate::app::overlay::{Layer, LayerKind};
-        use crate::input::keybindings::KeyContext;
-        // The editor content is the keyboard owner of last resort.
-        let base_context = if ed.active_window().is_composite_buffer(ed.active_buffer()) {
-            KeyContext::CompositeBuffer
-        } else {
-            ed.active_window().key_context.clone()
-        };
-        out.push((
-            super::layer_rank::EDITOR_BASE,
-            Layer {
-                kind: LayerKind::Editor,
-                owns_keyboard: true,
-                key_context: Some(base_context),
-                blocks_terminal_input: false,
-            },
-        ));
-    }
-
-    // **No `on_layer_key`, because there is no walk left to be on.** The
-    // keyboard owner of last resort ALWAYS answered, so the walk terminated
-    // here — and every other member has since crossed: the four modals and
-    // the context menu claim by containment, the menu and the popups by their
-    // own layers, the prompt and the two plugin panels by `Modality::Focus`,
-    // and the unfocused-popup interception turned out to be a rung of the
-    // keymap rather than a layer's dispatch (see `dispatch_base_key`). A walk
-    // over one entry is a call, so `handle_key` makes it.
-    //
-    // `layers` above stays: the `EDITOR_BASE` layer is what `get_key_context`
-    // resolves against and what the PTY gate counts. Those two are what A.4
-    // has left to derive.
-}
+use super::Editor;
 
 /// Behavior owned by this component: the key pipeline's tail (moved
 /// verbatim from `handle_key` — the editor content's own keyboard

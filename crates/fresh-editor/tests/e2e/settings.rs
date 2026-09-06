@@ -1500,24 +1500,36 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Tab to footer - from settings panel, Tab goes to footer
-    // First button (Layer) should be selected
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // To the footer: Left leaves the body for the tree, Shift+Tab wraps the
+    // ring to Cancel, and Left walks back to Layer.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Layer button should be selected (has > indicator)
     harness.assert_screen_contains(">[ User ]");
 
-    // Tab through all footer buttons: Layer(0) → Reset(1) → Save(2) → Cancel(3)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Right through the footer: Layer → Reset → Save → Cancel
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Reset ]");
 
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Save ]");
 
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Cancel button should now be selected
@@ -2019,10 +2031,13 @@ fn test_settings_file_explorer_toggles_propagate_to_runtime() {
         .unwrap();
     harness.render().unwrap();
 
-    // Tab to footer then navigate to Save (index 2) and press Enter.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
+    // To Save: Left leaves the body for the tree, Shift+Tab wraps the ring
+    // to Cancel, Left steps to Save.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -2340,10 +2355,13 @@ fn test_settings_loads_saved_values_on_reopen() {
     // Should now show 5
     harness.assert_screen_contains("5");
 
-    // Tab to footer (Layer button), then Tab to Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
+    // To Save: Left leaves the body for the tree, Shift+Tab wraps the ring
+    // to Cancel, Left steps to Save.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Press Enter to save
@@ -2904,10 +2922,13 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
         screen
     );
 
-    // Save: Tab to footer (Layer), Tab to Save, Enter
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
+    // To Save: Left leaves the body for the tree, Shift+Tab wraps the ring
+    // to Cancel, Left steps to Save.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -3392,12 +3413,14 @@ fn test_settings_edit_button_keyboard_navigation() {
     // Open settings
     harness.open_settings().unwrap();
 
-    // Tab to settings panel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Tab to footer (defaults to Layer button, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // To the footer: Shift+Tab from the tree wraps the ring to Cancel, and
+    // Left walks back to Layer.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Should show Layer button focused
@@ -3458,13 +3481,14 @@ fn test_settings_edit_button_opens_config_file() {
         "Settings should be open"
     );
 
-    // Navigate to Edit button: Tab -> Tab -> Tab*4 (through all footer buttons)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Settings
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Layer)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Cancel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Edit
+    // Navigate to Edit: Shift+Tab from the tree wraps the ring to Cancel,
+    // and Right steps to Edit.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Verify Edit button is focused
@@ -3525,12 +3549,15 @@ fn test_settings_edit_button_blocked_with_pending_changes() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Navigate to Edit button (Footer now starts at Layer, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Layer)
-                                                                 // Tab through Layer -> Reset -> Save -> Cancel -> Edit
-    for _ in 0..4 {
-        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    }
+    // Navigate to Edit: Left leaves the body for the tree, Shift+Tab wraps
+    // the ring to Cancel, and Right steps to Edit.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Press Enter to try to activate Edit button
@@ -3962,103 +3989,84 @@ fn test_usability_backtab_backward_navigation() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
     harness.open_settings().unwrap();
 
-    // Start in Categories panel. Tab forward to Settings.
+    // Start in the tree. Tab enters the body at its selected card.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains(">  Active Keybinding Map");
 
-    // Now in Settings. Shift+Tab should go back to Categories.
+    // Shift+Tab from the first card goes back to the tree.
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
+    harness.assert_screen_not_contains(">  Active Keybinding Map");
 
-    // We should be back in Categories. Tab forward to verify we're at Categories
-    // (Tab from Categories goes to Settings).
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Shift+Tab from the tree wraps the ring to its last stop, Cancel, and
+    // walks the footer backwards from there: Save, Reset, Layer, Edit.
+    for want in [
+        ">[ Cancel ]",
+        ">[ Save ]",
+        ">[ Reset ]",
+        ">[ User ]",
+        ">[ Edit ]",
+    ] {
+        harness
+            .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+            .unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains(want);
+    }
 
-    // Tab to Footer
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Should be in Footer - Layer button visible with focus
-    harness.assert_screen_contains(">[ User ]");
-
-    // Shift+Tab from Footer should go to Settings
+    // Shift+Tab from Edit enters the body at its selected card.
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
-
-    // Shift+Tab from Settings should go to Categories
-    harness
-        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Shift+Tab from Categories should wrap to Footer
-    harness
-        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Should be in Footer with Edit button focused (last button when entering backward)
-    harness.assert_screen_contains(">[ Edit ]");
+    harness.assert_screen_not_contains(">[ Edit ]");
+    harness.assert_screen_contains(">  Active Keybinding Map");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test: Tab in footer visits ALL 5 buttons (Layer, Reset, Save, Cancel, Edit).
-///
-/// Before fix: Footer always started at Save (index 2), skipping Layer and Reset.
-/// After fix: Footer starts at Layer (index 0), Tab visits all 5 buttons.
 #[test]
 fn test_usability_footer_tab_visits_all_buttons() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
     harness.open_settings().unwrap();
 
-    // Tab to Settings, then Tab to Footer
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Button 0: Layer
-    harness.assert_screen_contains(">[ User ]");
-
-    // Button 1: Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    harness.assert_screen_contains(">[ Reset ]");
-
-    // Button 2: Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    harness.assert_screen_contains(">[ Save ]");
-
-    // Button 3: Cancel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Shift+Tab from the tree wraps the ring to the footer's last stop.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Cancel ]");
 
-    // Button 4: Edit
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Left to the footer's first stop in reading order, Edit.
+    for want in [">[ Save ]", ">[ Reset ]", ">[ User ]"] {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains(want);
+    }
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Edit ]");
 
-    // Tab again should wrap to Categories
+    // Tab visits all five in reading order: Edit, Layer, Reset, Save, Cancel.
+    for want in [">[ User ]", ">[ Reset ]", ">[ Save ]", ">[ Cancel ]"] {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains(want);
+    }
+
+    // Tab again wraps to the tree: no button is focused.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    // Verify we left footer (no > indicator on any button)
-    harness.assert_screen_not_contains(">[ Edit ]");
+    harness.assert_screen_not_contains(">[ Cancel ]");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test: Left arrow from Settings navigates back to Categories.
-///
-/// Before fix: Left on non-number controls called handle_control_decrement
-/// (which changed dropdown values).
-/// After fix: Left on non-number controls navigates to Categories panel.
 #[test]
 fn test_usability_left_arrow_to_categories() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
@@ -4072,14 +4080,13 @@ fn test_usability_left_arrow_to_categories() {
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Verify we're back in Categories by pressing Tab (which goes to Settings)
-    // then Tab again (which goes to Footer)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Verify we're back in the tree: Shift+Tab from it wraps the ring to the
+    // footer's last stop.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
-
-    // We should be in Footer now
-    harness.assert_screen_contains(">[ User ]");
+    harness.assert_screen_contains(">[ Cancel ]");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
@@ -4416,15 +4423,16 @@ fn test_reset_button_shows_confirmation_dialog() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Navigate to footer: Tab from Settings goes to Footer (starts at Layer/Project, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Go Right from Layer (index 0) to Reset (index 1)
+    // To the footer: Left leaves the body for the tree, Shift+Tab wraps the
+    // ring to its last stop, Cancel; Left twice more reaches Reset.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains(">[ Reset ]");
 
     // Press Enter on Reset button
     harness
@@ -4491,15 +4499,16 @@ fn test_reset_dialog_confirm_discards_changes() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Navigate to footer: Tab from Settings goes to Footer (starts at Layer/Project, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Go Right from Layer (index 0) to Reset (index 1)
+    // To the footer: Left leaves the body for the tree, Shift+Tab wraps the
+    // ring to its last stop, Cancel; Left twice more reaches Reset.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains(">[ Reset ]");
 
     // Press Enter on Reset button
     harness

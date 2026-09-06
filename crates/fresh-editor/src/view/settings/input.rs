@@ -4,7 +4,7 @@
 //! through the focus hierarchy: Dialog -> Panel -> Control.
 
 use super::items::SettingControl;
-use super::state::{FocusPanel, SettingsState};
+use super::state::{FocusPanel, FocusTarget, SettingsState};
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -922,9 +922,9 @@ impl SettingsState {
     /// Handle input when Categories panel is focused
     fn handle_categories_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
         use crate::view::shell::settings::TreeKey as T;
-        // The eight the tree's node claims for itself when it has focus. They
-        // are here too because focus can be left on a seam whose panel no
-        // longer has the keyboard — see `view::shell::settings::tree_keys`.
+        // The eight the tree's node claims for itself when it has focus
+        // (`view::shell::settings::categories_keys`), for a key that arrives
+        // without the tree in front of it.
         let tree = match event.code {
             KeyCode::Up => Some(T::Prev),
             KeyCode::Down => Some(T::Next),
@@ -941,14 +941,6 @@ impl SettingsState {
             return InputResult::Consumed;
         }
         match event.code {
-            KeyCode::Tab => {
-                self.toggle_focus();
-                InputResult::Consumed
-            }
-            KeyCode::BackTab => {
-                self.toggle_focus_backward();
-                InputResult::Consumed
-            }
             KeyCode::Char('/') => {
                 self.start_search();
                 InputResult::Consumed
@@ -991,19 +983,10 @@ impl SettingsState {
                 self.select_next();
                 InputResult::Consumed
             }
-            KeyCode::Tab => {
-                self.toggle_focus();
-                InputResult::Consumed
-            }
-            KeyCode::BackTab => {
-                self.toggle_focus_backward();
-                InputResult::Consumed
-            }
             KeyCode::Left => {
                 // Left always navigates back to categories — numbers no
                 // longer use Left/Right for inc/dec (direct typing only).
-                self.update_control_focus(false);
-                self.focus.set(FocusPanel::Categories);
+                self.focus_on(FocusTarget::Categories);
                 InputResult::Consumed
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
@@ -1051,33 +1034,24 @@ impl SettingsState {
 
     /// Handle input when Footer is focused
     /// Footer buttons: [Layer] [Reset] [Save] [Cancel] + [Edit] on left for advanced users
-    /// Tab cycles between buttons; after last button, moves to Categories panel
+    /// Left/Right step between buttons; Left off the first returns to the body.
+    /// Tab is the tree's ring (`view::shell::settings::keys`).
     fn handle_footer_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
         const FOOTER_BUTTON_COUNT: usize = 5;
 
         match event.code {
-            KeyCode::Left | KeyCode::BackTab => {
-                // Move to previous button, or wrap to Categories panel
-                if self.footer_button_index > 0 {
-                    self.footer_button_index -= 1;
-                } else {
-                    self.focus.set(FocusPanel::Settings);
+            KeyCode::Left => {
+                // Move to previous button, or back to the body
+                match self.footer_button_index {
+                    0 => self.focus_on(FocusTarget::Card(self.selected_item)),
+                    i => self.focus_on(FocusTarget::Footer(i - 1)),
                 }
                 InputResult::Consumed
             }
             KeyCode::Right => {
                 // Move to next button
                 if self.footer_button_index < FOOTER_BUTTON_COUNT - 1 {
-                    self.footer_button_index += 1;
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Tab => {
-                // Move to next button, or wrap to Categories panel
-                if self.footer_button_index < FOOTER_BUTTON_COUNT - 1 {
-                    self.footer_button_index += 1;
-                } else {
-                    self.focus.set(FocusPanel::Categories);
+                    self.focus_on(FocusTarget::Footer(self.footer_button_index + 1));
                 }
                 InputResult::Consumed
             }
@@ -1258,7 +1232,6 @@ impl SettingsState {
                 // (issue #2515).
                 self.commit_text_edit();
                 self.stop_editing();
-                self.toggle_focus();
                 InputResult::Consumed
             }
             _ => InputResult::Consumed, // Consume all during text edit
@@ -1684,7 +1657,7 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::new(schema, &config).unwrap();
         state.visible = true;
-        state.focus.set(FocusPanel::Categories);
+        state.focus_on(FocusTarget::Categories);
 
         let mut ctx = InputContext::new();
 
@@ -1695,7 +1668,9 @@ mod tests {
         // * Right expands the focused category (no-op for non-
         //   expandable ones); does NOT move focus to Settings.
         // * Left collapses; same — does not switch panels.
-        // * Tab is the only key that switches panels.
+        // * Tab is not the dispatcher's at all: it is the tree's ring
+        //   (`view::shell::settings::keys`), and reaches here only when the
+        //   ring could not serve it, where it is nothing.
         let result = state.handle_key_event(&key(KeyCode::Enter), &mut ctx);
         assert_eq!(result, InputResult::Ignored);
         assert_eq!(state.focus_panel(), FocusPanel::Categories);
@@ -1708,57 +1683,9 @@ mod tests {
         assert_eq!(result, InputResult::Consumed);
         assert_eq!(state.focus_panel(), FocusPanel::Categories);
 
-        // Tab is the panel switcher.
         let result = state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(result, InputResult::Consumed);
-        assert_eq!(state.focus_panel(), FocusPanel::Settings);
-    }
-
-    #[test]
-    fn test_tab_cycles_focus_panels() {
-        let schema = include_str!("../../../plugins/config-schema.json");
-        let config = crate::config::Config::default();
-        let mut state = SettingsState::new(schema, &config).unwrap();
-        state.visible = true;
-
-        let mut ctx = InputContext::new();
-
-        // Start at Categories
+        assert_eq!(result, InputResult::Ignored);
         assert_eq!(state.focus_panel(), FocusPanel::Categories);
-
-        // Tab -> Settings
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel(), FocusPanel::Settings);
-
-        // Tab -> Footer (defaults to Layer button, index 0)
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel(), FocusPanel::Footer);
-        assert_eq!(state.footer_button_index, 0);
-
-        // Tab through footer buttons: 0 -> 1 -> 2 -> 3 -> 4 -> wrap to Categories
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.footer_button_index, 1);
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.footer_button_index, 2);
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.footer_button_index, 3);
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.footer_button_index, 4); // Edit button
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel(), FocusPanel::Categories);
-
-        // SECOND LOOP: Tab again should still land on Layer button when entering Footer
-        // Tab -> Settings
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel(), FocusPanel::Settings);
-
-        // Tab -> Footer (should reset to Layer button, not stay on Edit)
-        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel(), FocusPanel::Footer);
-        assert_eq!(
-            state.footer_button_index, 0,
-            "Footer should reset to Layer button (index 0) on second loop"
-        );
     }
 
     #[test]
@@ -1947,7 +1874,7 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::new(schema, &config).unwrap();
         state.visible = true;
-        state.focus.set(FocusPanel::Footer);
+        state.focus_on(FocusTarget::Footer(0));
         state.footer_button_index = 2; // Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
 
         let mut ctx = InputContext::new();
@@ -1973,7 +1900,7 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::new(schema, &config).unwrap();
         state.visible = true;
-        state.focus.set(FocusPanel::Settings);
+        state.focus_on(FocusTarget::Card(0));
 
         // Find a number setting (any will do)
         let number_idx = state
@@ -2016,7 +1943,7 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::new(schema, &config).unwrap();
         state.visible = true;
-        state.focus.set(FocusPanel::Settings);
+        state.focus_on(FocusTarget::Card(0));
 
         assert!(
             select_first_text_control(&mut state),

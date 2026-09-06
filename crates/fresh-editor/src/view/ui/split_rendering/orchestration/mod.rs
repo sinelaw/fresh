@@ -289,6 +289,7 @@ pub(crate) fn render_content(
         &crate::view::shell::splits::Splits {
             root: split_manager.root().clone(),
             maximized: split_manager.maximized_split().map(LeafId),
+            active: None,
             chrome: pane_chrome.clone(),
             // The strip's buttons take their width from the tabs slot, never
             // from the content, and the preview paints none.

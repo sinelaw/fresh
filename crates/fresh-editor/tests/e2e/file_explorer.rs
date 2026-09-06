@@ -819,7 +819,7 @@ fn test_file_explorer_focus_after_delete() {
     harness.wait_for_file_explorer_item("file1.txt").unwrap();
 
     // Verify we're in file explorer context
-    let key_context_before = harness.editor().get_key_context();
+    let key_context_before = harness.editor_mut().get_key_context();
     println!("Key context before deletion: {:?}", key_context_before);
     assert!(
         matches!(
@@ -862,7 +862,7 @@ fn test_file_explorer_focus_after_delete() {
     println!("Screen after deletion:\n{}", screen_after);
 
     // Check that focus is back to file explorer
-    let key_context_after = harness.editor().get_key_context();
+    let key_context_after = harness.editor_mut().get_key_context();
     println!("Key context after deletion: {:?}", key_context_after);
 
     // The critical assertion: focus should be on file explorer after deletion
@@ -1796,7 +1796,7 @@ fn test_click_empty_explorer_area_then_editor_allows_typing() {
     harness.render().unwrap();
 
     // Check key_context after file explorer click
-    let key_context_after_explorer = harness.editor().get_key_context();
+    let key_context_after_explorer = harness.editor_mut().get_key_context();
     println!(
         "Key context after explorer click: {:?}",
         key_context_after_explorer
@@ -1812,7 +1812,7 @@ fn test_click_empty_explorer_area_then_editor_allows_typing() {
     harness.render().unwrap();
 
     // Check key_context after editor click
-    let key_context_after_editor = harness.editor().get_key_context();
+    let key_context_after_editor = harness.editor_mut().get_key_context();
     println!(
         "Key context after editor click: {:?}",
         key_context_after_editor
@@ -2246,7 +2246,7 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     );
 
     // Verify 2: Focus should be on the editor (Normal key context), not file explorer
-    let key_context = harness.editor().get_key_context();
+    let key_context = harness.editor_mut().get_key_context();
     assert!(
         matches!(key_context, fresh::input::keybindings::KeyContext::Normal),
         "Focus should be on editor (Normal context) after rename. Got: {:?}",
@@ -2512,7 +2512,7 @@ fn test_file_explorer_rename_existing_file_keeps_focus() {
     harness.render().unwrap();
 
     // Verify we're in FileExplorer context
-    let key_context_before = harness.editor().get_key_context();
+    let key_context_before = harness.editor_mut().get_key_context();
     assert!(
         matches!(
             key_context_before,
@@ -2563,7 +2563,7 @@ fn test_file_explorer_rename_existing_file_keeps_focus() {
     );
 
     // Verify 2: Focus should STILL be on file explorer (not switched to editor)
-    let key_context_after = harness.editor().get_key_context();
+    let key_context_after = harness.editor_mut().get_key_context();
     assert!(
         matches!(
             key_context_after,
@@ -2968,7 +2968,7 @@ fn test_file_explorer_escape_clears_search() {
     // Verify we're in file explorer context
     assert!(
         matches!(
-            harness.editor().get_key_context(),
+            harness.editor_mut().get_key_context(),
             fresh::input::keybindings::KeyContext::FileExplorer
         ),
         "Should be in FileExplorer context"
@@ -3001,7 +3001,7 @@ fn test_file_explorer_escape_clears_search() {
     // Should still be in file explorer context
     assert!(
         matches!(
-            harness.editor().get_key_context(),
+            harness.editor_mut().get_key_context(),
             fresh::input::keybindings::KeyContext::FileExplorer
         ),
         "Should still be in FileExplorer context after Escape"
@@ -3016,7 +3016,7 @@ fn test_file_explorer_escape_clears_search() {
 
     assert!(
         matches!(
-            harness.editor().get_key_context(),
+            harness.editor_mut().get_key_context(),
             fresh::input::keybindings::KeyContext::Normal
         ),
         "Should exit FileExplorer context on second Escape (no search to clear)"

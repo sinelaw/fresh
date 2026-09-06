@@ -2657,6 +2657,7 @@ impl Editor {
                             true => item.path.clone(),
                             false => String::new(),
                         },
+                        live: item.control.is_live(),
                         hovered_popup_row: s.hovered_popup_row.clone(),
                         description: item.description.clone().filter(|d| !d.is_empty()),
                         layer: match item.layer_source {
@@ -2688,6 +2689,7 @@ impl Editor {
                 .collect();
         Some(st::Items {
             cards,
+            entry: s.selected_item,
             anchor: Some(s.body_anchor.clone()),
         })
     }
@@ -2771,13 +2773,7 @@ impl Editor {
                 .map(|i| i.nullable && !i.is_null)
                 .unwrap_or(false);
             let focused = (s.focus_panel() == crate::view::settings::state::FocusPanel::Footer)
-                .then(|| match s.footer_button_index {
-                    0 => st::Button::Layer,
-                    1 => st::Button::Reset,
-                    2 => st::Button::Save,
-                    3 => st::Button::Cancel,
-                    _ => st::Button::Edit,
-                });
+                .then(|| st::Button::from_index(s.footer_button_index));
             use crate::view::settings::hit::SettingsHit;
             st::Footer {
                 layer: format!("[ {} ]", s.target_layer_name()),
@@ -4356,17 +4352,15 @@ impl Editor {
     /// rectangle this reads, so taking the size as well would be a second way
     /// to say the same thing — and the two could then disagree, which is the
     /// bug above wearing a different hat.
-    /// Lay the shell's retained tree out for one frame, and settle the focus
-    /// moves that were waiting for it.
+    /// Lay the shell's retained tree out for one frame.
     ///
-    /// **One function because they are one step, and because a test that
-    /// re-spelled the step could not fail when the step changed.** The replay
-    /// has to happen on the frame that first builds the element a
-    /// `setFocusKey` named (see [`Editor::pending_panel_tree_focus`]), so it
-    /// belongs to laying the tree out, not beside it. `render` used to spell
-    /// the sequence inline and the widget-runtime tests spelled it again in a
-    /// helper — two copies, and deleting the replay from `render` left the
-    /// copy passing. Now there is one, and #3137 comes back as a test failure.
+    /// The frame is where the tree follows the description: `fresh_ui`
+    /// settles focus onto the scope's `autofocus` mark when that mark has
+    /// moved, so a panel focus the host decided since the last frame — a
+    /// `setFocusKey`, the dock's `/` — lands here, on the frame that carries
+    /// it, and nothing outside the tree places focus in it. `render` and the
+    /// widget-runtime tests both call this one function, so a step removed
+    /// from it fails the tests that depend on the step.
     ///
     /// The tree is retained across frames — element state, focus and the dirty
     /// set live on it — so it is moved out for the duration rather than
@@ -4388,10 +4382,29 @@ impl Editor {
         crate::view::shell::geometry::stats::note_shell_layout();
         ui.frame(crate::view::shell::frame::frame_tree(shell), size);
         self.shell_ui = Some(ui);
-        // The gain this raises is queued behind the one the stale holder
-        // already left, and `apply_settled_shell_messages` settles on the last
-        // — which is why the replay belongs here and not at the drain.
-        self.retry_pending_panel_tree_focus();
+        self.shell_description_stale = false;
+    }
+
+    /// Lay the tree out from the current description when a write since the
+    /// last frame has made it stale — see `Editor::shell_description_stale`.
+    ///
+    /// The frame builder is the one `render` uses, at the size the tree was
+    /// last laid out for. A tree that has never been laid out has no size to
+    /// lay out at, and nothing to be stale relative to.
+    pub(crate) fn lay_out_shell_if_stale(&mut self) {
+        if !self.shell_description_stale {
+            return;
+        }
+        let Some(size) = self.shell_ui.as_ref().map(|ui| ui.frame_size()) else {
+            return;
+        };
+        if size.w == 0 || size.h == 0 {
+            return;
+        }
+        let rect = ratatui::layout::Rect::new(0, 0, size.w, size.h);
+        let split = self.compute_dock_split(rect);
+        let shell = self.shell_frame(split);
+        self.lay_out_shell_tree(shell, size);
     }
 
     /// The active window's pane leaves, collected so a caller can hold the
@@ -4480,6 +4493,15 @@ impl Editor {
         let pane_chrome = self.pane_chrome();
         let groups = self.active_window().pane_groups();
         let interiors = self.pane_interiors();
+        // **The pane that has the keyboard is the *effective* active split.**
+        // A buffer group's host leaf is the window's active split while the
+        // keyboard is in one of the group's own panes; the pane the keys
+        // belong to — and the one the base marks as its focus holder — is
+        // that inner pane. Its panel holds the keyboard whenever nothing
+        // above it does: its layer is declared first, so every other
+        // keyboard layer outranks it by declaration order.
+        let active_pane = self.effective_active_split();
+        let pane_keys = Some(active_pane).filter(|a| interiors.contains_key(a));
         let splits = self.active_window().buffers.splits().map(|(mgr, _)| {
             // Which buttons the strips carry, by the painter's own rule. Both
             // are frame-wide: they read "is there more than one pane" and "is
@@ -4489,6 +4511,7 @@ impl Editor {
             crate::view::shell::splits::Splits {
                 root: mgr.root().clone(),
                 maximized: mgr.maximized_split().map(crate::model::event::LeafId),
+                active: Some(active_pane),
                 chrome: pane_chrome.clone(),
                 controls: crate::view::shell::splits::PaneControls {
                     maximize: several || is_maximized,
@@ -4546,6 +4569,7 @@ impl Editor {
             // still owns every key. `chrome::Prompt::layers` asked
             // `is_prompting()` for exactly this and so does the layer.
             prompt_keys: self.is_prompting(),
+            search_prompt: self.active_prompt_has_search_options(),
             // A focused panel is the keyboard's owner, which is what
             // `chrome::Dock::layers` and `chrome::FloatingModal::layers` say
             // with `owns_keyboard` — asked here so the frame can declare the
@@ -4555,6 +4579,7 @@ impl Editor {
                 .floating_widget_panel
                 .as_ref()
                 .is_some_and(|f| f.focused),
+            pane_keys,
             dock: dock_area.map(|d| d.width),
             sidebar,
             menu: self.open_context_menu_for_shell(),
@@ -5556,7 +5581,6 @@ impl Editor {
     /// `hide_cursor`; this is the equivalent gate for chrome carets that are
     /// painted before the overlays exist (today: the file explorer's).
     fn cursor_suppressed_by_late_overlay(&self) -> bool {
-        use crate::app::overlay::LayerKind;
         // DERIVED from the overlay stack (this used to be a seven-item
         // hand list that had already drifted from `hide_cursor`'s):
         // every present layer suppresses EXCEPT the ones that don't
@@ -5570,12 +5594,7 @@ impl Editor {
         // The SET, not `overlay_layers`: which layer outranks which for
         // the keyboard says nothing about whether one paints over a
         // caret, so this must not be reading a ranked list.
-        self.overlay_layer_set().any(|l| {
-            !matches!(
-                l.kind,
-                LayerKind::Popup | LayerKind::Dock | LayerKind::Editor | LayerKind::Prompt
-            )
-        })
+        self.shell_ui.as_ref().is_some_and(|ui| ui.modal_up())
     }
 
     /// Render the Quick Open hints line showing available mode prefixes
@@ -8196,8 +8215,10 @@ impl Editor {
     /// in a panel nobody is editing. `caret_key` is keyed per pane so the
     /// question can be asked of one.
     fn described_pane_caret(&self) -> Option<(u16, u16)> {
-        let mgr = self.active_window().buffers.splits().map(|(m, _)| m)?;
-        let active = mgr.active_split();
+        // The effective split: inside a buffer group the window's active
+        // split is the group's host leaf, and the pane with the keyboard is
+        // the inner one. See `shell_frame`'s `active_pane`.
+        let active = self.effective_active_split();
         if !self.described_panes().contains(&active) {
             return None;
         }
@@ -8277,15 +8298,27 @@ impl Editor {
                 .focus_key(&key)
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
+            // A pane-mounted panel holds the keyboard when its pane is the
+            // active one, which the pane knows and this builder does not:
+            // `splits::panel_content` sets it. See `Ctx::keyboard`.
+            keyboard: false,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            // A pane-mounted panel has no keyboard layer of its own, so
-            // neither field is read for it; see `panel::Interior`.
-            claims_tab: false,
+            // **The panel's keymap: its buffer's mode.** A pane-mounted
+            // panel's plugin declares its bindings on the buffer it mounted
+            // into (`setBufferMode`), and that is the mode its interior
+            // resolves a key against first — the same way the dock's
+            // resolves against the mode it mounted with.
+            keymap: self
+                .buffer_mode(buffer)
+                .map(|mode| crate::view::shell::panel::Keymap {
+                    mode: mode.to_string(),
+                    resolver: self.keybindings.clone(),
+                }),
             markdown: Some(self.markdown_ink()),
         })
     }
@@ -8377,6 +8410,7 @@ impl Editor {
                 .focus_key(&key)
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
+            keyboard: panel.focused,
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),
             hovered_popup_row: panel.hovered_popup_row.clone(),
@@ -8395,7 +8429,22 @@ impl Editor {
                             .scrollbar_flash_until
                             .is_some_and(|until| self.time_source().now() < until)
                 }),
-            claims_tab: self.panel_mode_binds_tab(),
+            // **The panel's keymap: the mode its plugin defined.** The one
+            // it declared at mount, or else the active window's editor mode,
+            // which is how a plugin that mounts a centred form declares one;
+            // a sidebar section takes its keys through `widget_event` and
+            // never through a mode, so it declares none.
+            keymap: match slot {
+                crate::app::PanelSlot::Dock | crate::app::PanelSlot::Floating => panel
+                    .mode
+                    .clone()
+                    .or_else(|| self.active_window().editor_mode.clone())
+                    .map(|mode| crate::view::shell::panel::Keymap {
+                        mode,
+                        resolver: self.keybindings.clone(),
+                    }),
+                crate::app::PanelSlot::Sidebar(_) => None,
+            },
             markdown: Some(self.markdown_ink()),
         })
     }
@@ -8412,29 +8461,6 @@ impl Editor {
             theme: self.theme.read().unwrap().clone().into(),
             grammars: self.grammar_registry.clone(),
         }
-    }
-
-    /// Whether the active editor mode explicitly binds Tab.
-    ///
-    /// The one precedence question `panel::interior` creates: the tree resolves
-    /// Tab to move focus, and a plugin that bound Tab through `defineMode`
-    /// would lose it. Asked the same way `router::widget_panel_key` asks —
-    /// explicitly-set bindings for the mode only, because the resolver's full
-    /// lookup falls back to Normal-context bindings and would report Tab bound
-    /// in every mode.
-    fn panel_mode_binds_tab(&self) -> bool {
-        let Some(mode) = self.active_window().editor_mode.clone() else {
-            return false;
-        };
-        let ev = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Tab,
-            crossterm::event::KeyModifiers::NONE,
-        );
-        let ctx = crate::input::keybindings::KeyContext::Mode(mode);
-        self.keybindings
-            .read()
-            .map(|kb| kb.has_explicit_binding(&ev, &ctx))
-            .unwrap_or(false)
     }
 
     pub(crate) fn panel_description(&self) -> Option<crate::view::shell::panel::Panel> {

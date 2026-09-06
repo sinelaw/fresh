@@ -38,6 +38,9 @@ fn tab_walks_the_focusables_in_reading_order_and_wraps() {
 
     ui.dispatch(Input::Key(KeyPress::new(KeyCode::BackTab)));
     assert_eq!(ui.focused(), Some(ids[2]));
+    // As a terminal reports it: BackTab with Shift still on.
+    ui.dispatch(Input::Key(KeyPress::with(KeyCode::BackTab, Mods::SHIFT)));
+    assert_eq!(ui.focused(), Some(ids[1]));
 }
 
 #[test]
@@ -829,4 +832,474 @@ fn a_second_reader_does_not_empty_its_focus_parents_ring() {
     assert_eq!(ui.focused(), Some(one), "the scope's ring is not empty");
     ui.dispatch(tab);
     assert_eq!(ui.focused(), Some(two), "and Tab walks all of it");
+}
+
+// -- a mark that moves ----------------------------------------------------------
+//
+// The fourth case of `apply_autofocus`. A description can *say* where focus
+// is by marking a control `autofocus`; the tree lands there when the scope
+// opens, and follows when the mark moves — while the ring's own moves are
+// left alone, because a mark that has not moved is not a decision.
+
+fn marked(name: &'static str, mark: bool) -> Node<&'static str> {
+    let n = focusable(text(name))
+        .key(name)
+        .h(Sizing::Cells(1))
+        .on_focus_change(move |e: &Event| {
+            (e.kind == fresh_ui::GestureKind::FocusGained).then_some(name)
+        });
+    match mark {
+        true => n.autofocus(),
+        false => n,
+    }
+}
+
+/// The dock's shape: a keyboard layer that names an in-flow interior as its
+/// scope, so the layer ranks early and the content paints late.
+fn panel(fields: Vec<Node<&'static str>>) -> Node<&'static str> {
+    col().children([
+        layer()
+            .anchor(Anchor::Screen(Align::Start))
+            .modality(Modality::Focus)
+            .scope_at("scope".into()),
+        focusable(col().children(fields))
+            .key("scope")
+            .skip_traversal(),
+    ])
+}
+
+#[test]
+fn a_mark_that_moves_inside_the_scope_moves_focus_with_one_gain() {
+    let mut ui: Ui<&'static str> = Ui::new();
+    ui.frame(panel(vec![marked("a", true), marked("b", false)]), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"a".into()),
+        "entered on the mark"
+    );
+    ui.take_messages();
+
+    ui.frame(panel(vec![marked("a", false), marked("b", true)]), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"b".into()),
+        "the mark moved; focus followed"
+    );
+    assert_eq!(ui.take_messages(), vec!["b"], "one landing, one gain");
+}
+
+#[test]
+fn a_mark_that_stays_does_not_undo_the_rings_own_move() {
+    let mut ui: Ui<&'static str> = Ui::new();
+    ui.frame(panel(vec![marked("a", true), marked("b", false)]), FRAME);
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"b".into()),
+        "Tab moved the ring"
+    );
+    ui.take_messages();
+
+    // The description has not caught up: it still marks `a`.
+    ui.frame(panel(vec![marked("a", true), marked("b", false)]), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"b".into()),
+        "a stale mark is not a decision; the ring's move stands"
+    );
+    assert!(ui.take_messages().is_empty());
+}
+
+#[test]
+fn a_mark_on_an_element_first_built_this_frame_lands_on_it() {
+    let mut ui: Ui<&'static str> = Ui::new();
+    ui.frame(panel(vec![marked("a", true)]), FRAME);
+    assert_eq!(ui.focused(), ui.find_by_key(&"a".into()));
+    ui.take_messages();
+
+    // The frame that first builds `c` is the one that marks it — the shape
+    // of a dropdown row that is described and focused in one plugin turn.
+    ui.frame(panel(vec![marked("a", false), marked("c", true)]), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"c".into()),
+        "landed on the frame that built the element, with no replay"
+    );
+    assert_eq!(ui.take_messages(), vec!["c"]);
+}
+
+#[test]
+fn a_mark_moving_outside_the_active_scope_moves_nothing() {
+    let group = |name: &'static str, fields: Vec<Node<&'static str>>| {
+        focusable(col().children(fields))
+            .key(name)
+            .skip_traversal()
+            .focus_scope()
+    };
+    let mut ui: Ui<&'static str> = Ui::new();
+    ui.frame(
+        col().children([
+            group("one", vec![marked("x", false), marked("y", false)]),
+            group("two", vec![marked("p", true), marked("q", false)]),
+        ]),
+        FRAME,
+    );
+    let x = ui.find_by_key(&"x".into()).unwrap();
+    ui.request_focus(x, SelectionOnFocus::None);
+    ui.take_messages();
+
+    // `two`'s mark moves while focus is confined to `one`.
+    ui.frame(
+        col().children([
+            group("one", vec![marked("x", false), marked("y", false)]),
+            group("two", vec![marked("p", false), marked("q", true)]),
+        ]),
+        FRAME,
+    );
+    assert_eq!(
+        ui.focused(),
+        Some(x),
+        "a mark outside the confinement is entry-only"
+    );
+    assert!(ui.take_messages().is_empty());
+}
+
+#[test]
+fn a_mark_that_goes_away_rests_focus_on_the_scope() {
+    let mut ui: Ui<&'static str> = Ui::new();
+    ui.frame(panel(vec![marked("a", true), marked("b", false)]), FRAME);
+    assert_eq!(ui.focused(), ui.find_by_key(&"a".into()));
+    ui.take_messages();
+
+    ui.frame(panel(vec![marked("a", false), marked("b", false)]), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"scope".into()),
+        "nothing marked is a state the tree holds on the scope's own element"
+    );
+    // And the ring starts from outside: the first Tab reaches the first
+    // focusable rather than skipping it.
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert_eq!(ui.focused(), ui.find_by_key(&"a".into()));
+}
+
+// -- observed, not claimed -------------------------------------------------------
+
+/// **A key can be observed without being claimed.** A subtree whose keys are
+/// bound outside the tree — a plugin panel whose Tab is the plugin's own —
+/// needs propagation and the tree's intent resolution to end at it while the
+/// key still reaches the host. `Flow::Stop` would swallow it; `Flow::Continue`
+/// would let traversal have it. Observing is the third answer.
+#[test]
+fn an_observed_key_ends_propagation_and_traversal_but_is_not_claimed() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        focusable(col().children([field("one"), field("two")]))
+            .key("interior")
+            .skip_traversal()
+            .on_key(|e: &Event| {
+                e.observe();
+                None
+            }),
+        FRAME,
+    );
+    let one = ui.find_by_key(&"one".into()).unwrap();
+    ui.request_focus(one, SelectionOnFocus::None);
+    let d = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert_eq!(ui.focused(), Some(one), "traversal did not move focus");
+    assert!(!d.claimed, "and the key is still the host's");
+    // A stop recorded first stands: observing cannot un-claim.
+    let mut ui2: Ui<()> = Ui::new();
+    ui2.frame(
+        focusable(
+            col().child(focusable(text("inner")).key("inner").on_key(|e: &Event| {
+                e.stop();
+                None
+            })),
+        )
+        .key("outer")
+        .skip_traversal()
+        .on_key(|e: &Event| {
+            e.observe();
+            None
+        }),
+        FRAME,
+    );
+    let inner = ui2.find_by_key(&"inner".into()).unwrap();
+    ui2.request_focus(inner, SelectionOnFocus::None);
+    let d = ui2.dispatch(Input::Key(KeyPress::new(KeyCode::Enter)));
+    assert!(
+        d.claimed,
+        "the inner stop claimed it before the outer observer ran"
+    );
+}
+
+/// A focusable built inside a `layout_reader` is an ordinary ring member: a
+/// mark on it lands, stays across frames, and its keys reach it.
+///
+/// The editor's settings dialog builds its whole box inside a reader (the
+/// box is sized from the frame), and its focus seams once sat *outside* the
+/// reader on the belief that a registration made during the layout pass was
+/// gone by the next frame. Autofocus settles after layout, and a keyed
+/// element is the same element from one layout to the next, so it is not.
+#[test]
+fn a_marked_focusable_inside_a_layout_reader_holds_focus_across_frames() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let build = {
+        let log = log.clone();
+        move || {
+            let log = log.clone();
+            layer()
+                .anchor(Anchor::Screen(Align::Center))
+                .modality(Modality::Keyboard)
+                .scope_at("box".into())
+                .child(fresh_ui::layout_reader(move |_info| {
+                    let log = log.clone();
+                    col()
+                        .key("box")
+                        .w(Sizing::Cells(10))
+                        .h(Sizing::Cells(3))
+                        .children([
+                            field("a"),
+                            focusable(text("b"))
+                                .key("b")
+                                .h(Sizing::Cells(1))
+                                .autofocus()
+                                .on_key(move |e: &Event| {
+                                    let code = e.key?.code;
+                                    if code != KeyCode::Enter {
+                                        return None;
+                                    }
+                                    log.borrow_mut().push(format!("{code:?}"));
+                                    e.stop();
+                                    None
+                                }),
+                            field("c"),
+                        ])
+                }))
+        }
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(), FRAME);
+    let b = ui.find_by_key(&"b".into()).expect("b");
+    assert_eq!(
+        ui.focused(),
+        Some(b),
+        "the mark lands on the frame it is built"
+    );
+    ui.frame(build(), FRAME);
+    ui.frame(build(), FRAME);
+    assert_eq!(ui.find_by_key(&"b".into()), Some(b), "the same element");
+    assert_eq!(ui.focused(), Some(b), "and still focused three frames on");
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Enter)));
+    assert_eq!(log.borrow().as_slice(), ["Enter"], "its keys reach it");
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"c".into()),
+        "and the ring walks the reader's siblings"
+    );
+}
+
+/// A mark that moves *between* two `layout_reader` subtrees — one nested in
+/// the other — is followed on the frame that carries it, not the next one.
+///
+/// The editor's settings dialog is a reader (the box) holding a reader (the
+/// footer row); a fact moving from a card to a footer button is exactly
+/// this. The readers rebuild during the layout pass, so the second reader's
+/// mark exists only after the layout dirt it raised is flushed; settling
+/// focus before that flush finds no mark and rests on the scope.
+#[test]
+fn a_mark_moving_into_a_nested_layout_reader_is_followed_on_that_frame() {
+    let build = |mark_button: bool| {
+        layer()
+            .anchor(Anchor::Screen(Align::Center))
+            .modality(Modality::Keyboard)
+            .scope_at("box".into())
+            .child(fresh_ui::layout_reader(move |_info| {
+                let field = focusable(text("a")).key("a").h(Sizing::Cells(1));
+                let field = match mark_button {
+                    false => field.autofocus(),
+                    true => field,
+                };
+                focusable(col().children([
+                    field,
+                    fresh_ui::layout_reader(move |_info| {
+                        let b = focusable(text("b")).key("b").h(Sizing::Cells(1));
+                        match mark_button {
+                            true => b.autofocus(),
+                            false => b,
+                        }
+                    }),
+                ]))
+                .w(Sizing::Cells(10))
+                .h(Sizing::Cells(3))
+                .key("box")
+                .skip_traversal()
+            }))
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(false), FRAME);
+    assert_eq!(ui.focused(), ui.find_by_key(&"a".into()));
+    ui.frame(build(true), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"b".into()),
+        "the mark moved into the nested reader, and focus followed this frame"
+    );
+}
+
+/// A group is entered at the stop it names, from either direction, and
+/// stepped through in reading order once inside.
+#[test]
+fn a_group_is_entered_at_its_entry_stop_and_walked_inside() {
+    let build = || {
+        col().children([
+            field("before"),
+            focusable(col().children([field("g0"), field("g1"), field("g2")]))
+                .skip_traversal()
+                .enters_at("g1".into()),
+            field("after"),
+        ])
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(), FRAME);
+    let at = |ui: &Ui<()>, k: &str| ui.find_by_key(&k.into()).unwrap();
+    let tab = Input::Key(KeyPress::new(KeyCode::Tab));
+    let back = Input::Key(KeyPress::new(KeyCode::BackTab));
+    ui.dispatch(tab);
+    assert_eq!(ui.focused(), Some(at(&ui, "before")));
+    ui.dispatch(tab);
+    assert_eq!(
+        ui.focused(),
+        Some(at(&ui, "g1")),
+        "entered at the entry, not the first"
+    );
+    ui.dispatch(tab);
+    assert_eq!(ui.focused(), Some(at(&ui, "g2")), "inside, reading order");
+    ui.dispatch(tab);
+    assert_eq!(ui.focused(), Some(at(&ui, "after")), "and out at the end");
+    ui.dispatch(back);
+    assert_eq!(
+        ui.focused(),
+        Some(at(&ui, "g1")),
+        "entered at the entry backwards too"
+    );
+    ui.dispatch(back);
+    assert_eq!(ui.focused(), Some(at(&ui, "g0")));
+    ui.dispatch(back);
+    assert_eq!(ui.focused(), Some(at(&ui, "before")));
+}
+
+/// An entry that names nothing on the ring is no entry: the group is entered
+/// where it would have been.
+#[test]
+fn a_group_whose_entry_is_not_a_stop_is_entered_in_order() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            field("before"),
+            focusable(col().children([field("g0"), text("plain").key("plain")]))
+                .skip_traversal()
+                .enters_at("plain".into()),
+        ]),
+        FRAME,
+    );
+    let tab = Input::Key(KeyPress::new(KeyCode::Tab));
+    ui.dispatch(tab);
+    ui.dispatch(tab);
+    assert_eq!(ui.focused(), ui.find_by_key(&"g0".into()));
+}
+
+/// **A layer that stops confining releases what it held.** The editor's dock:
+/// its interior is a subtree that stays described whether or not the dock
+/// holds the keyboard, and the keyboard layer that scopes to it comes and
+/// goes with the host's focus fact. While the layer is up, the dock's marked
+/// widget holds focus. When the layer goes and the mark moves to the pane
+/// behind, focus must go with it — the dock's widget is still there, still
+/// focusable, and still where focus was left, so nothing but this rule moves
+/// it.
+#[test]
+fn a_layer_that_stops_confining_releases_focus_to_the_enclosing_mark() {
+    let build = |dock_keys: bool| {
+        let pane = focusable(text("pane"))
+            .key("pane")
+            .skip_traversal()
+            .h(Sizing::Cells(1));
+        let pane = match dock_keys {
+            true => pane,
+            false => pane.autofocus(),
+        };
+        let widget = focusable(text("w")).key("w").h(Sizing::Cells(1));
+        let widget = match dock_keys {
+            true => widget.autofocus(),
+            false => widget,
+        };
+        let dock = col().key("dock").children([widget, field("x")]);
+        let root = col().children([dock, pane]);
+        match dock_keys {
+            true => root.child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Start))
+                    .modality(Modality::Focus)
+                    .scope_at("dock".into()),
+            ),
+            false => root,
+        }
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(true), FRAME);
+    let w = ui.find_by_key(&"w".into()).expect("w");
+    assert_eq!(ui.focused(), Some(w), "the confined mark holds focus");
+    // Tab inside the confinement: the ring's own move, which the mark must
+    // not undo on the next frame.
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    let x = ui.find_by_key(&"x".into()).expect("x");
+    assert_eq!(ui.focused(), Some(x));
+    ui.frame(build(true), FRAME);
+    assert_eq!(ui.focused(), Some(x), "a stale mark does not undo Tab");
+
+    // The layer goes and the mark moves to the pane.
+    ui.frame(build(false), FRAME);
+    let pane = ui.find_by_key(&"pane".into()).expect("pane");
+    assert_eq!(
+        ui.focused(),
+        Some(pane),
+        "focus left behind by a gone confinement goes to the enclosing mark"
+    );
+    // And stays there across frames that change nothing.
+    ui.frame(build(false), FRAME);
+    assert_eq!(ui.focused(), Some(pane));
+}
+
+/// Outside every confinement the whole tree is the scope: a mark moving from
+/// one subtree to another at the root is followed the same way a mark moving
+/// inside a dialog is.
+#[test]
+fn a_mark_moving_between_subtrees_at_the_root_is_followed() {
+    let build = |which: &'static str| {
+        let one = focusable(text("one")).key("one").h(Sizing::Cells(1));
+        let two = focusable(text("two")).key("two").h(Sizing::Cells(1));
+        let (one, two) = match which {
+            "one" => (one.autofocus(), two),
+            _ => (one, two.autofocus()),
+        };
+        col().children([col().child(one), col().child(two)])
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build("one"), FRAME);
+    let one = ui.find_by_key(&"one".into()).expect("one");
+    assert_eq!(ui.focused(), Some(one));
+    ui.frame(build("two"), FRAME);
+    let two = ui.find_by_key(&"two".into()).expect("two");
+    assert_eq!(
+        ui.focused(),
+        Some(two),
+        "the root's mark moved, focus follows"
+    );
+    // Tab is the ring's move; a mark that has not moved leaves it alone.
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert_eq!(ui.focused(), Some(one));
+    ui.frame(build("two"), FRAME);
+    assert_eq!(ui.focused(), Some(one), "a stale mark does not undo Tab");
 }

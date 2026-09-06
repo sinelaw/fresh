@@ -18,7 +18,7 @@ let popoverRegionOwner=null;
 // untouched — scroll positions, caret blink phase and IME focus survive by
 // construction instead of by snapshot/restore.
 const REGION_ORDER = ["fileExplorer","panes","separators","menu","statusbar",
-  "popups","palette","widgets","contextMenu","auxModal","keybindingEditor",
+  "popups","palette","tree","contextMenu","auxModal","keybindingEditor",
   "settings","trustDialog","caret"];
 let containers=null;
 let renderedRegions=[];   // region names rebuilt by the last render (test surface)
@@ -121,14 +121,9 @@ const REGION_FILL={
   // rendered inside it, matching the TUI's single box) plus a `.modal-scrim`
   // behind it in centered-modal placement.
   palette(c,reg){ if(reg.palette) for(const el of paletteEls(reg.palette)) c.appendChild(el); },
-  // Native plugin widget panels (floating / dock). **The server no longer
-  // sends this region** — the web's plugin-panel projection was deleted so the
-  // retained tree could be the only thing that lays a panel out (see
-  // `docs/internal/fresh-editor-retained-mode-plan.md` §6d). `reg.widgets` is
-  // always undefined, so this renders nothing; the entry stays so the region
-  // slot keeps its place in `REGION_ORDER` and so the replacement has an
-  // obvious seam to land on.
-  widgets(c,reg){ if(reg.widgets) for(const s of reg.widgets) for(const el of widgetSurfaceEls(s)) c.appendChild(el); },
+  // The plugin panels, folded from the display list the tree produced for
+  // them (`regions.tree`, see 72-tree.js).
+  tree(c,reg){ if(reg.tree) for(const el of treeEls(reg.tree)) c.appendChild(el); },
   contextMenu(c,reg){ if(reg.contextMenu) c.appendChild(contextMenuEl(reg.contextMenu)); },
   auxModal(c,reg){ if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) c.appendChild(el); },
   keybindingEditor(c,reg){ if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) c.appendChild(el); },
@@ -142,7 +137,7 @@ const REGION_FILL={
 // removes the real node synchronously.
 const FX={
   palette:      {sel:".palette",                present:r=>!!r.palette,        out:"fx-out-pal",  dur:180},
-  widgets:      {sel:".widget-surface.w-dock",  present:r=>(r.widgets||[]).some(w=>w.kind==="dock"), out:"fx-out-left", dur:280},
+  tree:         {sel:".tree-surface.dock",      present:r=>!!(r.tree&&r.tree.surfaces&&r.tree.surfaces.some(s=>s.kind==="dock")), out:"fx-out-left", dur:280},
   fileExplorer: {sel:".fileexplorer",           present:r=>!!r.fileExplorer,   out:"fx-out-wipe", dur:280},
 };
 // Entrance timestamps: a surface often gets a second frame right after it
@@ -233,9 +228,7 @@ function fxSlideEls(els, dx){
 let fxDockCells=null, fxFeCells=null;
 function fxLayoutSlides(){
   if(!scene||!scene.regions||!containers) return;
-  let dockC=0;
-  for(const s of (scene.regions.widgets||[]))
-    if(s.kind==="dock"&&s.rect&&s.rect.x===0&&s.rect.w<(scene.w||0)) dockC=s.rect.w;
+  const dockC=treeDockCells(scene.regions);
   const feC=scene.regions.fileExplorer?scene.regions.fileExplorer.rect.w:0;
   const first=fxDockCells===null;
   const dockDelta=(!first&&(fxDockCells===0)!==(dockC===0))?px(dockC-fxDockCells,CW):0;

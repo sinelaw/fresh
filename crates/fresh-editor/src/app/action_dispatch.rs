@@ -76,6 +76,15 @@ impl Editor {
 
         // Actions are the funnel for command-driven UI mutation (palette,
 
+        // **An action is a write the description reads.** Most reach here
+        // through a key or a press, which mark the tree stale themselves
+        // when they finish; the ones that do not — a plugin command, a test
+        // driving the editor by actions, an async completion — change what
+        // the tree says (a prompt opens, a popup closes, focus moves) with
+        // no frame in between. The next input, and the next `get_key_context`,
+        // lay the tree out from the facts first (`shell_description_stale`).
+        self.shell_description_stale = true;
+
         // Record action to macro if recording
         self.record_macro_action(&action);
 
@@ -1763,9 +1772,18 @@ impl Editor {
                     state.set_current_to_null();
                 }
             }
+            // The next *panel* — coarser than the ring's Tab, which steps
+            // control to control; a bound key for jumping between the tree,
+            // the body and the footer.
             Action::SettingsToggleFocus => {
+                use crate::view::settings::state::{FocusPanel, FocusTarget};
                 if let Some(ref mut state) = self.settings_state {
-                    state.toggle_focus();
+                    let next = match state.focus_panel() {
+                        FocusPanel::Categories => FocusTarget::Card(state.selected_item),
+                        FocusPanel::Settings => FocusTarget::Footer(0),
+                        FocusPanel::Footer => FocusTarget::Categories,
+                    };
+                    state.focus_on(next);
                 }
             }
             Action::SettingsActivate => {

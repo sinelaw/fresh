@@ -18,7 +18,16 @@ use crate::render::geom::Point;
 pub enum Flow {
     #[default]
     Continue,
+    /// The handler claimed the event: propagation ends, the tree resolves
+    /// nothing further, and a host behind the tree does not act on it.
     Stop,
+    /// **Observed, not claimed.** The handler acted, propagation ends and
+    /// the tree resolves no intent from the key — but the key is still the
+    /// host's, and is reported unclaimed so a pipeline behind the tree acts
+    /// on it. The disposition a surface whose keys are bound *outside* the
+    /// tree needs: without it, a subtree could only swallow every key
+    /// (`Stop`) or let the tree's own traversal have it (`Continue`).
+    Observe,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -338,6 +347,14 @@ impl Event {
     /// Claim the event: propagation stops after this listener.
     pub fn stop(&self) {
         self.ctl.flow.set(Flow::Stop);
+    }
+
+    /// End propagation and the tree's own resolution of this key without
+    /// claiming it — see [`Flow::Observe`]. A stop already recorded stands.
+    pub fn observe(&self) {
+        if self.ctl.flow.get() != Flow::Stop {
+            self.ctl.flow.set(Flow::Observe);
+        }
     }
 
     /// Suppress whatever the framework would otherwise do. Orthogonal to

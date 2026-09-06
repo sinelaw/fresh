@@ -305,6 +305,7 @@ fn panel_body(i: usize, p: &super::panel::Interior) -> Node<UiMsg> {
                 slot: super::widgets::Slot::Sidebar(i),
                 states: &interior.states,
                 focus_key: interior.focus_key.clone(),
+                keyboard: interior.keyboard,
                 hovered_key: interior.hovered_key.clone(),
                 marker_gutter: interior.marker_gutter,
                 hovered_item_key: interior.hovered_item_key.clone(),
@@ -318,7 +319,12 @@ fn panel_body(i: usize, p: &super::panel::Interior) -> Node<UiMsg> {
         .w(Sizing::Cells(inner_w))
     });
     if p.has_focus_targets() {
-        super::panel::interior(super::widgets::Slot::Sidebar(i), p.claims_tab, node)
+        super::panel::interior(
+            super::widgets::Slot::Sidebar(i),
+            p.keymap.clone(),
+            p.keyboard && p.focus_key.is_empty(),
+            node,
+        )
     } else {
         node
     }
@@ -879,13 +885,16 @@ mod tests {
             spec: Rc::new(spec),
             states: Rc::new(Default::default()),
             focus_key: String::new(),
+            // The host's focus fact for the section: an unfocused one
+            // holds no keyboard and marks nothing.
+            keyboard: focused,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
-            claims_tab: false,
+            keymap: None,
             markdown: None,
         };
         let mut sec = panel_section(0);

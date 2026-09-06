@@ -804,15 +804,16 @@ pub fn suggestions_window(spec: &fresh_ui::LayoutSpec) -> Option<(usize, usize)>
 /// layers in rather than as three integers in a table.
 ///
 /// The seam itself is `modal::keys`' — an `on_key` at the top of the confined
-/// subtree, naming the surface and leaving the meaning to its interior — with
-/// the one difference that makes `Focus` necessary: it does not `stop()`.
-/// Whether the key was taken is only known once `dispatch_prompt_key` has run,
-/// which happens in the applier, so the *host* completes the claim rather than
-/// the tree guessing at it (`Editor::shell_interior_took_key`).
+/// subtree, naming the surface and leaving the meaning to its interior, and
+/// claiming the key: it is the prompt's while the prompt is up. What the
+/// prompt does with a key it does not bind is its own business, and that
+/// business is handing it on to the editor's keyboard
+/// (`Editor::hand_key_to_editor`, in the applier) — which is why the layer
+/// is `Focus` and not `Keyboard`: nothing here swallows.
 ///
 /// It paints nothing and takes no pointer: the prompt row, its card and its
 /// suggestion list are described elsewhere, and this is only the keyboard.
-pub fn keys_layer() -> Node<UiMsg> {
+pub fn keys_layer(search: bool) -> Node<UiMsg> {
     use fresh_ui::{layer, Align, Anchor, Modality, Place, PointerMode};
     layer()
         .anchor(Anchor::Screen(Align::Start))
@@ -827,10 +828,28 @@ pub fn keys_layer() -> Node<UiMsg> {
         .modality(Modality::Focus)
         .child(
             fresh_ui::focusable(row())
+                .key(keys_key(search))
                 .pointer_mode(PointerMode::Ignore)
                 .autofocus()
-                .on_key(|_| Some(UiMsg::Ui(UiFact::PromptKey))),
+                .on_key(|e: &fresh_ui::Event| {
+                    e.stop();
+                    Some(UiMsg::Ui(UiFact::PromptKey))
+                }),
         )
+}
+
+/// The key of the prompt's keyboard sink, which names the prompt's key
+/// section: a search prompt owns the match-mode toggles on top of the
+/// prompt's own keys (`KeyContext::SearchPrompt`), any other prompt does
+/// not (`KeyContext::Prompt`).
+pub fn keys_key(search: bool) -> fresh_ui::Key {
+    fresh_ui::Key::Str(
+        match search {
+            true => "keys:search_prompt",
+            false => "keys:prompt",
+        }
+        .into(),
+    )
 }
 
 #[cfg(test)]

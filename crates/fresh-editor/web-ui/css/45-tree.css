@@ -1,0 +1,14 @@
+/* The plugin panels, folded from the display list (72-tree.js). Items sit at
+   the exact cell rectangles the tree laid them out at; the layer takes no
+   input of its own and the items fall through to the document's cell mapping. */
+.tree{position:absolute;left:0;top:0;pointer-events:none;user-select:none;z-index:90}
+.tree-surface{position:absolute;pointer-events:none}
+.tree-scrim{position:absolute;left:0;top:0;pointer-events:auto;background:rgba(0,0,0,.45)}
+.tree-item{position:absolute;pointer-events:auto;overflow:hidden;box-sizing:border-box}
+.tree-item.k-border{border:1px solid currentColor}
+.tree-item.k-border.rounded{border-radius:6px}
+.tree-item.k-scrim.dim{background:rgba(0,0,0,.45)}
+.tree-item.k-selectable{pointer-events:none}
+.tree-line{position:absolute;white-space:pre;color:inherit}
+.tree-thumb{position:absolute;left:0;right:0;border-radius:3px}
+.tree-caret{position:absolute;pointer-events:none;border-left:2px solid var(--accent, #fff);opacity:.9}

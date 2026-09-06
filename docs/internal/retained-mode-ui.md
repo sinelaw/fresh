@@ -116,13 +116,45 @@ disagrees with focus is the tree's own ring having moved and the description
 catching up next frame; a mark that *moved* is a decision the tree has not
 followed. A mark that goes away rests focus on the scope's own element, which
 is what an empty scope already does (`:575`). The landing is a real
-`focus_element` (handlers fire, the echo lands in `pending_messages`). A
-`debug_assert` that a scope holds at most one mark. **Verify** that
-`active_scope()` (`:434`) names the *layer's* scope when both a layer scope
-and an inner `focus_scope` node are present; the mark lookup must be over
-the layer's scope, and the landing unconfined, because a host decision may
-legitimately move focus out of a trapped subtree. This is the whole of the
-focus problem in sinelaw/fresh#3176; §2.2 says why.
+`focus_element` (handlers fire, the echo lands in `pending_messages`). When a
+confinement holds marks at more than one depth — a dialog's own fallback
+and the fallback of a dialog it opened inside itself — the innermost wins,
+because the surface that opened last is the more specific statement. Two
+refinements found by building it: a confinement seen for the *first* time with focus already
+inside it follows its mark (the panel just took the keyboard around a focus
+that was already there — that is its entry); and **a scope may mark its own
+element**, which is how a description says "nothing inside is focused, and
+that is a resting state" — the tree rests on the scope and Tab starts from
+outside the ring, rather than landing on the first control and telling the
+host about a focus nobody chose. `active_scope()` (`:434`) names the layer's
+scope ahead of an inner `focus_scope` node, and the landing is unconfined,
+so a host decision may move focus out of a trapped subtree. And the settle
+runs over the tree that will be painted: a `layout_reader` builds during the
+layout pass and raises its dirt after the drain, so `settle` flushes that
+dirt *before* `apply_autofocus` as well as after — otherwise a mark inside a
+reader nested in a reader (a dialog's footer inside its box) is found a
+frame late and focus rests on the scope meanwhile. Three more, found by
+blurring the dock: **the root is a scope** — outside every confinement the
+whole tree settles against its own mark, so a mark moving from one subtree
+to another (the keyboard handed from a panel back to the pane behind it) is
+followed like a mark moving inside a dialog; **a confinement that stops
+confining releases what it held** — the dock's interior outlives the
+keyboard layer that scoped to it, and focus left inside it by that layer
+goes to the enclosing scope's mark rather than staying on a surface that
+has given the keyboard up; and **a mark on a `skip_traversal` element
+counts** — `skip` says Tab does not stop there, not that focus may never
+rest there, and the base's own focus holder is exactly such an element.
+Which is the last piece: **focus is never nowhere.** The active pane's
+content is a keyed, skipped focusable the description marks whenever no
+panel holds the keyboard (`splits::content_surface`; a pane-mounted
+panel's wrapper, when none of its widgets does), and it observes every key
+(`Flow::Observe`) until the buffer host's keymap rides on the tree (L3). A
+blurred panel's widgets stop marking (`widgets::Ctx::keyboard`, the host's
+focus fact for the slot), so the tree's focus — and with it the key context
+— leaves the panel on the frame the blur is described. This is the whole
+of the focus problem in sinelaw/fresh#3176; §2.2 says why. *Landed*, with
+its tests in `crates/fresh-ui/tests/focus.rs` and
+`app/widget_runtime.rs` (`blurring_a_panel_moves_the_trees_focus_to_the_pane_behind_it`).
 
 **L2 — One vocabulary for "was this key taken".** Today a key is claimed by
 `e.stop()` at one seam, by a boolean fold at another and by a traversal
@@ -134,7 +166,18 @@ claimed` is derived from that vocabulary alone. `on_key_capture` (`:99`)
 already exists and is the down-leg counterpart; with the three
 dispositions every key policy in the editor — a plugin's mode binding, a
 dialog's chord, a kind's "I updated myself but the key is still yours" — is
-expressible on the node that owns it.
+expressible on the node that owns it. *Landed*: `Flow::Observe` /
+`Event::observe()` end propagation and the tree's intent resolution
+without claiming, and `dispatch_key` reports the key unclaimed; and
+`Dispatch.claimed` is the tree's word alone — the `Option<bool>` fold the
+editor's seams completed after the fact is gone. What made that possible
+is a ruling about the seams themselves: a seam that hands a key to a host
+interior (the prompt's, a focused panel's) *claims* it, because the key is
+that surface's, and what the surface does with a key it does not bind is
+its own business — for both, handing it on to the editor's own keyboard
+(`Editor::hand_key_to_editor`, from the applier). A decline is `None`
+with no `stop()`, as a collapsed sidebar header does; nothing declines by
+answering twice.
 
 **L3 — The keymap rides on the description.** A node can declare
 `shortcuts` — chord → intent, or chord → message — built by the host from
@@ -146,14 +189,23 @@ ladder of rungs that mutate and decline. The library already has
 `Shortcut → Intent → Action`; what it lacks is the message-valued shortcut
 and the guarantee that a shortcut declared on an ancestor pre-empts a
 focused descendant's default handling when the host says it must (which is
-L2's capture leg plus the shortcut table consulted on it).
+L2's capture leg plus the shortcut table consulted on it). *Landed for the
+plugin panels, with no library change*: the capture leg and a
+message-valued handler were already there, so a panel's keymap is
+`view::shell::panel::Keymap` — the plugin's mode and the resolver — set on
+its interior as an `on_key_capture` that answers a key the mode explicitly
+binds with `UiMsg::Action`. The router's mode pre-emption
+(`mode_has_binding`, `mode_pre_empts`, `WidgetKeyOutcome::FallThrough`,
+`WidgetPanelView::editor_mode`) and `Interior::claims_tab` went with it.
+Still to come: the buffer host's mode and the root's global chords (S7).
 
 **L4 — The traversal order of a subtree is queryable.** `Ui::
-traversal_order(scope)` and `next_in(scope, from, dir)`: the same policy
-`move_focus` uses, as a pure read, available whether or not focus is inside
-the subtree. This is what lets a plugin's `FocusAdvance` on a panel that does
-*not* hold the tree's focus advance the panel's focus fact along the one ring
-there is, instead of a second ring walked over the spec.
+traversal_order(root)`, `next_in(root, from, dir)`, `enclosing_focus_scope`
+and `contains`: the same policy `move_focus` uses, as a pure read, available
+whether or not focus is inside the subtree. This is what lets a plugin's
+`FocusAdvance` on a panel that does *not* hold the tree's focus advance the
+panel's focus fact along the one ring there is, instead of a second ring
+walked over the spec. *Landed*; `focus_ring_scoped_in_spec` is gone.
 
 **L5 — A wrapped-text viewport in source coordinates.** `cursor_byte`
 (`desc.rs:1554`) exists. What is missing is the viewport over wrapped
@@ -220,6 +272,15 @@ a scrollbar node beside it and `Ui::window` need not know which kind of node
 they are looking at. **Verify** whether `RenderObject` already has the
 method a viewport answers through; if it is viewport-private, it becomes a
 trait method with the viewport as one implementor.
+
+**L14 — A group is entered at its cursor.** `Node::enters_at(key)` on a
+focusable names the stop traversal lands on when it *enters* that subtree
+from outside, in either direction; inside, reading order. A card list whose
+selected card the arrows move, a radio group, a tab strip: Tab from the
+tree lands on the selected card, not the first, and Shift+Tab from the
+footer likewise. `FocusEntry::group` carries the innermost group and its
+resolved entry; `FocusScope::entered_at` is the one rule. *Landed*, for the
+settings body, with its tests in `crates/fresh-ui/tests/focus.rs`.
 
 ### 1.3 What the library does not do, by decision
 
@@ -302,29 +363,59 @@ the tree follow the mark whenever it moves.
    the guarantee: a write to any panel state the description reads marks the
    description stale, and `shell_dispatch` (`app/shell_host.rs:1446`) lays
    the tree out before routing when it is. The frame build is pure by
-   property 1, so building it from dispatch has no side effect but layout.
-   **Verify** that the frame builder writes no editor state; if it does,
-   that write is a defect on its own. The e2e harness renders between events
-   and cannot see this class; the test sends two events before rendering.
+   property 1, so building it from dispatch has no side effect but layout —
+   checked: `shell_frame` writes only the two caches of what it built
+   (`menu_layout_frame`, `shell_frame_status_bar`), which the next build
+   overwrites. The e2e harness renders between events and cannot see this
+   class; the test sends two events before rendering. *Landed*:
+   `Editor::lay_out_shell_if_stale`, at the head of `shell_dispatch` and of
+   a host-driven focus advance.
 5. **One ring.** `handle_widget_focus_advance` (`:1216`) and its spec walk
    (`focus_ring_scoped_in_spec`) are deleted. A `FocusAdvance` on a panel the
    tree is focused in is `Ui::move_focus`; on one it is not, it is
    `next_in(interior, fact, dir)` (L4) written to the fact. Same order, one
    source.
-6. **Every panel is on the ring, including pane-mounted ones.** A pane panel
-   today has no keyboard layer and its wrapper is `skip_traversal`
-   (`widgets.rs:637`) because Tab there is the plugin's mode binding. With L3
-   the binding is a shortcut on the panel's scope, so the pane's panel gets
-   the same `Modality::Focus` layer the dock has, active while its pane is
-   the active pane, and Tab is the tree's everywhere.
-7. **The settings dialog is on the ring.** Its layer names the card body as
-   its scope; its `keys` node (`view/shell/settings.rs:319`) becomes a
-   capture handler for the dialog's chords and a bubble fallback that claims
-   only what nothing inside answered (L2); the `WidgetFocus` applier
-   (`shell_host.rs:1790`) gains the `Settings` and `SettingsEntry` arms it
-   drops today (`:1796`); `FocusManager<T>` (`view/ui/focus.rs:31`) and
-   `settings_state.focus` are deleted; Tab inside the body steps control to
-   control and leaves at the end.
+6. **Every panel is on the ring, including pane-mounted ones.** *Landed for
+   the ring*: a pane panel's wrappers are no longer `skip_traversal`, its
+   interior is keyed (`interior_key(Slot::Pane(leaf))`) and the host's
+   advance walks it through `Ui::next_in` like every other panel's. What
+   keeps its keys the host's meanwhile is the interior *observing* every key
+   (L2): the tree decides nothing for a key that reaches a pane widget,
+   because the plugin's `defineMode` binds them outside the tree. *Landed
+   in full*: the observer is gone; the pane's panel is the same
+   `panel::interior` the dock's is, with its buffer's mode as the keymap on
+   its capture leg (L3), and the active pane's panel has a `Modality::Focus`
+   layer (`Frame::pane_keys`) declared first among the keyboard layers, so
+   every other one outranks it by declaration order. Tab the mode does not
+   bind is the tree's, confined to the panel; every other unbound key is
+   `PanelKey(Pane)` and goes to the buffer's route. The layer is keyed as
+   the base's (`panel::is_base_layer`) so the overlay gates — the PTY gate,
+   bracketed paste — do not read it as something layered over the content.
+7. **The settings dialog is on the ring.** *Landed.* Its layer names the
+   box as its scope (`scope_at`); the stops inside it are the category tree
+   (or the narrow strip), each **card**, and the footer's buttons, each a
+   keyed focusable the description marks `autofocus` when the dialog's focus
+   fact names it; the `keys` seam is off the ring and declines Tab, so
+   `fresh-ui` walks the stops in reading order — entering the body at its
+   selected card (L14) — and each landing comes back as
+   `UiFact::SettingsFocus`. The fact is `SettingsState::{focus_panel,
+   selected_item, footer_button_index}` with one writer,
+   `SettingsState::focus_on`, reached by the keys, the mouse, the search
+   jump and the tree's landing alike; `FocusManager<T>`, `settings_state.
+   focus`, `toggle_focus` and the dispatcher's Tab arms are deleted.
+
+   Two decisions the build made. **The card is the stop, not the control in
+   it** (`Slot::widgets_on_ring`): under the edit-mode model `view/settings`
+   still keeps, the control becomes live by the host's decision (Enter) and
+   paints its caret only then, so a control on the ring would either show a
+   caret it cannot honour or double the stops; a live control claims its own
+   keys, Tab included, and Tab there commits the edit and stays on the card.
+   §3.6 makes the control the stop when that model goes, and the entry
+   dialog's ring — its rows, per-field affordances and composite sub-rows,
+   all of them the host's model today — goes with it (the `SettingsEntry`
+   slot is off the ring for the same reason). **A search is not stepped out
+   of with Tab**: the query row is the one stop while it runs and hands Tab
+   to the dispatcher with every other key, as it always did.
 8. **The keyboard tables go.** With L3 the router's mode-binding check,
    `KeyContext` as a computed enum (`input/keybindings.rs:232` stays as the
    *vocabulary* of contexts; `get_key_context`'s ladder goes), `layer_rank`
@@ -332,7 +423,24 @@ the tree follow the mark whenever it moves.
    are all derivable: precedence is layer declaration order, "does a modal
    block terminal input" is `Ui::raw_input()` (exists, `schedule.rs:730`),
    and the base key dispatcher is reached only through the buffer host's own
-   key handler.
+   key handler. *Landed for the context and the gates*: every surface with
+   a key section puts a key on the node that holds focus while it has the
+   keyboard (a modal's seam, a popup's seam, the prompt's sink, a panel's
+   interior or sink, the settings box), `frame::key_context_of` is the one
+   table from those keys to a `KeyContext`, and `Editor::get_key_context`
+   walks the focus chain outward and takes the first answer — over a tree
+   laid out from the facts, since `handle_key`/`handle_mouse` lay out before
+   routing and any applied message marks the description stale. The PTY
+   gate is "focus is in a layer, or a popup or the centred panel is up";
+   "the content holds the keyboard" is "focus is in no layer"; "a modal
+   covers the content" is `Ui::modal_up` (a layer that swallows keys or
+   blocks the pointer); the unfocused-popup guard is `Ui::keyboard_owned`.
+   `Layer`, `LayerKind`, `layer_rank`, `overlay_layers` and every
+   `ChromeComponent::layers` are deleted; `app/chrome/` keeps the two hover
+   reactions and the `Editor` methods the facts land in until §3.1 moves
+   them. The PTY gate on `raw_input()` proper waits for the terminal to be a
+   host leaf (S7); the base dispatcher's Normal-context resolution waits for
+   the buffer's (S7).
 9. **The dock's key policy is the plugin's.** `router.rs:222`'s dock branch
    hardcodes one plugin's widget-key conventions. Two generic pieces replace
    it: a **focus-trapped container answers its own navigation** (the kinds
@@ -346,6 +454,24 @@ the tree follow the mark whenever it moves.
    `Button`s they already are; its `dock_menu_*` handlers
    (`plugins/orchestrator.ts:11769`) go. `is_left_dock` and `is_sidebar`
    collapse into `non_modal`, then the router's dock branch has nothing left.
+   *Landed*, with one decision the build made: the dock's three dropdowns
+   are `list` widgets rather than focus-trapped `Button` containers — a
+   list's ↑/↓ and Enter are its own kind's and reach the plugin as `select`
+   and `activate`, which is the trap's navigation without a trap. The dock
+   mounts with `mode: DOCK_MODE` (a new `mountFloatingWidget` option; the
+   panel's own keymap, so the buffer's mode neither shadows nor is shadowed
+   by it) and `DOCK_MODE_BINDINGS` names the chords: `/`, Esc, Enter,
+   Space, F2, Menu, Alt+T/I/P/N, each a plugin command that decides from
+   the plugin's own focus mirror. The router's dock branch, `DockEvent`,
+   `FocusWidget`, `fire_dock_widget_event` and the `dock_*` events are
+   deleted; `WidgetPanelView` is `non_modal` and two fields. Two things
+   the build found. The plugin's mirror of its own focus (`pickerFocusKey`)
+   is written when the plugin *decides* (`focusDockControl`), not only when the
+   host's `focus` event confirms it a round-trip later — two keys in a row
+   read the same mirror. And a blur is a focus write like any other: it
+   marks the tree stale and the description stops marking the panel's
+   widgets, so the tree's focus — and the key context read off it — leaves
+   the dock on the same key (L1's root-scope and release rules).
 
 ### 2.4 Tests that pin the contract
 
@@ -353,9 +479,10 @@ In `app/widget_runtime.rs`, before any of it changes: the two existing
 tests; the tree's own Tab is not undone by the next frame's stale mark; a
 decision on an unfocused panel moves nothing until the panel is entered and
 then lands; `autoFocusFirst:false` with an empty key is not re-seeded by the
-tree's entry landing (**verify** which way this comes out today — if it
-re-seeds, that is the welcome-screen bug the option was added for, returned
-by the back door); two decisions in one batch resolve the second from the
+tree's entry landing (it *was* — the tree landed on the first control and
+the echo wrote it back, the welcome-screen bug returned by the back door;
+the interior now marks itself when the panel names nothing, and the tree
+rests there); two decisions in one batch resolve the second from the
 first. And in every `Modality::Focus` seam, `.claimed` asserted on both
 branches — the shape that would have caught the three "who took this key"
 defects.
@@ -677,6 +804,18 @@ comes out and the two dock sections run again. Every deletion in this
 document is checked with `--all-features`, because the web is a second
 caller.
 
+*Landed, for the plugin panels.* `Editor::tree_view` (`view/scene.rs`)
+ships `regions.tree`: the surfaces (dock column, floating layer, plugin
+sidebar sections) and every display-list item those subtrees and their
+layers produced, with the fold's resolved colours; `web-ui/js/72-tree.js`
+folds them into DOM at their cell rectangles, and input needs nothing of its
+own because the document-level handlers already map a pixel to a cell and
+the server routes the cell over the tree. The old widget-panel renderer and
+its hit routing are deleted, the suite's dock sections read the tree, and
+the suite runs to its end again. Still native: the menu bar, status bar,
+explorer, popups, palette, settings and the modals — each retires onto this
+projection when its chrome crosses (§3.4, §3.6).
+
 ### 3.10 Performance
 
 The frame is measured before it is optimised: a `crates/fresh-editor/benches`
@@ -763,7 +902,23 @@ the most deletion per step.
 | **S6 Menus** | dropdown content model in the description; legacy menu layout and `menu_layout_now` deleted (§3.4) | S2 (shortcuts on menus) | S9 |
 | **S7 The pane as a host leaf, and its chrome** | `BufferHost` as a `HostSpec::Leaf` with hit, byte, focus, scroll facts and caret (§3.7.1–3.7.8); `content.rs` deleted; tab strip, scrollbars, gutter as nodes; `PointerGrab` → captures; L6, L8, L12, L13; `WindowLayoutCache` deleted; one fold, one caret; provenance gate (§3.2, §3.3, §3.7) | S2 (shortcuts on the leaf) | S8 |
 | **S8 Theme and performance** | `Paint::Lit` retired; resolve cache; benchmark; `Rc<WidgetSpec>`, memo at the seam; L7, L9, L11; the `ThemeKey` decision (§3.3, §3.10) | S3, S7 | — |
-| **S9 Web** | DOM fold of the display list; scene region views retired; plugin panels return; guard removed (§3.9) | S3, S6 | — |
+| **S9 Web** | DOM fold of the display list — *landed for the plugin panels*; the scene's remaining region views retire as each surface crosses (§3.9) | S3, S6 | — |
+
+**Status.** S1 is landed on this branch: L1 with its library tests, L4,
+the deletion of
+`focus_panel_widget_in_tree` / `pending_panel_tree_focus` / the replay, of
+the spec ring and of `WidgetPanelState::tabbable`, the stale-tree rule, the
+narrowed writer (`WidgetRegistry::decide_focus`), the six contract tests in
+`app/widget_runtime.rs`, pane panels on the ring with their keyboard
+layer (§2.3(6)), and the settings dialog on the ring (§2.3(7)) with
+`FocusManager` gone. **S2** is landed in its main part: the key context
+and the four overlay gates are reads of the tree (§2.3(8)), the layer
+stack is deleted, a plugin panel's mode is a keymap on its interior (L3),
+the dock's policy is the plugin's (§2.3(9)), and the claim is the tree's
+word alone (L2). Open in S2: the buffer host's own keymap on
+the tree — today the base's keys still cross `PanelKey` / the pane's
+content surface into `dispatch_base_key` — and the PTY gate on
+`raw_input()` (§3.1).
 
 **S1 is one PR** and closes sinelaw/fresh#3176. **S2 is its own PR** and
 the only one that changes what a key does over a shipped surface; it gets

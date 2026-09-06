@@ -88,9 +88,7 @@ const appH=()=>document.getElementById("app").clientHeight;
 // the bezel's screen starts to its right, so the sidebar floats free of it.
 function dockWidthPx(){
   if(!scene||!scene.regions) return 0;
-  for(const s of (scene.regions.widgets||[]))
-    if(s.kind==="dock"&&s.rect&&s.rect.x===0&&s.rect.w<(scene.w||0)) return px(s.rect.w,CW);
-  return 0;
+  return px(treeDockCells(scene.regions),CW);
 }
 // Wrap the bezel around the grid minus the dock columns. Runs after every
 // render/frame (dock width and grid size are server-driven) and on window

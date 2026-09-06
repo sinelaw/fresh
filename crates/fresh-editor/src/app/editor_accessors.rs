@@ -223,7 +223,12 @@ impl Editor {
     ///      buffer or a file-backed one — `openFileStreaming` produces
     ///      the latter for streaming detail panels).
     pub fn active_buffer_mode(&self) -> Option<&str> {
-        let buffer_id = self.active_buffer();
+        self.buffer_mode(self.active_buffer())
+    }
+
+    /// The plugin mode a buffer of the active window resolves its keys
+    /// against: its own virtual mode, else its buffer group's.
+    pub fn buffer_mode(&self, buffer_id: fresh_core::BufferId) -> Option<&str> {
         let win = self.active_window();
         if let Some(mode) = win
             .buffer_metadata

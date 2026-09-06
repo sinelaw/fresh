@@ -136,21 +136,15 @@ pub fn unfocused_popup_action(
 /// [`widget_panel_key`] decides over. Built by the Editor from live
 /// state; carries exactly what the decision needs and nothing else.
 pub struct WidgetPanelView {
-    /// The panel is the left dock (vs a centered modal). The dock is
-    /// non-modal: unhandled shortcuts blur it and fall through to the
-    /// editor; a centered modal swallows them.
-    pub is_left_dock: bool,
-    /// The panel is a sidebar section. Non-modal like the dock — Esc blurs
-    /// it and an unbound shortcut blurs it and falls through — without the
-    /// dock's plugin-shaped key conventions.
-    pub is_sidebar: bool,
+    /// The panel is non-modal — the left dock or a sidebar section: Esc
+    /// blurs it and leaves it mounted, and an unbound shortcut blurs it and
+    /// falls through to the editor. A centered modal cancels on Esc and
+    /// swallows what it does not bind.
+    pub non_modal: bool,
     /// The panel's currently focused widget key (previous render).
     pub focus_key: Option<String>,
     /// The focused widget is a Text input (clipboard chords belong to it).
     pub focused_widget_is_text: bool,
-    /// The active window's editor mode, if any. A `defineMode` binding
-    /// for a key must win over the panel's default smart-key behaviour.
-    pub editor_mode: Option<String>,
 }
 
 /// What a key aimed at a floating widget panel means. The Editor executes
@@ -158,12 +152,8 @@ pub struct WidgetPanelView {
 /// *not* consumed and continues down the normal dispatch pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WidgetKeyOutcome {
-    /// Fire a `widget_event` of this type at the dock's `sessions` widget.
-    DockEvent(&'static str),
-    /// Move panel focus to this widget key (and notify the plugin).
-    FocusWidget(&'static str),
-    /// Blur the panel — focus returns to the editor; the panel stays
-    /// mounted. Key consumed.
+    /// Blur the panel and let the editor handle the key (a non-modal
+    /// panel's Esc).
     Blur,
     /// Blur the panel and let the editor handle the key (dock-style
     /// unhandled shortcut: e.g. Ctrl+P should still open the palette).
@@ -183,23 +173,18 @@ pub enum WidgetKeyOutcome {
     SelectAll,
     /// Consumed with no effect — the modal owns the input channel.
     Swallow,
-    /// The active mode explicitly binds this key — not consumed here.
-    FallThrough,
 }
 
 /// Decide what a keystroke aimed at a mounted floating widget panel
 /// means. Pure: reads the [`WidgetPanelView`] and the keymap, mutates
 /// nothing. See the outcome variants for the effect vocabulary.
 ///
-/// The left dock handles Enter / Esc / Space / "/" here, at the
-/// floating-panel layer, *independent of editor modes*: editor modes
-/// (`defineMode`) resolve against the active buffer's mode, which the
-/// dock floats over — so a session whose buffer has a local mode would
-/// shadow any global dock mode. Everywhere else, an explicit mode binding
-/// for the key wins (`FallThrough`) — that is what `defineMode` exists
-/// for. Only bindings *explicitly* set for the mode count: the resolver's
-/// full `resolve()` falls back to Normal-context bindings for any mode,
-/// which would falsely report Enter as bound everywhere.
+/// **The panel's own chords are its keymap's, not the router's.** A key the
+/// panel's plugin mode binds — the dock's `/`, Esc, Enter, its Alt chords —
+/// is taken on the tree by `view::shell::panel::Keymap` before the router is
+/// asked, so what arrives here is the generic vocabulary every panel shares:
+/// the widget keys the kinds answer, the characters a field types, and what
+/// an unbound chord does to a modal versus a non-modal panel.
 pub fn widget_panel_key(
     view: &WidgetPanelView,
     kb: &KeybindingResolver,
@@ -208,131 +193,9 @@ pub fn widget_panel_key(
 ) -> WidgetKeyOutcome {
     use WidgetKeyOutcome::*;
 
-    let mode_has_binding = |code: KeyCode, modifiers: KeyModifiers| {
-        view.editor_mode
-            .as_ref()
-            .map(|mode_name| {
-                let key_event = KeyEvent::new(code, modifiers);
-                let mode_ctx = KeyContext::Mode(mode_name.to_string());
-                kb.has_explicit_binding(&key_event, &mode_ctx)
-            })
-            .unwrap_or(false)
-    };
-
-    // ACKNOWLEDGED RESIDUE (retired by `docs/internal/retained-mode-ui.md` §2.3): this dock
-    // branch hardcodes ONE plugin's widget-key conventions ("filter",
-    // "sessions", "project-pick:"/"menu-pick:" prefixes, dock_menu_*
-    // events) — orchestrator-specific panel semantics in host
-    // dispatch. The generalization (plugin-declared key policy, or
-    // these behaviors moving into kind/Component contracts) is part of
-    // the app-level focus-unification arc; until then this is the one
-    // deliberate plugin-shaped seam in the router.
-    if view.is_left_dock {
-        let on_filter = view.focus_key.as_deref() == Some("filter");
-        // Any of the dock's inline dropdowns (project scope, the
-        // "New Task…" create menu, or a session's "Move to…" folder
-        // menu) owns the keyboard while panel focus sits on one of its
-        // option rows. The plugin moves focus onto a `project-pick:` /
-        // `menu-pick:` button when a menu opens; in that state ↑/↓ move
-        // the cursor, Enter commits, Esc cancels — all routed to the
-        // plugin as `dock_menu_*` events so they don't leak to the
-        // session tree underneath.
-        let on_project_menu = view
-            .focus_key
-            .as_deref()
-            .map(|k| k.starts_with("project-pick:") || k.starts_with("menu-pick:"))
-            .unwrap_or(false);
-        if on_project_menu {
-            match code {
-                KeyCode::Up => return DockEvent("dock_menu_prev"),
-                KeyCode::Down => return DockEvent("dock_menu_next"),
-                // Tab/Shift+Tab navigate the menu too, so they can't
-                // tab focus *out* of the open dropdown into the dock
-                // toolbar behind it.
-                KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => {
-                    return DockEvent("dock_menu_prev")
-                }
-                KeyCode::BackTab => return DockEvent("dock_menu_prev"),
-                KeyCode::Tab => return DockEvent("dock_menu_next"),
-                KeyCode::Enter | KeyCode::Char(' ') => return DockEvent("dock_menu_accept"),
-                KeyCode::Esc => return DockEvent("dock_menu_cancel"),
-                _ => {}
-            }
-        }
-        let sessions_focused = view
-            .focus_key
-            .as_deref()
-            .map(|k| k == "sessions" || k.is_empty())
-            .unwrap_or(true);
-        match code {
-            KeyCode::Esc => {
-                return if on_filter {
-                    // Return from the filter to the session list.
-                    FocusWidget("sessions")
-                } else {
-                    // Leave the dock — focus the editor; dock stays visible.
-                    Blur
-                };
-            }
-            KeyCode::Enter => {
-                return if on_filter {
-                    FocusWidget("sessions")
-                } else if sessions_focused {
-                    // Enter on the session list activates the highlighted
-                    // row; handled plugin-side so the discovered-vs-live
-                    // decision lives next to the dialog's identical
-                    // `activate` logic.
-                    DockEvent("dock_activate")
-                } else {
-                    // A button or toggle is keyboard-focused. Run THAT
-                    // control's action via the generic smart-key
-                    // dispatcher instead of the list's dock_activate.
-                    SmartKey("Enter")
-                };
-            }
-            KeyCode::Char('/') if modifiers.is_empty() => return FocusWidget("filter"),
-            // The standard context-menu keys open the highlighted node's
-            // right-click menu. Only fire while the session tree itself is
-            // focused, matching the Enter branch above.
-            KeyCode::Menu if sessions_focused => return DockEvent("dock_context"),
-            // F2 — the classic TUI "user menu" key. Shift+F10 (the
-            // desktop-GUI convention) is unreliable in terminals.
-            KeyCode::F(2) if modifiers.is_empty() && sessions_focused => {
-                return DockEvent("dock_context")
-            }
-            // Alt+T / Alt+I / Alt+P / Alt+N: dialog OPEN_MODE chords the
-            // dock can't express as an editor mode (it floats over the
-            // active buffer's mode) — routed as dock widget_events.
-            KeyCode::Char('t' | 'T') if modifiers.contains(KeyModifiers::ALT) => {
-                return DockEvent("dock_toggle_worktrees")
-            }
-            KeyCode::Char('i' | 'I') if modifiers.contains(KeyModifiers::ALT) => {
-                return DockEvent("dock_toggle_trivial")
-            }
-            KeyCode::Char('p' | 'P') if modifiers.contains(KeyModifiers::ALT) => {
-                return DockEvent("dock_toggle_scope")
-            }
-            KeyCode::Char('n' | 'N') if modifiers.contains(KeyModifiers::ALT) => {
-                return DockEvent("dock_new")
-            }
-            // Toggle the highlighted row's multi-select checkbox (plugin
-            // owns the selection set).
-            KeyCode::Char(' ') => return DockEvent("dock_space"),
-            _ => {}
-        }
-    }
-
     if code == KeyCode::Esc {
-        // Mode-binding precedence: a plugin's `defineMode` entry for
-        // Escape wins over the default "Esc closes the modal" behaviour.
-        // Lets a plugin claim Esc for a nested dismiss-the-dropdown
-        // gesture before the outermost cancel fires.
-        if mode_has_binding(code, modifiers) {
-            return FallThrough;
-        }
-        // A sidebar section stays mounted: Esc leaves it, as it leaves the
-        // dock.
-        if view.is_sidebar {
+        // A non-modal panel stays mounted: Esc leaves it.
+        if view.non_modal {
             return Blur;
         }
         return CancelAndUnmount;
@@ -358,38 +221,14 @@ pub fn widget_panel_key(
         KeyCode::PageDown => Some("PageDown"),
         _ => None,
     };
-    // **A sidebar section is not the buffer's, so the buffer's mode does not
-    // speak for it.** `editor_mode` is the active *buffer's* plugin mode —
-    // `markdown-source` binds Enter, Tab and Shift+Tab for list continuation
-    // in a Markdown buffer — and letting it pre-empt a focused section's keys
-    // sent Enter on a contents row to the buffer's list-continuation handler
-    // instead of the row's `activate`. The dock and the centred panel keep
-    // the precedence because the plugin that mounts them is the one defining
-    // the mode (the orchestrator's New-Session form relies on it); a section
-    // takes its keys through `widget_event` and never through a mode.
-    let mode_pre_empts = |code: KeyCode, modifiers: KeyModifiers| {
-        !view.is_sidebar && mode_has_binding(code, modifiers)
-    };
-
+    // **A key the panel's mode binds never gets here.** The panel's keymap
+    // rides on its node (`view::shell::panel::Keymap`) and takes such a key
+    // on the tree's capture leg, so the router sees only what the mode left.
     if let Some(name) = key_name {
-        // The orchestrator New-Session form relies on mode precedence so
-        // Enter submits the form regardless of which field is focused.
-        if mode_pre_empts(code, modifiers) {
-            return FallThrough;
-        }
         return SmartKey(name);
     }
 
     if let KeyCode::Char(c) = code {
-        // The active editor mode may have explicitly claimed this char
-        // via `defineMode`. This covers *plain* chars too (not just
-        // Ctrl/Alt chords): a plugin that binds a bare key like `/` gets
-        // it before the text-input fast path. The trade-off is that a
-        // bound bare key can't also be typed as text in that mode, which
-        // is what the plugin asked for by binding it.
-        if mode_pre_empts(code, modifiers) {
-            return FallThrough;
-        }
         // Ctrl/Alt-modified chords with no mode binding: a centered
         // modal swallows them (it must not leak keys to global bindings
         // like Ctrl-P). The non-modal dock does the opposite — an
@@ -411,7 +250,7 @@ pub fn widget_panel_key(
                     _ => {}
                 }
             }
-            if view.is_left_dock || view.is_sidebar {
+            if view.non_modal {
                 return BlurUnconsumed;
             }
             return Swallow;
@@ -848,74 +687,35 @@ mod tests {
         assert_eq!(layout_reading(&plain, &kb, KeyContext::Normal), None);
     }
 
+    /// Esc leaves a non-modal panel mounted and blurs it; on a centered
+    /// modal it cancels and unmounts. A panel's own Esc — the dock's
+    /// "back to the list from the filter" — is its keymap's, on the tree,
+    /// and never reaches here.
     #[test]
-    fn dock_esc_depends_on_focus() {
+    fn esc_blurs_a_non_modal_panel_and_cancels_a_modal() {
         let kb = resolver();
-        let dock = |focus: Option<&str>| WidgetPanelView {
-            is_left_dock: true,
-            is_sidebar: false,
-            focus_key: focus.map(str::to_string),
+        let view = |non_modal: bool| WidgetPanelView {
+            non_modal,
+            focus_key: Some("sessions".to_string()),
             focused_widget_is_text: false,
-            editor_mode: None,
         };
-        // Esc on the filter returns to the session list; elsewhere it
-        // blurs the dock (which stays mounted).
         assert_eq!(
-            widget_panel_key(&dock(Some("filter")), &kb, KeyCode::Esc, KeyModifiers::NONE),
-            WidgetKeyOutcome::FocusWidget("sessions")
-        );
-        assert_eq!(
-            widget_panel_key(
-                &dock(Some("sessions")),
-                &kb,
-                KeyCode::Esc,
-                KeyModifiers::NONE
-            ),
+            widget_panel_key(&view(true), &kb, KeyCode::Esc, KeyModifiers::NONE),
             WidgetKeyOutcome::Blur
         );
-        // On a centered modal, Esc cancels and unmounts.
-        let modal = WidgetPanelView {
-            is_left_dock: false,
-            is_sidebar: false,
-            focus_key: None,
-            focused_widget_is_text: false,
-            editor_mode: None,
-        };
         assert_eq!(
-            widget_panel_key(&modal, &kb, KeyCode::Esc, KeyModifiers::NONE),
+            widget_panel_key(&view(false), &kb, KeyCode::Esc, KeyModifiers::NONE),
             WidgetKeyOutcome::CancelAndUnmount
         );
     }
 
     #[test]
-    fn dock_dropdown_owns_navigation_keys() {
+    fn modal_swallows_chords_a_non_modal_panel_blurs_through() {
         let kb = resolver();
-        let view = WidgetPanelView {
-            is_left_dock: true,
-            is_sidebar: false,
-            focus_key: Some("project-pick:2".to_string()),
-            focused_widget_is_text: false,
-            editor_mode: None,
-        };
-        assert_eq!(
-            widget_panel_key(&view, &kb, KeyCode::Up, KeyModifiers::NONE),
-            WidgetKeyOutcome::DockEvent("dock_menu_prev")
-        );
-        assert_eq!(
-            widget_panel_key(&view, &kb, KeyCode::Enter, KeyModifiers::NONE),
-            WidgetKeyOutcome::DockEvent("dock_menu_accept")
-        );
-    }
-
-    #[test]
-    fn modal_swallows_chords_dock_blurs_through() {
-        let kb = resolver();
-        let mk = |is_left_dock| WidgetPanelView {
-            is_left_dock,
-            is_sidebar: false,
+        let mk = |non_modal| WidgetPanelView {
+            non_modal,
             focus_key: None,
             focused_widget_is_text: false,
-            editor_mode: None,
         };
         let ctrl_p = (KeyCode::Char('p'), KeyModifiers::CONTROL);
         // A centered modal must not leak Ctrl+P to the palette…
@@ -927,34 +727,6 @@ mod tests {
         assert_eq!(
             widget_panel_key(&mk(true), &kb, ctrl_p.0, ctrl_p.1),
             WidgetKeyOutcome::BlurUnconsumed
-        );
-    }
-
-    /// A sidebar section is non-modal like the dock: Esc leaves it mounted
-    /// and blurs it, and an unbound chord blurs it and falls through to the
-    /// editor — without the dock's own key conventions.
-    #[test]
-    fn sidebar_section_blurs_on_esc_and_unbound_chords() {
-        let kb = resolver();
-        let view = WidgetPanelView {
-            is_left_dock: false,
-            is_sidebar: true,
-            focus_key: Some("tree".to_string()),
-            focused_widget_is_text: false,
-            editor_mode: None,
-        };
-        assert_eq!(
-            widget_panel_key(&view, &kb, KeyCode::Esc, KeyModifiers::NONE),
-            WidgetKeyOutcome::Blur
-        );
-        assert_eq!(
-            widget_panel_key(&view, &kb, KeyCode::Char('p'), KeyModifiers::CONTROL),
-            WidgetKeyOutcome::BlurUnconsumed
-        );
-        // Enter is still the widget's.
-        assert_eq!(
-            widget_panel_key(&view, &kb, KeyCode::Enter, KeyModifiers::NONE),
-            WidgetKeyOutcome::SmartKey("Enter")
         );
     }
 
@@ -1184,44 +956,6 @@ mod tests {
     }
 
     #[test]
-    fn a_sidebar_section_keeps_its_keys_from_the_buffers_mode() {
-        // The active buffer's plugin mode binds Enter (markdown-source's
-        // list continuation). A focused *sidebar section* is not the
-        // buffer, so its Enter is the row's `activate`; the centred panel
-        // keeps the precedence because its own plugin defines the mode.
-        let mut config = config();
-        config.keybindings.push(crate::config::Keybinding {
-            key: "enter".to_string(),
-            modifiers: Vec::new(),
-            keys: Vec::new(),
-            action: "save".to_string(),
-            args: std::collections::HashMap::new(),
-            when: Some("mode:markdown-source".to_string()),
-        });
-        let kb = KeybindingResolver::new(&config);
-        let view = |is_sidebar: bool| WidgetPanelView {
-            is_left_dock: false,
-            is_sidebar,
-            focus_key: Some("toc".to_string()),
-            focused_widget_is_text: false,
-            editor_mode: Some("markdown-source".to_string()),
-        };
-        assert_eq!(
-            widget_panel_key(&view(true), &kb, KeyCode::Enter, KeyModifiers::NONE),
-            WidgetKeyOutcome::SmartKey("Enter")
-        );
-        assert_eq!(
-            widget_panel_key(&view(false), &kb, KeyCode::Enter, KeyModifiers::NONE),
-            WidgetKeyOutcome::FallThrough
-        );
-        // Esc still leaves the section rather than unmounting it.
-        assert_eq!(
-            widget_panel_key(&view(true), &kb, KeyCode::Esc, KeyModifiers::NONE),
-            WidgetKeyOutcome::Blur
-        );
-    }
-
-    #[test]
     fn chord_or_key_walks_a_two_key_sequence() {
         let mut config = config();
         config.keybindings.push(crate::config::Keybinding {
@@ -1325,11 +1059,9 @@ mod tests {
     fn clipboard_chords_reach_a_focused_text_widget() {
         let kb = resolver();
         let view = WidgetPanelView {
-            is_left_dock: false,
-            is_sidebar: false,
+            non_modal: false,
             focus_key: Some("path".to_string()),
             focused_widget_is_text: true,
-            editor_mode: None,
         };
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Char('v'), KeyModifiers::CONTROL),

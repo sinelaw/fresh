@@ -1,21 +1,14 @@
-//! Chrome surfaces as REGISTERED components.
+//! Chrome surfaces' hover reactions, and the pointer grabs.
 //!
-//! What a [`ChromeComponent`] declares today is two things: the overlay
-//! LAYER its surface contributes (`layers`, ranked by [`layer_rank`]) and
-//! how the surface reacts to a hover-target change (`on_hover_change`).
-//! Everything else this registry once carried has crossed to the shell
-//! tree — the per-event box tree and its validated memo, the pointer walk
-//! over those boxes, and the ranked keyboard walk. Their retirement is
-//! recorded in `docs/internal/retained-mode-ui.md` §3.1, which deletes this module; nothing here
-//! memoizes, and no cache is consulted on the way to a layer.
-//!
-//! What keeps the registry alive is that the layer stack must stay DERIVED
-//! from live state. A surface's presence, keyboard ownership, `KeyContext`
-//! and PTY blocking are declared next to the surface that owns them, so
-//! they cannot drift the way the central conditional ladders they replaced
-//! did (`app::overlay`'s header names the three that had already gone out
-//! of sync with each other). [`components`] is the ONE list; its order
-//! decides nothing — see the note on that function.
+//! What a [`ChromeComponent`] declares today is one thing: how its surface
+//! reacts to a hover-target change (`on_hover_change`). Everything else this
+//! registry once carried has crossed to the shell tree — the per-event box
+//! tree and its validated memo, the pointer walk over those boxes, the ranked
+//! keyboard walk, and last the overlay-layer stack that told `get_key_context`
+//! and the PTY gate which surface was up (both read the tree now: `app::
+//! overlay`). The modules below keep the `Editor` methods the tree's facts
+//! land in for each surface. `docs/internal/retained-mode-ui.md` §3.1 moves
+//! the two hover reactions beside their surfaces and deletes this module.
 
 mod base;
 mod context_menu;
@@ -31,37 +24,6 @@ mod status_bar;
 
 use super::types::HoverTarget;
 use super::Editor;
-
-/// Overlay-layer ranks, DESCENDING = higher keyboard/modal precedence.
-///
-/// **A keyboard table, and nothing else.** It is not paint order and not
-/// the frame's declaration order: `MENU` outranks `CONTEXT_MENU` here
-/// because an open menu owns the keyboard, while the frame declares the
-/// context menu *after* the menu-bar dropdowns so it paints on top of
-/// them; and `CONTEXT_MENU` sits below `POPUP` so the unfocused-popup
-/// guard's `take_while` cannot see it, while a context menu paints above
-/// every popup. Reading the two orders as one has already produced a wrong
-/// comment in `view::shell::frame` — when the question is "what is drawn
-/// over what", the answer is that frame's declaration order, never this.
-///
-/// Only the two ordered readers of `Editor::overlay_layers` consult these
-/// ranks (`resolve_focus_context` and `popup_blocked_by_higher_modal`); a
-/// gate that merely asks whether a layer is present reads the unordered
-/// `Editor::overlay_layer_set` instead. Event-debug (1000) is hardcoded in
-/// `overlay_layers` — a debugging instrument, not a component.
-pub(crate) mod layer_rank {
-    pub(crate) const SETTINGS: u16 = 900;
-    pub(crate) const KEYBINDING_EDITOR: u16 = 890;
-    pub(crate) const CALIBRATION_WIZARD: u16 = 880;
-    pub(crate) const WORKSPACE_TRUST: u16 = 870;
-    pub(crate) const MENU: u16 = 860;
-    pub(crate) const PROMPT: u16 = 850;
-    pub(crate) const POPUP: u16 = 840;
-    pub(crate) const CONTEXT_MENU: u16 = 830;
-    pub(crate) const FLOATING_MODAL: u16 = 820;
-    pub(crate) const DOCK: u16 = 810;
-    pub(crate) const EDITOR_BASE: u16 = 0;
-}
 
 /// The active pointer GRAB, if any: press-established routing that
 /// owns the pointer until release. Grabs are NOT bubble dispatch — a
@@ -180,172 +142,9 @@ pub(crate) trait ChromeComponent: Sync {
     ) -> bool {
         false
     }
-
-    /// This component's overlay-layer contributions, from live state:
-    /// `(rank, Layer)` pairs pushed into `out` (see [`layer_rank`]).
-    /// `Editor::layer_contributions` concatenates every component's, and
-    /// only its ordered reader sorts by rank descending — the layer stack
-    /// is DERIVED from the registry, so a surface's presence, keyboard
-    /// ownership, `KeyContext`, and PTY blocking are declared by its
-    /// component instead of a central conditional ladder.
-    fn layers(&self, _ed: &Editor, _out: &mut Vec<(u16, crate::app::overlay::Layer)>) {}
-
-    // **No keyboard dispatch.** This was `on_layer_key`: the key walk,
-    // offered down `layer_rank`'s ordering, the keyboard analogue of
-    // `dispatch_pointer` over owner-stamped boxes. Every member has crossed
-    // — by containment for the modals and the context menu, by their own
-    // layers for the menu and the popups, by `Modality::Focus` for the prompt
-    // and the two plugin panels — and the editor base is a direct call from
-    // `handle_key`. What a component still declares is where its layer sits
-    // and what that layer means, which is `layers` above.
 }
 
-/// The ONE chrome registry — every surface with keyboard behaviour, once.
-///
-/// **Precedence is not this list's**, and no longer anything else's here
-/// either: it is the order the frame declares its layers in. Order here
-/// decides nothing. It used to: every gesture scanned a z-ordered list of
-/// rectangles, and within a band the registry order *was* precedence, so
-/// components pushed specific targets before guards. Then it was the ranked
-/// key walk's. Both are gone — the pointer and the keyboard are the shell
-/// tree's, and a `ChromeComponent` is what is left of a surface once both its
-/// input halves have migrated: a declaration of where its layer sits in the
-/// stack `get_key_context` and the PTY gate still read.
-///
-/// The order below is the one the pointer walk left behind, kept because it
-/// still reads as "outermost first" and nothing gains by shuffling it.
+/// The surfaces with a hover reaction, offered every hover-target change.
 pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
-    &[
-        &modals::Settings,
-        &modals::KeybindingEditor,
-        &modals::CalibrationWizard,
-        &modals::WorkspaceTrust,
-        &context_menu::ContextMenu,
-        &prompt::Prompt,
-        &popups::Popups,
-        &floating_modal::FloatingModal,
-        &dock::Dock,
-        &menu::Menu,
-        &file_explorer::FileExplorer,
-        &base::Base,
-    ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::layer_rank::*;
-
-    /// The rank block is the ONE precedence source for the two readers
-    /// that consume `Editor::overlay_layers` as an ORDER — the
-    /// `resolve_focus_context` walk behind `get_key_context`, and
-    /// `popup_blocked_by_higher_modal`'s `take_while` behind
-    /// `resolve_unfocused_popup_action`. Everything else that consults the
-    /// stack (the PTY gate, the LSP-hover suppressor, the chrome-caret
-    /// gate) asks a membership question and reads the unordered
-    /// `Editor::overlay_layer_set`, so a one-character edit here cannot
-    /// reach it. Two places, then — but neither has any other statement of
-    /// its precedence, so the deliberate relations are pinned. Each assert
-    /// names the behavior that regresses if it flips.
-    #[test]
-    fn deliberate_rank_relations_are_pinned() {
-        // The capture-all modal band outranks everything routable.
-        for modal in [SETTINGS, KEYBINDING_EDITOR, CALIBRATION_WIZARD] {
-            for below in [WORKSPACE_TRUST, MENU, PROMPT, POPUP] {
-                assert!(modal > below, "modal band must own the keyboard first");
-            }
-        }
-        // Workspace-trust keys beat an open prompt — the deliberate
-        // convergence fix of the K arc (dispatch now agrees with
-        // `get_key_context`, which always ranked WT higher).
-        assert!(WORKSPACE_TRUST > PROMPT);
-        // An open menu owns the keyboard over the prompt and popups.
-        assert!(MENU > PROMPT && MENU > POPUP);
-        // The prompt outranks the popup band (block order of the old
-        // dispatch_modal_input, preserved as ranks).
-        assert!(PROMPT > POPUP);
-        // Context menus rank BELOW the popup layer — the
-        // `popup_blocked_by_higher_modal` take_while must not see
-        // them (their keyboard precedence is the pre-band grab, by
-        // ruling; the rank is deliberately NOT it).
-        assert!(CONTEXT_MENU < POPUP);
-        // A focused centered modal takes keys over the dock beneath
-        // it (the New-Session form on top of the sessions dock).
-        assert!(FLOATING_MODAL > DOCK);
-        // Prompt/popup/menu take keys before a focused dock or
-        // centered modal — the R1 rank-inversion fix.
-        assert!(POPUP > FLOATING_MODAL);
-        // The editor base is the floor.
-        for r in [
-            SETTINGS,
-            KEYBINDING_EDITOR,
-            CALIBRATION_WIZARD,
-            WORKSPACE_TRUST,
-            MENU,
-            PROMPT,
-            POPUP,
-            CONTEXT_MENU,
-            FLOATING_MODAL,
-            DOCK,
-        ] {
-            assert!(r > EDITOR_BASE);
-        }
-    }
-
-    /// Every rank is distinct: intra-rank ordering falls back to the
-    /// stable sort's declaration order, and nothing today relies on
-    /// that — keep it that way by construction.
-    #[test]
-    fn ranks_are_distinct() {
-        let ranks = [
-            SETTINGS,
-            KEYBINDING_EDITOR,
-            CALIBRATION_WIZARD,
-            WORKSPACE_TRUST,
-            MENU,
-            PROMPT,
-            POPUP,
-            CONTEXT_MENU,
-            FLOATING_MODAL,
-            DOCK,
-            EDITOR_BASE,
-        ];
-        let set: std::collections::HashSet<_> = ranks.iter().collect();
-        assert_eq!(set.len(), ranks.len(), "two layers share a rank");
-    }
-
-    /// The base-layer contract: the stack of a live editor ALWAYS ends with
-    /// the editor base layer, owning the keyboard. `Base::layers` must never
-    /// grow a state gate — `get_key_context` resolves against the first
-    /// owning layer with a context and `expect`s one, so a gate here would
-    /// panic the input path.
-    #[test]
-    fn the_stack_always_ends_with_an_owning_base_layer() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir_context = crate::config_io::DirectoryContext::for_testing(temp.path());
-        let ed = crate::app::Editor::for_test(
-            crate::config::Config::default(),
-            80,
-            24,
-            None,
-            dir_context,
-            crate::view::color_support::ColorCapability::TrueColor,
-            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
-            None,
-            None,
-            false,
-            false,
-        )
-        .unwrap();
-        let stack = ed.overlay_layers();
-        let last = stack.last().expect("stack never empty");
-        assert!(
-            matches!(last.kind, crate::app::overlay::LayerKind::Editor),
-            "the editor base terminates the stack"
-        );
-        assert!(last.owns_keyboard, "the base always owns the keyboard");
-        assert!(
-            last.key_context.is_some(),
-            "the base names a context, which `get_key_context` expects to find"
-        );
-    }
+    &[&menu::Menu, &file_explorer::FileExplorer]
 }

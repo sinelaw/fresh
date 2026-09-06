@@ -3,46 +3,7 @@
 
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, Editor};
-
-pub(crate) struct ContextMenu;
-
-impl ChromeComponent for ContextMenu {
-    /// The last thing this component does.
-    ///
-    /// Paint, pointer and keyboard have all moved to the `Layer` in the
-    /// shell's tree, which declares `Modality::Exclusive` — the same two facts
-    /// this entry states by hand: nothing outside is interactive, and the
-    /// terminal takes no raw input beneath it.
-    ///
-    /// It stays because the PTY gate reads `blocks_terminal_input` off the
-    /// overlay stack, while the library derives the same thing from
-    /// `raw_input()` — which is only meaningful once host leaves *declare*
-    /// that they take raw input. Today every region is a `PlainHost`, whose
-    /// `takes_raw_input` is false, so deriving it now would report that the
-    /// terminal is blocked on every frame. It retires with the terminal grid's
-    /// own host leaf (S5), and `layer_rank::CONTEXT_MENU` goes with it.
-    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
-        use crate::app::overlay::{Layer, LayerKind};
-        // While one is open it owns the keyboard — from the tree now, not
-        // from a pre-band grab here — so no `KeyContext` is exposed. Like any covering
-        // overlay it blocks PTY routing. Ranked below `Popup` so the
-        // unfocused-popup `take_while` guard is unaffected. One entry
-        // covers all four menus — they share the geometry core and are
-        // mutually exclusive (opening one closes the others).
-        if ed.active_window().open_context_menu().is_some() {
-            out.push((
-                super::layer_rank::CONTEXT_MENU,
-                Layer {
-                    kind: LayerKind::ContextMenu,
-                    owns_keyboard: true,
-                    key_context: None,
-                    blocks_terminal_input: true,
-                },
-            ));
-        }
-    }
-}
+use super::Editor;
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).

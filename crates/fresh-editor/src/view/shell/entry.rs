@@ -363,6 +363,7 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
             slot: super::widgets::Slot::SettingsEntry,
             states: super::widgets::no_state(),
             focus_key: focus_key.clone(),
+            keyboard: true,
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),

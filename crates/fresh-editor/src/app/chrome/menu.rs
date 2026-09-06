@@ -1,5 +1,5 @@
-//! What is left of the menu bar's chrome component: its layer entry and the
-//! reaction half of hover.
+//! What is left of the menu bar's chrome component: the reaction half of
+//! hover.
 //!
 //! Paint, pointer and keyboard have all migrated. The bar row is a native
 //! region in the shell's tree, the open dropdown chain is a stack of `Layer`s,
@@ -38,21 +38,6 @@ impl ChromeComponent for Menu {
             return false;
         }
         ed.menu_hover_reaction(new)
-    }
-
-    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
-        use crate::app::overlay::{Layer, LayerKind};
-        if ed.menu_state.active_menu.is_some() {
-            out.push((
-                super::layer_rank::MENU,
-                Layer {
-                    kind: LayerKind::Menu,
-                    owns_keyboard: true,
-                    key_context: Some(crate::input::keybindings::KeyContext::Menu),
-                    blocks_terminal_input: true,
-                },
-            ));
-        }
     }
 
     // **No keyboard here at all any more.** What was left of this handler was

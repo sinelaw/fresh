@@ -244,9 +244,8 @@ impl Editor {
         // row's owner is the List itself — a row click focuses the list, and
         // arrows right after it keep moving the list's selection.)
         //
-        // **Asked of the spec, not of a recorded ring.** This read
-        // `WidgetPanelState::tabbable`, which is the collector's ring as of
-        // whatever render ran last; the spec in hand may have moved since. The
+        // **Asked of the spec, not of a recorded ring.** The registry no longer
+        // records a ring; the spec in hand is the only current answer. The
         // question is a property of the widget under the pointer, so it is put
         // to that widget — `kinds::focusable_key` is the same predicate the
         // tree's ring admits by, so a click can never focus something Tab
@@ -654,13 +653,16 @@ impl Editor {
     /// needs the whole text projection, which is what `render_floating_spec`
     /// below produces.
     pub(super) fn rerender_widget_panel(&mut self, panel_key: &crate::widgets::PanelKey) {
+        // Whatever this re-resolves is read by the description; the tree
+        // catches up on the next frame, and a key before it lays one out.
+        self.shell_description_stale = true;
         if self.resolve_described_panel(panel_key) {
             return;
         }
         // The spec already lives in the registry — mutations (e.g.
         // `append_tree_nodes_in_spec`) edit it in place. Borrow it for
         // render, then write back only the side-effects (hits, instance
-        // states, focus key, tabbable). The previous shape cloned the
+        // states, focus key). The previous shape cloned the
         // whole spec out, rendered, then moved it back — for a Tree
         // with 5 000 nodes that's a multi-MB deep clone per IPC, which
         // dominates the host's per-mutation cost during a streaming
@@ -765,7 +767,6 @@ impl Editor {
                 out_pieces.hits,
                 out_pieces.instance_states,
                 out_pieces.focus_key,
-                out_pieces.tabbable,
                 out_pieces.painted,
                 out_pieces.boxes,
             )
@@ -874,7 +875,6 @@ impl Editor {
                 Vec::new(),
                 out.instance_states,
                 out.focus_key,
-                out.tabbable,
                 std::collections::HashMap::new(),
                 Vec::new(),
             )
@@ -1214,82 +1214,90 @@ impl Editor {
     /// (`c89d25f`), and the runtime cannot know whether the tree's focus is
     /// where its ring would start.
     fn handle_widget_focus_advance(&mut self, panel_key: &crate::widgets::PanelKey, delta: i32) {
+        // The ring is read off the tree, so the tree has to carry the panel
+        // as it is now — a mount or a spec update since the last frame is
+        // laid out first. See `Editor::shell_description_stale`.
+        self.lay_out_shell_if_stale();
         if self.advance_panel_focus_in_tree(panel_key, delta) {
             return;
         }
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        // The ring comes from the *spec*, scoped to the nearest focus-trap
-        // ancestor of the focused widget (a modal / Component subtree
-        // contains Tab cycling; without traps this is the whole panel's
-        // declaration order). It read the box arena until S6, which was the
-        // same two facts — focusable, and the enclosing trap — recovered from
-        // the rectangles a paint left behind; a described panel produces no
-        // rectangles and never needed them, because both facts are
-        // `box_meta`'s and `box_meta` is a function of the spec.
-        let ring = crate::widgets::focus_ring_scoped_in_spec(&panel.spec, &panel.focus_key);
-        if ring.is_empty() {
+        // **The tree does not hold this panel's focus** — a mounted but
+        // unfocused panel, or a pane-mounted one whose keyboard is the
+        // buffer's — so the panel's focus *fact* advances instead, along the
+        // ring the tree would walk if it did (`Ui::next_in`). One order and
+        // one source: the same registrations, in the same policy's order, as
+        // the Tab above. Confined to the nearest focus scope around the
+        // focused widget, which is what a `Component`'s trap declares.
+        let Some(slot) = self.described_slot_of_panel(panel_key) else {
             return;
-        }
-        let n = ring.len() as i32;
-        // "Nothing focused" sits *outside* the ring, not on its first
-        // entry — so the first Tab must land on the first widget and the
-        // first Shift+Tab on the last.
-        //
-        // `position()` answering `None` for an unfocused panel used to
-        // fall through to index 0, and the step was applied from there:
-        // Tab went to `ring[1]`, skipping the first tabbable entirely,
-        // and Shift+Tab to `ring[n - 1]`. That could not happen while
-        // focus was always seeded, so `autoFocusFirst: false` is what
-        // made this reachable.
-        let buffer_id = panel.buffer_id;
-        let follows_cursor = panel.focus_follows_cursor;
-        let end_of_ring = if delta >= 0 {
-            ring[0].clone()
-        } else {
-            ring[(n - 1) as usize].clone()
         };
-        let new_key = match ring.iter().position(|k| k == &panel.focus_key) {
-            Some(cur) => {
-                let new_idx = ((cur as i32 + delta) % n + n) % n;
-                ring[new_idx as usize].clone()
+        let focus_key = self
+            .widget_registry
+            .focus_key(panel_key)
+            .map(str::to_string)
+            .unwrap_or_default();
+        let Some(ui) = self.shell_ui.as_ref() else {
+            return;
+        };
+        let Some(interior) = ui.find_by_key(&crate::view::shell::panel::interior_key(slot)) else {
+            return;
+        };
+        let from = (!focus_key.is_empty())
+            .then(|| ui.find_by_key(&crate::view::shell::widgets::widget_focus_key(&focus_key)))
+            .flatten()
+            .filter(|f| ui.contains(interior, *f));
+        let root = from
+            .and_then(|f| ui.enclosing_focus_scope(f))
+            .filter(|s| ui.contains(interior, *s))
+            .unwrap_or(interior);
+        let dir = match delta < 0 {
+            true => fresh_ui::FocusDir::Prev,
+            false => fresh_ui::FocusDir::Next,
+        };
+        // "Nothing focused" sits *outside* the ring: the first Tab lands on
+        // the first widget and the first Shift+Tab on the last, which is what
+        // `next_in` answers for a `from` it does not find.
+        let mut cur = from;
+        for _ in 0..delta.unsigned_abs() {
+            match ui.next_in(root, cur, dir) {
+                Some(n) => cur = Some(n),
+                None => break,
             }
-            // Every other panel in the editor: "nothing focused" is the
-            // panel at rest, and the ring starts at its end.
-            None if !follows_cursor => end_of_ring,
-            // On a `focusFollowsCursor` panel it is the caret sitting on
-            // prose instead, which on a page that is mostly prose is most
-            // of the time — so starting at the ring's end would send every
-            // Tab from below the fold to the top of the document.
-            //
-            // The two `None`s below are not that case and are not silent:
-            // a panel with no caret to read, or a ring naming widgets the
-            // last paint did not place, are both disagreements between
-            // this panel's spec and its paint. Falling back to the ring's
-            // end would make them look exactly like the resting state
-            // this branch exists to avoid.
-            None => {
-                let seed = self.panel_buffer_caret(buffer_id).and_then(|(row, col)| {
-                    self.widget_registry
-                        .tabbable_from_caret(panel_key, row, col, delta >= 0, &ring)
-                });
-                match seed {
-                    Some(key) => key,
-                    None => {
-                        tracing::warn!(
-                            panel = %panel_key,
-                            "focusFollowsCursor: no caret or no painted ring member to seed Tab \
-                             from; falling back to the end of the ring"
-                        );
-                        end_of_ring
-                    }
-                }
-            }
+        }
+        let Some(new) = cur.filter(|c| Some(*c) != from) else {
+            return;
+        };
+        let Some(new_key) = ui
+            .key_of(new)
+            .as_ref()
+            .and_then(crate::view::shell::widgets::widget_key_of)
+            .map(str::to_string)
+        else {
+            return;
         };
         self.set_panel_focus_and_notify(panel_key, new_key);
         self.rerender_widget_panel(panel_key);
+    }
+
+    /// The slot whose described interior this panel is, pane-mounted panels
+    /// included — `slot_of_panel` answers only the three slots with a
+    /// keyboard layer.
+    fn described_slot_of_panel(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+    ) -> Option<crate::view::shell::widgets::Slot> {
+        use crate::view::shell::widgets::Slot;
+        match self.slot_of_panel(panel_key) {
+            Some(super::PanelSlot::Dock) => return Some(Slot::Dock),
+            Some(super::PanelSlot::Floating) => return Some(Slot::Floating),
+            Some(super::PanelSlot::Sidebar(i)) => return Some(Slot::Sidebar(i)),
+            None => {}
+        }
+        let buffer = self.widget_registry.get(panel_key)?.buffer_id;
+        self.window_panes()
+            .into_iter()
+            .find(|(_, b)| *b == buffer)
+            .map(|(leaf, _)| Slot::Pane(leaf))
     }
 
     /// Ask the tree to move this panel's focus along its own ring, and report
@@ -1344,11 +1352,9 @@ impl Editor {
     /// focus.
     ///
     /// The other moment — a focus move made while the panel is *already*
-    /// focused, which `apply_autofocus` cannot settle because it leaves focus
-    /// alone once it is inside the scope — is the mirror's second direction,
-    /// and it is [`Editor::focus_panel_widget_in_tree`]: every host-side write
-    /// of the registry's focus key moves the tree's focus with it, under the
-    /// same `has_focus_within` test this function asks.
+    /// focused — is the description's too: the mark moves with the registry's
+    /// key, and `fresh_ui` re-settles focus onto a mark that moved. No host
+    /// call places focus in the tree.
     fn advance_panel_focus_in_tree(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
@@ -1431,114 +1437,6 @@ impl Editor {
         true
     }
 
-    /// Move the tree's focus to this panel's `widget`, when the tree is the
-    /// ring holding the panel's focus.
-    ///
-    /// **The second direction of the focus mirror**, and the half that was
-    /// missing. `UiFact::WidgetFocus` writes the registry from what the tree
-    /// decided; nothing wrote the tree from what the *host* decided, so every
-    /// focus move the host makes while the panel is already focused — a
-    /// plugin's `setFocusKey`, the dock's `/` landing on its filter, a kind's
-    /// own focus effect — left the two rings pointing at different widgets.
-    /// The description then painted the marker where the registry said and
-    /// the next Tab started from where the tree said: the dock's create
-    /// dropdown closed back onto `sessions` while the tree still held the
-    /// button above it, so three Tabs from the list landed one stop past the
-    /// section header the user was aiming at.
-    ///
-    /// Scoped by the same question `advance_panel_focus_in_tree` asks — does
-    /// the tree hold this panel's focus — because that is what makes the tree
-    /// the ring at all. When it does not (a mounted but unfocused panel, a
-    /// pane-mounted one, an interior with nothing focusable), there is
-    /// nothing to move and the landing is settled by `autofocus` the next
-    /// time focus enters the panel.
-    ///
-    /// The gain the move raises goes into `Ui::pending_messages` and is
-    /// applied at the next dispatch (`Editor::apply_settled_shell_messages`),
-    /// where it names the widget the registry already holds and the mirror's
-    /// first direction is a no-op. It does not loop.
-    ///
-    /// **Two of the three writers of the registry's focus key call this, and
-    /// the third does not need to.** This one and
-    /// `WidgetMutation::SetFocusKey` are decisions. The third is
-    /// `rerender_widget_panel`'s re-clamp onto the first tabbable when the
-    /// focused widget is not in the new spec — and a widget that left the
-    /// spec left the tree with it, so the tree's focused element is gone and
-    /// `apply_autofocus` settles regardless; `on_the_ring`'s `autofocus` mark
-    /// then lands it on the clamped key. Pushing from inside a render would
-    /// buy nothing and would move focus during a paint.
-    pub(super) fn focus_panel_widget_in_tree(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget: &str,
-    ) {
-        use crate::view::shell::widgets::Slot;
-        let slot = match self.slot_of_panel(panel_key) {
-            Some(super::PanelSlot::Dock) => Slot::Dock,
-            Some(super::PanelSlot::Floating) => Slot::Floating,
-            Some(super::PanelSlot::Sidebar(i)) => Slot::Sidebar(i),
-            None => return,
-        };
-        let Some(mut ui) = self.shell_ui.take() else {
-            return;
-        };
-        let holds = ui
-            .find_by_key(&crate::view::shell::panel::interior_key(slot))
-            .is_some_and(|el| ui.has_focus_within(el));
-        // **The one case that is not "nothing to move": the element is not
-        // there yet.** A plugin that opens an in-panel dropdown writes the
-        // spec carrying its rows and then `setFocusKey` onto one of them, and
-        // both land before the next frame describes either. So this lookup
-        // asks the tree for a widget the *previous* spec had no row for, and
-        // the move it wanted has to wait exactly one frame. See
-        // `Editor::pending_panel_tree_focus`.
-        let mut found = false;
-        if holds {
-            if let Some(el) = ui.find_by_key(&crate::view::shell::widgets::widget_focus_key(widget))
-            {
-                found = true;
-                // `SelectAll` is what the ring's own moves ask for
-                // (`Ui::move_focus`), and a host-driven landing is not a
-                // different kind of landing.
-                ui.request_focus(el, fresh_ui::SelectionOnFocus::SelectAll);
-            }
-        }
-        self.shell_ui = Some(ui);
-        // A move that landed retires any request still waiting; one that could
-        // not find its element becomes the request. `!holds` is neither — the
-        // tree does not hold this panel's focus, so `autofocus` settles the
-        // landing the next time focus enters it, and a pending write would
-        // fight that.
-        self.pending_panel_tree_focus = match (holds, found) {
-            (true, false) => Some((panel_key.clone(), widget.to_string())),
-            _ => None,
-        };
-    }
-
-    /// Replay the focus move [`Editor::focus_panel_widget_in_tree`] could not
-    /// make, now that the frame has built the element it names.
-    ///
-    /// Called once per frame, immediately after the tree is rebuilt. The
-    /// request is dropped whether or not it lands: the frame just built is the
-    /// one describing the spec the write was aimed at, so a widget missing
-    /// from it is missing for good, and a standing request would keep pulling
-    /// focus back on every later frame.
-    ///
-    /// A request whose widget the registry no longer names has been overtaken
-    /// by a newer focus decision — a Tab, a click, another `setFocusKey` — and
-    /// is dropped without acting, so replaying it cannot undo the newer one.
-    pub(super) fn retry_pending_panel_tree_focus(&mut self) {
-        let Some((panel_key, widget)) = self.pending_panel_tree_focus.take() else {
-            return;
-        };
-        if self.widget_registry.focus_key(&panel_key) != Some(widget.as_str()) {
-            return;
-        }
-        self.focus_panel_widget_in_tree(&panel_key, &widget);
-        // One replay only — see the doc comment.
-        self.pending_panel_tree_focus = None;
-    }
-
     /// Update the panel's focused widget AND fire a
     /// `widget_event { event_type: "focus" }` so plugins can
     /// react. Used by every host-driven focus move — key-driven
@@ -1575,10 +1473,15 @@ impl Editor {
             "set_panel_focus_and_notify: firing `focus` widget_event"
         );
         self.widget_registry
-            .set_focus_key(panel_key, new_key.clone());
-        // The tree is the ring; the registry is its mirror. Written in step,
-        // before the plugin is told, so nothing reads one against the other.
-        self.focus_panel_widget_in_tree(panel_key, &new_key);
+            .decide_focus(panel_key, new_key.clone());
+        // **The fact is written; the tree follows it on the next frame.** The
+        // description marks the registry's focused widget `autofocus`
+        // (`view::shell::widgets::on_the_ring`), and `fresh_ui` re-settles
+        // focus whenever that mark moves — on the frame that carries it,
+        // including a frame that builds the widget for the first time. No
+        // host-side call places focus in the tree, so there is nothing to
+        // hold back or replay when the element is not there yet.
+        self.shell_description_stale = true;
         // Offer the transition to the kinds: the widget losing focus
         // and the one gaining it each get their `on_focus_change`
         // hook (Tree keeps its selected-row highlight coherent with
@@ -1610,113 +1513,6 @@ impl Editor {
         // then finds focus and caret already agreeing. `seat_focus_depth`
         // makes that an assertion rather than a hope.
         //
-        // Placing it *after* the event is the whole reason this is the
-        // last statement: with the seat in the middle, a disagreeing
-        // resolve fired the inner (final) `focus` event before the outer
-        // (already superseded) one, and every plugin mirroring focus from
-        // these events — `welcome_screen.ts` does — was left holding the
-        // stale key.
-        self.seat_focus_depth += 1;
-        debug_assert!(
-            self.seat_focus_depth <= 2,
-            "focus/caret sync recursed past its one re-entry: focus and the caret \
-             disagree after a seat, which means `anchor_of_widget` and \
-             `focus_target_at` are not settling on the same widget"
-        );
-        self.seat_cursor_on_focused_widget(panel_key, &new_key);
-        self.seat_focus_depth -= 1;
-    }
-
-    /// Move `buffer_id`'s caret onto the row of the widget that just
-    /// took focus, for a panel that asked for `focusFollowsCursor`.
-    ///
-    /// The guard is not "is the caret already on that row" but "does the
-    /// caret's row already resolve to this widget", which is the same
-    /// question the other direction asks — and it has to be, because a
-    /// card several rows tall anchors at its top. Arriving at its last
-    /// row from below focuses the card; seating the caret on the card's
-    /// *top* row would then throw the reader back over everything they
-    /// just walked past, and the next Up would do it again.
-    ///
-    /// Clearing focus never moves the caret. "Nothing is focused" is
-    /// what a caret on prose means; there is no row to go to.
-    pub(super) fn seat_cursor_on_focused_widget(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        new_key: &str,
-    ) {
-        if new_key.is_empty() {
-            return;
-        }
-        let Some(panel) = self.widget_registry.get(panel_key) else {
-            return;
-        };
-        if !panel.focus_follows_cursor {
-            return;
-        }
-        let buffer_id = panel.buffer_id;
-        if let Some((row, col)) = self.panel_buffer_caret(buffer_id) {
-            if self
-                .widget_registry
-                .focus_target_at(panel_key, row, col)
-                .is_some_and(|k| k == new_key)
-            {
-                return;
-            }
-        }
-        let Some((row, byte_in_row)) = self.widget_registry.anchor_of_widget(panel_key, new_key)
-        else {
-            return;
-        };
-        let Some(offset) = self.buffer_offset_in_row(buffer_id, row, byte_in_row) else {
-            return;
-        };
-        // Un-latch first, or the reveal the caret move *is* may not
-        // happen: `ensure_visible` returns early while
-        // `skip_ensure_visible` is set, and a wheel scroll sets it.
-        self.unlatch_ensure_visible(buffer_id);
-        self.seat_buffer_cursor(buffer_id, offset);
-    }
-
-    /// The byte offset of `byte_in_row` on `row`, clamped to that row's
-    /// own text.
-    ///
-    /// A widget's span is measured against the row text the panel
-    /// rendered, and padding to the pane's width is applied when the
-    /// line is *drawn*, not when it is stored — so a span can reach past
-    /// what the buffer holds. Clamping keeps a caret that would land in
-    /// the padding on the last real cell of its row instead of on the
-    /// next one.
-    fn buffer_offset_in_row(
-        &self,
-        buffer_id: BufferId,
-        row: u32,
-        byte_in_row: usize,
-    ) -> Option<usize> {
-        let state = self.active_window().buffers.get(&buffer_id)?;
-        let start = state.buffer.line_start_offset(row as usize)?;
-        let end = match state.buffer.line_start_offset(row as usize + 1) {
-            // Less the newline that begins the next row.
-            Some(next) => next.saturating_sub(1),
-            None => state.buffer.len(),
-        };
-        if start + byte_in_row > end {
-            // Not absorbed quietly: the widget's span and the row's
-            // stored text have disagreed, and the caret is about to land
-            // at end-of-row instead of on the widget — which the sync
-            // then re-resolves to whatever control is rightmost on that
-            // row. Either the hit geometry is stale or a row really is
-            // shorter than the span recorded against it; both are the
-            // author's business.
-            tracing::warn!(
-                "widget span past its row: buffer {:?} row {} byte {} exceeds row end {}",
-                buffer_id,
-                row,
-                byte_in_row,
-                end - start
-            );
-        }
-        Some((start + byte_in_row).min(end))
     }
 
     /// Every split currently showing `buffer_id`, the leaves of grouped
@@ -1775,7 +1571,6 @@ impl Editor {
         }
         self.active_window_mut()
             .set_buffer_cursor_in_splits(buffer_id, position, &splits);
-        self.sync_widget_focus_to_cursor(buffer_id, position);
     }
 
     /// Clear `skip_ensure_visible` on every split showing `buffer_id`, so
@@ -1799,73 +1594,6 @@ impl Editor {
                 }
             }
         }
-    }
-
-    /// The other direction: the caret has landed somewhere in a
-    /// `focusFollowsCursor` panel's buffer, so focus goes to whatever
-    /// focusable widget is on that row — or to nothing, when the row
-    /// carries none.
-    ///
-    /// Clearing is the half that matters most. Without it an arrow key
-    /// leaves the last Tab's target armed under Enter, three cards up
-    /// and off screen: the reader is looking at one thing and the
-    /// keyboard is pointed at another.
-    pub(super) fn sync_widget_focus_to_cursor(&mut self, buffer_id: BufferId, position: usize) {
-        // Cheap out before touching the buffer: this runs on every cursor
-        // move in the editor, and resolving a byte offset to a line
-        // number is not free on a multi-GB file.
-        if !self.widget_registry.has_focus_follower(buffer_id) {
-            return;
-        }
-        let Some((row, col)) = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
-            .map(|st| st.buffer.position_to_line_col(position))
-        else {
-            return;
-        };
-        let Some(panel_key) = self.widget_registry.focus_follower_of(buffer_id) else {
-            return;
-        };
-        let Some(next) = self
-            .widget_registry
-            .focus_target_at(&panel_key, row as u32, col)
-        else {
-            return;
-        };
-        if self.widget_registry.focus_key(&panel_key) == Some(next.as_str()) {
-            return;
-        }
-        self.set_panel_focus_and_notify(&panel_key, next);
-        // The focus marker is painted by the render, so the panel has to
-        // repaint for the move to be visible at all.
-        self.rerender_widget_panel(&panel_key);
-    }
-
-    /// The caret's `(0-indexed row, byte in that row)` in `buffer_id`, as
-    /// the split the reader is in has it.
-    ///
-    /// Each split showing a buffer keeps its own cursors, so "the
-    /// buffer's caret" is not a thing — this used to take whichever one
-    /// a `HashMap` walk reached first, which made both callers
-    /// order-dependent with the page open twice: a Tab in one pane could
-    /// be seeded from the other pane's caret, differently on different
-    /// runs. The effective active split is the one whose caret the
-    /// reader is moving, and it is what `apply_event` writes through.
-    fn panel_buffer_caret(&self, buffer_id: BufferId) -> Option<(u32, usize)> {
-        let leaf = self.effective_active_split();
-        let (_, view_states) = self.windows.get(&self.active_window)?.buffers.splits()?;
-        let position = view_states
-            .get(&leaf)
-            .and_then(|vs| vs.buffer_state(buffer_id))
-            .map(|bs| bs.cursors.primary().position)?;
-        let (line, col) = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
-            .map(|st| st.buffer.position_to_line_col(position))?;
-        Some((line as u32, col))
     }
 
     /// Offer a panel-focus transition to the kinds: the widget losing
@@ -2745,6 +2473,9 @@ impl Editor {
         if let Some(f) = self.panel_mut(slot) {
             f.focused = true;
         }
+        // The panel's keyboard is a fact the description reads (its keys
+        // layer, its marks), so the tree is stale until it is rebuilt.
+        self.shell_description_stale = true;
         let widget_key = self
             .widget_registry
             .get(&panel_key)
@@ -2778,6 +2509,10 @@ impl Editor {
         if let Some(f) = self.panel_mut(slot) {
             f.focused = false;
         }
+        // The blur is a focus write: the description marks the pane behind
+        // the panel now, and the tree must say so before the next key is
+        // routed over it (`Editor::get_key_context`).
+        self.shell_description_stale = true;
         tracing::debug!(
             target: "fresh::dock",
             panel = %panel_key,
@@ -3647,6 +3382,7 @@ mod tests {
             height_pct: 100,
             placement: crate::app::PanelPlacement::LeftDock { width_cols: 30 },
             focused: true,
+            mode: None,
             entries: Vec::new(),
             last_inner_rect: None,
             scrollbar_zone_hovered: false,
@@ -3759,7 +3495,6 @@ mod tests {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             true,
@@ -3894,7 +3629,6 @@ mod tests {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             true,
@@ -3946,21 +3680,88 @@ mod tests {
 
     /// **Where the tree has no ring, the arena is still the one that works.**
     ///
-    /// This is the half of S6 that is *not* available to be deleted. A panel
-    /// whose interior the tree does not describe — or describes with nothing
-    /// focusable in it — keeps `panel::keys_layer`'s sink, and the sink is
-    /// outside every scope: `Ui::move_focus` there has nowhere to go. The box
-    /// arena is the only ring such a panel has, and every host-driven advance
-    /// (`WidgetAction::FocusAdvance`, `KeyFx::focus_advance`, the smart-key
-    /// `Tab`) has to keep landing on it.
-    ///
-    /// The editor here has never had a frame, so its tree carries no
-    /// interior scope at all — which is exactly the shape
-    /// `advance_panel_focus_in_tree` must decline, and it declines it by
-    /// asking the tree rather than by asking the runtime how many tabbables
-    /// the spec has.
+    /// **Blurring a panel moves the tree's focus out of it, and the key
+    /// context follows.** The focus fact has one writer, and the tree is its
+    /// projection: while the dock holds the keyboard, its focused widget is
+    /// marked and the focus chain reads as `Dock`; when the host blurs it
+    /// (`blur_floating_panel`, the dive), the dock stops marking, the active
+    /// pane's content is the mark, and the next key is routed over a tree
+    /// that says so — `get_key_context` reads `Normal`, so a typed character
+    /// reaches the buffer and `Ctrl+P` opens the editor's palette. Before
+    /// this, focus stayed on the blurred dock's widget (it was still there,
+    /// still focusable) and every key after a dive resolved in the `Dock`
+    /// context and died.
     #[test]
-    fn a_panel_the_tree_does_not_hold_advances_on_the_arena() {
+    fn blurring_a_panel_moves_the_trees_focus_to_the_pane_behind_it() {
+        use crate::input::keybindings::KeyContext;
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        mount_list_panel(
+            &mut editor,
+            &panel_key,
+            crate::app::PanelSlot::Dock.buffer_id(),
+        );
+        editor.dock = Some(dock_panel(panel_key.clone()));
+        frame_the_shell(&mut editor);
+        assert_eq!(editor.get_key_context(), KeyContext::Dock);
+        let focused = editor
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| ui.focused())
+            .and_then(|e| editor.shell_ui.as_ref().unwrap().key_of(e));
+        assert_eq!(
+            focused,
+            Some(crate::view::shell::widgets::widget_focus_key("lst")),
+            "the dock's focused widget holds the tree's focus"
+        );
+
+        editor.blur_floating_panel(crate::app::PanelSlot::Dock);
+        assert!(
+            editor.shell_description_stale,
+            "a focus write marks the tree stale"
+        );
+        // The context is read off a tree laid out after the write.
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        let focused = editor
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| ui.focused())
+            .and_then(|e| editor.shell_ui.as_ref().unwrap().key_of(e));
+        let active = editor
+            .active_window()
+            .buffers
+            .splits()
+            .map(|(m, _)| m.active_split())
+            .expect("a pane");
+        assert_eq!(
+            focused,
+            Some(crate::view::shell::splits::content_key(active)),
+            "the active pane's content is where focus rests"
+        );
+        assert!(!editor.presents_blocking_overlay());
+        assert!(editor.editor_base_owns_keyboard());
+
+        // And a frame that changes nothing leaves it there.
+        frame_the_shell(&mut editor);
+        let focused = editor
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| ui.focused())
+            .and_then(|e| editor.shell_ui.as_ref().unwrap().key_of(e));
+        assert_eq!(
+            focused,
+            Some(crate::view::shell::splits::content_key(active))
+        );
+    }
+
+    /// **A panel the tree does not hold advances along the tree's ring
+    /// anyway.** A mounted but unfocused panel has no keyboard layer, so
+    /// `Ui::move_focus` is not the move — but its interior is described, its
+    /// wrappers are registered, and `Ui::next_in` walks them in the same
+    /// order Tab would. The panel's focus *fact* advances along that ring;
+    /// there is no second ring walked over the spec.
+    #[test]
+    fn a_panel_the_tree_does_not_hold_advances_along_the_trees_ring() {
         let (mut editor, _t) = make_editor();
         let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
         let spec = WidgetSpec::Col {
@@ -3993,7 +3794,6 @@ mod tests {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             true,
@@ -4004,16 +3804,18 @@ mod tests {
             Some("one"),
             "the render clamps focus onto the first tabbable"
         );
-        // In the dock's slot, so the routing resolves a slot and asks the
-        // tree — and the tree, never having been framed, carries no interior
-        // scope to answer with.
-        editor.dock = Some(dock_panel(panel_key.clone()));
+        // In the dock's slot, unfocused: the tree describes the interior
+        // and its ring, and does not hold the panel's focus.
+        let mut dock = dock_panel(panel_key.clone());
+        dock.focused = false;
+        editor.dock = Some(dock);
+        frame_the_shell(&mut editor);
 
         editor.handle_widget_focus_advance(&panel_key, 1);
         assert_eq!(
             editor.widget_registry.focus_key(&panel_key),
             Some("two"),
-            "the arena advanced it"
+            "the fact advanced along the tree's ring"
         );
         editor.handle_widget_focus_advance(&panel_key, -1);
         assert_eq!(
@@ -4060,7 +3862,6 @@ mod tests {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             true,
@@ -4135,7 +3936,6 @@ mod tests {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             true,
@@ -4252,7 +4052,6 @@ mod tests {
             panel.painted.len()
         );
         assert_eq!(panel.focus_key, "lst", "the focus clamp still ran");
-        assert_eq!(panel.tabbable, vec!["lst".to_string()], "and the ring");
         assert!(
             matches!(
                 panel.instance_states.get("lst"),
@@ -4375,7 +4174,6 @@ mod tests {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             true,
@@ -4389,12 +4187,242 @@ mod tests {
         assert_eq!(ui.focused(), one, "the frame settled on the first widget");
 
         editor.set_panel_focus_and_notify(&panel_key, "two".to_string());
+        assert!(
+            editor.shell_description_stale,
+            "a decision the tree has not seen makes the description stale"
+        );
+        frame_the_shell(&mut editor);
 
         let ui = editor.shell_ui.as_ref().expect("the tree");
         assert_eq!(
             ui.focused(),
             ui.find_by_key(&crate::view::shell::widgets::widget_focus_key("two")),
-            "the tree followed the host's write, so the next Tab starts here"
+            "the frame carried the host's write, so the next Tab starts here"
+        );
+        assert!(!editor.shell_description_stale, "and the frame cleared it");
+    }
+
+    /// **The tree's own move stands until a decision says otherwise.**
+    ///
+    /// A Tab moves the tree's focus; the registry learns of it through the
+    /// `WidgetFocus` echo at the next drain, and until then the description
+    /// still marks the widget focus *left*. That stale mark is not a
+    /// decision — it has not moved — so the frame that carries it changes
+    /// nothing. This is what separates "the mark moved" from "the mark
+    /// disagrees with focus", and it is the property the library's fourth
+    /// autofocus case is built on.
+    #[test]
+    fn the_trees_own_move_is_not_undone_by_a_stale_mark() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let spec = WidgetSpec::Col {
+            children: vec![button("one"), button("two")],
+            key: None,
+        };
+        let out = super::render_floating_spec(
+            false,
+            &spec,
+            &Default::default(),
+            &Default::default(),
+            "",
+            30,
+            None,
+            "",
+            "",
+            "",
+            None,
+            true,
+        );
+        editor.widget_registry.mount(
+            panel_key.clone(),
+            crate::app::PanelSlot::Dock.buffer_id(),
+            spec,
+            out.hits,
+            out.instance_states,
+            out.focus_key,
+            out.painted,
+            out.boxes,
+            true,
+        );
+        editor.dock = Some(dock_panel(panel_key.clone()));
+        frame_the_shell(&mut editor);
+
+        // The ring moves on its own, and the echo is deliberately not
+        // drained: the registry still says "one".
+        let ui = editor.shell_ui.as_mut().expect("the tree");
+        assert!(ui.move_focus(fresh_ui::FocusDir::Next));
+        let two = ui.find_by_key(&crate::view::shell::widgets::widget_focus_key("two"));
+        assert_eq!(ui.focused(), two);
+        let _undrained = ui.take_messages();
+        assert_eq!(editor.widget_registry.focus_key(&panel_key), Some("one"));
+
+        frame_the_shell(&mut editor);
+        let ui = editor.shell_ui.as_ref().expect("the tree");
+        assert_eq!(
+            ui.focused(),
+            two,
+            "a mark that has not moved does not pull focus back"
+        );
+    }
+
+    /// **A decision on a panel the tree is not focused in lands when the
+    /// panel is entered.** The registry's key is the only record of where
+    /// focus will land; the tree cannot write a fact about a subtree it is
+    /// not in, and does not try.
+    #[test]
+    fn a_decision_on_an_unfocused_panel_lands_when_it_is_entered() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let spec = WidgetSpec::Col {
+            children: vec![button("one"), button("two")],
+            key: None,
+        };
+        let out = super::render_floating_spec(
+            false,
+            &spec,
+            &Default::default(),
+            &Default::default(),
+            "",
+            30,
+            None,
+            "",
+            "",
+            "",
+            None,
+            true,
+        );
+        editor.widget_registry.mount(
+            panel_key.clone(),
+            crate::app::PanelSlot::Dock.buffer_id(),
+            spec,
+            out.hits,
+            out.instance_states,
+            out.focus_key,
+            out.painted,
+            out.boxes,
+            true,
+        );
+        let mut dock = dock_panel(panel_key.clone());
+        dock.focused = false;
+        editor.dock = Some(dock);
+        frame_the_shell(&mut editor);
+
+        editor.set_panel_focus_and_notify(&panel_key, "two".to_string());
+        frame_the_shell(&mut editor);
+        assert_eq!(editor.widget_registry.focus_key(&panel_key), Some("two"));
+
+        editor.dock.as_mut().expect("the dock").focused = true;
+        frame_the_shell(&mut editor);
+        let ui = editor.shell_ui.as_ref().expect("the tree");
+        assert_eq!(
+            ui.focused(),
+            ui.find_by_key(&crate::view::shell::widgets::widget_focus_key("two")),
+            "entering the panel lands on the fact, not on the first control"
+        );
+    }
+
+    /// **`autoFocusFirst: false` with nothing focused is a resting state the
+    /// tree's entry landing must not overwrite.** The description marks
+    /// nothing, so the tree rests on the scope's own element and the
+    /// `WidgetFocus` echo has nothing to say.
+    #[test]
+    fn an_empty_focus_the_panel_asked_for_is_not_reseeded_by_entry() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let spec = WidgetSpec::Col {
+            children: vec![button("one"), button("two")],
+            key: None,
+        };
+        let out = super::render_floating_spec(
+            false,
+            &spec,
+            &Default::default(),
+            &Default::default(),
+            "",
+            30,
+            None,
+            "",
+            "",
+            "",
+            None,
+            false,
+        );
+        assert_eq!(out.focus_key, "", "nothing seeded");
+        editor.widget_registry.mount(
+            panel_key.clone(),
+            crate::app::PanelSlot::Dock.buffer_id(),
+            spec,
+            out.hits,
+            out.instance_states,
+            out.focus_key,
+            out.painted,
+            out.boxes,
+            false,
+        );
+        editor.dock = Some(dock_panel(panel_key.clone()));
+        frame_the_shell(&mut editor);
+        editor.apply_settled_shell_messages();
+        assert_eq!(
+            editor.widget_registry.focus_key(&panel_key),
+            Some(""),
+            "the tree's landing did not name a widget the panel did not"
+        );
+    }
+
+    /// **Two decisions in one batch resolve the second from the first.** A
+    /// host focus write and a Tab with no frame between them: the Tab must
+    /// move from where the write put focus, not from where the tree last
+    /// saw it. `shell_dispatch` lays the tree out before routing when the
+    /// description is stale, which is the rule that keeps this true.
+    #[test]
+    fn a_tab_in_the_same_batch_as_a_focus_write_moves_from_the_written_focus() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let spec = WidgetSpec::Col {
+            children: vec![button("one"), button("two"), button("three")],
+            key: None,
+        };
+        let out = super::render_floating_spec(
+            false,
+            &spec,
+            &Default::default(),
+            &Default::default(),
+            "",
+            30,
+            None,
+            "",
+            "",
+            "",
+            None,
+            true,
+        );
+        editor.widget_registry.mount(
+            panel_key.clone(),
+            crate::app::PanelSlot::Dock.buffer_id(),
+            spec,
+            out.hits,
+            out.instance_states,
+            out.focus_key,
+            out.painted,
+            out.boxes,
+            true,
+        );
+        editor.dock = Some(dock_panel(panel_key.clone()));
+        frame_the_shell(&mut editor);
+        editor.apply_settled_shell_messages();
+
+        editor.set_panel_focus_and_notify(&panel_key, "two".to_string());
+        let tab = fresh_ui::Input::Key(fresh_ui::KeyPress::new(fresh_ui::KeyCode::Tab));
+        editor.shell_dispatch(tab);
+        assert_eq!(
+            editor.widget_registry.focus_key(&panel_key),
+            Some("three"),
+            "the Tab started from the written focus"
+        );
+        let ui = editor.shell_ui.as_ref().expect("the tree");
+        assert_eq!(
+            ui.focused(),
+            ui.find_by_key(&crate::view::shell::widgets::widget_focus_key("three"))
         );
     }
 
@@ -4410,7 +4438,8 @@ mod tests {
     /// session list underneath, which dismissed the popup, moved the
     /// selection and live-switched the workspace.
     ///
-    /// The move is held for the one frame it takes the element to exist.
+    /// The description carries the move; the frame that builds the element
+    /// is the frame that lands on it, and nothing is held or replayed.
     #[test]
     fn a_focus_onto_a_widget_the_next_frame_builds_lands_on_that_frame() {
         let (mut editor, _t) = make_editor();
@@ -4445,7 +4474,6 @@ mod tests {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             true,
@@ -4484,7 +4512,6 @@ mod tests {
                 out.hits,
                 out.instance_states,
                 out.focus_key,
-                out.tabbable,
                 out.painted,
                 out.boxes,
             )
@@ -4492,12 +4519,9 @@ mod tests {
         editor.set_panel_focus_and_notify(&panel_key, "menu-pick:move:root".to_string());
 
         // The tree cannot carry it yet — the option row is not in the frame
-        // that is currently built — so the move is held rather than dropped.
-        assert_eq!(
-            editor.pending_panel_tree_focus,
-            Some((panel_key.clone(), "menu-pick:move:root".to_string())),
-            "a move with no element to land on is held for the next frame"
-        );
+        // that is currently built. Nothing is held: the description marks
+        // the row, and the frame that builds it is the one that lands there.
+        assert!(editor.shell_description_stale);
 
         frame_the_shell(&mut editor);
 
@@ -4508,10 +4532,6 @@ mod tests {
                 "menu-pick:move:root"
             )),
             "the dropdown owns the keyboard, so ↑/↓ drive it and not the list"
-        );
-        assert_eq!(
-            editor.pending_panel_tree_focus, None,
-            "and the request retires — one replay, never a standing pull"
         );
     }
 }

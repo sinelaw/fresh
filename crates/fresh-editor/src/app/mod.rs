@@ -1188,33 +1188,21 @@ pub struct Editor {
     /// keeping `app` and `ui` side by side in `main`.
     pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
 
-    /// A panel focus move the host decided **before the tree could carry it**,
-    /// held for the one frame it takes the description to catch up.
+    /// The shell's description has changed since the tree was last laid out
+    /// from it, and no frame has carried the change yet.
     ///
-    /// `Editor::focus_panel_widget_in_tree` is the imperative half of the
-    /// focus mirror: it moves the tree's focus to the widget the registry has
-    /// just been told holds the panel's. It can only move focus to an element
-    /// that *exists*, and the two writes a plugin makes when it opens an
-    /// in-panel dropdown — a new spec, then `setFocusKey` onto a row of it —
-    /// are both applied before the next frame describes that spec. So the
-    /// element the second write names is one the tree will not have until the
-    /// frame after, and the move found nothing to do.
-    ///
-    /// Nothing then re-tried it, and the mirror's *other* direction wrote the
-    /// disagreement back: the tree still held the widget focus never left, so
-    /// its `FocusGained` fact re-pointed the registry at that one and the
-    /// dropdown lost the keyboard it had just been handed. That is #3137 — the
-    /// dock's "Move to Folder…" popup, whose first ↓ dismissed it, moved the
-    /// session list underneath and live-switched the workspace.
-    ///
-    /// Recorded here instead, and replayed by
-    /// `Editor::retry_pending_panel_tree_focus` immediately after the frame
-    /// that builds the element, where the gain it raises is queued *after* the
-    /// stale one and so is the one the next dispatch settles on. One replay,
-    /// never a standing request: the frame that follows the write is built
-    /// from the very spec the write was aimed at, so a widget still absent
-    /// there is not coming.
-    pub(crate) pending_panel_tree_focus: Option<(crate::widgets::PanelKey, String)>,
+    /// **Input is never routed over a tree older than the facts it routes
+    /// over.** A panel's focus fact, its spec and its model state are read by
+    /// the description, and the tree follows them on the next frame — a
+    /// plugin's `setFocusKey` onto a widget the same write introduced lands on
+    /// the frame that builds it, with nothing held back or replayed. What that
+    /// leaves is the batch: two keys processed with no frame between them,
+    /// the first moving a panel's focus (the dock's `/` to its filter) and the
+    /// second a Tab the tree would resolve from where focus *was*. So a
+    /// dispatch that finds this set lays the tree out first
+    /// (`Editor::lay_out_shell_if_stale`), from the same frame builder
+    /// `render` uses, and only then routes the key.
+    pub(crate) shell_description_stale: bool,
 
     /// Where the shell tree's `Persisted` values live, and the handle that can
     /// drop a window's.
@@ -1253,23 +1241,6 @@ pub struct Editor {
     ///
     /// A `Modality::Focus` layer confines the keyboard without swallowing it,
     /// so what its interior declined is still the host's to resolve. But the
-    /// interior runs in a `UiFact` applier, *after* `Ui::dispatch` has already
-    /// reported whether anything in the tree claimed the key — so the surface
-    /// that is authoritative answers last. Its applier sets this, and
-    /// `shell_dispatch` folds it into what it returns.
-    ///
-    /// Reset at the top of every dispatch rather than cleared by its reader,
-    /// so a stale `true` cannot survive into the next keystroke.
-    /// The interior's own verdict on the key, when an interior ran.
-    ///
-    /// **`None` is not `false`.** `None` means no `Modality::Focus` interior
-    /// answered this key at all, so the tree's `claimed` stands; `Some(b)` is
-    /// the interior's answer and *replaces* it. Folding these with `||` let the
-    /// tree's claim win whenever it said `true`, so a surface that declines a
-    /// key could never hand it back — which is what stopped Escape closing a
-    /// plugin's floating panel.
-    pub(crate) shell_interior_took_key: Option<bool>,
-
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,
@@ -1639,6 +1610,10 @@ pub(crate) struct FloatingWidgetState {
     /// `FloatingPanelControl{op:"focus"|"blur"}` so the editor
     /// underneath stays keyboard-usable while the dock is visible.
     pub focused: bool,
+    /// The plugin mode whose bindings this panel's keys resolve against
+    /// first — the panel's own keymap (`view::shell::panel::Keymap`),
+    /// declared at mount. `None`: the window's editor mode, as before.
+    pub mode: Option<String>,
     /// The text projection's rows for this panel, refreshed on every spec /
     /// command / mutate.
     ///
@@ -2201,6 +2176,7 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
         "END" => KeyCode::End,
         "PAGEUP" | "PGUP" => KeyCode::PageUp,
         "PAGEDOWN" | "PGDN" => KeyCode::PageDown,
+        "MENU" => KeyCode::Menu,
         s if s.starts_with('F') && s.len() > 1 => {
             // Function key (F1-F12)
             if let Ok(n) = s[1..].parse::<u8>() {
@@ -2312,6 +2288,7 @@ mod tests {
             height_pct: 50,
             placement,
             focused,
+            mode: None,
             entries: Vec::new(),
             last_inner_rect: None,
             scrollbar_zone_hovered: false,
@@ -2326,26 +2303,35 @@ mod tests {
         }
     }
 
-    /// The overlay layer stack always terminates in the editor base layer,
-    /// which owns the keyboard, so a fresh editor resolves to its active
-    /// window's context.
-    #[test]
-    fn overlay_stack_base_layer_owns_keyboard() {
-        use crate::app::overlay::LayerKind;
-        use crate::input::keybindings::KeyContext;
-
-        let editor = default_test_editor();
-        let layers = editor.overlay_layers();
-        let base = layers.last().expect("at least the base layer");
-        assert_eq!(base.kind, LayerKind::Editor);
-        assert!(base.owns_keyboard);
-        assert!(!base.blocks_terminal_input);
-        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    /// One frame of the shell's tree, without a terminal — the same call
+    /// `render` makes, so the context read below reads a real tree.
+    fn frame_the_shell(editor: &mut Editor) {
+        use ratatui::layout::Rect;
+        let rect = Rect::new(0, 0, 80, 24);
+        let split = editor.compute_dock_split(rect);
+        let shell = editor.shell_frame(split);
+        editor.lay_out_shell_tree(shell, fresh_ui::Size::new(80, 24));
     }
 
-    /// P1 invariant preserved through the P2 layer walk: a *focused* dock
-    /// owns the keyboard (`KeyContext::Dock`); once blurred it falls
-    /// through to the editor underneath so the buffer stays usable.
+    /// With nothing layered over the content, the context is the active
+    /// window's — before any frame exists, and after one.
+    #[test]
+    fn a_fresh_editor_resolves_to_its_windows_context() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        frame_the_shell(&mut editor);
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        assert!(editor.editor_base_owns_keyboard());
+        assert!(!editor.presents_blocking_overlay());
+    }
+
+    /// A *focused* dock holds the keyboard (`KeyContext::Dock`), read off
+    /// the tree's focus sitting in the dock's keyboard layer; once blurred
+    /// the layer is gone and the context falls through to the editor
+    /// underneath so the buffer stays usable. The PTY gate follows the same
+    /// read.
     #[test]
     fn focused_dock_owns_keyboard_blurred_falls_through() {
         use crate::input::keybindings::KeyContext;
@@ -2355,14 +2341,21 @@ mod tests {
             PanelPlacement::LeftDock { width_cols: 30 },
             true,
         ));
+        frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Dock);
+        assert!(editor.presents_blocking_overlay());
+        assert!(!editor.editor_base_owns_keyboard());
 
         editor.dock.as_mut().unwrap().focused = false;
+        frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        assert!(!editor.presents_blocking_overlay());
     }
 
-    /// A focused centered modal outranks a focused dock — when the
-    /// new-session form opens on top of the dock, the modal owns input.
+    /// A focused centered modal over a focused dock: the frame declares the
+    /// modal's keyboard layer after the dock's, so it is the one holding
+    /// focus, and the context is the modal's (`Normal`, so a plugin mode's
+    /// bindings resolve), not the dock's.
     #[test]
     fn centered_modal_outranks_dock() {
         use crate::input::keybindings::KeyContext;
@@ -2373,8 +2366,9 @@ mod tests {
             true,
         ));
         editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
-        // The centered modal resolves as Normal (not Dock).
+        frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        assert!(editor.presents_blocking_overlay());
     }
 
     /// F3: hiding the left dock (Toggle Dock → unmount) must request a

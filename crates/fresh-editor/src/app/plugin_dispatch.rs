@@ -2005,6 +2005,7 @@ impl Editor {
                 title,
                 closable,
                 start_blurred,
+                mode,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
                 self.handle_mount_floating_widget(
@@ -2017,6 +2018,7 @@ impl Editor {
                     title,
                     closable,
                     start_blurred,
+                    mode,
                 );
             }
 
@@ -5228,6 +5230,9 @@ impl Editor {
         spec: fresh_core::api::WidgetSpec,
         options: fresh_core::api::WidgetPanelOptions,
     ) {
+        // The description reads what this writes; see
+        // `Editor::shell_description_stale`.
+        self.shell_description_stale = true;
         // Mount = clean slate. Instance state and focus key reset
         // so a plugin that re-mounts (e.g. reopening a panel with
         // a fresh prefill) sees its spec values take effect. To
@@ -5266,7 +5271,6 @@ impl Editor {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             options.auto_focus_first(),
@@ -5306,6 +5310,9 @@ impl Editor {
         panel_key: &crate::widgets::PanelKey,
         spec: fresh_core::api::WidgetSpec,
     ) {
+        // The description reads what this writes; see
+        // `Editor::shell_description_stale`.
+        self.shell_description_stale = true;
         let prev = match self.widget_registry.instance_states(panel_key) {
             Some(s) => s.clone(),
             None => {
@@ -5358,7 +5365,6 @@ impl Editor {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
         ) {
@@ -5655,27 +5661,18 @@ impl Editor {
                 }
             }
             WidgetMutation::SetFocusKey { widget_key } => {
-                // Panel-level focus lives in the registry, not the
-                // spec. The renderer reads it on the next paint and
-                // re-clamps to the first tabbable if the key isn't a
-                // current tabbable, so an unknown key is a safe no-op.
-                //
-                // **And the tree is told, because for a described panel the
-                // registry is the mirror and the tree is the ring.** Writing
-                // only the registry left the plugin's focus and the tree's
-                // focus on different widgets, and the next Tab moved from the
-                // tree's. No `focus` event: the plugin asked for this one, and
-                // `set_panel_focus_and_notify` exists for the moves it did not
-                // ask for.
+                // Panel-level focus is a fact of the registry, not of the
+                // spec. The description marks the widget it names `autofocus`
+                // and the tree follows the mark on the next frame — the one
+                // that builds the widget, when the same plugin turn introduced
+                // it — so nothing here places focus in the tree. A key naming
+                // no tabbable is clamped by `rerender_widget_panel` below, the
+                // same as an empty key. No `focus` event: the plugin asked for
+                // this one, and `set_panel_focus_and_notify` exists for the
+                // moves it did not ask for.
                 self.widget_registry
-                    .set_focus_key(panel_key, widget_key.clone());
-                self.focus_panel_widget_in_tree(panel_key, &widget_key);
-                // On a `focusFollowsCursor` panel the caret is half of
-                // what focus *is*, so it comes along here too — a plugin
-                // that focuses its search field from a hotkey means the
-                // reader's caret to be in that field. Still no `focus`
-                // event: the plugin asked for this one.
-                self.seat_cursor_on_focused_widget(panel_key, &widget_key);
+                    .decide_focus(panel_key, widget_key.clone());
+                self.shell_description_stale = true;
             }
         }
 
@@ -5722,7 +5719,12 @@ impl Editor {
         // the panel owns the keyboard, because command dispatch is
         // budgeted across frames and the pair may split across ticks.
         start_blurred: bool,
+        // The panel's own keymap — see `view::shell::panel::Keymap`.
+        mode: Option<String>,
     ) {
+        // The description reads what this writes; see
+        // `Editor::shell_description_stale`.
+        self.shell_description_stale = true;
         let width_pct = width_pct.clamp(1, 100);
         let height_pct = height_pct.clamp(1, 100);
         // The dock mounts into its own slot so it coexists with a
@@ -5770,6 +5772,7 @@ impl Editor {
             height_pct,
             placement,
             focused: !start_blurred,
+            mode,
             entries: Vec::new(),
             last_inner_rect: None,
             scrollbar_zone_hovered: false,
@@ -5823,7 +5826,6 @@ impl Editor {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             // Floating and dock panels render through
@@ -5867,6 +5869,9 @@ impl Editor {
         closable: bool,
         start_blurred: bool,
     ) {
+        // The description reads what this writes; see
+        // `Editor::shell_description_stale`.
+        self.shell_description_stale = true;
         // One slot per identity: a dock or centred panel with this key
         // moves into the section.
         let existing = match self.slot_of_panel(&panel_key) {
@@ -5880,6 +5885,7 @@ impl Editor {
             height_pct: 100,
             placement: super::PanelPlacement::SidebarSection { rows },
             focused: false,
+            mode: None,
             entries: Vec::new(),
             last_inner_rect: None,
             scrollbar_zone_hovered: false,
@@ -5930,7 +5936,6 @@ impl Editor {
             out.hits,
             out.instance_states,
             out.focus_key,
-            out.tabbable,
             out.painted,
             out.boxes,
             // As the dock: `render_floating_spec` seeds focus
@@ -5958,6 +5963,9 @@ impl Editor {
         panel_key: &crate::widgets::PanelKey,
         spec: fresh_core::api::WidgetSpec,
     ) {
+        // The description reads what this writes; see
+        // `Editor::shell_description_stale`.
+        self.shell_description_stale = true;
         let Some(slot) = self.slot_of_panel(panel_key) else {
             tracing::debug!(
                 "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
@@ -6027,7 +6035,6 @@ impl Editor {
                 out.hits,
                 out.instance_states,
                 out.focus_key,
-                out.tabbable,
                 out.painted,
                 out.boxes,
             )
@@ -6104,6 +6111,9 @@ impl Editor {
             tracing::warn!("FloatingPanelControl for unknown/mismatched panel {panel_key} ignored");
             return;
         };
+        // Every op here may move a panel or its keyboard, both of which the
+        // description reads, so the tree is stale whatever the op.
+        self.shell_description_stale = true;
         // `blur` fires a widget_event, so handle it before borrowing the
         // panel — it reborrows `self` via the shared helper.
         if op == "blur" {

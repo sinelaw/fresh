@@ -138,6 +138,23 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
+        // **Input is never routed over a tree older than the facts it routes
+        // over.** Every read below that asks the tree where the keyboard is
+        // — the PTY gate, the key context, the unfocused-popup guard — reads
+        // a tree laid out from the facts as they stand; and a key may change
+        // any of them, so the description is stale once it has been handled,
+        // and the next reader lays it out again.
+        self.lay_out_shell_if_stale();
+        let r = self.handle_key_routed(code, modifiers);
+        self.shell_description_stale = true;
+        r
+    }
+
+    fn handle_key_routed(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> AnyhowResult<()> {
         let _t_total = std::time::Instant::now();
 
         // Any keystroke may change routing-relevant UI state (open/close a
@@ -499,7 +516,7 @@ impl Editor {
         // `dispatch_base_key` — reached precisely when a surface declined,
         // including one that dismissed itself passing through. It needs
         // post-mutation truth, which is what the re-derived stack gives it.
-        if crate::app::overlay::popup_blocked_by_higher_modal(&self.overlay_layers()) {
+        if self.shell_ui.as_ref().is_some_and(|ui| ui.keyboard_owned()) {
             return None;
         }
 
@@ -513,19 +530,6 @@ impl Editor {
     // swallowed before the keymap was ever consulted. The bindings are
     // enumerated instead (`Editor::popup_keys`) and declared on the open
     // popup's layer, where nothing is in front of them.
-
-    /// Fire a `widget_event` at the plugin owning the dock, keyed to the
-    /// `sessions` widget. Used for dock-only gestures (Enter-activate,
-    /// the Alt+T/Alt+I/Alt+P filter toggles) that the dialog handles via
-    /// an editor mode the dock can't use — see `dispatch_floating_widget_key`.
-    fn fire_dock_widget_event(&self, panel_key: &crate::widgets::PanelKey, event_type: &str) {
-        self.fire_widget_event(
-            panel_key,
-            "sessions".to_string(),
-            event_type.to_string(),
-            serde_json::json!({}),
-        );
-    }
 
     /// Route a keystroke to the floating widget panel when one is
     /// mounted. Returns `true` if the key was consumed.
@@ -555,17 +559,15 @@ impl Editor {
             }
         };
         let view = router::WidgetPanelView {
-            is_left_dock: matches!(
+            non_modal: matches!(
                 self.panel(slot).map(|f| f.placement),
                 Some(super::PanelPlacement::LeftDock { .. })
-            ),
-            is_sidebar: matches!(slot, super::PanelSlot::Sidebar(_)),
+            ) || matches!(slot, super::PanelSlot::Sidebar(_)),
             focus_key: self
                 .widget_registry
                 .focus_key(&panel_key)
                 .map(str::to_string),
             focused_widget_is_text: self.panel_focused_widget_is_text(&panel_key),
-            editor_mode: self.active_window().editor_mode.clone(),
         };
         let outcome = {
             let kb = self.keybindings.read().unwrap();
@@ -582,14 +584,6 @@ impl Editor {
             "dispatch_floating_widget_key: decision"
         );
         match outcome {
-            WidgetKeyOutcome::DockEvent(event_type) => {
-                self.fire_dock_widget_event(&panel_key, event_type);
-                true
-            }
-            WidgetKeyOutcome::FocusWidget(key) => {
-                self.set_panel_focus_and_notify(&panel_key, key.to_string());
-                true
-            }
             WidgetKeyOutcome::Blur => {
                 self.blur_floating_panel(slot);
                 true
@@ -660,7 +654,6 @@ impl Editor {
                 true
             }
             WidgetKeyOutcome::Swallow => true,
-            WidgetKeyOutcome::FallThrough => false,
         }
     }
 }

@@ -7,7 +7,8 @@ use crate::app::Editor;
 use anyhow::Result as AnyhowResult;
 
 use super::items::SettingControl;
-use super::{FocusPanel, SettingsHit};
+use super::state::FocusTarget;
+use super::SettingsHit;
 use crate::view::controls::DualListColumn;
 
 impl Editor {
@@ -139,7 +140,7 @@ impl Editor {
             // **narrow** strip's, which is still painted.
             SettingsHit::Category(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Categories);
+                    state.focus_on(FocusTarget::Categories);
                     state.selected_category = idx;
                     state.selected_item = 0;
                     state.body_anchor.scroll_to(fresh_ui::Point::ZERO);
@@ -157,36 +158,31 @@ impl Editor {
             }
             SettingsHit::Item(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                 }
             }
             SettingsHit::ControlToggle(idx) | SettingsHit::ControlDropdown(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                 }
                 self.settings_activate_current();
             }
             SettingsHit::ControlDropdownOption(idx, option_idx) => {
                 // Click on a dropdown option - select it and close dropdown
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.dropdown_select(option_idx);
                 }
             }
             SettingsHit::ControlDecrement(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                 }
                 self.settings_decrement_current();
             }
             SettingsHit::ControlIncrement(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                 }
                 self.settings_increment_current();
             }
@@ -194,22 +190,19 @@ impl Editor {
                 // Click on the value between the brackets — focus the item
                 // and enter inline editing mode (matches the Enter-key flow).
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.start_number_editing();
                 }
             }
             SettingsHit::ControlText(idx) | SettingsHit::ControlTextListRow(idx, _) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.start_editing();
                 }
             }
             SettingsHit::ControlMapRow(idx, row_idx) => {
                 let is_add_new_row = if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
 
                     let mut is_add_new = false;
                     if let Some(page) = state.pages.get_mut(state.selected_category) {
@@ -236,8 +229,7 @@ impl Editor {
             SettingsHit::ControlMapAddNew(idx) => {
                 // Click on map add-new row - focus it and activate immediately
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
 
                     if let Some(page) = state.pages.get_mut(state.selected_category) {
                         if let Some(item) = page.items.get_mut(idx) {
@@ -252,8 +244,7 @@ impl Editor {
             }
             SettingsHit::ControlDualListAvailable(idx, row) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.with_dual_list_mut(idx, |dl| {
                         dl.active_column = DualListColumn::Available;
                         dl.available_cursor = row;
@@ -263,8 +254,7 @@ impl Editor {
             }
             SettingsHit::ControlDualListIncluded(idx, row) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.with_dual_list_mut(idx, |dl| {
                         dl.active_column = DualListColumn::Included;
                         dl.included_cursor = row;
@@ -274,8 +264,7 @@ impl Editor {
             }
             SettingsHit::ControlDualListAdd(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.with_dual_list_mut(idx, |dl| dl.add_selected());
                     state.on_value_changed();
                     state.refresh_dual_list_sibling();
@@ -283,8 +272,7 @@ impl Editor {
             }
             SettingsHit::ControlDualListRemove(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.with_dual_list_mut(idx, |dl| dl.remove_selected());
                     state.on_value_changed();
                     state.refresh_dual_list_sibling();
@@ -292,16 +280,14 @@ impl Editor {
             }
             SettingsHit::ControlDualListMoveUp(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.with_dual_list_mut(idx, |dl| dl.move_up());
                     state.on_value_changed();
                 }
             }
             SettingsHit::ControlDualListMoveDown(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.with_dual_list_mut(idx, |dl| dl.move_down());
                     state.on_value_changed();
                 }
@@ -309,8 +295,7 @@ impl Editor {
             SettingsHit::ControlInherit(idx) => {
                 // Click on [Inherit] button - set value to null (inherited)
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Settings);
-                    state.selected_item = idx;
+                    state.focus_on(FocusTarget::Card(idx));
                     state.set_current_to_null();
                 }
             }

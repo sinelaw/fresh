@@ -83,7 +83,6 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
     // painter, so covering the dock column is safe now in a way it was not
     // when this was painted by hand.
     let has_chrome = c.is_some();
-    let chrome = c.clone();
     let l = fresh_ui::layer()
         .anchor(Anchor::Screen(Align::Center))
         .place(Place::Over);
@@ -99,9 +98,9 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
         // the width from the same constraints, so the question is already
         // answered here, one frame earlier and without a layout read.
         let wide = w.saturating_sub(2) >= NARROW_BELOW;
-        let n = col().w(Sizing::Cells(w)).h(Sizing::Cells(h)).key(key());
+        let n = col().w(Sizing::Cells(w)).h(Sizing::Cells(h));
         match &c {
-            None => n.pointer_mode(PointerMode::Ignore),
+            None => n.key(key()).pointer_mode(PointerMode::Ignore),
             // One row of border, the search row, a blank gap, and then the
             // painter's body — `search_header_height + search_gap` in the
             // renderer, which is where it puts everything else.
@@ -211,7 +210,24 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                     // The border's own row, which the painter draws.
                     rows.push(row().h(Sizing::Cells(1)));
                 }
-                route(n.children(rows))
+                // **The box is the dialog's focus scope, and its rest.** The
+                // layer names it (`scope_at`), so the ring is what is inside
+                // it — the category list, the cards, the footer's buttons —
+                // and nothing outside. Off the ring, so Tab never stops on
+                // it; and marked itself when the fact names no node inside
+                // it (the body has the keyboard over a page with no cards),
+                // so that focus rests here rather than on whichever stop is
+                // first — the same rule `panel::interior` applies when a
+                // panel's focus key is empty. Its keys reach the seam.
+                let n = fresh_ui::focusable(route(n.children(rows)))
+                    .w(Sizing::Cells(w))
+                    .h(Sizing::Cells(h))
+                    .key(key())
+                    .skip_traversal();
+                match marks_inside(c) {
+                    true => n,
+                    false => n.autofocus(),
+                }
             }
         }
     });
@@ -233,51 +249,50 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
         // the pointer and this one does not.
         true => l
             .modality(Modality::Keyboard)
-            .child(keys(seam(&chrome, body))),
+            .scope_at(key())
+            .child(keys(body)),
         false => l.pointer_mode(PointerMode::Ignore).child(body),
     }
 }
 
-/// The keyboard of whichever of the dialog's panels has it, around the box.
+/// Whether the chrome marks any stop inside the box — see [`layer`].
+fn marks_inside(c: &Chrome) -> bool {
+    matches!(c.search, Search::Active { .. })
+        || c.categories.as_ref().is_some_and(|x| x.focused)
+        || c.strip.as_ref().is_some_and(|x| x.focused)
+        || c.items
+            .as_ref()
+            .is_some_and(|it| it.cards.iter().any(|k| k.selected))
+        || c.footer.as_ref().is_some_and(|f| f.focused.is_some())
+}
+
+/// Where the dialog's keyboard is: the one fact `SettingsState` keeps as
+/// `focus_panel`, `selected_item` and `footer_button_index`, said as the node
+/// that holds it.
 ///
-/// **Not on the control, and that is a library constraint rather than a
-/// choice.** The obvious home for these listeners is the node that draws the
-/// control — the category list, the query row — but every one of those is
-/// built inside the box's `layout_reader`, and a focus registration created
-/// during the layout pass is not one `apply_autofocus` can hand focus to:
-/// measured across two frames, such a registration was in the scope after the
-/// first frame and gone after the second, so the seam held focus for exactly
-/// one frame and then silently stopped answering. Declared here it is an
-/// ordinary child of the layer, built in the reconcile pass like everything
-/// else, and it is an *ancestor* of the control either way — listeners run
-/// from the focused element outward, so a click that focuses a list row still
-/// reaches it.
-///
-/// **Exactly one exists at any time, and which one is a stated fact.** A
-/// search replaces the category tree with its results (`Search::Active` is
-/// `search_active`, which is the same condition that makes `categories` and
-/// `strip` `None`), so the two are never both wanted. That matters more than
-/// it looks: `apply_autofocus` hands focus on only when the element holding
-/// it has been destroyed, so the seam has to *leave* when its panel loses the
-/// keyboard, or the baton never comes back.
-///
-/// The `false` arm is unreachable from `app::render`'s chrome — `categories`
-/// and `strip` are the same `then` — and is a seam that declines everything
-/// rather than no seam at all, because a scope with nothing focusable in it
-/// drops focus, and with focus nowhere the modal stops swallowing.
-fn seam(c: &Option<Chrome>, content: Node<UiMsg>) -> Node<UiMsg> {
-    let Some(c) = c else { return content };
-    match &c.search {
-        Search::Active { .. } => search_keys(content),
-        Search::Hint(_) => tree_keys(
-            content,
-            c.categories
-                .as_ref()
-                .map(|x| x.focused)
-                .or_else(|| c.strip.as_ref().map(|x| x.focused))
-                .unwrap_or(false),
-        ),
-    }
+/// The description marks the node the fact names (`autofocus`), so the tree's
+/// focus follows the host's decisions — Up/Down on the cards, Left/Right on
+/// the footer, a click — and the tree's own moves (Tab, a press) come back as
+/// [`UiFact::SettingsFocus`] naming the node they landed on, which
+/// `SettingsState::focus_on` writes. One fact, one writer, the tree its
+/// projection: the same shape a plugin panel's `focus_key` has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    /// The category tree, or the narrow layout's strip.
+    Categories,
+    /// A card of the page, by item index.
+    Card(usize),
+    /// A footer button.
+    Button(Button),
+}
+
+/// Report a landing on `f`, for a node the ring can stop on.
+fn lands(n: Node<UiMsg>, f: Focus) -> Node<UiMsg> {
+    n.on_focus_change(move |e: &Event| match e.kind == GestureKind::FocusGained {
+        // Only the gain names a holder; the loss is paired with one.
+        false => None,
+        true => Some(UiMsg::Ui(UiFact::SettingsFocus(f))),
+    })
 }
 
 /// The dialog's keyboard seam: the node every key the dialog's own controls
@@ -285,42 +300,28 @@ fn seam(c: &Option<Chrome>, content: Node<UiMsg>) -> Node<UiMsg> {
 ///
 /// The same shape as [`super::modal::keys`], and for the same reason —
 /// listeners run from the focused element outward, so a control that answers
-/// its own key stops it before this sees it — with one difference: **no
-/// `autofocus`.** This node is the fallback holder of focus, not the wanted
-/// one. `apply_autofocus` prefers a node that asks for focus and only falls
-/// back to the first in the scope, so marking this one would win over every
-/// control inside it and nothing in the dialog would ever be focused.
+/// its own key stops it before this sees it. It is outside the box that is
+/// the layer's scope and off the ring, so it never holds focus itself: when
+/// nothing inside the box is marked, focus rests on the box.
 ///
-/// It is still *reachable* — no `skip_traversal` — because it has to be. This
-/// node names no scope, so `active_scope` has none to fall back to: were the
-/// traversal set to come out empty, focus would be dropped, and with focus
-/// nowhere `Ui::keyboard_owned` is false — the modal would stop swallowing and
-/// its keys would reach the buffer underneath. (The scope-root fallback that
-/// `fresh-ui` grew for a plugin panel's interior does not apply here: it needs
-/// a *named* scope, which the settings layer does not declare.)
-///
-/// **Including Tab, and that is not an oversight.** Declining Tab is how the
-/// tree's ring moves focus, and it is what `panel::interior` does — but the
-/// two surfaces are not the same case. The dialog's body is a *cursor list*:
-/// `SettingsState::selected_item` is the one cursor, Up/Down and
-/// PageUp/PageDown move it, and `fresh-ui` resolves only `Next`/`Prev` and the
-/// four directions to focus moves — the page keys have no traversal default at
-/// all. So a ring position could never be more than a partial mirror of the
-/// cursor, and the first PageDown would leave the two disagreeing, with the
-/// band on one card and the next Tab stepping from another. Nor could the
-/// decline be made conditional on the ring having somewhere to go: this layer
-/// is `Modality::Keyboard`, which *swallows* what nothing acted on, so a
-/// declined Tab the ring cannot serve is dropped rather than handed back —
-/// `fresh-ui`'s `a_key_the_ring_cannot_serve_is_handed_back_only_by_a_focus_layer`
-/// pins that, and it is why `panel::interior` may decline where this may not.
-/// And the footer's five buttons are not focusable nodes at all, while Tab is
-/// the only way to reach them. Making the dialog's Tab the tree's means first
-/// making its cursor the tree's, which is a larger change than a keyboard seam.
+/// **Tab is the ring's.** Declined here, `fresh-ui` resolves it to the next
+/// stop in the scope — the category list, each card, the footer's buttons, in
+/// reading order — and the landing comes back as [`UiFact::SettingsFocus`].
+/// A card whose control is live (editing) claims its own keys before they get
+/// here, Tab included, because the edit is the host's to commit.
 fn keys(content: Node<UiMsg>) -> Node<UiMsg> {
-    fresh_ui::focusable(content).on_key(|e: &Event| {
-        e.stop();
-        Some(UiMsg::Ui(UiFact::ModalKey(super::modal::KeySlot::Settings)))
-    })
+    fresh_ui::focusable(content)
+        .skip_traversal()
+        .on_key(|e: &Event| {
+            if matches!(
+                e.key?.code,
+                fresh_ui::KeyCode::Tab | fresh_ui::KeyCode::BackTab
+            ) {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(UiFact::ModalKey(super::modal::KeySlot::Settings)))
+        })
 }
 
 /// Send every pointer event that reaches this node to the modal slot, which
@@ -384,9 +385,9 @@ pub fn panel_key() -> fresh_ui::Key {
 /// here is the *click's* meaning — pick this category, auto-expand it, put
 /// the body back at the top. A keyboard step is `tree_step` over the display
 /// rows, categories and sections alike, and stops on rows `on_select` would
-/// treat as a jump. So the arrows are claimed by [`tree_keys`] before they
-/// are ever resolved to an intent — raw key listeners run first, which is the
-/// mechanism that lets a host override a widget's own keyboard without
+/// treat as a jump. So the arrows are claimed by [`categories_keys`] before
+/// they are ever resolved to an intent — raw key listeners run first, which
+/// is the mechanism that lets a host override a widget's own keyboard without
 /// forking the widget.
 ///
 /// **The rows answer their own presses and the list owns its window**, which
@@ -440,7 +441,50 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
         (0, _) | (_, None) => list,
         (_, Some(i)) => list.selected(i.min(n - 1)),
     };
-    fresh_ui::ComponentExt::node(list).key(categories_key())
+    // The list's own ring stop is declined: the tree is one stop, and its
+    // cursor is the host's (`SettingsState::tree_key`), not the list's.
+    let list = list.focusable(false);
+    categories_keys(fresh_ui::ComponentExt::node(list), c.focused)
+}
+
+/// The category tree's stop on the ring — the wide layout's list or the
+/// narrow layout's strip — with its keys.
+///
+/// Marked while the fact says the tree has the keyboard, so focus entering
+/// the dialog, or coming back to it, lands here. The eight keys are the
+/// tree's whenever it holds focus: they arrive as what they mean
+/// (`UiFact::SettingsTree`), resolved by the node rather than by a
+/// dispatcher working out whose panel it was.
+fn categories_keys(n: Node<UiMsg>, focused: bool) -> Node<UiMsg> {
+    let (w, h) = (n.w, n.h);
+    let n = fresh_ui::focusable(n)
+        .w(w)
+        .h(h)
+        .key(categories_key())
+        .on_key(|e: &Event| {
+            let k = e.key?;
+            // Modifiers deliberately unread: `handle_categories_input` matches
+            // on `event.code` alone, so Shift+Down is a step there and has to
+            // stay one here.
+            let t = match k.code {
+                fresh_ui::KeyCode::Up => TreeKey::Prev,
+                fresh_ui::KeyCode::Down => TreeKey::Next,
+                fresh_ui::KeyCode::PageUp => TreeKey::PageUp,
+                fresh_ui::KeyCode::PageDown => TreeKey::PageDown,
+                fresh_ui::KeyCode::Home => TreeKey::First,
+                fresh_ui::KeyCode::End => TreeKey::Last,
+                fresh_ui::KeyCode::Right => TreeKey::Expand,
+                fresh_ui::KeyCode::Left => TreeKey::Collapse,
+                _ => return None,
+            };
+            e.stop();
+            Some(UiMsg::Ui(UiFact::SettingsTree(t)))
+        });
+    let n = match focused {
+        true => n.autofocus(),
+        false => n,
+    };
+    lands(n, Focus::Categories)
 }
 
 /// A key the category tree answers for itself.
@@ -465,61 +509,6 @@ pub enum TreeKey {
     /// category row so the next `Down` walks to the next category rather than
     /// into sections that are no longer drawn.
     Collapse,
-}
-
-/// The category tree's own keyboard.
-///
-/// One seam for both layouts, because it is one panel:
-/// `FocusPanel::Categories` is the wide layout's list and the narrow layout's
-/// strip alike, and `handle_categories_input` was already the same code for
-/// both.
-///
-/// **`focused` is the gate, and it is a stated fact, not a re-derivation.**
-/// `Categories::focused` / `Strip::focused` is `FocusPanel::Categories`,
-/// resolved once where the description is built; it is the same condition
-/// under which `dispatch_settings_key` routes to `handle_categories_input`.
-/// So the node claims exactly the keys the dispatcher's categories arm would
-/// have claimed, and declines every other key to the seam above it.
-///
-/// **And the dispatcher's arm stays.** Tree focus and `FocusPanel` are still
-/// two facts with one authority, and the authority is `FocusPanel`: nothing
-/// in the tree can *move* focus to the settings body or the query field,
-/// because neither is a node — both are `WidgetSpec`s the widget adapter
-/// renders — so `apply_autofocus` hands the baton on only when the node
-/// holding it is destroyed. Where that leaves focus on a seam whose panel no
-/// longer has the keyboard, this declines and `handle_categories_input`
-/// answers, exactly as before. Removing that floor is Phase 2.1's to earn.
-///
-/// `autofocus` because this is the wanted holder of focus while the tree is
-/// the panel with the keyboard, and the dialog's own seam deliberately does
-/// not ask. It is marked whether or not `focused` is set: the mark decides
-/// where focus *lands*, and a seam that stopped asking the moment the body
-/// took the keyboard would hand focus back to the dialog's catch-all, which
-/// never gives it up.
-fn tree_keys(n: Node<UiMsg>, focused: bool) -> Node<UiMsg> {
-    fresh_ui::focusable(n).autofocus().on_key(move |e: &Event| {
-        if !focused {
-            return None;
-        }
-        let k = e.key?;
-        // Modifiers deliberately unread: `handle_categories_input` matches on
-        // `event.code` alone, so Shift+Down is a step there and has to stay
-        // one here. A chord that means something else — Ctrl+S — is answered
-        // above this, before the panel is asked at all.
-        let t = match k.code {
-            fresh_ui::KeyCode::Up => TreeKey::Prev,
-            fresh_ui::KeyCode::Down => TreeKey::Next,
-            fresh_ui::KeyCode::PageUp => TreeKey::PageUp,
-            fresh_ui::KeyCode::PageDown => TreeKey::PageDown,
-            fresh_ui::KeyCode::Home => TreeKey::First,
-            fresh_ui::KeyCode::End => TreeKey::Last,
-            fresh_ui::KeyCode::Right => TreeKey::Expand,
-            fresh_ui::KeyCode::Left => TreeKey::Collapse,
-            _ => return None,
-        };
-        e.stop();
-        Some(UiMsg::Ui(UiFact::SettingsTree(t)))
-    })
 }
 
 pub fn clear_key() -> fresh_ui::Key {
@@ -683,12 +672,13 @@ fn strip_band(s: &Strip) -> Node<UiMsg> {
             ),
         );
     }
-    col().children([
+    let band = col().children([
         row().h(Sizing::Cells(1)).children(kids),
         line(s.hint.clone(), pair("editor.line_number_fg", "ui.popup_bg")),
         row().h(Sizing::Cells(1)),
         rule(),
-    ])
+    ]);
+    categories_keys(band, s.focused)
 }
 
 /// The settings panel's header, and the band under it the painter still owns.
@@ -753,10 +743,17 @@ pub fn items(it: &Items) -> Node<UiMsg> {
         .key(items_key())
         .scrollbar()
         .scrollbar_theme(pair("ui.split_separator_fg", "ui.popup_bg"));
-    match &it.anchor {
+    let v = match &it.anchor {
         Some(a) => v.anchor_to(a.clone()),
         None => v,
-    }
+    };
+    // **The body is entered at its cursor.** The cards are a list with a
+    // selection the arrows move, so Tab from the tree or Shift+Tab from the
+    // footer lands on the selected card, not on whichever card is first in
+    // its direction — and steps card to card once inside.
+    fresh_ui::focusable(v)
+        .skip_traversal()
+        .enters_at(card_key(it.entry))
 }
 
 /// One setting: its section heading when it starts one, and its card.
@@ -774,7 +771,7 @@ fn card(c: &Card) -> Node<UiMsg> {
     }
     rows.push(card_box(c));
     let idx = c.index;
-    let mut g = gesture(col().key(card_key(c.index)).children(rows)).on(
+    let mut g = gesture(col().children(rows)).on(
         GestureKind::Press,
         Rc::new(move |e: &Event| {
             if e.button != MouseButton::Left {
@@ -790,9 +787,35 @@ fn card(c: &Card) -> Node<UiMsg> {
     g = g.on_enter(Rc::new(move |_: &Event| {
         Some(UiMsg::Ui(UiFact::SettingsItemHover(Some(idx))))
     }));
-    g.on_leave(Rc::new(move |_: &Event| {
+    let g = g.on_leave(Rc::new(move |_: &Event| {
         Some(UiMsg::Ui(UiFact::SettingsItemHover(None)))
-    }))
+    }));
+    // **The card is the ring's stop, not the control in it.** The dialog's
+    // unit of navigation is the card — `selected_item` is the cursor, Up and
+    // Down move it — and the control becomes live (editing) by the host's
+    // decision, Enter. So the card is marked when it is the selected one and
+    // the body has the keyboard, and the control inside is described off the
+    // ring (`Slot::widgets_on_ring`). §3.6 makes the control the stop when
+    // the edit-mode model goes.
+    //
+    // While the control is live its keys are the host's, Tab included: the
+    // edit has to be committed before focus can move, and the commit is
+    // `dispatch_settings_key`'s.
+    let live = c.live;
+    let n = fresh_ui::focusable(g)
+        .key(card_key(idx))
+        .on_key(move |e: &Event| {
+            if !live {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(UiFact::ModalKey(super::modal::KeySlot::Settings)))
+        });
+    let n = match c.selected {
+        true => n.autofocus(),
+        false => n,
+    };
+    lands(n, Focus::Card(idx))
 }
 
 /// The bordered box: the three-column indicator gutter down its left, the
@@ -884,6 +907,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             slot: super::widgets::Slot::Settings,
             states: super::widgets::no_state(),
             focus_key: focus_key.clone(),
+            keyboard: true,
             hovered_key: None,
             marker_gutter: false,
             hovered_item_key: String::new(),
@@ -1117,7 +1141,7 @@ fn search_row(s: &Search) -> Node<UiMsg> {
                     super::widgets::node(
                         &field,
                         info.constraints.max_w,
-                        &super::widgets::Ctx::plain(super::widgets::Slot::Floating),
+                        &super::widgets::Ctx::plain(super::widgets::Slot::Settings),
                     )
                 }
             }));
@@ -1128,38 +1152,48 @@ fn search_row(s: &Search) -> Node<UiMsg> {
             );
         }
     }
-    row().h(Sizing::Cells(1)).key(search_key()).children(kids)
+    let row = row().h(Sizing::Cells(1)).children(kids);
+    match s {
+        Search::Hint(_) => row.key(search_key()),
+        Search::Active { .. } => search_keys(row),
+    }
 }
 
 /// The query field's keyboard while a search is running.
 ///
-/// The seam this replaces is the category tree's: a search is exactly when
-/// `categories` and `strip` are `None`, so the two swap rather than coexist,
-/// and the swap is what moves focus (see [`seam`]).
-///
 /// **The whole dialog is the query field's then**, which is why this is the
-/// focusable and the results list below it is not: `handle_search_input`
+/// stop on the ring and the results list below it is not: `handle_search_input`
 /// consumes every key, the results are a *controlled* list whose selection is
 /// `selected_search_result`, and Up/Down there move that selection rather
 /// than the list's own.
 ///
-/// Only Up and Down are the node's. Enter, Escape, Left/Right/Home/End and
-/// every printable character edit or commit the query, and that is one text
-/// field's behaviour that has not migrated — the field is a `WidgetSpec`
-/// rendered through the widget adapter, not a node, so there is nothing here
-/// to give them to. They fall through to the seam above and reach
-/// `handle_search_input` exactly as before.
+/// Only Up and Down are the node's own. Enter, Escape, Left/Right/Home/End,
+/// Tab and every printable character edit, commit or leave the query, and
+/// that is one text field's behaviour that has not migrated — the field is a
+/// `WidgetSpec` rendered through the widget adapter, not a node, so there is
+/// nothing here to give them to. They go to `handle_search_input` from here,
+/// Tab included: a search is not a form to step out of with Tab, it is left
+/// with Escape or Enter.
+///
+/// Marked whenever it is built, because it is built only while a search is
+/// running, and that is the fact that says the keyboard is the query's.
 fn search_keys(n: Node<UiMsg>) -> Node<UiMsg> {
-    fresh_ui::focusable(n).autofocus().on_key(|e: &Event| {
-        let k = e.key?;
-        let forward = match k.code {
-            fresh_ui::KeyCode::Up => false,
-            fresh_ui::KeyCode::Down => true,
-            _ => return None,
-        };
-        e.stop();
-        Some(UiMsg::Ui(UiFact::SettingsSearchStep(forward)))
-    })
+    let (w, h) = (n.w, n.h);
+    fresh_ui::focusable(n)
+        .w(w)
+        .h(h)
+        .key(search_key())
+        .autofocus()
+        .on_key(|e: &Event| {
+            let k = e.key?;
+            e.stop();
+            let forward = match k.code {
+                fresh_ui::KeyCode::Up => false,
+                fresh_ui::KeyCode::Down => true,
+                _ => return Some(UiMsg::Ui(UiFact::ModalKey(super::modal::KeySlot::Settings))),
+            };
+            Some(UiMsg::Ui(UiFact::SettingsSearchStep(forward)))
+        })
 }
 
 /// One styled run of the modal's chrome.
@@ -1240,6 +1274,8 @@ pub struct Page {
 #[derive(Clone)]
 pub struct Items {
     pub cards: Vec<Card>,
+    /// The card the body is entered at: the dialog's `selected_item`.
+    pub entry: usize,
     /// The window's handle, so the host can move it to a card — which is the
     /// whole of what `ScrollablePanel::ensure_focused_visible` did, minus its
     /// copy of every item's height.
@@ -1268,6 +1304,9 @@ pub struct Card {
     /// key while it is being edited, empty otherwise. It is what makes a text
     /// field paint its caret.
     pub focus_key: String,
+    /// The control is live — editing, typing a number, a dropdown open —
+    /// and its keys are the host's until it is left.
+    pub live: bool,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
     /// empty. The pop-over's rows report their own hover, because a settings
     /// control has no panel behind it for the runtime's probe to walk.
@@ -1386,6 +1425,30 @@ pub enum Button {
     Cancel,
     /// Opens the layer's config file in the editor.
     Edit,
+}
+
+impl Button {
+    /// The footer's own order, which is `SettingsState::footer_button_index`:
+    /// `[Layer] [Reset] [Save] [Cancel]` and then `[Edit]` on the left.
+    pub fn index(self) -> usize {
+        match self {
+            Button::Layer => 0,
+            Button::Reset => 1,
+            Button::Save => 2,
+            Button::Cancel => 3,
+            Button::Edit => 4,
+        }
+    }
+
+    pub fn from_index(i: usize) -> Button {
+        match i {
+            0 => Button::Layer,
+            1 => Button::Reset,
+            2 => Button::Save,
+            3 => Button::Cancel,
+            _ => Button::Edit,
+        }
+    }
 }
 
 /// The footer's five buttons, with the labels and states already resolved.
@@ -1546,8 +1609,7 @@ fn button(f: &Footer, b: Button, label: &str) -> Node<UiMsg> {
         true => ">",
         false => "",
     };
-    gesture(text(format!("{marker}{label}")).theme(theme))
-        .key(footer_key(b))
+    let g = gesture(text(format!("{marker}{label}")).theme(theme))
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -1563,7 +1625,16 @@ fn button(f: &Footer, b: Button, label: &str) -> Node<UiMsg> {
         }))
         .on_leave(Rc::new(move |_: &Event| {
             Some(UiMsg::Ui(UiFact::SettingsButtonHover(None)))
-        }))
+        }));
+    // A stop on the ring, marked while the fact names it. Its keys — Enter,
+    // Left and Right — are the dispatcher's footer arm's, reached through the
+    // seam.
+    let n = fresh_ui::focusable(g).key(footer_key(b));
+    let n = match focused {
+        true => n.autofocus(),
+        false => n,
+    };
+    lands(n, Focus::Button(b))
 }
 
 /// What a press on one of the settings dialogs asks for.
@@ -2025,6 +2096,9 @@ mod tests {
             }),
             Size::new(w, h),
         );
+        // The frame's own settle queued its landing; the editor takes those
+        // before routing, and so does this.
+        let _ = ui.take_messages();
         ui
     }
 
@@ -2033,6 +2107,7 @@ mod tests {
         let mut c = chrome();
         c.items = Some(Items {
             anchor: Some(anchor.clone()),
+            entry: 0,
             cards: (0..n)
                 .map(|index| Card {
                     index,
@@ -2044,6 +2119,7 @@ mod tests {
                         key: None,
                     },
                     focus_key: String::new(),
+                    live: false,
                     hovered_popup_row: String::new(),
                     description: None,
                     layer: None,
@@ -2344,11 +2420,19 @@ mod tests {
             .collect()
     }
 
+    /// The key's own facts, then the ones a focus move it caused queued —
+    /// a landing's `SettingsFocus` is framework-initiated and arrives through
+    /// `Ui::take_messages`, which is where `Editor::shell_dispatch` reads it.
     fn press_key(ui: &mut Ui<UiMsg>, code: fresh_ui::KeyCode) -> Vec<UiFact> {
-        facts(ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress::with(
+        let mut got = facts(ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress::with(
             code,
             fresh_ui::Mods::NONE,
-        ))))
+        ))));
+        got.extend(ui.take_messages().into_iter().filter_map(|m| match m {
+            UiMsg::Ui(f) => Some(f),
+            _ => None,
+        }));
+        got
     }
 
     /// **The category tree answers its own keys.** Not `ModalKey` — the key
@@ -2380,16 +2464,22 @@ mod tests {
         }
     }
 
-    /// And only while the description says the tree is the panel with the
-    /// keyboard. Focus does not move when `FocusPanel` does — nothing in the
-    /// tree can move it to the settings body, which is not a node — so the
-    /// seam can be left holding focus for a panel that has lost it, and it
-    /// has to decline rather than steer the wrong cursor.
+    /// And only while it holds focus, which is while the fact marks it. With
+    /// the body named as the panel with the keyboard and no card selected
+    /// (a page with nothing on it), nothing inside the box is marked, and
+    /// focus rests on the box itself rather than on the first stop: the
+    /// tree does not steer a cursor the fact says is elsewhere, and the key
+    /// is the dispatcher's.
     #[test]
     fn the_tree_declines_the_arrows_once_the_body_has_the_keyboard() {
         let mut c = chrome();
         c.categories.as_mut().expect("wide layout").focused = false;
         let mut ui = with_chrome(c, 100, 30, None);
+        assert_eq!(
+            ui.focused(),
+            ui.find_by_key(&key()),
+            "focus rests on the box"
+        );
         assert_eq!(
             press_key(&mut ui, fresh_ui::KeyCode::Down),
             vec![UiFact::ModalKey(
@@ -2398,24 +2488,72 @@ mod tests {
         );
     }
 
-    /// Tab is still the dialog's, and [`keys`] says at length why: the body is
-    /// a cursor list whose cursor the model owns, `fresh-ui` resolves no
-    /// traversal default for the page keys that also move it, this
-    /// layer swallows a declined key the ring cannot serve, and the footer's
-    /// buttons are not focusable nodes. The ring is not the authority for this
-    /// dialog's focus, so the key that moves it is not the ring's either.
+    /// **Tab is the ring's.** [`keys`] declines it, and `fresh-ui` walks the
+    /// stops inside the box in reading order — the category tree, each card,
+    /// the footer's buttons as they are laid out (`[Edit]` on the left first)
+    /// — reporting each landing as [`UiFact::SettingsFocus`], which is how
+    /// the dialog's focus fact learns of a move the tree made. Nothing here is
+    /// `ModalKey`: the dispatcher has no Tab arm any more.
     #[test]
-    fn tab_is_still_the_dialogs() {
-        let mut ui = laid_out(100, 30, None);
-        for code in [fresh_ui::KeyCode::Tab, fresh_ui::KeyCode::BackTab] {
-            assert_eq!(
-                press_key(&mut ui, code),
-                vec![UiFact::ModalKey(
-                    crate::view::shell::modal::KeySlot::Settings
-                )],
-                "{code:?} is the dialog's"
-            );
+    fn tab_walks_the_dialogs_ring() {
+        let anchor = Rc::new(fresh_ui::behavior::Anchor::default());
+        let mut c = paged(2, &anchor);
+        c.categories.as_mut().expect("wide layout").focused = true;
+        c.items.as_mut().expect("cards").cards[0].selected = false;
+        let mut ui = with_chrome(c, 100, 30, None);
+        assert_eq!(ui.focused(), ui.find_by_key(&categories_key()));
+        let mut walk = Vec::new();
+        for _ in 0..8 {
+            walk.extend(press_key(&mut ui, fresh_ui::KeyCode::Tab));
         }
+        assert_eq!(
+            walk,
+            vec![
+                UiFact::SettingsFocus(Focus::Card(0)),
+                UiFact::SettingsFocus(Focus::Card(1)),
+                UiFact::SettingsFocus(Focus::Button(Button::Edit)),
+                UiFact::SettingsFocus(Focus::Button(Button::Layer)),
+                UiFact::SettingsFocus(Focus::Button(Button::Reset)),
+                UiFact::SettingsFocus(Focus::Button(Button::Save)),
+                UiFact::SettingsFocus(Focus::Button(Button::Cancel)),
+                UiFact::SettingsFocus(Focus::Categories),
+            ],
+            "the ring, in reading order, wrapping"
+        );
+        assert_eq!(
+            press_key(&mut ui, fresh_ui::KeyCode::BackTab),
+            vec![UiFact::SettingsFocus(Focus::Button(Button::Cancel))],
+            "and back"
+        );
+    }
+
+    /// The description marks the stop the fact names, so a fact that moved
+    /// by the host's decision — Down on the cards, a click, Right on the
+    /// footer — is where the tree's focus is on the frame that carries it.
+    #[test]
+    fn the_tree_follows_the_marked_stop() {
+        let anchor = Rc::new(fresh_ui::behavior::Anchor::default());
+        let mut c = paged(3, &anchor);
+        c.categories.as_mut().expect("wide layout").focused = false;
+        c.items.as_mut().expect("cards").cards[0].selected = false;
+        c.items.as_mut().expect("cards").cards[2].selected = true;
+        let mut ui = with_chrome(c, 100, 30, None);
+        assert_eq!(ui.focused(), ui.find_by_key(&card_key(2)));
+        let mut c = paged(3, &anchor);
+        c.categories.as_mut().expect("wide layout").focused = false;
+        c.items.as_mut().expect("cards").cards[0].selected = false;
+        c.footer.as_mut().expect("footer").focused = Some(Button::Save);
+        ui.frame(
+            frame_tree(Frame {
+                settings: Some(c),
+                modal: Some(Slot::Settings),
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(100, 30),
+        );
+        assert_eq!(ui.focused(), ui.find_by_key(&footer_key(Button::Save)));
     }
 
     /// A running search moves the seam to the query row, which is where the
@@ -2443,14 +2581,12 @@ mod tests {
 
     /// **Focus never leaves the dialog, even where nothing in it is a
     /// control.** With neither the wide layout's category list nor the narrow
-    /// layout's strip described, the only focusables left in the box are the
-    /// two seams — [`seam`]'s and [`keys`]' own — and neither is a control:
-    /// every key becomes `ModalKey` and the dialog still owns the keyboard.
-    ///
-    /// The floor under this is [`keys`] being reachable. This layer names no
-    /// scope, so a traversal set that came out empty would drop focus
-    /// altogether, and with focus nowhere `Ui::keyboard_owned` is false and
-    /// the modal's keys reach the buffer underneath.
+    /// layout's strip described, and no cards, the ring inside the box holds
+    /// only the footer's buttons, and the fact marks none of them; focus
+    /// rests on the box itself, which marks itself for exactly this, and
+    /// every key becomes `ModalKey` through [`keys`]. With focus nowhere
+    /// `Ui::keyboard_owned` would be false and the modal's keys would reach
+    /// the buffer underneath.
     #[test]
     fn a_key_never_escapes_a_layout_with_no_focusable_control() {
         let mut c = chrome();

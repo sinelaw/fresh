@@ -74,7 +74,7 @@ fn clicking_tab_after_explorer_click_moves_focus_to_editor() {
     // the file explorer.
     single_click_file(&mut harness, "alpha.txt");
     assert_eq!(
-        harness.editor().get_key_context(),
+        harness.editor_mut().get_key_context(),
         fresh::input::keybindings::KeyContext::FileExplorer,
         "precondition: single-click in explorer should leave focus in FileExplorer"
     );
@@ -96,7 +96,7 @@ fn clicking_tab_after_explorer_click_moves_focus_to_editor() {
 
     // Focus must move to the editor — this is the core fix for #1540.
     assert_eq!(
-        harness.editor().get_key_context(),
+        harness.editor_mut().get_key_context(),
         fresh::input::keybindings::KeyContext::Normal,
         "clicking a tab must move focus from the explorer to the editor"
     );

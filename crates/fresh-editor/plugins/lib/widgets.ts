@@ -1216,6 +1216,11 @@ export class FloatingWidgetPanel {
        * across frames, so a follow-up blur can land a tick late).
        * Default false: mounting focuses the panel. */
       startBlurred?: boolean;
+      /** The plugin mode (`defineMode`) whose bindings this panel's keys
+       * resolve against first — the panel's own keymap, ahead of the
+       * widget that holds focus. A dock declares its chords here rather
+       * than through the window's editor mode. */
+      mode?: string;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -1233,6 +1238,7 @@ export class FloatingWidgetPanel {
       options.title ?? "",
       options.closable ?? false,
       options.startBlurred ?? false,
+      options.mode ?? "",
     );
   }
 

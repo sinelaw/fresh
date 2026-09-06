@@ -275,6 +275,7 @@ mod tests {
         let s = Splits {
             root: root.clone(),
             maximized: None,
+            active: None,
             chrome: [
                 (id(0), chrome(true, true, true)),
                 (id(1), chrome(true, false, false)),
@@ -331,6 +332,7 @@ mod tests {
         let s = Splits {
             root: split(SplitDirection::Vertical, leaf(0), leaf(1), 0.5, 10),
             maximized: Some(id(1)),
+            active: None,
             chrome: Default::default(),
             controls: Default::default(),
             groups: Default::default(),
@@ -359,6 +361,7 @@ mod tests {
         let s = Splits {
             root: leaf(0),
             maximized: None,
+            active: None,
             chrome: [
                 (id(0), chrome(true, true, false)),
                 (id(20), chrome(false, true, false)),

@@ -397,6 +397,20 @@ impl SettingControl {
         }
     }
 
+    /// Whether the control is *live*: its keys are its own until it is
+    /// left, so nothing else — the ring's Tab included — may take them.
+    ///
+    /// Wider than [`Self::is_editing`]: a number being typed into and an open
+    /// dropdown have no caret to paint, and are live all the same.
+    pub fn is_live(&self) -> bool {
+        self.is_editing()
+            || match self {
+                Self::Number(n) => n.editing(),
+                Self::Dropdown(d) => d.open,
+                _ => false,
+            }
+    }
+
     /// The tree key of the row a `sub_focus` id names, for a control whose
     /// rows are a `List`.
     ///

@@ -7022,6 +7022,9 @@ impl JsEditorApi {
         // Mount without taking keyboard focus (the auto-opened dock).
         // Optional trailing arg, default false, for call-site back-compat.
         start_blurred: rquickjs::function::Opt<bool>,
+        // The panel's own keymap: a `defineMode` name whose bindings its
+        // keys resolve against first. Optional trailing arg, default none.
+        mode: rquickjs::function::Opt<String>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -7046,6 +7049,7 @@ impl JsEditorApi {
                 title: title.0.filter(|s| !s.is_empty()),
                 closable: closable.0.unwrap_or(false),
                 start_blurred: start_blurred.0.unwrap_or(false),
+                mode: mode.0.filter(|s| !s.is_empty()),
             })
             .is_ok())
     }

@@ -1,73 +1,17 @@
-//! Info/message popups: **the unfocused rung, and the PTY gate.**
+//! Info/message popups: **the unfocused rung.**
 //!
-//! Everything else this component used to carry is a property of the popup's
-//! own layer now — the opaque rect that absorbed a stray press, the scrollbar
-//! track, the wheel, the two dismiss guards, the row and close-button clicks,
-//! the hover highlight, and, last, the keyboard of the popup that holds it.
-//! What is left is the interception for a popup that is *visible without being
-//! focused* (nothing in the tree is listening for its keys, because nothing in
-//! it has focus) and the layer rank that says a visible popup blocks the PTY.
+//! Everything else this used to carry is a property of the popup's own layer
+//! now — the opaque rect that absorbed a stray press, the scrollbar track,
+//! the wheel, the two dismiss guards, the row and close-button clicks, the
+//! hover highlight, and, last, the keyboard of the popup that holds it,
+//! whose seam names its key section for `frame::key_context_of`. What is
+//! left is the interception for a popup that is *visible without being
+//! focused* (nothing in the tree is listening for its keys, because nothing
+//! in it has focus).
 
 use crate::input::keybindings::Action;
 
-use super::{ChromeComponent, Editor};
-
-pub(crate) struct Popups;
-
-impl ChromeComponent for Popups {
-    // No wheel arm. The popup's window is a viewport in the shell's tree and
-    // takes its own wheel, vertical and horizontal — which is also what stops
-    // a horizontal delta panning the buffer underneath, since a layer's
-    // content claims the event rather than a guard absorbing it.
-
-    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
-        use crate::app::overlay::{Layer, LayerKind};
-        // A non-trust popup is *present* whenever visible, but only
-        // *owns* the keyboard while capturing; a merely-visible
-        // unfocused popup falls through. Either way a visible popup
-        // blocks PTY routing — it covers the active buffer. While the
-        // workspace-trust prompt tops the global stack, its dedicated
-        // layer (the modals component) takes this one's place.
-        if !ed.workspace_trust_on_top()
-            && (ed.global_popups.is_visible() || ed.active_state().popups.is_visible())
-        {
-            out.push((
-                super::layer_rank::POPUP,
-                Layer {
-                    kind: LayerKind::Popup,
-                    owns_keyboard: ed.popups_capture_keys(),
-                    key_context: Some(crate::input::keybindings::KeyContext::Popup),
-                    blocks_terminal_input: true,
-                },
-            ));
-        }
-    }
-
-    // **The unfocused rung, and nothing else.**
-    //
-    // The three this used to offer — the completion resolver, then the global
-    // popup stack, then the buffer's — are the open popup's own now: its
-    // layer declares the intents it carries out, the keymap's `popup` and
-    // `completion` bindings ride down as shortcuts on it, and what an
-    // unhandled key does is the layer's `Dismiss` (a hover pane spends it
-    // going away; a completion list lets it through to the buffer) or
-    // `Modality::Keyboard` (a list waiting to be answered keeps it). The
-    // shell is offered the key before this walk, so none of that reaches
-    // here.
-    //
-    // What is left is not the popup's keyboard at all: a merely-*visible*
-    // popup holds no focus, so nothing in the tree is listening for it, and
-    // the user's bound popup-cancel (default Esc) and popup-focus (default
-    // Alt+T) are ordinary editor bindings that must still find it.
-    //
-    // **So it is not a layer's dispatch either, and no longer pretends to
-    // be.** `dispatch_popup_keys` is the first rung of `dispatch_base_key`
-    // now: an editor binding resolved before the rest of the keymap, which
-    // is what it always was. It sat on this component because the ranked
-    // walk was the only place a rung could sit; with every surface that
-    // outranks a popup claiming its keys in the tree, the walk has one
-    // member and the rung belongs inside it.
-}
+use super::Editor;
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).

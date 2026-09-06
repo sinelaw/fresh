@@ -1,7 +1,7 @@
 //! `Component` — a transparent focus/event scope around a subtree.
 //!
 //! Renders its child unchanged; `focus_trap` on its `box_meta` is what
-//! scopes Tab cycling (`render::focus_ring_scoped_in_spec`, and the layout
+//! scopes Tab cycling (the tree's ring, read by `Ui::next_in`, and the layout
 //! box that carries the same flag) to the subtree. See
 //! `docs/internal/retained-mode-ui.md` §3.5.
 

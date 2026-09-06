@@ -117,6 +117,7 @@ fn born_attached_session_does_not_wedge_source_window_typing() {
             title: None,
             closable: false,
             start_blurred: false,
+            mode: None,
         })
         .unwrap();
     harness

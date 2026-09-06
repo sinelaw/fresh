@@ -51,6 +51,41 @@ pub fn crossterm_mods(m: Mods) -> KeyModifiers {
     out
 }
 
+/// The other direction, for a key the tree carried that a host table is
+/// keyed by: the keymap resolver reads crossterm's vocabulary.
+pub fn crossterm_key_code(code: KeyCode) -> Option<CtKey> {
+    Some(match code {
+        KeyCode::Char(c) => CtKey::Char(c),
+        KeyCode::Enter => CtKey::Enter,
+        KeyCode::Esc => CtKey::Esc,
+        KeyCode::Tab => CtKey::Tab,
+        KeyCode::BackTab => CtKey::BackTab,
+        KeyCode::Backspace => CtKey::Backspace,
+        KeyCode::Delete => CtKey::Delete,
+        KeyCode::Insert => CtKey::Insert,
+        KeyCode::Up => CtKey::Up,
+        KeyCode::Down => CtKey::Down,
+        KeyCode::Left => CtKey::Left,
+        KeyCode::Right => CtKey::Right,
+        KeyCode::Home => CtKey::Home,
+        KeyCode::End => CtKey::End,
+        KeyCode::PageUp => CtKey::PageUp,
+        KeyCode::PageDown => CtKey::PageDown,
+        KeyCode::F(n) => CtKey::F(n),
+        KeyCode::Menu => CtKey::Menu,
+        #[allow(unreachable_patterns)]
+        _ => return None,
+    })
+}
+
+/// A press the tree carried, as the event the keymap resolves.
+pub fn crossterm_key_event(k: KeyPress) -> Option<crossterm::event::KeyEvent> {
+    Some(crossterm::event::KeyEvent::new(
+        crossterm_key_code(k.code)?,
+        crossterm_mods(k.mods),
+    ))
+}
+
 /// A key the tree understands, or `None` for one it has no vocabulary for.
 ///
 /// `None` is not a failure: the key simply stays on the existing path.

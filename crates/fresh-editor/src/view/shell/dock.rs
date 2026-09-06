@@ -81,11 +81,21 @@ pub fn dock(
 /// a *second* layout reading the runtime's scroll offset, so a scrolled list
 /// raised the menu for a different row from the one clicked — has been gone
 /// since 2.4, and the applier destructures the cell away.
+/// The dock column's key — what the web reads the dock's display-list items
+/// under (`Editor::tree_view`).
+pub fn column_key() -> Key {
+    Key::Str("dock_column".into())
+}
+
 fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     let described = interior.is_some();
-    let scoped = interior
-        .as_ref()
-        .map(|i| (i.has_focus_targets(), i.claims_tab));
+    let scoped = interior.as_ref().map(|i| {
+        (
+            i.has_focus_targets(),
+            i.keymap.clone(),
+            i.keyboard && i.focus_key.is_empty(),
+        )
+    });
     let body = match interior {
         None => host(HostRegion::Dock.id()),
         Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
@@ -106,6 +116,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                     slot: super::widgets::Slot::Dock,
                     states: &i.states,
                     focus_key: i.focus_key.clone(),
+                    keyboard: i.keyboard,
                     hovered_key: i.hovered_key.clone(),
                     marker_gutter: i.marker_gutter,
                     hovered_item_key: i.hovered_item_key.clone(),
@@ -131,8 +142,8 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
     // widgets decline. Only when there is something in it to focus — see
     // `panel::Interior::has_focus_targets`.
     let body = match scoped {
-        Some((true, claims_tab)) => {
-            super::panel::interior(super::widgets::Slot::Dock, claims_tab, body)
+        Some((true, keymap, rests_empty)) => {
+            super::panel::interior(super::widgets::Slot::Dock, keymap, rests_empty, body)
         }
         _ => body,
     };
@@ -198,6 +209,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
             GestureKind::Leave,
             Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::DockHover(false)))),
         )
+        .key(column_key())
 }
 
 /// The column's last cell, which the painter draws the draggable divider into
@@ -369,13 +381,14 @@ mod tests {
                     }),
                     states: Rc::new(Default::default()),
                     focus_key: String::new(),
+                    keyboard: true,
                     hovered_key: None,
                     hovered_item_key: String::new(),
                     hovered_popup_row: String::new(),
                     marker_gutter: false,
                     avail_height: None,
                     scrollbar_reveal: None,
-                    claims_tab: false,
+                    keymap: None,
                     markdown: None,
                 }),
                 ..Frame::default()
@@ -564,13 +577,14 @@ mod tests {
                     spec: Rc::new(spec),
                     states: Rc::new(Default::default()),
                     focus_key: String::new(),
+                    keyboard: true,
                     hovered_key: None,
                     hovered_item_key: String::new(),
                     hovered_popup_row: String::new(),
                     marker_gutter: false,
                     avail_height: None,
                     scrollbar_reveal: None,
-                    claims_tab: false,
+                    keymap: None,
                     markdown: None,
                 }),
                 ..Frame::default()
@@ -682,15 +696,25 @@ mod tests {
     #[test]
     fn an_imperative_move_reports_the_new_holder() {
         let mut ui = described_with_buttons();
-        // The settle's own gain is already pending — nothing drains it, which
-        // is why `advance_panel_focus_in_tree` clears the backlog before it
-        // moves. Same here, so what is left is the move's.
+        // The interior names no focused widget, so the frame rested focus on
+        // the scope itself and said nothing — "nothing focused" is a state
+        // the description carries, not a gain the registry is told about.
         let settled = ui.take_messages();
         assert!(
-            !settled.is_empty(),
-            "the frame's autofocus produced a gain and left it pending"
+            settled.is_empty(),
+            "nothing named, nothing gained: the frame rested on the scope"
         );
         let first = ui.focused().expect("the scope took focus");
+        assert_eq!(
+            Some(first),
+            ui.find_by_key(&super::super::panel::interior_key(
+                super::super::widgets::Slot::Dock
+            )),
+            "on the interior, outside the ring"
+        );
+        // From outside the ring, the first move lands on the first button and
+        // the second on the second.
+        assert!(ui.move_focus(fresh_ui::FocusDir::Next));
         assert!(
             ui.move_focus(fresh_ui::FocusDir::Next),
             "two buttons: the ring can serve the move"
@@ -711,8 +735,8 @@ mod tests {
             .collect();
         assert_eq!(
             named,
-            vec!["two".to_string()],
-            "one gain, naming the widget the ring landed on"
+            vec!["one".to_string(), "two".to_string()],
+            "each landing names the widget the ring reached"
         );
     }
 

@@ -185,225 +185,131 @@ console.log('\n[plugin floating/dock widget = native WidgetSpec, NOT cells]');
 // bar truncates "… read only (Ctrl+Space …)" clean out of existence, exactly as
 // the comment further down this file has always warned.
 let dockProbeOpened = false;
-if (!((await scene(page)).regions.widgets || []).length) {
+// **The plugin panels come to the web as the display list** (`regions.tree`):
+// the items the retained tree produced for the dock, a floating panel and the
+// plugin sidebar sections, folded into DOM by 72-tree.js. There is no widget
+// spec to walk and no hit list to echo — a click is a cell, routed over the
+// tree like a terminal click — so every assertion below reads the tree's
+// items and clicks their cells.
+const treeOf = async () => ((await scene(page)).regions.tree) || { surfaces: [], items: [] };
+const treeSurface = async kind => (await treeOf()).surfaces.find(s => s.kind === kind);
+const treeLines = (t, kind) => {
+  const si = t.surfaces.findIndex(s => s.kind === kind);
+  return t.items.filter(i => i.surface === si && i.kind === 'lines').map(i => ({ ...i, text: (i.lines || []).join('\n') }));
+};
+const findLine = (t, kind, re) => treeLines(t, kind).find(i => re.test(i.text));
+const surfaceText = (t, kind) => treeLines(t, kind).map(i => i.text).join('\n');
+const cellPx = async (col, row) => {
+  const m = await page.evaluate(() => window.fresh.metrics);
+  return { x: m.ax + (col + 0.5) * m.cw, y: m.ay + (row + 0.5) * m.ch };
+};
+const clickCell = async (col, row, opts) => { const p = await cellPx(col, row); await page.mouse.click(p.x, p.y, opts || {}); };
+const clickLine = async (it, opts) => clickCell(it.x + Math.min(it.w - 1, 2), it.y, opts);
+const waitTree = (pred, arg, ms) => page.waitForFunction((a) => {
+  const t = window.fresh.scene.regions.tree; if (!t || !t.surfaces) return false;
+  const lines = kind => { const si = t.surfaces.findIndex(s => s.kind === kind); return t.items.filter(i => i.surface === si && i.kind === 'lines').map(i => (i.lines || []).join('\n')); };
+  // eslint-disable-next-line no-new-func
+  return (new Function('t', 'lines', 'a', 'return (' + a.src + ')(t, lines, a.arg)'))(t, lines, a);
+}, { src: pred.toString(), arg }, { timeout: ms || 8000 }).catch(() => {});
+
+if (!(await treeSurface('dock'))) {
   await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
   dockProbeOpened = true;
 }
-await page.waitForFunction(() => { const w = window.fresh.scene.regions.widgets; return w && w.length > 0; }, { timeout: 8000 }).catch(() => {});
+await waitTree((t) => t.surfaces.some(s => s.kind === 'dock'));
 await page.waitForTimeout(300);
-// **The web's plugin-panel projection is deleted for now** (see
-// `docs/internal/retained-mode-ui.md` §3.9); it is being rebuilt from
-// the display list rather than from the widget tree it used to read.
-//
-// Its absence is one recorded failure, and deliberately not a dead suite. Every
-// DOM interaction below needs a `.widget-surface` that is not currently there,
-// and an uncaught locator timeout kills the driver outright — which is what it
-// did: the throw on the "Filters" disclosure took the *twenty sections after
-// this one* down with it, so settings, the keybinding editor, the WebSocket
-// transport, region diffs, shared-view mirroring, zoom and terminal selection
-// went untested while every one of them still works. A guarded skip keeps them
-// honest, and the suite still exits non-zero for what is missing.
-const webDockPanels = !!((await scene(page)).regions.widgets || []).length;
-check('editor reports a widget surface', webDockPanels);
+const webDockPanels = !!(await treeSurface('dock'));
+check('the dock is in the display list the web folds', webDockPanels);
 if (webDockPanels) {
-  // The redesigned dock (hierarchical folder tree) collapses the filter
-  // toggles behind a "Filters" disclosure — expand it so the full toolbar
-  // (view / project / worktree / hide-trivial / Manage) is rendered.
-  await page.locator('.widget-surface.w-dock .w-button', { hasText: 'Filters' }).first().click();
+  // The redesigned dock collapses the filter toggles behind a "Filters"
+  // disclosure — expand it so the full toolbar is rendered.
+  const filters = findLine(await treeOf(), 'dock', /Filters/);
+  if (filters) await clickLine(filters);
   await page.waitForTimeout(400);
-  check('dock rendered as a native widget panel', (await page.locator('.widget-surface .w-button').count()) >= 3);
-  check('NO svg/cells inside the widget panel', (await page.locator('.widget-surface svg').count()) === 0);
+  check('dock rendered from the display list', (await page.locator('.tree-item').count()) >= 5);
+  check('NO svg/cells inside the dock', (await page.locator('.tree svg').count()) === 0);
   await page.screenshot({ path: `${SHOTS}/28-native-dock.png` });
 
-  console.log('\n[dock widget clicks: identity-routed, robust against hit-list drift]');
-  // Panel clicks are delivered by IDENTITY (widgetKey + eventType + payload),
-  // with the raw hit index only as a tiebreaker — raw indices go stale whenever
-  // the plugin re-renders between the pushed frame and the click, and list hits
-  // are windowed to the TUI's visible rows (the web list is natively scrolled,
-  // so its lower rows may have no recorded hit at all). Full multi-workspace
-  // reproduction (start real workspaces, click rows below the TUI fold) is
-  // deliberately NOT run here: each orchestrator workspace creates a real git
-  // worktree + spawned shell session under ~/.local/share/fresh (persistent
-  // side effects, seconds each, trust-dialog churn) — not CI-safe. The
-  // off-window synthesis path is covered by the resolver's spec-driven design;
-  // what CI covers is the identity routing itself, including stale indices.
-  const dockSurf = async () => ((await scene(page)).regions.widgets || []).find(w => w.kind === 'dock');
-  const findByKey = (sp, key) => { if (!sp) return undefined; if (sp.key === key) return sp;
-    for (const c of (sp.children || [])) { const r = findByKey(c, key); if (r !== undefined) return r; }
-    return sp.child ? findByKey(sp.child, key) : undefined; };
-  const d0 = await dockSurf();
-  const t0v = !!(findByKey(d0.spec, 'hide-trivial') || {}).checked;
-  await page.locator('.widget-surface.w-dock .w-toggle', { hasText: 'empty' }).first().click();
-  await page.waitForFunction(v0 => { const d = (window.fresh.scene.regions.widgets || []).find(w => w.kind === 'dock');
-    const f = sp => { if (!sp) return undefined; if (sp.key === 'hide-trivial') return sp; for (const c of (sp.children || [])) { const r = f(c); if (r !== undefined) return r; } return sp.child ? f(sp.child) : undefined; };
-    return d && !!(f(d.spec) || {}).checked !== v0; }, t0v, { timeout: 5000 }).catch(() => {});
-  const t1v = !!(findByKey((await dockSurf()).spec, 'hide-trivial') || {}).checked;
-  check('dock toggle click flips real plugin state (identity-routed)', t1v !== t0v, `checked ${t0v}->${t1v}`);
-  // The hits list was regenerated by that re-render; the next click must still resolve.
-  await page.locator('.widget-surface.w-dock .w-toggle', { hasText: 'empty' }).first().click();
-  await page.waitForFunction(v1 => { const d = (window.fresh.scene.regions.widgets || []).find(w => w.kind === 'dock');
-    const f = sp => { if (!sp) return undefined; if (sp.key === 'hide-trivial') return sp; for (const c of (sp.children || [])) { const r = f(c); if (r !== undefined) return r; } return sp.child ? f(sp.child) : undefined; };
-    return d && !!(f(d.spec) || {}).checked !== v1; }, t1v, { timeout: 5000 }).catch(() => {});
-  const t2v = !!(findByKey((await dockSurf()).spec, 'hide-trivial') || {}).checked;
-  check('dock click still resolves after the hits list was regenerated', t2v === t0v, `checked ${t1v}->${t2v}`);
-  // THE regression shape: a stale/bogus hitIndex with a correct identity must
-  // still deliver (pre-fix, hitIndex was the only routing and this was a
-  // silent no-op). Same bridge dispatch as the WS path.
-  const dStale = await dockSurf();
-  const staleHit = dStale.hits.find(h => h.widgetKey === 'hide-trivial');
-  await page.request.post(URL + '/widget', { data: { surface: 'panel', plugin: dStale.plugin, panelId: dStale.panelId,
-    widgetKey: staleHit.widgetKey, eventType: staleHit.eventType, payload: staleHit.payload, hitIndex: 999 } });
-  await page.waitForFunction(v2 => { const d = (window.fresh.scene.regions.widgets || []).find(w => w.kind === 'dock');
-    const f = sp => { if (!sp) return undefined; if (sp.key === 'hide-trivial') return sp; for (const c of (sp.children || [])) { const r = f(c); if (r !== undefined) return r; } return sp.child ? f(sp.child) : undefined; };
-    return d && !!(f(d.spec) || {}).checked !== v2; }, t2v, { timeout: 5000 }).catch(() => {});
-  const t3v = !!(findByKey((await dockSurf()).spec, 'hide-trivial') || {}).checked;
-  check('stale hitIndex + correct identity still delivers (drift regression)', t3v !== t2v, `checked ${t2v}->${t3v}`);
-  // A session tree-row click selects it through the same identity path.
-  await page.locator('.widget-surface.w-dock .w-tree-row').first().click();
-  await page.waitForTimeout(500);
-  const dSel = await dockSurf();
-  check('clicking a dock workspace row selects it in the scene',
-    !!dSel && dSel.instances && dSel.instances.sessions && dSel.instances.sessions.selectedIndex === 0,
-    JSON.stringify(dSel && dSel.instances));
+  console.log('\n[dock clicks are cells routed over the tree]');
+  // The "empty" toggle (hide trivial): its row's text changes state when
+  // clicked, and again when clicked once more.
+  const toggleText = async () => { const it = findLine(await treeOf(), 'dock', /empty/i); return it ? it.text : null; };
+  const t0 = await toggleText();
+  let tg = findLine(await treeOf(), 'dock', /empty/i); if (tg) await clickLine(tg);
+  await waitTree((t, lines, v0) => lines('dock').some(l => /empty/i.test(l) && l !== v0), t0, 5000);
+  const t1 = await toggleText();
+  check('dock toggle click flips real plugin state', t1 !== null && t1 !== t0, `${JSON.stringify(t0)} -> ${JSON.stringify(t1)}`);
+  tg = findLine(await treeOf(), 'dock', /empty/i); if (tg) await clickLine(tg);
+  await waitTree((t, lines, v1) => lines('dock').some(l => /empty/i.test(l) && l !== v1), t1, 5000);
+  const t2 = await toggleText();
+  check('a second click flips it back (the frame the click landed on was rebuilt)', t2 === t0, `${JSON.stringify(t1)} -> ${JSON.stringify(t2)}`);
 
   console.log('\n[dock right-click = plugin context menu (anchored popup, like the TUI)]');
-  // Right-click on a session row fires a `context` widget event (never in the
-  // recorded hits — the bridge synthesizes it, exactly like the TUI's
-  // right-click path) and the orchestrator raises its anchored Visit / Move /
-  // Archive / Delete popup, undimmed, dismissed by Esc or an outside click.
-  const modalSurf = async () => ((await scene(page)).regions.widgets || []).find(w => w.kind === 'floatingModal');
-  await page.locator('.widget-surface.w-dock .w-tree-row').first().click({ button: 'right' });
-  await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
-  const ctxM = await modalSurf();
+  // Right-click on a session row fires the plugin's `context` event exactly as
+  // the TUI's right-click does, and the orchestrator raises its anchored
+  // Visit / Move / Archive / Delete popup as a floating panel — undimmed,
+  // dismissed by Esc or an outside click.
+  const sessionRow = async () => {
+    const t = await treeOf();
+    const rows = treeLines(t, 'dock');
+    const named = rows.find(i => /fresh/.test(i.text) && !/Filters|New Task|Search/.test(i.text));
+    return named || rows[rows.length - 1];
+  };
+  const floating = async () => (await treeOf()).surfaces.find(s => s.kind === 'floating');
+  let row = await sessionRow();
+  if (row) await clickLine(row, { button: 'right' });
+  await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
+  const ctxM = await floating();
   check('right-click on a dock row opens the context-menu panel', !!ctxM);
   check('context menu is ANCHORED (popup placement, not centered)', !!ctxM && ctxM.anchored === true);
-  const ctxText = ctxM ? await page.locator('.widget-surface.w-floatingModal').innerText() : '';
+  const ctxText = surfaceText(await treeOf(), 'floating');
   check('context menu offers Visit / Move to folder / Archive / Delete',
     /Visit/.test(ctxText) && /Move to Folder/i.test(ctxText) && /Archive/.test(ctxText) && /Delete/.test(ctxText), ctxText);
-  check('anchored popup scrim is transparent (no modal dim)', (await page.locator('.modal-scrim.scrim-clear').count()) === 1);
+  check('anchored popup has no dimming scrim', !(await treeOf()).items.some(i => i.kind === 'scrim' && i.dim));
   await page.screenshot({ path: `${SHOTS}/29-dock-context-menu.png` });
-  // Esc dismisses the popup; the dock survives.
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !(window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
-  check('Esc closes the context menu', !(await modalSurf()));
-  // Reopen; a click outside the popup dismisses it (standard menu behaviour).
-  await page.locator('.widget-surface.w-dock .w-tree-row').first().click({ button: 'right' });
-  await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
-  await page.locator('.modal-scrim.scrim-clear').click({ position: { x: 900, y: 600 } });
-  await page.waitForFunction(() => !(window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
-  check('outside-click dismisses the context menu', !(await modalSurf()));
-
-  console.log('\n[widget text field = native <input>, host-authoritative echo + caret]');
-  // The dock's "Search Tasks" field is a widget Text: it must render as a real
-  // <input> whose value/caret mirror the host TextEdit per keystroke (the spec
-  // value is initial-only and would lag until the plugin round-trip).
-  const dockSearch = page.locator('.widget-surface.w-dock input.w-text-input').first();
-  check('widget text field renders as a native <input>', (await dockSearch.count()) === 1);
-  await dockSearch.click();
-  await page.waitForTimeout(400);
-  check('clicking the field takes real DOM focus (native caret)', await page.evaluate(() =>
-    document.activeElement && document.activeElement.classList.contains('w-text-input')));
-  let echoOk = true;
-  for (const ch of 'abc') {
-    await page.keyboard.type(ch);
-    const want = 'abc'.slice(0, 'abc'.indexOf(ch) + 1);
-    const ok = await page.waitForFunction(w => document.activeElement.value === w, want, { timeout: 2000 }).then(() => true).catch(() => false);
-    if (!ok) { echoOk = false; break; }
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));
+  check('Esc closes the context menu', !(await floating()));
+  row = await sessionRow();
+  if (row) await clickLine(row, { button: 'right' });
+  await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
+  {
+    const sc = await scene(page);
+    await clickCell(sc.w - 2, sc.h - 3);
   }
-  check('every keystroke echoes into the input (host TextEdit → instance state)', echoOk,
-    JSON.stringify(await page.evaluate(() => document.activeElement.value)));
-  await page.keyboard.press('Home'); await page.waitForTimeout(300);
-  check('caret follows the host cursor (Home → 0)', (await page.evaluate(() => document.activeElement.selectionStart)) === 0);
-  // Clear the filter so later dock assertions see the full session list.
-  await page.keyboard.press('End');
-  for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace');
-  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));
+  check('outside-click dismisses the context menu', !(await floating()));
 
-  console.log('\n[dock chrome polish: no h-scroll, list fills, dropdowns float over content]');
-  // Regression cover for the orchestrator-dock visual fixes: the dock never
-  // raises a spurious horizontal scrollbar; the session tree fills the panel
-  // (the TUI hint-padding rows are dropped in the web); and the toolbar
-  // dropdowns float over the content (positioned by `layoutDockOverlays`)
-  // instead of reflowing the list, with a full-width option highlight and an
-  // outside-click dismiss.
-  const dockOverlay = () => page.locator('.widget-surface.w-dock > .w-col > .w-overlay');
-  const treeHeight = () => page.evaluate(() => {
-    const t = document.querySelector('.widget-surface.w-dock .w-tree');
-    return t ? Math.round(t.getBoundingClientRect().height) : -1;
-  });
+  console.log('\n[widget text field: keys reach the host field through the tree]');
+  // The dock's "Search Tasks" field is a described text field: a press on it
+  // places the caret through the tree, and every keystroke goes to the host's
+  // TextEdit — what the display list then shows is the field's own text.
+  const search = findLine(await treeOf(), 'dock', /Search/i);
+  check('the search field is in the dock', !!search);
+  if (search) {
+    await clickLine(search);
+    await page.waitForTimeout(300);
+    await page.keyboard.type('zq');
+    await waitTree((t, lines) => lines('dock').some(l => /zq/.test(l)), null, 5000);
+    check('typed text reaches the field and comes back in the display list', !!findLine(await treeOf(), 'dock', /zq/));
+    for (let i = 0; i < 2; i++) await page.keyboard.press('Backspace');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  }
 
-  // (1) No horizontal scrollbar: over-wide `pre` tree rows ellipsis-clip.
-  const dockOverflowX = await page.evaluate(() =>
-    getComputedStyle(document.querySelector('.widget-surface.w-dock')).overflowX);
-  check('dock never scrolls horizontally (overflow-x: hidden)', dockOverflowX === 'hidden', dockOverflowX);
-
-  // (2) The session list fills the panel (no blank filler stealing the space).
-  const fillRatio = await page.evaluate(() => {
-    const dock = document.querySelector('.widget-surface.w-dock');
-    const tree = document.querySelector('.widget-surface.w-dock .w-tree');
-    return tree ? tree.getBoundingClientRect().height / dock.getBoundingClientRect().height : 0;
-  });
-  check('session list fills the dock (tree ≥ 55% of dock height)', fillRatio >= 0.55, `ratio=${fillRatio.toFixed(2)}`);
-
-  // (3) New Task… dropdown floats flush under its button (never on top of it),
-  //     and its option highlight fills the row instead of hugging the text.
-  await page.locator('.widget-surface.w-dock .w-button.primary', { hasText: 'New Task' }).first().click();
-  await page.waitForFunction(() => !!document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
-    { timeout: 8000 }).catch(() => {});
-  const newInfo = await page.evaluate(() => {
-    const ov = document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay');
-    const btn = [...document.querySelectorAll('.widget-surface.w-dock .w-button.primary')]
-      .find(b => /New Task/.test(b.textContent));
-    if (!ov || !btn) return null;
-    const o = ov.getBoundingClientRect(), b = btn.getBoundingClientRect();
-    const opt = ov.querySelector('.w-button'), row = opt && opt.closest('.w-row');
-    return {
-      floats: getComputedStyle(ov).position === 'absolute',
-      belowButton: o.top >= b.bottom - 2,
-      optionFillsRow: !!row && opt.getBoundingClientRect().width >= row.getBoundingClientRect().width - 2,
-    };
-  });
-  check('New Task dropdown floats absolutely, flush below its button', !!newInfo && newInfo.floats && newInfo.belowButton, JSON.stringify(newInfo));
-  check('dropdown option highlight fills the row (no half-width spacer)', !!newInfo && newInfo.optionFillsRow, JSON.stringify(newInfo));
+  console.log('\n[dock dropdowns are layers over the column]');
+  // "New Task… ▾" opens a create dropdown as a layer inside the dock's
+  // subtree; its rows are display-list items below the trigger.
+  const newTask = findLine(await treeOf(), 'dock', /New Task/);
+  if (newTask) await clickLine(newTask);
+  await waitTree((t, lines, before) => lines('dock').length > before, treeLines(await treeOf(), 'dock').length, 5000);
+  const opened = await treeOf();
+  const option = treeLines(opened, 'dock').find(i => /^\s*New Task…\s*$/.test(i.text));
+  check('New Task dropdown rows are items below the trigger', !!option && !!newTask && option.y > newTask.y, JSON.stringify({ trigger: newTask && newTask.y, option: option && option.y }));
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
-    { timeout: 8000 }).catch(() => {});
-
-  // (4) Move to Folder… floats over the tree without reflowing it, and an
-  //     outside click dismisses it (the dropdowns carry no scrim of their own).
-  await page.locator('.widget-surface.w-dock .w-tree-row').first().click({ button: 'right' });
-  await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'),
-    { timeout: 8000 }).catch(() => {});
-  const treeBeforeMove = await treeHeight();
-  await page.locator('.widget-surface.w-floatingModal .w-button', { hasText: 'Move to Folder' }).first().click();
-  await page.waitForFunction(() => !!document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
-    { timeout: 8000 }).catch(() => {});
-  const moveInfo = await page.evaluate(() => {
-    const ov = document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay');
-    const tree = document.querySelector('.widget-surface.w-dock .w-tree');
-    const div = document.querySelector('.widget-surface.w-dock .w-divider');
-    if (!ov) return null;
-    const ovTop = Math.round(ov.getBoundingClientRect().top);
-    // The menu is pinned to the divider at the head of the tree (a small
-    // divider gap sits above the first tree row); the pre-fix bug parked it at
-    // the panel top over the toolbar, which this catches.
-    return {
-      floats: getComputedStyle(ov).position === 'absolute',
-      atTreeHead: !!div && Math.abs(ovTop - Math.round(div.getBoundingClientRect().top)) <= 3
-        && (!tree || ovTop >= Math.round(tree.getBoundingClientRect().top) - 16),
-      treeH: tree ? Math.round(tree.getBoundingClientRect().height) : -1,
-    };
-  });
-  check('Move to Folder floats absolutely at the head of the tree', !!moveInfo && moveInfo.floats && moveInfo.atTreeHead, JSON.stringify(moveInfo));
-  check('Move to Folder does not collapse the session list', !!moveInfo && moveInfo.treeH >= treeBeforeMove * 0.7, `tree ${treeBeforeMove} -> ${moveInfo && moveInfo.treeH}`);
-  await page.screenshot({ path: `${SHOTS}/30-dock-move-dropdown.png` });
-  await page.mouse.click(1000, 700); // click in the editor, outside the dock
-  await page.waitForFunction(() => !document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
-    { timeout: 8000 }).catch(() => {});
-  check('outside-click dismisses the Move to Folder dropdown', (await dockOverlay().count()) === 0);
+  await waitTree((t, lines, n) => lines('dock').length <= n, treeLines(opened, 'dock').length - 1, 5000);
   await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 } else {
-  skip('the dock panel sections (clicks, context menu, text field, chrome)');
+  skip('the dock panel sections (clicks, context menu, text field, dropdowns)');
   if (dockProbeOpened) {
     // Put the editor back the way the probe found it.
     await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
@@ -414,7 +320,7 @@ if (webDockPanels) {
 console.log('\n[keybinding editor = full native modal incl. edit dialog]');
 // Start clean: dismiss any focused dock/floating panel so keys reach the editor.
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
-if (((await scene(page)).regions.widgets || []).length) {
+if (await treeSurface('dock')) {
   await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
   await page.waitForTimeout(200);
 }
@@ -576,7 +482,7 @@ const diffKeys = await page.evaluate(() => window.fresh.lastFrameKeys);
 check('a typing frame is a region DIFF (changed paths, not a scene)', diffKeys.length > 0, JSON.stringify(diffKeys));
 check('typing frame touches the pane, per index', diffKeys.some(k => k.startsWith('regions.panes.')), JSON.stringify(diffKeys));
 check('typing frame does NOT resend heavyweight unrelated regions',
-  !diffKeys.includes('regions.settings') && !diffKeys.includes('regions.keybindingEditor') && !diffKeys.includes('regions.widgets'),
+  !diffKeys.includes('regions.settings') && !diffKeys.includes('regions.keybindingEditor') && !diffKeys.includes('regions.tree'),
   JSON.stringify(diffKeys));
 
 console.log('\n[shared-view mirroring: multiple clients are all live at once]');
@@ -889,47 +795,44 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
 console.log('\n[New Workspace dialog is modal: a scrim dims + blocks the dock behind it]');
 if (webDockPanels) {
-  if (!((await scene(page)).regions.widgets || []).some(w => w.kind === 'dock')) {
+  if (!(await treeSurface('dock'))) {
     await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
-    await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'dock'), { timeout: 8000 }).catch(() => {});
+    await waitTree((t) => t.surfaces.some(s => s.kind === 'dock'));
   }
   await page.waitForTimeout(200);
-  check('dock alone (no modal) has zero modal-scrims', (await page.locator('.modal-scrim').count()) === 0);
-  // "New Task… ▾" opens a create dropdown first (dock redesign); pick the
-  // "New Task…" option to open the form. The two are told apart by the
-  // trigger's trailing "▾" rather than by how the option happens to be padded
-  // — it is rendered with leading indent AND a trailing space, so an end-anchor
-  // straight after the ellipsis matched neither row and the click hung for its
-  // full timeout.
-  await page.locator('.widget-surface.w-dock .w-button', { hasText: 'New Task' }).first().click();
-  await page.waitForTimeout(300);
-  await page.locator('.widget-surface.w-dock .w-button', { hasText: /^\s*New Task…\s*$/ }).first().click();
-  await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
+  check('dock alone (no modal) has no scrim item', !(await treeOf()).items.some(i => i.kind === 'scrim'));
+  // "New Task… ▾" opens a create dropdown first; pick the "New Task…" option.
+  const nt = findLine(await treeOf(), 'dock', /New Task/);
+  if (nt) await clickLine(nt);
+  await waitTree((t, lines) => lines('dock').some(l => /^\s*New Task…\s*$/.test(l)), null, 5000);
+  const opt = treeLines(await treeOf(), 'dock').find(i => /^\s*New Task…\s*$/.test(i.text));
+  if (opt) await clickLine(opt);
+  await waitTree((t) => t.surfaces.some(s => s.kind === 'floating' && !s.anchored));
   await page.waitForTimeout(200);
-  check('New Workspace dialog is a floatingModal', ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
-  check('exactly one modal-scrim behind the floatingModal', (await page.locator('.modal-scrim').count()) === 1);
-  const dockSel = async () => { const d = ((await scene(page)).regions.widgets || []).find(w => w.kind === 'dock'); return d && d.instances && d.instances.sessions ? d.instances.sessions.selectedIndex : null; };
-  // A freshly (re)opened dock reports selectedIndex -1 until an async probe
-  // repaint pins it to the highlighted session (refreshOpenDialog re-pins on
-  // every repaint) — wait for the pin so the scrim check below isn't racing it.
-  await page.waitForFunction(() => { const d = (window.fresh.scene.regions.widgets || []).find(w => w.kind === 'dock');
-    return d && d.instances && d.instances.sessions && d.instances.sessions.selectedIndex >= 0; }, { timeout: 8000 }).catch(() => {});
-  const sel0 = await dockSel();
-  const cardBox = await page.locator('.widget-surface.w-dock .w-tree-row').first().boundingBox();
-  if (cardBox) await page.mouse.click(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
-  await page.waitForTimeout(300);
-  const sel1 = await dockSel();
-  check('a click over the dock is eaten by the scrim (dock selection unchanged, modal still open)',
-    sel1 === sel0 && ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'), `sel ${sel0}->${sel1}`);
+  const modal = (await treeOf()).surfaces.find(s => s.kind === 'floating' && !s.anchored);
+  check('New Workspace dialog is a centered floating panel', !!modal);
+  check('a dimming scrim sits behind it', (await page.locator('.tree .tree-scrim').count()) === 1);
+  // A click over the dock lands on the scrim, which the tree routes to the
+  // modal: the dock's selection is untouched and the dialog stays open.
+  // The dock repaints on its own (project detection, titles), so the
+  // comparison is the clicked row and the modal, not the whole column.
+  const rowIt = treeLines(await treeOf(), 'dock').find(i => /fresh/.test(i.text));
+  if (rowIt) await clickLine(rowIt);
+  await page.waitForTimeout(400);
+  const stillModal = (await treeOf()).surfaces.some(s => s.kind === 'floating' && !s.anchored);
+  const rowAfter = treeLines(await treeOf(), 'dock').find(i => /fresh/.test(i.text));
+  check('a click over the dock is eaten by the modal (row unchanged, modal still open)',
+    stillModal && !!rowIt && !!rowAfter && rowAfter.text === rowIt.text && rowAfter.bg === rowIt.bg,
+    JSON.stringify({ stillModal, before: rowIt && rowIt.text, after: rowAfter && rowAfter.text }));
   await page.screenshot({ path: `${SHOTS}/34-new-workspace-modal.png` });
-  await page.keyboard.press('Escape'); await page.waitForTimeout(250);
-  check('Escape closed the New Workspace dialog', !((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
-  check('scrim removed once the modal closed', (await page.locator('.modal-scrim').count()) === 0);
+  await page.keyboard.press('Escape');
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));
+  check('Escape closed the New Workspace dialog', !(await treeOf()).surfaces.some(s => s.kind === 'floating'));
+  check('scrim gone once the modal closed', (await page.locator('.tree .tree-scrim').count()) === 0);
   // Close the dock again: the sections below assert on status-bar text, and
-  // with the COSMOS bezel already costing ~13 columns the dock's width pushes
-  // long status messages ("… read only (Ctrl+Space …)") into truncation.
+  // the dock's width pushes long status messages into truncation.
   await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
-  await page.waitForFunction(() => !(window.fresh.scene.regions.widgets || []).some(w => w.kind === 'dock'), { timeout: 8000 }).catch(() => {});
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'dock'));
 } else {
   skip('New Workspace dialog is modal (needs the dock panel)');
 }
@@ -1203,28 +1106,33 @@ await page.waitForTimeout(400);
 check('macOS skin active (vibrancy modal in play)',
   await page.evaluate(() => document.body.classList.contains('theme-macos')));
 
-// (a) Orchestrator "Run Agent" widget dropdown, mounted inside the
-// backdrop-filter modal — the case that regressed.
+// (a) Orchestrator "Run Agent" dropdown, inside a floating panel: the pop-over
+// is a layer the tree raises under the trigger, and it arrives as items in the
+// same display list, placed exactly where the tree placed them.
 await page.request.post(URL + '/action', { data: { action: 'orchestrator_run_agent' } });
-await page.waitForFunction(() => document.querySelectorAll('.w-dropdown .w-dd-pill').length > 0, null, { timeout: 8000 }).catch(() => {});
-const raBox = await page.locator('.w-dropdown .w-dd-pill').first().boundingBox();
-if (raBox) {
-  const closedW = await page.evaluate(() => document.querySelector('.w-dd-pill').getBoundingClientRect().width);
-  await page.mouse.click(raBox.x + raBox.width / 2, raBox.y + raBox.height / 2);
-  await page.waitForFunction(() => !!document.querySelector('.w-dd.w-dd-floating'), null, { timeout: 5000 }).catch(() => {});
-  const w = await page.evaluate(() => {
-    const list = document.querySelector('.w-dd.w-dd-floating'), pill = document.querySelector('.w-dd-pill');
-    if (!list || !pill) return null;
-    const lr = list.getBoundingClientRect(), pr = pill.getBoundingClientRect();
-    return { dx: Math.round(lr.left - pr.left), dy: Math.round(lr.top - pr.bottom), openW: pr.width };
-  });
-  await page.screenshot({ path: `${SHOTS}/34-macos-widget-dropdown.png` });
-  check('Run-Agent widget dropdown opens directly under its pill (not offset by the modal)',
-    !!w && Math.abs(w.dx) <= 4 && w.dy >= -2 && w.dy <= 8, JSON.stringify(w));
-  // The open (▴) and closed (▾) chevrons must be the same width so the pill
-  // doesn't jump — regressed when open used the full-size ▲ vs the small ▾.
-  check('closed pill width stays stable when opened (matched-size chevron)',
-    !!w && Math.abs(w.openW - closedW) <= 1, JSON.stringify({ closedW: Math.round(closedW), openW: Math.round(w.openW) }));
+await waitTree((t) => t.surfaces.some(s => s.kind === 'floating'));
+await page.waitForTimeout(300);
+{
+  const t0 = await treeOf();
+  // The trigger is drawn in pieces — `[value ` then `▼]` — so the arrow
+  // piece finds the row and the leftmost `[` piece on it is the trigger.
+  const arrow = treeLines(t0, 'floating').find(i => /[▾▼]/.test(i.text));
+  const pill = arrow && (treeLines(t0, 'floating').filter(i => i.y === arrow.y && i.x <= arrow.x && /^\[/.test(i.text)).sort((a, b) => a.x - b.x)[0] || arrow);
+  check('Run-Agent panel shows a dropdown trigger', !!pill, surfaceText(t0, 'floating').slice(0, 200));
+  if (pill) {
+    const before = treeLines(t0, 'floating').length;
+    await clickLine(arrow);
+    await waitTree((t, lines, n) => lines('floating').length > n, before, 5000);
+    const t1 = await treeOf();
+    // The pop-over's rows: new items under the pill, at the pill's column.
+    const was = new Set(treeLines(t0, 'floating').map(o => `${o.x},${o.y},${o.text}`));
+    const rows = treeLines(t1, 'floating').filter(i => i.y > pill.y && i.x >= pill.x - 1 && i.x <= pill.x + 2 && !was.has(`${i.x},${i.y},${i.text}`));
+    const first = rows.sort((p, q) => p.y - q.y)[0];
+    check('the dropdown opens directly under its trigger (the tree placed it)',
+      !!first && first.y - pill.y >= 1 && first.y - pill.y <= 2 && Math.abs(first.x - pill.x) <= 4,
+      JSON.stringify({ pill: { x: pill.x, y: pill.y }, first: first && { x: first.x, y: first.y, text: first.text } }));
+    await page.screenshot({ path: `${SHOTS}/34-macos-widget-dropdown.png` });
+  }
 }
 await page.keyboard.press('Escape'); await page.waitForTimeout(100);
 await page.keyboard.press('Escape'); await page.waitForTimeout(200);
