@@ -890,6 +890,15 @@ impl Editor {
                 self.active_window_mut()
                     .handle_clear_file_explorer_decorations(&namespace);
             }
+            PluginCommand::SetFileExplorerFilter { namespace, paths } => {
+                let paths = paths.into_iter().map(std::path::PathBuf::from).collect();
+                self.active_window_mut()
+                    .handle_set_file_explorer_filter(namespace, paths);
+            }
+            PluginCommand::ClearFileExplorerFilter { namespace } => {
+                self.active_window_mut()
+                    .handle_clear_file_explorer_filter(&namespace);
+            }
             PluginCommand::SetFileExplorerSlots { namespace, slots } => {
                 self.active_window_mut()
                     .handle_set_file_explorer_slots(namespace, slots);
