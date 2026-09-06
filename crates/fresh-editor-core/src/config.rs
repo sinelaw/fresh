@@ -5964,9 +5964,161 @@ impl Config {
             "ocaml".to_string(),
             LanguageConfig {
                 extensions: vec!["ml".to_string(), "mli".to_string()],
-                filenames: vec![],
+                filenames: vec![".ocamlinit".to_string()],
                 grammar: "OCaml".to_string(),
                 comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "coq".to_string(),
+            LanguageConfig {
+                // Keep `.v` assigned to V by default for compatibility (see
+                // #1528). Language detection promotes it to Coq/Rocq when an
+                // ancestor contains `_CoqProject` or `_RocqProject`.
+                extensions: vec!["coq".to_string()],
+                filenames: vec!["_CoqProject".to_string(), "_RocqProject".to_string()],
+                grammar: "Coq/Rocq".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "dune".to_string(),
+            LanguageConfig {
+                extensions: vec!["dune".to_string()],
+                filenames: vec![
+                    "dune".to_string(),
+                    "dune-project".to_string(),
+                    "dune-workspace".to_string(),
+                    "dune-workspace.*".to_string(),
+                    "*.dune".to_string(),
+                ],
+                grammar: "Dune".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "dafny".to_string(),
+            LanguageConfig {
+                extensions: vec!["dfy".to_string()],
+                filenames: vec![],
+                grammar: "Dafny".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "nginx".to_string(),
+            LanguageConfig {
+                // `.conf` is intentionally not claimed globally. Nginx files
+                // are recognized by their conventional name or directory.
+                extensions: vec!["nginx".to_string()],
+                filenames: vec![
+                    "nginx.conf".to_string(),
+                    "*.nginx.conf".to_string(),
+                    "**/nginx/**/*.conf".to_string(),
+                    "**/nginx/sites-available/*".to_string(),
+                    "**/nginx/sites-enabled/*".to_string(),
+                ],
+                grammar: "Nginx".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "smt2".to_string(),
+            LanguageConfig {
+                extensions: vec!["smt2".to_string()],
+                filenames: vec![],
+                grammar: "SMT-LIB 2".to_string(),
+                comment_prefix: Some(";".to_string()),
                 auto_indent: true,
                 auto_close: None,
                 auto_surround: None,
@@ -9596,6 +9748,87 @@ mod tests {
                 "expected `{filename}` to be detected as jsonc"
             );
         }
+    }
+
+    #[test]
+    fn test_default_languages_map_ocaml_coq_and_dune_files() {
+        use crate::language_detect::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        for (path, expected) in [
+            ("lib.ml", "ocaml"),
+            ("lib.mli", "ocaml"),
+            (".ocamlinit", "ocaml"),
+            ("proof.coq", "coq"),
+            ("_CoqProject", "coq"),
+            ("dune", "dune"),
+            ("dune-project", "dune"),
+            ("dune-workspace.dev", "dune"),
+            ("library.dune", "dune"),
+            ("module.v", "vlang"),
+            ("module.vv", "vlang"),
+        ] {
+            assert_eq!(
+                detect_language(Path::new(path), &languages),
+                Some(expected.to_string()),
+                "expected `{path}` to be detected as {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_languages_map_dafny_files() {
+        use crate::language_detect::detect_language;
+        use std::path::Path;
+
+        assert_eq!(
+            detect_language(Path::new("verified.dfy"), &Config::default_languages()),
+            Some("dafny".to_string())
+        );
+    }
+
+    #[test]
+    fn test_default_languages_map_nginx_files_without_claiming_all_conf() {
+        use crate::language_detect::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        for path in [
+            "nginx.conf",
+            "reverse-proxy.nginx",
+            "reverse-proxy.nginx.conf",
+            "/etc/nginx/conf.d/default.conf",
+            "/etc/nginx/sites-available/default",
+        ] {
+            assert_eq!(
+                detect_language(Path::new(path), &languages),
+                Some("nginx".to_string()),
+                "expected `{path}` to be detected as nginx"
+            );
+        }
+        assert_ne!(
+            detect_language(Path::new("application.conf"), &languages),
+            Some("nginx".to_string()),
+            "generic .conf files must not be claimed by Nginx"
+        );
+    }
+
+    #[test]
+    fn test_default_languages_map_smtlib2_files() {
+        use crate::language_detect::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        assert_eq!(
+            detect_language(Path::new("constraints.smt2"), &languages),
+            Some("smt2".to_string())
+        );
+        assert_ne!(
+            detect_language(Path::new("legacy.smt"), &languages),
+            Some("smt2".to_string()),
+            "SMT-LIB 1 files must not be claimed by the SMT-LIB 2 grammar"
+        );
     }
 
     #[test]

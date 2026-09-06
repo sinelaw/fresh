@@ -1,0 +1,114 @@
+%YAML 1.2
+---
+name: Nginx
+file_extensions: [nginx]
+scope: source.nginx
+
+contexts:
+  main:
+    - include: escapes
+    - include: comments
+    - include: strings
+    - include: block-directives
+    - include: control-directives
+    - include: directives
+    - include: regexes
+    - include: variables
+    - include: urls
+    - include: addresses
+    - include: numbers
+    - include: constants
+    - include: operators
+    - include: punctuation
+
+  escapes:
+    - match: '\\.'
+      scope: constant.character.escape.nginx
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.nginx
+
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.nginx
+        - include: escapes
+        - include: variables
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.nginx
+        - include: escapes
+        - include: variables
+        - match: "'"
+          pop: true
+
+  block-directives:
+    # Core contexts plus block directives supplied by common HTTP/stream modules.
+    - match: '^\s*(events|http|mail|stream|server|location|upstream|types|map|geo|split_clients|limit_except|if)\b'
+      captures:
+        1: keyword.control.nginx
+
+  control-directives:
+    - match: '^\s*(include|set|rewrite|return|break)\b'
+      captures:
+        1: keyword.control.nginx
+
+  directives:
+    # Nginx modules can add directives, so highlight any directive-shaped token
+    # at the start of a line instead of freezing support to one module list.
+    - match: '^\s*([A-Za-z_][A-Za-z0-9_-]*)\b'
+      captures:
+        1: entity.name.function.directive.nginx
+
+  regexes:
+    - match: '(~\*?|!~\*?)\s+([^\s;{]+)'
+      captures:
+        1: keyword.operator.regex.nginx
+        2: string.regexp.nginx
+
+  variables:
+    - match: '\$\{[A-Za-z_][A-Za-z0-9_]*\}'
+      scope: variable.other.nginx
+    - match: '\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+)'
+      scope: variable.other.nginx
+
+  urls:
+    - match: '\b(?:https?|grpc|grpcs|memcached|scgi|uwsgi|fastcgi)://[^\s;{}]+'
+      scope: string.unquoted.url.nginx
+
+  addresses:
+    - match: '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]+)?\b'
+      scope: constant.other.address.nginx
+    - match: '\[[0-9A-Fa-f:]+\](?::[0-9]+)?'
+      scope: constant.other.address.nginx
+
+  numbers:
+    - match: '\b(0x[0-9A-Fa-f]+)\b'
+      scope: constant.numeric.hex.nginx
+    - match: '\b([0-9]+(?:\.[0-9]+)?)(ms|[smhdwMykKgG])\b'
+      captures:
+        1: constant.numeric.nginx
+        2: support.type.unit.nginx
+    - match: '\b[0-9]+(?:\.[0-9]+)?\b'
+      scope: constant.numeric.nginx
+
+  constants:
+    - match: '\b(on|off|yes|no|true|false|none|default|optional)\b'
+      scope: constant.language.boolean.nginx
+    - match: '\b(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|TRACE|CONNECT)\b'
+      scope: constant.language.method.nginx
+    - match: '\b(debug|info|notice|warn|error|crit|alert|emerg|stderr)\b'
+      scope: constant.language.log-level.nginx
+
+  operators:
+    - match: '!~\*?|~\*?|='
+      scope: keyword.operator.nginx
+
+  punctuation:
+    - match: '[{}]'
+      scope: punctuation.section.block.nginx
+    - match: ';'
+      scope: punctuation.terminator.nginx
