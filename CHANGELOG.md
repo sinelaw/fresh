@@ -40,6 +40,10 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Review Diff works with an external difftool** instead of showing an empty diff (#3066, by @asukaminato0721).
 * **Review Diff's `D` on a fully staged file now actually discards it**, with an honest report if it can't (#2318).
 * **Review Diff follows the working tree**, picking up changes made outside the editor instead of only its own saves, and no longer stacks a duplicate panel when re-run (#3126, reported by @asukaminato0721).
+* **A sidebar section no longer forces the sidebar open** — opening a Markdown file, or the Welcome screen, used to yank the sidebar (and a file explorer) open on you. A section mounted quietly now waits in a hidden column and is there when you open it; asking for one still opens it.
+* **The Welcome screen binds no printable key**: `1`/`2`/`3`, `0`, `/` and Space are all characters you might mean to type into its file finder. The caret navigates, Enter activates, and the Contents section jumps.
+* **The Welcome screen gained a Contents outline in the sidebar** — the same place Markdown files get theirs — plus a first-screen row that opens the file explorer, a terminal, a split or Settings, and a section on **Review Diff** with the keys it actually binds.
+* **The Welcome screen's caret and its focus stay on the same thing**: Tab brings the caret to the control it focuses, moving the caret onto a paragraph clears focus so `Enter` does nothing, and landing on a control — the file finder's field included — focuses it. Its level banners also breathe: a blank row now separates each rule from the sentence under it.
 * **Rendering fixes**: tab whitespace markers, indentation guides, block-selection rectangles, and angle brackets misread as delimiters; the File Explorer also gained a scrollbar (#3077, #3079, #3148, #3090, reported by @Korkman; #2859, reported by @asukaminato0721).
 * **The integrated terminal no longer loses scrollback** that just scrolled off screen (#3151).
 * **A conceal spanning a line break no longer crashes the editor** (#3139).

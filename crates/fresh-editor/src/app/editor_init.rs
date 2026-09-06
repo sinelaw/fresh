@@ -567,6 +567,7 @@ impl Editor {
         // `Editor::shell_store`.
         let shell_store = std::rc::Rc::new(fresh_ui::behavior::MemStore::new());
         let editor = Editor {
+            seat_focus_depth: 0,
             perf_counters: Default::default(),
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,

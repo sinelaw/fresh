@@ -529,6 +529,7 @@ impl Editor {
             painted: std::collections::HashMap::new(),
             boxes: Vec::new(),
             auto_focus_first: true,
+            focus_follows_cursor: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
         };

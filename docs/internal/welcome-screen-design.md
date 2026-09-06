@@ -407,19 +407,88 @@ a manual; "It's a project now" is a thing that happens to you.
 
 ---
 
+## 6b. The Contents section, and the UI row
+
+**It opens only where it is wanted.** Mounting a sidebar section used to open
+the sidebar *column* whatever the mount said, initialising a file explorer to
+head it — so a quiet mount yanked thirty-five columns away from a reader who
+had deliberately closed the sidebar, and did it to the welcome page's own
+pane after the page had composed against the full width (the doors fell out
+of their row; every row wrapped). It is not this page's bug alone:
+`markdown_toc` mounts on every Markdown buffer, so opening a `.md` file
+opened your sidebar. Revealing is the *ask* now, not the placement
+(`Editor::reveal_sidebar`): a mount that does not start blurred, a focus on a
+section, and re-anchoring a panel into the column all say so out loud, while a
+quiet mount waits in a hidden column and is there the moment you open it.
+The page also mounts nothing while it is a *background* tab — an outline of a
+page nobody is looking at would sit where the Markdown outline goes, in place
+of it.
+
+**The page is a long document, so it gets an outline.** That is what a
+Markdown file gets in this editor (`markdown_toc.ts`, the first consumer of
+the sidebar-sections API), and it comes from the same `mountSidebarSection`
+call — a `Tree` of the three levels with each card nested under its own.
+
+Three things about it are decisions rather than defaults.
+
+*The outline is recorded as the page is built*, not listed in a table beside
+it. `banner()` and `card()` push one entry each while `buildSpec()` walks the
+page top to bottom, so an entry cannot name a card that is not there or miss
+one that is. A second copy of this page's structure has gone stale at least
+once before (the level captions the jump keys used to match as strings).
+
+*An arrow browses; a click or Enter goes.* Going means moving the caret
+(`scrollToWidget` seats it), and the caret is what focus follows here — so
+scrolling on every arrow key would hand the keyboard to the page and the
+reader would lose the outline they were walking after one press.
+
+*The "you are here" mark is in the label, not the selection.* A `Tree` paints
+its selection band only while it has the keyboard, and this section spends
+its life blurred — which is the whole point, since it is there to say where
+you are while you read the page. So a `▸` goes in the row's own text, and
+`setSelectedIndex` goes too, for the arrow key that starts here later. The
+mark follows *focus* on a heading rather than the caret's exact row: a plugin
+cannot ask where its own widgets were painted, and with the caret driving
+focus that is most of the way there. A level banner is deliberately not
+focusable, so `jumpTo` marks its entry itself.
+
+**The UI row** in the first viewport is the first thing on the page that says
+the editor has furniture, and it says it by handing you the furniture: every
+entry runs the real action (`toggle_file_explorer`, `open_terminal`,
+`split_vertical`, `open_settings`) and `Contents` mounts and focuses the
+section above — which is why the button exists at all, since a sidebar
+section can be closed, collapsed, or buried under the explorer.
+
+The one button that was written and then removed is instructive:
+"Side-by-side this file", next to "Review the working tree" on the Review Diff
+card. The working tree is something this page can point at; *this file*, from
+the welcome screen, is the welcome screen.
+
 ## 7. Interaction
 
 | Input | Effect |
 |---|---|
-| `1` / `2` / `3` | scroll to that level; the path card and depth meter update |
-| `0` | back to the top |
 | scroll / `PgUp` / `PgDn` / mouse wheel | ordinary buffer scrolling; the depth meter follows |
-| `Tab` / `Shift+Tab` | move focus between interactive widgets |
-| `Enter` / `Space` | activate the focused widget |
+| `Tab` / `Shift+Tab` | move focus between interactive widgets — the caret comes with it |
+| arrow / page keys / a click on the text | move the caret; the control on the row it lands on takes focus, and a row with none clears it |
+| `Enter` | activate the focused widget — nothing, on a paragraph |
 | click on a fold arrow, or `za` on its row | fold / unfold that card |
-| typing, while the finder is focused | it is a real text input; it really searches |
+| typing, while the caret is in the finder | it is a real text input; it really searches |
+| the Contents section in the sidebar | this page's own outline: an arrow browses it, a click or Enter goes |
 | `Ctrl+P`, `F1`, `Alt+O`, the menu bar | all work — this is a normal pane, not a modal |
 | `Ctrl+W` / the tab's `×` | close it, like any tab |
+
+**This page binds nothing printable, and that is the rule.** `1` / `2` / `3`
+jumped to a level, `0` went to the top, `/` put focus in the finder, and
+Space activated the focused control. Every one of them is a character a
+reader can mean to *type* into the field this page carries. The host does
+hand a focused text widget the key ahead of the mode's bindings, so they were
+never actually stolen — but working by a precedence rule is a worse answer
+than not binding them at all, and each had a better replacement once the page
+grew a caret: the caret navigates, Enter activates, the Contents section
+jumps, and the door cards are Tab stops that jump when you press Enter on
+one. Their label says so (`jump ↓ · click, or Enter`) where it used to
+promise a digit.
 
 **Focus.** A `welcome` mode (via `defineMode`) with `inheritNormalBindings:
 false`: on a cursorless page, every key is either bound here or intentionally
@@ -711,10 +780,59 @@ Eleven things the wireframes did not know:
 
 6. **Tab moves widget focus, but the host only scrolls the pane for a focused
    *text* widget.** A focused button further down a long document was
-   invisible. The `focus` event now reveals the focused widget's card, using
-   card-header rows read back from the painted buffer — the same read-back
-   `resolveLevelLines` already did for the jump keys. A keyed read-only widget
-   also joins the Tab cycle, so the markdown sample is deliberately keyless.
+   invisible — and the page had two "you are here" markers that could point
+   at different things, since it also carries a real caret. Both are one
+   question, so they are now one answer: the panel is mounted with
+   `focusFollowsCursor`, and the host keeps focus and the caret on the same
+   widget in both directions — a focus move seats the caret on the focused
+   widget's row (which reveals it, for free), and a caret move focuses
+   whatever is on the row it landed on, or clears focus when that row is
+   prose. Three workarounds went with it: the page's own reveal on `focus`,
+   its read-back of card-header rows, and `/` jumping to Level 1 to bring the
+   field it had just focused on screen. A keyed read-only widget also joins
+   the Tab cycle, so the markdown sample is deliberately keyless.
+
+   Three things the host has to get right, all learned from this page.
+
+   *A focus region is a control, not a row.* The three door cards share every
+   one of their rows and the three verbs sit on one line, so a caret row
+   cannot say which of them the reader is on — only a column can. Resolving
+   by row would also make Tab between two controls of one row impossible,
+   because the move to the second seats the caret on the row they share and
+   the row hands focus straight back to the first. The hit areas already
+   carry a byte span per row, so this is the span they were always for; it is
+   resolved *nearest*, by the same distance function the click path uses,
+   because a caret reading down the page keeps whatever column it was in and
+   that column is very often a framed card's border.
+
+   *A card anchors at its top-left cell*, and seating asks whether the caret
+   already resolves to the widget before moving it. Arrowing **up** into a
+   card's last row focuses the card, and seating the caret on the card's top
+   row would throw the reader back over everything they had just walked past.
+   The same test is why a Tab onto the only control on a row leaves the caret
+   where it is: the two already agree.
+
+   *An absolute placement clears the goal column.* Seating the caret is a
+   jump, and a jump resets the column an Up/Down aims at — the same as a
+   click or a search hit. Without that, Tab across to the third door card
+   and one Down threw the caret back into the first, so Enter opened a
+   level the reader had not chosen.
+
+   *The finder must not trap the caret.* Its field takes focus just by the
+   caret arriving on its row, and its Up/Down walk its results — so a
+   reader walking down the page fell in and could not walk out. The list
+   no longer wraps (either end falls through to a caret move) and it only
+   claims the arrow keys once a query has been typed: with an empty one
+   every file in the repo is a hit, and an untouched finder is not
+   something you are navigating. For the same reason `/` scrolls the card
+   into view before focusing the field — the reveal a focus move brings is
+   minimal, which would leave the results below the fold.
+
+   *Tab from nothing focused starts beside the caret.* "Nothing focused" is
+   not this panel at rest — it is the caret on prose, which on a page that is
+   mostly prose is most rows. Falling back to the ring's first entry would
+   send every such Tab to the top of the document: read down to Level 3,
+   press Tab, and you are back on the startup switch.
 
 7. **`getAllThemes()` answers with the registry object, not a list.** Its keys
    are the theme names.

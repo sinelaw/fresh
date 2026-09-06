@@ -212,10 +212,30 @@ impl Editor {
             }
         }
 
-        // 3. Trigger plugin hooks for this event (with pre-calculated line info)
+        // 3b. A `focusFollowsCursor` panel keeps its focus on whatever the
+        // caret is on, so this runs for every event: an arrow key, a page
+        // key, a click on the text, and equally an edit, which moves the
+        // caret without being a `MoveCursor`.
+        //
+        // It reads the caret the buffer *ended up with* rather than a
+        // position taken out of the event. Those differ — an edit has no
+        // new-position field at all, a `Batch` can nest another `Batch`
+        // whose last move is the one that counts, and a position can be
+        // clamped on the way in — and every one of those differences was
+        // a hole while this matched on the event's shape instead.
+        //
+        // Before the plugin hooks: a `cursor_moved` handler that asks the
+        // host what has focus should be told the truth. Cheap for every
+        // other buffer in the editor — `sync_widget_focus_to_cursor`
+        // answers a bool before it touches anything.
+        let buffer_id = self.active_buffer();
+        let caret = self.active_cursors().primary().position;
+        self.sync_widget_focus_to_cursor(buffer_id, caret);
+
+        // 4. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
 
-        // 4. Notify LSP of the change using pre-calculated positions
+        // 5. Notify LSP of the change using pre-calculated positions
         // For BulkEdit events (undo/redo of code actions, renames, etc.),
         // collect_lsp_changes returns empty because there are no incremental byte
         // positions to convert — BulkEdit restores a tree snapshot.  Send a

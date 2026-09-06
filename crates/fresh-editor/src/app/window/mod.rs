@@ -1911,7 +1911,31 @@ impl Window {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
-                    view_state.cursors.primary_mut().move_to(position, false);
+                    let cursor = view_state.cursors.primary_mut();
+                    cursor.move_to(position, false);
+                    // An absolute placement is a jump, not a vertical move,
+                    // so it clears the goal column — the same thing every
+                    // other jump in the editor does (`new_sticky_column:
+                    // None` on a diagnostic jump, a search hit, a click).
+                    // Without it the *next* Up/Down snapped the caret back
+                    // to a column the reader left long ago: Tab onto the
+                    // third door card seated the caret on it and one Down
+                    // threw it back into the first.
+                    //
+                    // It is right for every caller of this function, not
+                    // just the one that found it, and the loop is why: this
+                    // writes *every* split showing the buffer, so each of
+                    // those carets has just been teleported to a position
+                    // it did not walk to. A goal column is a memory of
+                    // which column the reader was aiming for while moving
+                    // vertically; keeping it across a jump the reader did
+                    // not make is keeping a memory of somewhere they no
+                    // longer are. The four callers — `setBufferCursor`,
+                    // `scrollToWidget`, a virtual buffer's
+                    // `initialCursorLine`, and the focus↔caret seat — are
+                    // all absolute placements, none of them a vertical
+                    // motion.
+                    cursor.sticky_column = None;
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                     moved_any = true;
                 }

@@ -12,6 +12,7 @@ import {
   text,
   textInput,
   textInputChar,
+  tree,
   type WidgetSpec,
   WidgetPanel,
   key as widgetKey,
@@ -35,7 +36,8 @@ const editor = getEditor();
 //   (wordmark, one line, three numbered doors, four verbs, one
 //   reassurance) and mentions no LSP, git, worktree or agent.
 //   Scrolling descends through three bannered levels ordered by
-//   sophistication; `1` / `2` / `3` jump straight to one.
+//   sophistication; the Contents section in the sidebar, and the three
+//   door cards, jump straight to one.
 //
 //   Everything here is built from the existing plugin surface — a
 //   virtual buffer with a mounted widget panel (the same pairing
@@ -218,6 +220,37 @@ function finderFocused(): boolean {
  *  scroll to that card's own fold widget. */
 
 
+/** One line of the Contents section: what it says, the widget it goes
+ *  to, and how deep it sits.
+ *
+ *  Recorded by `banner()` and `card()` as the page is built rather than
+ *  listed in a table beside them. A table is a second copy of the
+ *  outline, and a second copy of anything on this page has gone stale
+ *  at least once (the level captions the jump keys used to match as
+ *  strings). The builder already walks the page top to bottom in
+ *  order; letting it say what it is building costs one push per
+ *  section and cannot disagree with the page. */
+type OutlineEntry = { label: string; key: string; depth: number };
+
+let outline: OutlineEntry[] = [];
+
+/** The entry the Contents section marks, by widget key.
+ *
+ *  A key, not an index into `outline` — that list is discarded and
+ *  rebuilt on every `render()`, which is every keystroke in the finder,
+ *  and an index into it is only stable while every `card()` call is
+ *  unconditional. One card built behind a condition and the mark would
+ *  quietly point at a different section.
+ *
+ *  It follows *focus*, not the caret, and only when focus lands on a
+ *  heading — a fold arrow or a level banner. A plugin cannot ask where
+ *  its own widgets were painted, so it cannot map an arbitrary caret row
+ *  back to a section; what it can see is that the reader focused this
+ *  heading, and with the caret driving focus that is most of the way
+ *  there. The mark stays put while they read a card's body, which is
+ *  the behaviour you want anyway. */
+let outlineSelected = "";
+
 const LEVEL_MARK: Record<string, string> = {
   "1": "LEVEL 1 · JUST EDIT",
   "2": "LEVEL 2 · IT'S A PROJECT NOW",
@@ -350,6 +383,55 @@ function verbs(): WidgetSpec[] {
   return [centredRow(...parts)];
 }
 
+/** The parts of the UI that are not the text, and the one line that says
+ *  they exist.
+ *
+ *  A first-viewport block on purpose. Everything above it is about
+ *  opening a file and typing; this is the first thing that says the
+ *  editor has *furniture*, and it says it by giving you the furniture
+ *  rather than by describing it — every one of these opens the real
+ *  thing, here, now.
+ *
+ *  `Contents` is this page's own outline in the sidebar, which is also
+ *  the answer to "this page is long": the section is already there when
+ *  the page opens, and this brings it back if it has been closed, or
+ *  puts the keyboard in it if it is buried under the explorer. */
+const UI_FEATURES: [string, string, string][] = [
+  ["ui_explorer", "File explorer", "toggle_file_explorer"],
+  // No action of its own — the page mounts and focuses its own section.
+  ["ui_contents", "Contents", ""],
+  ["ui_terminal", "Terminal", "open_terminal"],
+  ["ui_split", "Split the pane", "split_vertical"],
+  ["ui_settings", "Settings", "open_settings"],
+];
+
+function uiFeatures(): WidgetSpec[] {
+  const parts: WidgetSpec[] = [];
+  UI_FEATURES.forEach(([key, label, action], i) => {
+    if (i > 0) parts.push(line([{ text: "   ·   ", style: { fg: C.gutter } }]));
+    parts.push(button(label, { key, bare: true, style: LINK, hoverStyle: HOVER_LINK }));
+    const acc = action ? accel(action) : "";
+    if (acc) {
+      parts.push(line([
+        { text: " " },
+        { text: acc, style: { fg: C.key, bold: true } },
+      ]));
+    }
+  });
+  return [
+    rule("THE UI, WHEN YOU WANT IT"),
+    blank(),
+    centredRow(...parts),
+    blank(),
+    centred([
+      {
+        text: "Each one opens the real thing. Contents is this page's outline, in the sidebar.",
+        style: { fg: C.muted },
+      },
+    ]),
+  ];
+}
+
 /** A section heading: fold arrow at the rail, title, then a leader rule
  *  running out to the hint. A rule is the typographic answer to a wide
  *  gap between a label and its value — and unlike a flex spacer it can
@@ -396,6 +478,7 @@ function card(
   body: () => WidgetSpec[],
   framed = false,
 ): WidgetSpec {
+  outline.push({ label: title, key: `fold:${id}`, depth: 1 });
   const head = heading(id, title, hint, framed);
   // Air before every section, not one blank row. Below the fold the
   // page was a stack of headings and boxes at single-row spacing, which
@@ -442,6 +525,7 @@ function rule(label: string): WidgetSpec {
 
 function banner(level: string, sub: string): WidgetSpec {
   const mark = LEVEL_MARK[level];
+  outline.push({ label: mark, key: `level:${level}`, depth: 0 });
   // Computed, not a hardcoded 40: the rule used to stop at column 64 on
   // a wide terminal and overflow the pane on a narrow one. Heavy stroke
   // so the top of the hierarchy is also the strongest horizontal.
@@ -465,6 +549,11 @@ function banner(level: string, sub: string): WidgetSpec {
       }),
       line([{ text: " " + "━".repeat(tail), style: { fg: C.frame } }]),
     ),
+    // A rule and the line under it, set tight, read as one two-line
+    // heading — the description looked like a subtitle *of the rule*
+    // rather than the opening sentence of the level it introduces. The
+    // air is what makes the banner a banner and the sentence prose.
+    blank(),
     line([{ text: "  " + sub, style: { fg: C.body } }]),
     blank(),
   );
@@ -562,6 +651,13 @@ function chipsRow(): WidgetSpec {
  *  but a button can say what it does under the pointer and a toggle
  *  cannot. */
 function startupRow(): WidgetSpec[] {
+  // The page's first row says so itself, rather than the outline naming
+  // `startupToggle` from a table: a table is a string that has to match a
+  // widget key defined somewhere else, and `scrollToWidget` on a key that
+  // no longer exists does nothing at all — a silent first row in the
+  // Contents section, which is exactly what building the outline as the
+  // page is built exists to rule out.
+  outline.push({ label: "Top of the page", key: "startupToggle", depth: 0 });
   const on = showOnStartup();
   const label = `${on ? "[✓]" : "[ ]"} Show this screen on startup`;
   return [
@@ -728,7 +824,7 @@ function doorCard(d: Door, rows: number): WidgetSpec {
       // time. The digit lives here rather than flushed right: a
       // full-width button pads its own label, so there is no column to
       // align a second fragment to.
-      doorRow(d, `jump ↓ · or press ${d.n}`, true),
+      doorRow(d, "jump ↓ · click, or Enter", true),
     ),
   });
 }
@@ -1006,6 +1102,8 @@ function level2(): WidgetSpec[] {
     blank(),
     gitCard(),
     blank(),
+    reviewCard(),
+    blank(),
     themeCard(),
     blank(),
     card("power", "Power tools when your hands get fast", "optional, all of it", () => [
@@ -1070,6 +1168,70 @@ function gitCard(): WidgetSpec {
     rows.push(blank());
     return rows;
   }, true);
+}
+
+/** Two columns: a key chord and what it does. The keys sit in a column
+ *  of their own so the eye can run down them — which is how a key table
+ *  is read, and is not how prose is read. */
+function keyRows(pairs: [string, string][]): WidgetSpec[] {
+  const width = Math.max(...pairs.map(([k]) => cols(k)));
+  return pairs.map(([k, what]) =>
+    line([
+      { text: "  " },
+      { text: k + " ".repeat(Math.max(0, width - cols(k))), style: { fg: C.key, bold: true } },
+      { text: "  " + what, style: { fg: C.body } },
+    ])
+  );
+}
+
+/** Review Diff — the code-review tool, which is a different thing from
+ *  the git card above it and is why that card stops where it does.
+ *
+ *  Every key here is one `audit_mode.ts` binds in `review-mode`, and
+ *  every command named is one it registers. A welcome screen that
+ *  teaches a chord the editor does not have is worse than one that
+ *  teaches nothing. */
+function reviewCard(): WidgetSpec {
+  return card("review", "Review Diff — read a change like a reviewer", "a tool, not a view", () => [
+    blank(),
+    ...bodyText(
+      "Your whole working tree as one diff you move through, stage from, and leave notes on. "
+        + "The palette opens it three ways: on the working tree, on a range or branch, or on a stash.",
+    ),
+    blank(),
+    ...keyRows([
+      ["n / p", "next / previous hunk"],
+      [", / .", "previous / next file"],
+      ["1 2 0", "one column · side by side · auto"],
+      ["F / C", "the files and comments panels (both start hidden)"],
+      ["Tab", "move between panels; arrows act on the focused one"],
+    ]),
+    blank(),
+    ...bodyText("Stage what you have read, hunk by hunk, without leaving the diff:", C.muted),
+    ...keyRows([
+      ["s u d", "stage · unstage · discard the hunk under the cursor"],
+      ["S U D", "the same, for the whole file"],
+      ["v", "select a line range first, and act on just those lines"],
+    ]),
+    blank(),
+    ...bodyText("And leave the review behind you:", C.muted),
+    ...keyRows([
+      ["c", "comment on the line under the cursor"],
+      ["] / [", "walk the comments you have left"],
+      ["e", "export the session as Markdown"],
+    ]),
+    blank(),
+    // One button, and only one that means anything from here: the
+    // working tree is a thing this page can point at, and "this file" is
+    // not — the current file, pressed from the welcome screen, is the
+    // welcome screen. The other two openings are palette commands, and
+    // the prose above names them.
+    row(
+      spacer(2),
+      button("Review the working tree", { key: "act_review_diff", hoverStyle: GLOW }),
+    ),
+    blank(),
+  ], true);
 }
 
 function themeCard(): WidgetSpec {
@@ -1287,6 +1449,8 @@ function buildSpec(): WidgetSpec {
     ...hero(),
     ...doors(),
     ...air(2),
+    ...uiFeatures(),
+    ...air(2),
     ...verbs(),
     ...air(2),
     // It teaches keybindings, so the keys should look like keys — the
@@ -1342,7 +1506,148 @@ function buildSpec(): WidgetSpec {
  *  whole document up the screen. */
 function render(): void {
   if (!panel) return;
+  outline = [];
   panel.set(buildSpec());
+  publishContents();
+}
+
+// ── The Contents section ─────────────────────────────────────────────
+//
+// The page is long, and a long document in this editor gets an outline
+// in the sidebar — that is what Markdown files do (`markdown_toc.ts`,
+// the first consumer of the sidebar-sections API). This page is a
+// document; it gets the same thing, from the same API, and the button
+// on the page is there because a sidebar section can be closed, scrolled
+// past, or hidden behind the explorer, and a reader who cannot see it
+// has no way to ask for it back.
+//
+// Its own id, distinct from the page's mounted panel: `widget_event`
+// carries the panel id, and both arrive at the same hook.
+
+const CONTENTS_PANEL_ID = 7301;
+let contentsMounted = false;
+
+/** Rows to ask the sidebar for: every entry, within reason. The section
+ *  is a fixed, known-length outline rather than a file's headings, so
+ *  there is a right answer and it is "all of it" — capped so the
+ *  explorer above it keeps a workable share of the column. */
+function contentsRows(): number {
+  return Math.max(6, Math.min(outline.length, 16));
+}
+
+/** Where the marked key sits in the outline as it stands now — the one
+ *  place an index is computed, at the moment it is used. */
+function outlineIndex(): number {
+  return outline.findIndex((e) => e.key === outlineSelected);
+}
+
+function contentsSpec(): WidgetSpec {
+  return tree({
+    key: "toc",
+    nodes: outline.map((e) => ({
+      // One column for "you are here". A tree paints its selection band
+      // only while it has the keyboard, and this section spends its life
+      // blurred — so without a glyph in the text it would say nothing at
+      // all about where in the page the reader is, which is half of what
+      // an outline is for.
+      text: { text: (e.key === outlineSelected ? "▸ " : "  ") + e.label },
+      depth: e.depth,
+      hasChildren: false,
+    })),
+    // The widget key each row goes to. It is already unique per row and
+    // it is the thing the row *means*, so there is nothing to look up
+    // on the way back: the activation handler scrolls to the key it was
+    // handed.
+    itemKeys: outline.map((e) => e.key),
+    selectedIndex: outlineIndex(),
+    // Nothing folds: the outline is three levels of cards, and a
+    // disclosure triangle on every level would be two states to keep for
+    // a list that fits.
+    expandedKeys: [],
+    itemHeight: 1,
+    cardBorders: false,
+    // The sidebar is a couple of dozen columns wide; one column per
+    // level is enough to read the nesting.
+    indentCols: 1,
+  });
+}
+
+/** Publish the outline. Mounts the section the first time and replaces
+ *  its content after that — `mountSidebarSection` on an id that is
+ *  already a section would replace it in place too, but a remount is
+ *  also a re-*mount*, and this page repaints on every keystroke in the
+ *  finder. */
+function publishContents(): void {
+  if (!contentsMounted) return;
+  editor.updateFloatingWidget(CONTENTS_PANEL_ID, contentsSpec());
+  editor.widgetMutate(CONTENTS_PANEL_ID, {
+    kind: "setSelectedIndex",
+    widgetKey: "toc",
+    index: outlineIndex(),
+  });
+}
+
+/** Put the section in the sidebar — quietly, unless `focus` says the
+ *  reader asked for it.
+ *
+ *  `startBlurred` is not a detail here. Mounting a section used to open
+ *  the sidebar *column* whatever the mount said, and the file explorer
+ *  came up with it: opening this page took thirty-five columns off a
+ *  hundred-and-twenty-column terminal on every launch, from someone who
+ *  had deliberately closed the sidebar. It also stole them from a page
+ *  that had already composed against the full width, so the three doors
+ *  fell out of their row and every row wrapped.
+ *
+ *  A blurred mount is silent now (`Editor::reveal_sidebar`): the outline
+ *  is there for a reader whose sidebar is open, and waits in a hidden
+ *  column for one whose is not. The `Contents` button is what opens it —
+ *  which is why the button exists at all, since a section can be closed,
+ *  collapsed, or buried under the explorer. */
+function mountContents(focus: boolean): void {
+  if (!contentsMounted) {
+    editor.mountSidebarSection(
+      CONTENTS_PANEL_ID,
+      contentsSpec(),
+      "Welcome — Contents",
+      contentsRows(),
+      { closable: true, startBlurred: true },
+    );
+    contentsMounted = true;
+  } else {
+    publishContents();
+  }
+  if (focus) editor.floatingPanelControl(CONTENTS_PANEL_ID, "focus", 0);
+}
+
+function unmountContents(): void {
+  if (!contentsMounted) return;
+  editor.unmountFloatingWidget(CONTENTS_PANEL_ID);
+  contentsMounted = false;
+}
+
+/** Mark the outline entry for a heading that just took focus.
+ *
+ *  Anything else — a button in a card's body, a theme swatch, the
+ *  finder's field — leaves the mark where it is: those are *inside* the
+ *  section the mark already names. */
+function markOutlineFor(widgetKey: string): void {
+  if (!contentsMounted) return;
+  if (!widgetKey.startsWith("fold:") && !widgetKey.startsWith("level:")) return;
+  if (widgetKey === outlineSelected) return;
+  if (!outline.some((e) => e.key === widgetKey)) return;
+  outlineSelected = widgetKey;
+  // Both, and both are needed. `setSelectedIndex` is the *selection* —
+  // where an arrow key would start if the reader put the keyboard in
+  // here — and a blurred tree does not paint one, which is most of the
+  // time: the whole point is to say where you are while you read the
+  // page, not while you drive the sidebar. The caret glyph in the label
+  // is what actually shows on a blurred section, so the spec goes too.
+  editor.widgetMutate(CONTENTS_PANEL_ID, {
+    kind: "setSelectedIndex",
+    widgetKey: "toc",
+    index: outlineIndex(),
+  });
+  editor.updateFloatingWidget(CONTENTS_PANEL_ID, contentsSpec());
 }
 
 
@@ -1500,7 +1805,19 @@ async function openWelcome(force: boolean): Promise<void> {
     // first tabbable widget on every repaint — so clearing focus did
     // not clear it, and leaving the finder parked focus on the startup
     // toggle, off screen, where the next Space switched the page off.
-    panel = new WidgetPanel(bufferId, undefined, { autoFocusFirst: false });
+    panel = new WidgetPanel(bufferId, undefined, {
+      autoFocusFirst: false,
+      // The caret and the focus ring are one thing on this page. It is a
+      // document with a real cursor in it, so two independent "where am
+      // I" markers is one too many: Tab used to move focus while the
+      // caret stayed three cards above, and an arrow key used to move
+      // the caret while Enter still fired whatever the last Tab had
+      // left focused — off screen, unasked for. The host maintains both
+      // directions now (`WidgetPanelOptions.focusFollowsCursor`), which
+      // is also what makes "nothing focused" the common case rather
+      // than a corner: most rows of this page are prose.
+      focusFollowsCursor: true,
+    });
     // Re-assert the caret *after* the panel exists. `createVirtualBuffer`
     // took `showCursors: true` and mounting a widget panel then cleared
     // it — panel buffers default to no caret — so the page ran with
@@ -1513,6 +1830,11 @@ async function openWelcome(force: boolean): Promise<void> {
     probeThemes();
     probeWorkspaces();
     render();
+    // No section yet. The page is created as a *background* tab at
+    // startup, and an outline of a page nobody is looking at would sit
+    // in the sidebar under the file they are — where the Markdown
+    // outline goes, and in place of it. `buffer_activated` is the moment
+    // this page is the one being read; `showBuffer` below fires it.
     if (force) editor.showBuffer(bufferId);
     void probeRepoFiles();
     void probeGit();
@@ -1525,6 +1847,7 @@ async function openWelcome(force: boolean): Promise<void> {
 function closeWelcome(): void {
   if (bufferId === null) return;
   const id = bufferId;
+  unmountContents();
   panel?.unmount();
   panel = null;
   bufferId = null;
@@ -1561,6 +1884,7 @@ registerHandler("welcomeOnBufferClosed", (e: { buffer_id: number }) => {
   // The tab's `×` / `Ctrl+W` route: the buffer is gone and we were not
   // the ones who asked, so drop our handle on it.
   if (bufferId !== null && e.buffer_id === bufferId) {
+    unmountContents();
     panel = null;
     bufferId = null;
   }
@@ -1610,8 +1934,23 @@ let lastKey = "";
  *  cached one belongs to a pane this buffer may never have had — and
  *  the page repaints if anything about its shape moved. */
 registerHandler("welcomeOnBufferActivated", (e: { buffer_id: number }) => {
-  if (bufferId === null || e.buffer_id !== bufferId) return;
+  // The Contents section is *this page's* outline, so it lives and dies
+  // with this page being the one you are looking at. Leaving it up over
+  // a source file would be a table of contents for something that is not
+  // on screen — and it would sit where the Markdown outline goes, which
+  // is the same column and the same idea.
+  if (bufferId === null) return;
+  if (e.buffer_id !== bufferId) {
+    unmountContents();
+    return;
+  }
   if (editor.getActiveBufferId() !== bufferId) return;
+  // Blurred, so a closed sidebar stays closed — which means a reader who
+  // keeps it closed gets no outline and no sign that one exists except
+  // the `Contents` button in the first viewport. That is the trade: this
+  // page does not get to open a column the reader shut, and the button
+  // is the recovery.
+  mountContents(false);
   editor.setTimeout(0, "welcomeCatchUpOnShow");
 });
 registerHandler("welcomeCatchUpOnShow", async () => {
@@ -1654,6 +1993,11 @@ function dispatch(action: ReturnType<typeof widgetKey>): void {
 function jumpTo(level: string): void {
   if (bufferId === null) return;
   editor.scrollToWidget(bufferId, `level:${level}`);
+  // A level banner is deliberately not focusable, so the `focus` event
+  // that normally moves the outline's mark never comes for one. Say it
+  // here instead: pressing `2` is exactly the reader telling us where
+  // they are.
+  markOutlineFor(`level:${level}`);
 }
 
 // The digits, `/` and Space are bound here *and* are ordinary
@@ -1665,20 +2009,16 @@ function jumpTo(level: string): void {
 // mode's bindings, so these handlers only ever run when nothing is
 // being typed into, and they can simply do their job.
 
-registerHandler("welcome_jump_1", () => jumpTo("1"));
-registerHandler("welcome_jump_2", () => jumpTo("2"));
-registerHandler("welcome_jump_3", () => jumpTo("3"));
-registerHandler("welcome_jump_top", () => {
-  if (bufferId === null) return;
-  // The startup switch is the first widget on the page, so "go to the
-  // top" is the same request as every other jump.
-  editor.scrollToWidget(bufferId, "startupToggle");
-});
 registerHandler("welcome_tab", () => dispatch(widgetKey("Tab")));
 registerHandler("welcome_shift_tab", () => dispatch(widgetKey("Shift+Tab")));
 /** Activate whatever has focus.
  *
- *  Two keys are handled here rather than forwarded to the panel:
+ *  Enter is the only key that gets here. Space used to as well, and is
+ *  gone with the rest of the printable bindings — it is a character a
+ *  reader can mean to type into the finder, and Enter already says
+ *  "activate this" everywhere else in the editor.
+ *
+ *  Two cases are handled here rather than forwarded to the panel:
  *
  *  - the finder field, because a single-line `Text` widget treats Enter
  *    as advance-focus, and opening the pick is this field's whole
@@ -1704,14 +2044,35 @@ registerHandler("welcome_enter", () => {
   if (activateFocused()) return;
   dispatch(widgetKey("Enter"));
 });
-registerHandler("welcome_space", () => {
-  if (activateFocused()) return;
-  dispatch(widgetKey("Space"));
-});
-function moveFinder(delta: number): void {
-  if (finderHits.length === 0) return;
-  finderIndex = (finderIndex + delta + finderHits.length) % finderHits.length;
+/** Walk the finder's marked hit, and say whether it moved.
+ *
+ *  It no longer wraps, and the caller falls through to an ordinary caret
+ *  move when it declines. Wrapping made the finder a trap: the caret now
+ *  focuses the field just by arriving on its row, so a reader walking
+ *  down the page fell in and could never walk out again — every Down
+ *  cycled a list instead of moving the caret, with nothing on screen to
+ *  say why. Falling out of either end is how a list inside a document
+ *  should behave. */
+function moveFinder(delta: number): boolean {
+  if (finderHits.length === 0) return false;
+  const next = finderIndex + delta;
+  if (next < 0 || next >= finderHits.length) return false;
+  finderIndex = next;
   render();
+  return true;
+}
+
+/** Whether Up/Down belong to the finder's result list rather than to the
+ *  page.
+ *
+ *  Not simply "is the field focused". With an empty query every file in
+ *  the repo is a hit, so a reader who has typed nothing — who has merely
+ *  arrived at the field with the caret — would have to walk two hundred
+ *  results to get past the card. A query is what makes the list
+ *  something you are navigating rather than something that happens to be
+ *  under you. */
+function finderOwnsVerticalKeys(): boolean {
+  return finderFocused() && finderQuery.length > 0;
 }
 /** Movement keys decide only *who* moves — the focused widget, or the
  *  editor. The moving itself is the host's, which is why none of the
@@ -1724,12 +2085,12 @@ function moveFinder(delta: number): void {
  *  mean something the host cannot know: with the finder focused they
  *  walk its *hits*, which are plugin state, not text in the field. */
 registerHandler("welcome_up", () => {
-  if (finderFocused()) moveFinder(-1);
-  else editor.executeAction("move_up");
+  if (finderOwnsVerticalKeys() && moveFinder(-1)) return;
+  editor.executeAction("move_up");
 });
 registerHandler("welcome_down", () => {
-  if (finderFocused()) moveFinder(1);
-  else editor.executeAction("move_down");
+  if (finderOwnsVerticalKeys() && moveFinder(1)) return;
+  editor.executeAction("move_down");
 });
 
 
@@ -1747,6 +2108,7 @@ registerHandler("welcome_close", () => {
   }
   closeWelcome();
 });
+
 
 // A mode that declares `allowTextInput` owns the keyboard: the host
 // blocks unbound Ctrl-/Alt-modified keys so a focused text field can
@@ -1767,21 +2129,6 @@ for (const [, action] of FORWARDED) {
   registerHandler(`welcome_do_${action}`, () => editor.executeAction(action));
 }
 
-/** `/` puts focus in the finder from anywhere on the page, so reaching
- *  it never means counting Tab stops. `setFocusKey` is the widget
- *  runtime's own focus mutation, so the host stays the single owner of
- *  focus. */
-registerHandler("welcome_focus_find", () => {
-  if (!panel) return;
-  if (folded.has("finder")) {
-    folded.delete("finder");
-    render();
-  }
-  lastFocusedWidget = "finderField";
-  panel.setFocusKey("finderField");
-  jumpTo("1");
-});
-
 registerHandler("mode_text_input", (args: { text: string }) => {
   if (!panel || !args?.text) return;
   // Every character typed into a focused field arrives here, including
@@ -1793,10 +2140,22 @@ registerHandler("mode_text_input", (args: { text: string }) => {
 editor.defineMode(
   "welcome",
   [
-    ["1", "welcome_jump_1"],
-    ["2", "welcome_jump_2"],
-    ["3", "welcome_jump_3"],
-    ["0", "welcome_jump_top"],
+    // **Nothing printable is bound here.** Every key this page claims is
+    // one no text field wants: Tab, Enter, Escape, the arrows, Backspace
+    // and Delete, and the handful of Ctrl-/Alt- accelerators the page
+    // promises in print.
+    //
+    // Four went, and the reason is the same for all four. `1` / `2` / `3`
+    // jumped to a level, `0` went to the top, `/` put focus in the
+    // finder and Space activated the focused control — and each is a
+    // character a reader can perfectly well mean to *type* into the
+    // field this page carries. The host does hand a focused text widget
+    // the key ahead of the mode's bindings, so they were not actually
+    // stolen; but "it works because of a precedence rule" is a worse
+    // answer than not binding them, and the page has better ways to say
+    // all four now: the caret navigates, Enter activates, the Contents
+    // section jumps, and the door cards are Tab stops that jump when you
+    // press Enter on them.
     ["Tab", "welcome_tab"],
     // Shift+Tab is its own key code, not Tab carrying a modifier: the
     // terminal sends CSI Z and the parser yields `BackTab`. `S-Tab`
@@ -1806,12 +2165,10 @@ editor.defineMode(
     ["BackTab", "welcome_shift_tab"],
     ["S-BackTab", "welcome_shift_tab"],
     ["Return", "welcome_enter"],
-    ["Space", "welcome_space"],
     ["Up", "welcome_up"],
     ["Down", "welcome_down"],
     ["Backspace", "welcome_backspace"],
     ["Delete", "welcome_delete"],
-    ["/", "welcome_focus_find"],
     ["Escape", "welcome_close"],
     ...FORWARDED.map(([k, action]) => [k, `welcome_do_${action}`] as [string, string]),
   ],
@@ -1860,6 +2217,18 @@ function activateKey(k: string): void {
     api?.focusWorkspace?.(id);
     return;
   }
+  if (k === "ui_contents") {
+    // Mount it if the reader closed it, raise it either way, and put the
+    // keyboard in it — the whole reason this button exists is that a
+    // sidebar section can be closed or buried.
+    mountContents(true);
+    return;
+  }
+  const uiFeature = UI_FEATURES.find(([key]) => key === k);
+  if (uiFeature && uiFeature[2]) {
+    editor.executeAction(uiFeature[2]);
+    return;
+  }
   switch (k) {
     case "act_open":
       editor.executeAction("open");
@@ -1869,6 +2238,9 @@ function activateKey(k: string): void {
       return;
     case "act_new":
       editor.executeAction("new");
+      return;
+    case "act_review_diff":
+      editor.executeAction("start_review_diff");
       return;
     case "act_review":
       // Renamed by #3098, along with the palette entry: the command
@@ -1926,38 +2298,83 @@ function openFinderHit(index: number): void {
   editor.openFile(hit.path);
 }
 
+/** The Contents section's own events.
+ *
+ *  Routing is decided by `panel_id` at the call site, so this returns
+ *  nothing: it used to answer "did I handle it", and the one caller
+ *  discarded the answer. */
+function handleContentsEvent(args: {
+  event_type: string;
+  payload?: unknown;
+}): void {
+  const payload = (args.payload ?? {}) as { index?: unknown; via?: unknown };
+  if (args.event_type === "cancel") {
+    // The section's `×`: the host has already unmounted it. The button
+    // on the page is how it comes back.
+    contentsMounted = false;
+    return;
+  }
+  if (args.event_type === "select" || args.event_type === "activate") {
+    const index = typeof payload.index === "number" ? payload.index : -1;
+    const entry = outline[index];
+    if (!entry || bufferId === null) return;
+    outlineSelected = entry.key;
+    // **An arrow key browses; a click or Enter goes.** Both halves are
+    // deliberate, and the first is why an arrow does not scroll the page.
+    //
+    // Going means moving the caret (`scrollToWidget` seats it), and on
+    // this page the caret is what focus follows — so a scroll on every
+    // arrow key would hand the keyboard to the page and the reader would
+    // lose the outline they were walking after one press. `markdown_toc`
+    // makes the same split under the name "cursor mode": browsing an
+    // outline is not navigating it, and Enter is what commits.
+    const goThere = args.event_type === "activate" ||
+      (payload as { via?: unknown }).via === "click";
+    if (!goThere) return;
+    editor.scrollToWidget(bufferId, entry.key, "top");
+    // `"top"` rather than a minimal reveal: the reader asked to be taken
+    // to this section, not to be shown that it exists.
+    editor.floatingPanelControl(CONTENTS_PANEL_ID, "blur", 0);
+    editor.showBuffer(bufferId);
+  }
+}
+
 editor.on("widget_event", (args) => {
+  if (args.panel_id === CONTENTS_PANEL_ID) {
+    handleContentsEvent(args);
+    return;
+  }
   if (!panel || args.panel_id !== panel.id()) return;
   const k = typeof args.widget_key === "string" ? args.widget_key : "";
-  if (k.length > 0) lastFocusedWidget = k;
 
-  // Tab / Shift+Tab move focus; the host scrolls the pane only for a
-  // focused *text* widget, so a focused button further down this
-  // document would otherwise be invisible. Reveal it.
+  // A `focus` event is the host stating where focus now is, and `""` is
+  // one of the things it can state — `focusFollowsCursor` clears focus
+  // every time the caret lands on prose, which is most of this page.
+  // Mirroring only non-empty keys left this proxy naming a widget
+  // nothing was focused on, so `Enter` on a paragraph still opened the
+  // finder's marked hit.
+  //
+  // And the `focus` branch is the *only* writer. There used to be a
+  // second one here, running for every event type, and the page has
+  // widgets the host never focuses: `doorRow` marks six of a card's
+  // seven rows `focusable: false`, and the finder's results are keyed
+  // individually and not focusable at all. Clicking either fires
+  // `activate` without moving focus, so that writer left the mirror
+  // naming a widget nothing was focused on — with host focus still in
+  // the finder field, `finderFocused()` went false while the field was
+  // still taking what you typed, and Up/Down stopped walking the
+  // results.
   if (args.event_type === "focus") {
-    // `"minimal"` is the whole of it now: scroll only as far as it takes
-    // to bring the control on screen, and not at all when it is already
-    // there.
-    //
-    // This used to name the enclosing *card* and scroll to its top,
-    // through a `cardForWidget` table mapping key prefixes to cards.
-    // Three bugs in one workaround. The table answered `null` for the
-    // startup switch, the three doors and the three verbs, so those
-    // seven never scrolled at all — from below the fold, seven
-    // consecutive Tabs moved focus with nothing changing on screen.
-    // Where it did answer, it scrolled unconditionally, so tabbing
-    // between two controls of one card moved the page for no reason.
-    // And scrolling to a top means the focused control lands on the top
-    // row with its own card title pushed off above it — a button whose
-    // label you can no longer read — which also stopped Tab and
-    // Shift+Tab being inverses, because a jump forgets where it came
-    // from.
-    //
-    // A minimal reveal has none of those cases. There is nothing left
-    // for the page to know about its own layout.
-    if (bufferId !== null && k.length > 0) {
-      editor.scrollToWidget(bufferId, k, "minimal");
-    }
+    lastFocusedWidget = k;
+    markOutlineFor(k);
+    // No reveal here any more. The page used to call `scrollToWidget`
+    // with `"minimal"`, which *is* a caret move — and under
+    // `focusFollowsCursor` the host has already made the only correct
+    // one. Repeating it was actively wrong in the case the host is
+    // careful about: a card several rows tall anchors at its top, so
+    // arrowing up into a door card's last row focused the card and this
+    // then threw the caret back over everything the reader had just
+    // walked past.
     return;
   }
 
