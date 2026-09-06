@@ -35,7 +35,7 @@ png = "0.18"
 muda = "0.17"
 # ObjC interop for NSNotificationCenter (menu tracking detection).
 # Versions match the ones muda 0.15 already pulls in.
-objc2-foundation = { version = "0.2", features = ["NSNotification", "NSString", "NSOperation", "block2"] }
+objc2-foundation = { version = "0.3", features = ["NSNotification", "NSString", "NSOperation", "block2"] }
 block2 = "0.5"
 
 # Windows: AppUserModelID registration so taskbar grouping and the pinned-
