@@ -1758,6 +1758,42 @@ impl Editor {
         Ok(())
     }
 
+    /// Handle PreviewFileInSplit: browse a file in `split_id` as the
+    /// editor's single preview tab, without moving focus there.
+    ///
+    /// The two failure modes are deliberately not alike. A split id that
+    /// doesn't resolve is the plugin's bug and is reported (#2769) — the
+    /// same rule `handle_open_file_in_split` follows. A file that won't
+    /// preview is not: a browse walks over whatever the search matched,
+    /// including files that are unreadable, or large enough that loading
+    /// them would have to ask about their encoding
+    /// (`LargeFileEncodingConfirmation`), and neither a dialog nor an error
+    /// belongs in the middle of a live result list. Skip it and log — the
+    /// same thing the explorer's arrow-key preview does — and leave the
+    /// full story for the deliberate open the user makes with Enter.
+    pub(super) fn handle_preview_file_in_split(
+        &mut self,
+        split_id: usize,
+        path: std::path::PathBuf,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> AnyhowResult<()> {
+        let target_split = LeafId(SplitId(split_id));
+        if !self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .is_some_and(|(_, view_states)| view_states.contains_key(&target_split))
+        {
+            anyhow::bail!("previewFileInSplit: split {} does not exist", split_id);
+        }
+
+        if let Err(e) = self.preview_file_in_split(&path, target_split, line, column) {
+            tracing::debug!("previewFileInSplit: skipping preview for {:?}: {}", path, e);
+        }
+        Ok(())
+    }
+
     /// Handle OpenFileInBackground command
     pub(super) fn handle_open_file_in_background(&mut self, path: std::path::PathBuf) {
         // Open file in a new tab without switching to it

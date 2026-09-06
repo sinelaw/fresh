@@ -1182,6 +1182,17 @@ impl Editor {
             } => {
                 return self.handle_open_file_in_split(split_id, path, line, column);
             }
+            PluginCommand::PreviewFileInSplit {
+                split_id,
+                path,
+                line,
+                column,
+            } => {
+                return self.handle_preview_file_in_split(split_id, path, line, column);
+            }
+            PluginCommand::DismissPreview => {
+                self.dismiss_preview();
+            }
             PluginCommand::ShowBuffer { buffer_id } => {
                 self.handle_show_buffer(buffer_id);
             }
