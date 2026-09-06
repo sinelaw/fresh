@@ -40,6 +40,7 @@ impl Editor {
         panel_width: u32,
         avail_height: Option<u32>,
         auto_focus_first: bool,
+        h_pan: &std::collections::HashMap<String, i32>,
     ) -> crate::widgets::RenderOutput {
         let theme_guard = self.theme.read().unwrap();
         crate::widgets::render_spec_with_options(
@@ -66,6 +67,10 @@ impl Editor {
                 // over its own previous value, so a repaint that did not
                 // carry this would start every list back at the top.
                 prev_painted: Some(prev_painted),
+                // The reader's sideways fold, for the same reason: a repaint
+                // that dropped it would slide every row back to its resting
+                // window under a reader who had panned away from it.
+                h_pan: Some(h_pan),
                 ..Default::default()
             },
         )
@@ -89,6 +94,7 @@ pub(super) fn render_floating_spec(
     hover_popup_row: &str,
     markdown: Option<crate::widgets::MarkdownCtx<'_>>,
     auto_focus_first: bool,
+    h_pan: Option<&std::collections::HashMap<String, i32>>,
 ) -> crate::widgets::RenderOutput {
     crate::widgets::render_spec_with_options(
         spec,
@@ -109,6 +115,10 @@ pub(super) fn render_floating_spec(
             markdown,
             avail_height,
             prev_painted: Some(prev_painted),
+            // The reader's sideways fold, for the same reason: a repaint that
+            // dropped it would slide every row back to its resting window
+            // under a reader who had panned away from it.
+            h_pan,
         },
     )
 }
@@ -811,6 +821,11 @@ impl Editor {
                 .get(panel_key)
                 .map(|p| p.painted.clone())
                 .unwrap_or_default();
+            let h_pan = self
+                .widget_registry
+                .get(panel_key)
+                .map(|p| p.h_pan.clone())
+                .unwrap_or_default();
             let prev_focus = self
                 .widget_registry
                 .focus_key(panel_key)
@@ -880,6 +895,7 @@ impl Editor {
                     grammars: Some(self.grammar_registry.as_ref()),
                 }),
                 auto_focus_first,
+                Some(&h_pan),
             );
             (buffer_id, is_floating, panel_width, out)
         };
@@ -1124,6 +1140,10 @@ impl Editor {
         Some(crate::widgets::kinds::Viewport {
             items: (window.h as u32).max(1),
             rows: cells as u32,
+            // `w` counts cells on both kinds of window — it is the one part
+            // of an item-scrolling rectangle that is not in items — so it is
+            // the width a sideways pan is measured against.
+            cols: window.w as u32,
         })
     }
 
@@ -2340,6 +2360,44 @@ impl Editor {
         true
     }
 
+    /// Pan the keyed widget sideways by `delta` display columns.
+    ///
+    /// The runtime's counterpart to [`Self::wheel_widget_by_key`], and it does
+    /// not go through a kind: a pan moves the panel's own fold rather than a
+    /// window a kind resolves, so there is nothing for a `Tree` or a `List` to
+    /// decide. What each kind decides is whether it *honours* the fold, which
+    /// it does at paint time by threading it into `render_tree_row` — and
+    /// [`pan_bounds`] answers that same question from the spec, so a notch over
+    /// a kind that cannot show a pan falls through instead of being swallowed.
+    ///
+    /// [`pan_bounds`]: crate::widgets::render::pan_bounds
+    pub(crate) fn pan_widget_by_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        delta: i32,
+    ) -> bool {
+        if widget_key.is_empty() {
+            return false;
+        }
+        let Some(spec) = self.widget_registry.get(panel_key).map(|p| p.spec.clone()) else {
+            return false;
+        };
+        let Some(widget) = crate::widgets::find_widget_by_key(&spec, widget_key) else {
+            return false;
+        };
+        let viewport = self.widget_viewport(panel_key, widget, widget_key);
+        let bounds = crate::widgets::render::pan_bounds(widget, viewport.cols, None);
+        let Some(panel) = self.widget_registry.get_mut(panel_key) else {
+            return false;
+        };
+        if !panel.pan_h(widget_key, Some(delta), bounds) {
+            return false;
+        }
+        self.rerender_widget_panel(panel_key);
+        true
+    }
+
     /// **Does the tree describe this panel's interior** — and it does for
     /// every mounted panel. The dock, the floating modal, a sidebar section
     /// and a pane all describe what is mounted in them; the pane-mounted class
@@ -2373,6 +2431,27 @@ impl Editor {
             .panels_for_buffer(buffer_id)
             .into_iter()
             .find(|panel_key| self.panel_focused_widget_is_text(panel_key))
+    }
+
+    /// The first panel rendering into `buffer_id` that has a focused widget
+    /// of *any* kind.
+    ///
+    /// [`Self::focused_text_widget_panel_for_buffer`] answers the narrower
+    /// question the clipboard path asks; this one is for a key addressed to
+    /// whatever holds focus — a `Tree`'s pan keys, where the whole point is
+    /// that focus is *not* on a text field.
+    pub(super) fn focused_widget_panel_for_buffer(
+        &self,
+        buffer_id: crate::model::event::BufferId,
+    ) -> Option<crate::widgets::PanelKey> {
+        self.widget_registry
+            .panels_for_buffer(buffer_id)
+            .into_iter()
+            .find(|k| {
+                self.widget_registry
+                    .get(k)
+                    .is_some_and(|p| !p.focus_key.is_empty())
+            })
     }
 
     /// True when `panel_key`'s currently-focused widget is a `Text`
@@ -3503,6 +3582,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -3566,6 +3646,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -3725,6 +3806,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         assert_eq!(
             out.tabbable,
@@ -3798,6 +3880,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -3866,6 +3949,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         // What the collector resolved for the same list, so the two numbers
         // are visible side by side: with a plain header above it they agree
@@ -3903,6 +3987,7 @@ mod tests {
                     rows: 3,
                     items: 3,
                     offset: 0,
+                    cols: 0,
                 },
             );
 
@@ -4043,7 +4128,11 @@ mod tests {
         };
         assert_eq!(
             Viewport::from_spec(&cards),
-            Viewport { rows: 12, items: 3 },
+            Viewport {
+                rows: 12,
+                items: 3,
+                cols: 0,
+            },
             "twelve rows of four-row cards is three cards"
         );
         let lines = match cards.clone() {
@@ -4075,7 +4164,8 @@ mod tests {
             Viewport::from_spec(&lines),
             Viewport {
                 rows: 12,
-                items: 12
+                items: 12,
+                cols: 0,
             },
             "and a single-line tree's rows are its nodes"
         );
@@ -4114,6 +4204,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -4180,6 +4271,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -4239,6 +4331,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -4296,6 +4389,7 @@ mod tests {
             "",
             None,
             false,
+            None,
         );
         assert_eq!(out.focus_key, "", "nothing seeded");
         editor.widget_registry.mount(
@@ -4346,6 +4440,7 @@ mod tests {
             "",
             None,
             true,
+            None,
         );
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -4411,6 +4506,7 @@ mod tests {
                 "",
                 None,
                 true,
+                None,
             )
         };
         // The dock before the dropdown: a list, and nothing else to focus.

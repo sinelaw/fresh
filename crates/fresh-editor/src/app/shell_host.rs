@@ -2151,6 +2151,36 @@ impl Editor {
                 };
                 self.wheel_widget_by_key(&key, &widget, delta);
             }
+            UiFact::WidgetPan {
+                slot,
+                widget,
+                delta,
+            } => {
+                use crate::view::shell::widgets::Slot;
+                // Every plugin-panel slot, unlike `WidgetWheel`: the panel a
+                // sideways notch is aimed at is most often a pane-mounted one
+                // (Search & Replace is the case this exists for), and a pane
+                // resolves to its panel through its buffer.
+                let key = match slot {
+                    Slot::Dock => self
+                        .panel(crate::app::PanelSlot::Dock)
+                        .map(|p| p.panel_key.clone()),
+                    Slot::Floating => self
+                        .panel(crate::app::PanelSlot::Floating)
+                        .map(|p| p.panel_key.clone()),
+                    Slot::Sidebar(i) => self
+                        .panel(crate::app::PanelSlot::Sidebar(i))
+                        .map(|p| p.panel_key.clone()),
+                    Slot::Pane(pane) => self.pane_panel_key(pane),
+                    // The settings surfaces and the prompt toolbar describe
+                    // their own specs with no plugin panel behind them —
+                    // nothing to pan.
+                    Slot::Settings | Slot::SettingsEntry | Slot::PromptToolbar => None,
+                };
+                if let Some(key) = key {
+                    self.pan_widget_by_key(&key, &widget, delta);
+                }
+            }
             UiFact::WidgetHover {
                 slot,
                 widget,

@@ -7,3 +7,9 @@ crates/fresh-editor/docs/fresh.txt text eol=lf
 # checkout on Windows makes every golden test fail on the line terminator
 # rather than on anything the picture shows.
 crates/fresh-ui/tests/golden/*.txt text eol=lf
+
+# Same again for the keyboard reference: its key-name tables are generated
+# from the code and compared against a freshly rendered block, which is always
+# LF. `key_name_docs` failed the whole Windows job on the line terminator
+# while reporting the tables as out of date, which they were not.
+docs/configuration/keyboard.md text eol=lf

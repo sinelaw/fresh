@@ -825,6 +825,23 @@ pub enum UiFact {
         widget: String,
         delta: i32,
     },
+    /// **A sideways notch on a rows widget** — Shift+wheel, or a trackpad's
+    /// horizontal scroll, over a `List` or `Tree`.
+    ///
+    /// Separate from [`UiFact::WidgetWheel`] because it moves a different
+    /// window: vertical scroll is the library's, resolved by the viewport the
+    /// description gave the element, while sideways is the runtime's — the
+    /// rows arrive fitted to the panel's width, so there is no wide content
+    /// for a `scroll.x` to move and the pan has to reach the runtime that
+    /// fits them. `delta` is in display columns, positive to reveal text on
+    /// the right. Every slot is handled here, the pane's included: a pane is
+    /// one buffer and a buffer names its panel.
+    WidgetPan {
+        slot: super::widgets::Slot,
+        widget: String,
+        delta: i32,
+    },
+    /// **Focus moved onto a plugin widget, and the runtime is being told.**
     /// **The tree's ring landed on a plugin widget, and the runtime is being
     /// told.**
     ///

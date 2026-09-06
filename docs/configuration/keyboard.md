@@ -218,6 +218,154 @@ The macOS keymap disables Alt+0-9 bindings because these key combinations are us
 
 If you find that certain Alt combinations insert characters instead of triggering editor commands, ensure your terminal's Option key is configured as Meta (see above).
 
+## Key Names
+
+The `key` field of a binding takes one of the names below.
+
+<!-- BEGIN GENERATED KEY NAMES -->
+
+*This section is generated from the key tables in the source. Edit those, not this text — see `crates/fresh-editor/tests/key_name_docs.rs`.*
+
+### Named keys
+
+| Name | Key |
+|---|---|
+| `enter` | `Enter` |
+| `backspace` | `Backspace` |
+| `delete`, `del` | `Delete` |
+| `insert`, `ins` | `Insert` |
+| `tab` | `Tab` |
+| `backtab` | `BackTab` |
+| `escape`, `esc` | `Esc` |
+| `space` | the space bar |
+| `left` | `Left` |
+| `right` | `Right` |
+| `up` | `Up` |
+| `down` | `Down` |
+| `home` | `Home` |
+| `end` | `End` |
+| `pageup` | `PageUp` |
+| `pagedown` | `PageDown` |
+| `capslock` | `CapsLock` |
+| `scrolllock` | `ScrollLock` |
+| `numlock` | `NumLock` |
+| `printscreen` | `PrintScreen` |
+| `pause` | `Pause` |
+| `menu` | `Menu` |
+
+Any single character is also a key name — `"a"`, `"7"`, `"é"` — as is a function key, `"f1"` through `"f35"` (F13 and up need a terminal that reports them). Names are case-insensitive.
+
+### Punctuation
+
+The single character is always accepted and is what the keybinding editor writes back. These X11 keysym spellings are accepted too, for the keys that are awkward to write literally in JSON.
+
+| Name | Character |
+|---|---|
+| `asterisk`, `star` | `*` |
+| `plus` | `+` |
+| `minus`, `hyphen` | `-` |
+| `slash` | `/` |
+| `period`, `dot` | `.` |
+| `equal`, `equals` | `=` |
+| `backslash` | `\` |
+| `comma` | `,` |
+| `semicolon` | `;` |
+| `colon` | `:` |
+| `apostrophe`, `quote` | `'` |
+| `quotedbl`, `doublequote` | `"` |
+| `grave`, `backtick` | `` ` `` |
+| `tilde` | `~` |
+| `exclam`, `exclamation` | `!` |
+| `at` | `@` |
+| `numbersign`, `hash` | `#` |
+| `dollar` | `$` |
+| `percent` | `%` |
+| `asciicircum`, `caret` | `^` |
+| `ampersand` | `&` |
+| `underscore` | `_` |
+| `bar`, `pipe` | `\|` |
+| `question` | `?` |
+| `less`, `lessthan` | `<` |
+| `greater`, `greaterthan` | `>` |
+| `parenleft` | `(` |
+| `parenright` | `)` |
+| `bracketleft` | `[` |
+| `bracketright` | `]` |
+| `braceleft` | `{` |
+| `braceright` | `}` |
+
+### Numeric keypad
+
+**These are aliases, not separate keys.** A terminal reports the keypad using the same code as the main keyboard, so binding `kp_multiply` also binds `*`, and binding `kp_enter` also binds `Enter`. There is no way to tell the two apart at this layer. `kp_begin` — the `5` key with Num Lock off — is the one exception: nothing on the main keyboard sends it.
+
+| Name | Binds the same key as |
+|---|---|
+| `kp_0` | `0` |
+| `kp_1` | `1` |
+| `kp_2` | `2` |
+| `kp_3` | `3` |
+| `kp_4` | `4` |
+| `kp_5` | `5` |
+| `kp_6` | `6` |
+| `kp_7` | `7` |
+| `kp_8` | `8` |
+| `kp_9` | `9` |
+| `kp_decimal` | `.` |
+| `kp_divide` | `/` |
+| `kp_multiply` | `*` |
+| `kp_subtract` | `-` |
+| `kp_add` | `+` |
+| `kp_enter` | `Enter` |
+| `kp_equal` | `=` |
+| `kp_separator` | `,` |
+| `kp_left` | `Left` |
+| `kp_right` | `Right` |
+| `kp_up` | `Up` |
+| `kp_down` | `Down` |
+| `kp_page_up` | `PageUp` |
+| `kp_page_down` | `PageDown` |
+| `kp_home` | `Home` |
+| `kp_end` | `End` |
+| `kp_insert` | `Insert` |
+| `kp_delete` | `Delete` |
+| `kp_begin` | `KeypadBegin` |
+
+### Media and modifier keys
+
+Reported only by a terminal speaking the kitty keyboard protocol, and for the modifier keys only when it is asked to report every key event. Unlike the keypad these are **not** aliases: nothing on the main keyboard means `volume_mute` or `left_hyper`, so each binds a key of its own.
+
+| Name | Key |
+|---|---|
+| `media_play` | `Media(Play)` |
+| `media_pause` | `Media(Pause)` |
+| `media_play_pause` | `Media(PlayPause)` |
+| `media_reverse` | `Media(Reverse)` |
+| `media_stop` | `Media(Stop)` |
+| `media_fast_forward` | `Media(FastForward)` |
+| `media_rewind` | `Media(Rewind)` |
+| `media_next` | `Media(TrackNext)` |
+| `media_previous` | `Media(TrackPrevious)` |
+| `media_record` | `Media(Record)` |
+| `volume_down` | `Media(LowerVolume)` |
+| `volume_up` | `Media(RaiseVolume)` |
+| `volume_mute` | `Media(MuteVolume)` |
+| `left_shift` | `Modifier(LeftShift)` |
+| `left_ctrl` | `Modifier(LeftControl)` |
+| `left_alt` | `Modifier(LeftAlt)` |
+| `left_super` | `Modifier(LeftSuper)` |
+| `left_hyper` | `Modifier(LeftHyper)` |
+| `left_meta` | `Modifier(LeftMeta)` |
+| `right_shift` | `Modifier(RightShift)` |
+| `right_ctrl` | `Modifier(RightControl)` |
+| `right_alt` | `Modifier(RightAlt)` |
+| `right_super` | `Modifier(RightSuper)` |
+| `right_hyper` | `Modifier(RightHyper)` |
+| `right_meta` | `Modifier(RightMeta)` |
+| `iso_level3_shift` | `Modifier(IsoLevel3Shift)` |
+| `iso_level5_shift` | `Modifier(IsoLevel5Shift)` |
+
+<!-- END GENERATED KEY NAMES -->
+
 ## Chord (Multi-Key) Bindings
 
 A binding can be a *sequence* of key presses instead of a single combination — the emacs keymap's `C-x C-s` for save, or `M-g g` for go-to-line. In `config.json`, a chord uses `keys` (an array of key presses) in place of `key`/`modifiers`:

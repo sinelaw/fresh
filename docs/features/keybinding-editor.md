@@ -109,7 +109,7 @@ Each binding in `config.json` has this structure:
 
 | Field | Description |
 |-------|-------------|
-| `key` | The key name (e.g., `"s"`, `"Enter"`, `"F1"`, `"Up"`) |
+| `key` | The key name (e.g., `"s"`, `"Enter"`, `"F1"`, `"Up"`) — see [Key Names](../configuration/keyboard.md#key-names) for every accepted spelling |
 | `modifiers` | Array of modifier keys: `"ctrl"`, `"alt"`, `"shift"`, `"super"` |
 | `action` | The action to trigger (see action list via autocomplete in the editor) |
 | `when` | Context when this binding is active (optional, defaults to `"normal"`) |

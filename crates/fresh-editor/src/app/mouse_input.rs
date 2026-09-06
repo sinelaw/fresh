@@ -14,10 +14,13 @@ use crate::view::prompt::PromptType;
 use anyhow::Result as AnyhowResult;
 use std::time::{Duration, Instant};
 
-/// Columns one notch of a sideways wheel pans. Horizontal panning has
-/// no line-oriented setting to follow — `mouse_wheel_scroll_lines`
-/// counts lines — so it keeps the fixed step it always had.
-const WHEEL_COLUMNS: i32 = 3;
+/// Columns one notch of a sideways wheel pans. Horizontal panning has no
+/// line-oriented setting to follow — `mouse_wheel_scroll_lines` counts lines
+/// — so it takes the same fixed step a pan keystroke does, which is what
+/// [`PAN_COLUMNS`] is for.
+///
+/// [`PAN_COLUMNS`]: crate::widgets::render::PAN_COLUMNS
+const WHEEL_COLUMNS: i32 = crate::widgets::render::PAN_COLUMNS;
 
 /// How long one line of a smoothed wheel gesture is meant to take.
 /// Roughly a frame at 60Hz, so a three-line notch walks across about

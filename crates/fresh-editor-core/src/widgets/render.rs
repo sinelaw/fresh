@@ -561,6 +561,12 @@ pub struct RenderContext<'a> {
     /// Settings dialog, a toolbar, most tests) starts every window at
     /// the top, exactly as an absent instance-state offset used to.
     pub prev_painted: Option<&'a HashMap<String, PaintedWindow>>,
+    /// How far each keyed rows-widget is panned sideways, in display columns.
+    /// The reader's own fold, carried here for the same reason
+    /// `prev_painted` is: the painter is where a window is resolved, and
+    /// sideways is a window like any other. `None` (a stateless render)
+    /// pans nothing, exactly as an unset entry does.
+    pub h_pan: Option<&'a HashMap<String, i32>>,
 }
 
 impl RenderContext<'_> {
@@ -571,6 +577,14 @@ impl RenderContext<'_> {
     pub fn painted(&self, key: Option<&str>) -> Option<PaintedWindow> {
         let k = key.filter(|k| !k.is_empty())?;
         self.prev_painted?.get(k).copied()
+    }
+
+    /// Sideways pan for `key`, in display columns. Zero for a keyless widget
+    /// — a pan is addressed to a widget and an unkeyed one cannot be named.
+    pub fn h_pan(&self, key: Option<&str>) -> i32 {
+        key.filter(|k| !k.is_empty())
+            .and_then(|k| self.h_pan?.get(k).copied())
+            .unwrap_or(0)
     }
 
     /// Whether `key` names the focused widget. Empty keys never match.
@@ -628,6 +642,10 @@ pub struct RenderOptions<'a> {
     /// previous render published. A host that keeps a panel mounted
     /// MUST thread it, or every repaint starts its lists at the top.
     pub prev_painted: Option<&'a HashMap<String, PaintedWindow>>,
+    /// See [`RenderContext::h_pan`] — how far each rows-widget is panned
+    /// sideways. A host that keeps a panel mounted MUST thread it, or every
+    /// repaint slides the reader's rows back to their resting window.
+    pub h_pan: Option<&'a HashMap<String, i32>>,
 }
 
 /// Render a spec to a [`RenderOutput`] under explicit [`RenderOptions`].
@@ -668,6 +686,7 @@ pub fn render_spec_with_options(
         marker_gutter: opts.marker_gutter,
         avail_height: opts.avail_height,
         prev_painted: opts.prev_painted,
+        h_pan: opts.h_pan,
     };
     let mut next_state = HashMap::new();
     let collected = render_collected(spec, prev, &mut next_state, ctx, panel_width);
@@ -2707,6 +2726,355 @@ pub struct RenderedTreeRow {
 /// checkbox glyph reuses `ui.tab_active_fg` (the same key the
 /// `Toggle` widget uses for its checked-state glyph) so it reads
 /// as a control surface against the row's text.
+/// A row body fitted to the columns it has, and where the slice came from.
+///
+/// The byte offsets are into the *original* body, so the caller can carry the
+/// plugin's overlays across the cut: an overlay is clamped into
+/// `[slice_start, slice_end)`, rebased to the slice, then shifted by
+/// `lead_bytes` (the leading `…`, when one was drawn) and by the row prefix.
+pub struct WindowedBody {
+    /// The text to draw: the slice, with `…` for each end that was cut.
+    pub text: String,
+    /// Byte offset in the body where the drawn slice starts.
+    pub slice_start: usize,
+    /// Byte offset in the body where the drawn slice ends.
+    pub slice_end: usize,
+    /// Bytes of leading marker drawn before the slice.
+    pub lead_bytes: usize,
+    /// The pans this row can actually use, as a delta from where it rests.
+    ///
+    /// The clamp the paint applied, handed back so the *stored* pan can be
+    /// held to it. Without this the panel keeps a number no row can reach —
+    /// `S-End` overshoots by however far the row rests from its own tail —
+    /// and the reader spends that difference pressing `S-Left` at a screen
+    /// that does not move. `(0, 0)` for a row that fits.
+    pub pan_range: (i32, i32),
+}
+
+/// Bytes of the char at char index `n`, or the length past the end.
+fn byte_of_char(s: &str, n: usize) -> usize {
+    s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+/// Byte offset `budget` display columns after `from`, never splitting a
+/// double-width cell across the edge.
+fn byte_after_cols(s: &str, from: usize, budget: usize) -> usize {
+    use crate::primitives::display_width::char_width;
+    let mut used = 0usize;
+    for (i, ch) in s[from..].char_indices() {
+        let w = char_width(ch);
+        if used + w > budget {
+            return from + i;
+        }
+        used += w;
+    }
+    s.len()
+}
+
+/// The column this row would rest at with no panning: far enough right that
+/// the anchor is on screen, and no further.
+///
+/// The anchor is the span the row exists to show — a search result's own
+/// match. When it already fits in the head there is nothing to slide, which
+/// is the overwhelmingly common case and leaves ordinary rows exactly as they
+/// were. Otherwise a third of the budget is kept as leading context, so the
+/// anchor reads in situ rather than flush against the elision marker.
+fn resting_start_col(body: &str, budget: usize, anchor: Option<(usize, usize)>) -> usize {
+    use crate::primitives::display_width::visual_column_at_byte;
+    let Some((start_chars, len_chars)) = anchor else {
+        return 0;
+    };
+    let a_col = visual_column_at_byte(body, byte_of_char(body, start_chars));
+    let b_col = visual_column_at_byte(body, byte_of_char(body, start_chars + len_chars));
+    // One column is owed to the trailing marker whenever anything is cut.
+    if b_col <= budget.saturating_sub(1) {
+        return 0;
+    }
+    a_col.saturating_sub((budget / 3).max(1))
+}
+
+/// Fit `body` into `budget` display columns, panned `pan` columns from where
+/// the row would rest.
+///
+/// **Display columns, not codepoints.** Every other width hint in this file
+/// counts codepoints, which is the same number for the ASCII a panel is
+/// usually full of and wrong by a factor of two for CJK — a `漢`-prefixed row
+/// was built half again as wide as the panel and cut by the terminal, taking
+/// the very text the row existed to show off the right edge (issue #1580).
+/// A pan has to move by what the reader sees, so this measures cells.
+///
+/// `pan` is a delta from the resting column, shared by every row in a tree:
+/// each row starts where its own content needs it to and they slide together.
+/// It is clamped per row, so panning right stops at the longest row's tail and
+/// panning left brings every row home to column zero.
+/// Where a body rests, and how far it can travel each way from there.
+///
+/// The measuring half of [`window_row_body`], split out because the pan a
+/// panel *stores* has to be held to the same limit the paint would apply —
+/// and a second copy of this arithmetic is exactly the drift that let
+/// `Shift+End` leave a number `Shift+Left` could not walk back.
+fn row_travel(body: &str, budget: usize) -> (usize, usize) {
+    use crate::primitives::display_width::str_width;
+    if budget == 0 {
+        return (0, 0);
+    }
+    let content = body.trim_end_matches(' ');
+    let total = str_width(content);
+    if total <= budget {
+        return (0, 0);
+    }
+    // The right-hand limit owes the leading marker a column; see below.
+    let max_start = total.saturating_sub(budget.saturating_sub(1));
+    (max_start, 0)
+}
+
+/// The pans `body` can use, as a delta from where it rests.
+///
+/// `(0, 0)` for a row that fits: there is nothing to its left and nothing to
+/// its right, and a row that fits never moves at any pan.
+pub fn row_pan_range(body: &str, budget: usize, anchor: Option<(usize, usize)>) -> (i32, i32) {
+    let (max_start, _) = row_travel(body, budget);
+    if max_start == 0 {
+        return (0, 0);
+    }
+    let content = body.trim_end_matches(' ');
+    let rest = resting_start_col(content, budget, anchor).min(max_start);
+    let cap = |v: usize| v.min(i32::MAX as usize) as i32;
+    (-cap(rest), cap(max_start - rest))
+}
+
+pub fn window_row_body(
+    body: &str,
+    budget: usize,
+    anchor: Option<(usize, usize)>,
+    pan: i32,
+) -> WindowedBody {
+    use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
+    const MARKER: &str = "…";
+
+    if budget == 0 {
+        return WindowedBody {
+            text: String::new(),
+            slice_start: 0,
+            slice_end: 0,
+            lead_bytes: 0,
+            pan_range: (0, 0),
+        };
+    }
+    // **Trailing padding is not content.** A row arrives padded to the width
+    // its author computed, and that number is arrived at by subtracting a
+    // prefix the author has to guess at — so a row that fits can measure a
+    // column or two over and pick up a `…` that elides nothing but spaces.
+    // Overflow and the right-hand limit are both judged on the real text;
+    // the padding still renders when it fits, so a selection band still
+    // spans the row.
+    let content = body.trim_end_matches(' ');
+    let total = str_width(content);
+    // Fits, and nobody asked to move: the row is its own text, untouched.
+    if total <= budget && pan == 0 {
+        return WindowedBody {
+            text: body.to_string(),
+            slice_start: 0,
+            slice_end: body.len(),
+            lead_bytes: 0,
+            pan_range: (0, 0),
+        };
+    }
+
+    // **The right-hand limit owes the leading marker a column.** Any window
+    // that does not start at zero spends one column on `…`, so stopping at
+    // `total - budget` leaves the last column of the line permanently
+    // unreachable — panning right ran out one character short of the end.
+    let max_start = total.saturating_sub(budget.saturating_sub(1));
+    let rest = resting_start_col(content, budget, anchor).min(max_start);
+    let start_col = (rest as i64 + pan as i64).clamp(0, max_start as i64) as usize;
+
+    let slice_start = byte_offset_at_visual_column(body, start_col);
+    let lead = start_col > 0;
+    let lead_cols = usize::from(lead);
+    let content_budget = budget - lead_cols;
+
+    // Two passes, because whether a trailing marker is owed is only known
+    // once the first pass has seen whether anything is left over.
+    //
+    // `content_budget == 0` is the one-column panel with a lead marker: the
+    // marker *is* the whole window, and a trailing one would draw a second
+    // column the row does not have. Say "no tail owed" rather than emit it.
+    let full_end = byte_after_cols(body, slice_start, content_budget);
+    let trail = content_budget > 0 && full_end < content.len();
+    let slice_end = if trail {
+        byte_after_cols(body, slice_start, content_budget.saturating_sub(1))
+    } else {
+        full_end
+    };
+
+    let mut text = String::with_capacity(body.len().min(budget * 4) + 8);
+    if lead {
+        text.push_str(MARKER);
+    }
+    text.push_str(&body[slice_start..slice_end]);
+    if trail {
+        text.push_str(MARKER);
+    }
+    WindowedBody {
+        text,
+        slice_start,
+        slice_end,
+        lead_bytes: if lead { MARKER.len() } else { 0 },
+        pan_range: row_pan_range(body, budget, anchor),
+    }
+}
+
+/// Columns of frozen gutter before a tree row's body, and the budget the
+/// body is then fitted into.
+///
+/// Written twice inside `render_tree_row` already — once as the measured
+/// width of the prefix it builds, once as the indent its continuation lines
+/// take — and [`pan_bounds`] needs the same numbers to say how far a row can
+/// travel. One definition, because a bound that disagrees with the paint by
+/// even a column is a bound the reader feels as a keypress that does nothing.
+fn tree_row_gutter_cols(node: &TreeNode, checkable: bool, indent_cols: usize) -> usize {
+    // The disclosure column is two wide whether or not a glyph is drawn
+    // (glyph + separator space, or two literal spaces), and a checkbox adds
+    // `[v]` and a space. The indent is per level of depth.
+    let checkbox = usize::from(checkable && node.checked.is_some()) * 4;
+    (node.depth as usize) * indent_cols + 2 + checkbox
+}
+
+/// A tree row's text as the paint will see it.
+///
+/// `TextPropertyEntry::text` is empty until `normalize_widths` concatenates
+/// the segments into it, and a row built from segments — which is every
+/// styled row a plugin sends — therefore measures as nothing until then.
+/// Measuring the unnormalised field said a Search & Replace row had no
+/// content and so nowhere to pan.
+fn row_text(entry: &TextPropertyEntry) -> std::borrow::Cow<'_, str> {
+    if entry.segments.is_empty() {
+        std::borrow::Cow::Borrowed(&entry.text)
+    } else {
+        std::borrow::Cow::Owned(entry.segments.iter().map(|s| s.text.as_str()).collect())
+    }
+}
+
+/// Columns one pan step moves — one key press, or one wheel notch.
+///
+/// `less(1)`'s left/right step, the closest thing to a convention a terminal
+/// has for panning sideways. The wheel used to move three, mirroring the
+/// three *lines* a vertical notch moves, but a screen is three times wider
+/// than it is tall: three columns of a hundred-and-twenty is a fifth of what
+/// three lines of forty is, and the gesture read as a dead one. One number
+/// for both, so a reader who pans with the wheel and a reader who pans with
+/// the keyboard are moving the same distance.
+pub const PAN_COLUMNS: i32 = 8;
+
+/// How far, in display columns, `widget` can usefully be panned each way.
+///
+/// The clamp that decides what is *drawn* is per row and lives in
+/// [`window_row_body`] — that is what keeps rows of different lengths sliding
+/// together instead of drifting apart at the ends. But the pan a panel
+/// *stores* is what the next keystroke moves from, so it has to be held to
+/// the same limit: `Shift+End` asks for "past the end of the longest row",
+/// and a number past what any row can reach is a number the reader spends
+/// keystrokes walking back while the screen sits still.
+///
+/// **Two bounds, because a pan is a delta from where each row rests** — its
+/// own match, not column zero. A row whose match sits 259 columns along a 403
+/// column line can go 259 columns left and only ~80 right, and one number for
+/// both is wrong on whichever side is shorter by the difference.
+///
+/// `cols` is the width the window was given. Zero means nobody has laid this
+/// widget out yet, and the answer is `(0, 0)`: a pan before the first frame
+/// has no screen to be measured against, and the first paint will answer it.
+///
+/// `(0, 0)` also for every kind whose paint does not thread the pan, which is
+/// every kind but `Tree`: a widget that cannot show a pan should not
+/// accumulate one.
+///
+/// `row` narrows the question to one node. The whole tree's range is what the
+/// stored pan is *clamped* to — it must not exclude a row that still has
+/// somewhere to go — but "pan to the end" is a question about the row the
+/// reader is on, and answering it with the longest row's travel leaves their
+/// row clamped at its own tail with keystrokes still to spend before it
+/// moves. Rows of unequal length cannot all be at their end at once; the one
+/// under the selection is the one that should be.
+pub fn pan_bounds(widget: &WidgetSpec, cols: u32, row: Option<usize>) -> (i32, i32) {
+    let WidgetSpec::Tree {
+        nodes,
+        checkable,
+        indent_cols,
+        item_height,
+        card_borders,
+        ..
+    } = widget
+    else {
+        return (0, 0);
+    };
+    // Bordered cards lay out inside their box rather than being windowed —
+    // `render_tree_row` returns before the pan is applied — so they offer a
+    // pan nothing.
+    if cols == 0 || (*card_borders && *item_height > 1) {
+        return (0, 0);
+    }
+    let (mut left, mut right) = (0i32, 0i32);
+    for (i, node) in nodes.iter().enumerate() {
+        if row.is_some_and(|r| r != i) {
+            continue;
+        }
+        let r = tree_row_pan_range(node, *checkable, *indent_cols as usize, cols);
+        left = left.min(r.0);
+        right = right.max(r.1);
+    }
+    (left, right)
+}
+
+/// One tree row's travel, measured the way `render_tree_row` will fit it.
+fn tree_row_pan_range(
+    node: &TreeNode,
+    checkable: bool,
+    indent_cols: usize,
+    cols: u32,
+) -> (i32, i32) {
+    let gutter = tree_row_gutter_cols(node, checkable, indent_cols);
+    let budget = (cols as usize).saturating_sub(gutter);
+    let w = node.window_anchor.unwrap_or_default();
+    let text = row_text(&node.text);
+    let pinned_bytes = byte_of_char(&text, w.pinned as usize);
+    let (pinned, rest) = text.split_at(pinned_bytes);
+    let anchor = node.window_anchor.map(|a| {
+        (
+            (a.start as usize).saturating_sub(a.pinned as usize),
+            a.len as usize,
+        )
+    });
+    let body_budget = budget.saturating_sub(crate::primitives::display_width::str_width(pinned));
+    let mut r = row_pan_range(rest, body_budget, anchor);
+    // Continuation lines pan with the row they continue, so they widen it.
+    // They carry no anchor of their own and rest at column zero.
+    for line in &node.extra_lines {
+        let c = row_pan_range(&row_text(line), budget, None);
+        r = (r.0.min(c.0), r.1.max(c.1));
+    }
+    r
+}
+
+/// Carry one overlay across a [`WindowedBody`] cut.
+///
+/// `None` when the overlay fell entirely outside the drawn slice — a
+/// highlight on text that is no longer on screen must not collapse onto the
+/// row's first cell.
+fn rebase_overlay(o: &InlineOverlay, w: &WindowedBody, shift: usize) -> Option<InlineOverlay> {
+    let start = o.start.clamp(w.slice_start, w.slice_end);
+    let end = o.end.clamp(w.slice_start, w.slice_end);
+    if end <= start {
+        return None;
+    }
+    let mut out = o.clone();
+    out.start = start - w.slice_start + w.lead_bytes + shift;
+    out.end = end - w.slice_start + w.lead_bytes + shift;
+    Some(out)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn render_tree_row(
     node: &TreeNode,
     expanded: bool,
@@ -2715,6 +3083,7 @@ pub fn render_tree_row(
     card_borders: bool,
     panel_width: u32,
     indent_cols: u32,
+    h_offset: i32,
 ) -> RenderedTreeRow {
     // Bordered-card trees: card nodes render inside a rounded box; the
     // other nodes (folder headers) collapse to a plain single row
@@ -2780,21 +3149,61 @@ pub fn render_tree_row(
         None
     };
     let body_start = text.len();
-    text.push_str(&node.text.text);
+    // **The host fits the row, not the plugin.** The prefix above is pinned
+    // and only the body slides, which is what makes a pan read as a frozen
+    // gutter with the content moving under it — and what lets the row keep
+    // its checkbox and disclosure glyph wherever the reader has panned to.
+    //
+    // Before this, a row longer than the panel was simply drawn past the edge
+    // and cut by the terminal, so there was nothing to pan and no marker to
+    // say anything had been cut. See `window_row_body`.
+    let prefix_cols = crate::primitives::display_width::str_width(&text);
+    let budget = (panel_width as usize).saturating_sub(prefix_cols);
+    // **The row's own pinned head.** A search result's `path:line` is its
+    // identity, not its content: a window that slid it away left rows nobody
+    // could tell apart. It stays with the prefix above and the rest of the row
+    // slides under it.
+    let w = node.window_anchor.unwrap_or_default();
+    let pinned_bytes = byte_of_char(&node.text.text, w.pinned as usize);
+    let (pinned, rest) = node.text.text.split_at(pinned_bytes);
+    let pinned_cols = crate::primitives::display_width::str_width(pinned);
+    text.push_str(pinned);
+    let rest_start = text.len();
+    let anchor = node.window_anchor.map(|a| {
+        (
+            (a.start as usize).saturating_sub(a.pinned as usize),
+            a.len as usize,
+        )
+    });
+    let window = window_row_body(rest, budget.saturating_sub(pinned_cols), anchor, h_offset);
+    text.push_str(&window.text);
 
-    // Carry over the plugin's inline overlays, shifted right by
-    // `body_start` so they land on the correct bytes after the
-    // prefix.
+    // Carry over the plugin's inline overlays. The pinned head keeps its
+    // offsets (shifted by the prefix only); everything past it is rebased onto
+    // the drawn slice. An overlay straddling the boundary contributes to both,
+    // and one wholly outside the slice is dropped rather than clamped — a
+    // match highlight on text that panned off screen must not reappear on the
+    // row's first cell.
     let mut overlays: Vec<InlineOverlay> = node
         .text
         .inline_overlays
         .iter()
-        .map(|o| {
-            let mut shifted = o.clone();
-            shifted.start += body_start;
-            shifted.end += body_start;
-            shifted
+        .flat_map(|o| {
+            let head = (o.start < pinned_bytes).then(|| {
+                let mut h = o.clone();
+                h.start += body_start;
+                h.end = o.end.min(pinned_bytes) + body_start;
+                h
+            });
+            let tail = (o.end > pinned_bytes).then(|| {
+                let mut t = o.clone();
+                t.start = o.start.max(pinned_bytes) - pinned_bytes;
+                t.end = o.end - pinned_bytes;
+                rebase_overlay(&t, &window, rest_start)
+            });
+            [head, tail.flatten()]
         })
+        .flatten()
         .collect();
 
     // Disclosure glyph color — only on internal nodes, where the
@@ -2872,18 +3281,19 @@ pub fn render_tree_row(
         for i in 0..extra_rows {
             match node.extra_lines.get(i) {
                 Some(src) => {
-                    let mut line_text = String::with_capacity(shift + src.text.len());
+                    // Same fit as the primary row, and the same pan, so a
+                    // card's continuation lines slide with the line they
+                    // continue. No anchor: only the primary row has a span it
+                    // exists to show.
+                    let cont_budget = (panel_width as usize).saturating_sub(cont_indent_cols);
+                    let cont = window_row_body(&src.text, cont_budget, None, h_offset);
+                    let mut line_text = String::with_capacity(shift + cont.text.len());
                     line_text.push_str(&indent_str);
-                    line_text.push_str(&src.text);
+                    line_text.push_str(&cont.text);
                     let shifted: Vec<InlineOverlay> = src
                         .inline_overlays
                         .iter()
-                        .map(|o| {
-                            let mut s = o.clone();
-                            s.start += shift;
-                            s.end += shift;
-                            s
-                        })
+                        .filter_map(|o| rebase_overlay(o, &cont, shift))
                         .collect();
                     extra_entries.push(TextPropertyEntry {
                         text: line_text,
@@ -4000,6 +4410,7 @@ pub mod tests {
                 rows,
                 items: rows,
                 offset,
+                cols: 0,
             },
         );
         m
@@ -4035,6 +4446,166 @@ pub mod tests {
     fn form_label_width_zero_panel_keeps_request() {
         // Auto-fit / tests (panel_width == 0) leave the requested width.
         assert_eq!(form_label_width(20, 2, 3, 0), 20);
+    }
+
+    use crate::primitives::display_width::str_width;
+
+    /// A row that fits is its own text, markers and all absent.
+    #[test]
+    fn window_row_body_leaves_a_fitting_row_alone() {
+        let w = window_row_body("hello", 20, None, 0);
+        assert_eq!(w.text, "hello");
+        assert_eq!((w.slice_start, w.slice_end, w.lead_bytes), (0, 5, 0));
+    }
+
+    /// Trailing padding is not content: a row padded past the budget by
+    /// spaces alone does not pick up a marker that elides nothing.
+    #[test]
+    fn window_row_body_ignores_trailing_padding() {
+        let padded = format!("abc{}", " ".repeat(40));
+        let w = window_row_body(&padded, 10, None, 0);
+        assert_eq!(w.text, padded, "padding is not something to elide");
+    }
+
+    /// With no anchor the window rests at the head and marks the cut tail.
+    #[test]
+    fn window_row_body_marks_a_cut_tail() {
+        let w = window_row_body("abcdefghij", 5, None, 0);
+        assert_eq!(w.text, "abcd…");
+        assert_eq!(str_width(&w.text), 5);
+    }
+
+    /// With an anchor past the budget the window slides to bring it in, and
+    /// marks both ends.
+    #[test]
+    fn window_row_body_rests_on_its_anchor() {
+        let body = format!("{}MATCH{}", "x".repeat(60), "y".repeat(60));
+        let w = window_row_body(&body, 20, Some((60, 5)), 0);
+        assert!(
+            w.text.contains("MATCH"),
+            "window missed its anchor: {}",
+            w.text
+        );
+        assert!(
+            w.text.starts_with('…') && w.text.ends_with('…'),
+            "{}",
+            w.text
+        );
+        assert_eq!(str_width(&w.text), 20);
+    }
+
+    /// The pan is a delta from that resting column: negative reaches the head
+    /// of the line, positive its tail, and each end clamps.
+    #[test]
+    fn window_row_body_pans_from_the_resting_column() {
+        let body = format!("HEAD{}MATCH{}TAIL", "x".repeat(60), "y".repeat(60));
+        let anchor = Some((64, 5));
+        assert!(!window_row_body(&body, 20, anchor, 0).text.contains("HEAD"));
+
+        let left = window_row_body(&body, 20, anchor, -1000);
+        assert!(left.text.starts_with("HEAD"), "{}", left.text);
+        assert_eq!(left.slice_start, 0, "clamped to the head, not past it");
+
+        let right = window_row_body(&body, 20, anchor, 1000);
+        assert!(right.text.ends_with("TAIL"), "{}", right.text);
+        assert_eq!(right.slice_end, body.len(), "clamped to the tail");
+    }
+
+    /// Columns, not codepoints. A CJK body is half as many characters as it
+    /// is cells, and the window has to measure what the reader sees — this is
+    /// the case an ASCII-only test cannot fail on.
+    #[test]
+    fn window_row_body_measures_display_columns() {
+        let body = format!("{}MATCH", "漢".repeat(30));
+        // 30 wide chars are 60 columns: a codepoint-counting window would
+        // think this fits in 40 and leave the row overflowing.
+        let w = window_row_body(&body, 40, Some((30, 5)), 0);
+        assert!(w.text.contains("MATCH"), "{}", w.text);
+        assert!(
+            str_width(&w.text) <= 40,
+            "{} cols: {}",
+            str_width(&w.text),
+            w.text
+        );
+        // And a pan of N moves N columns, not N characters.
+        let panned = window_row_body(&body, 40, Some((30, 5)), -8);
+        assert_eq!(
+            str_width(&w.text),
+            str_width(&panned.text),
+            "both windows fill the budget"
+        );
+        assert!(str_width(&panned.text) <= 40);
+    }
+
+    /// A window never splits a double-width cell across its edge.
+    #[test]
+    fn window_row_body_never_splits_a_wide_cell() {
+        // Panned as well as at rest. A window that has been panned owes a
+        // leading marker, which spends a column the resting window does not,
+        // so the budgets where a row can overrun are only reachable with a
+        // non-zero pan — at `budget == 1` the marker *is* the whole window
+        // and a trailing one would draw a second column.
+        for body in ["漢".repeat(20), "abcdefghij".to_string()] {
+            for budget in 1..=40usize {
+                for pan in [-40, -1, 0, 1, 5, 40] {
+                    let w = window_row_body(&body, budget, None, pan);
+                    assert!(
+                        str_width(&w.text) <= budget,
+                        "budget {budget}, pan {pan}: {:?} is {} columns",
+                        w.text,
+                        str_width(&w.text)
+                    );
+                    assert!(body.is_char_boundary(w.slice_start));
+                    assert!(body.is_char_boundary(w.slice_end));
+                }
+            }
+        }
+    }
+
+    /// An overlay on text that panned off screen is dropped, not clamped onto
+    /// the row's first cell.
+    #[test]
+    fn tree_row_overlay_outside_the_window_is_dropped() {
+        let body = format!("{}MATCH{}", "x".repeat(60), "y".repeat(60));
+        let mut node = tnode(&body, 0, false);
+        node.text.inline_overlays.push(InlineOverlay {
+            start: 60,
+            end: 65,
+            style: OverlayOptions::default(),
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+        // Panned hard right: the overlay's text is no longer drawn.
+        let r = render_tree_row(&node, false, false, 1, false, 30, 2, i32::MAX / 4);
+        assert!(
+            !r.entry.text.contains("MATCH"),
+            "precondition: panned past the overlay. Row: {:?}",
+            r.entry.text
+        );
+        assert!(
+            r.entry.inline_overlays.is_empty(),
+            "an overlay outside the drawn slice must be dropped, not clamped"
+        );
+    }
+
+    /// The pinned head stays put while the rest of the row slides under it.
+    #[test]
+    fn tree_row_pins_its_declared_head() {
+        let body = format!("path.rs:1 - {}MATCH{}", "x".repeat(60), "y".repeat(60));
+        let mut node = tnode(&body, 0, false);
+        node.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+            pinned: 12,
+            start: 72,
+            len: 5,
+        });
+        for pan in [0, 20, i32::MAX / 4] {
+            let r = render_tree_row(&node, false, false, 1, false, 40, 2, pan);
+            assert!(
+                r.entry.text.contains("path.rs:1 - "),
+                "pan {pan} slid the pinned head away: {:?}",
+                r.entry.text
+            );
+        }
     }
 
     #[test]
@@ -4649,6 +5220,7 @@ pub mod tests {
             has_children: false,
             checked: None,
             extra_lines: Vec::new(),
+            window_anchor: None,
         };
         let nodes = vec![node("alpha"), node("beta")];
         let spec = WidgetSpec::Tree {
@@ -5792,6 +6364,7 @@ pub mod tests {
             has_children,
             checked: None,
             extra_lines: Vec::new(),
+            window_anchor: None,
         }
     }
 
@@ -5817,9 +6390,211 @@ pub mod tests {
         }
     }
 
+    /// A pan is a delta from where each row *rests*, so the two directions
+    /// are bounded by different numbers: a row whose match is far along a long
+    /// line has a great deal to its left and little to its right.
+    ///
+    /// One number for both is what let `S-End` store a value `S-Left` could
+    /// not walk back.
+    #[test]
+    fn pan_bounds_are_measured_from_where_rows_rest() {
+        let mut node = tnode(&"x".repeat(400), 0, false);
+        node.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+            pinned: 0,
+            start: 380,
+            len: 5,
+        });
+        let tree = make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t"));
+        let (left, right) = pan_bounds(&tree, 100, None);
+        assert!(
+            (0..20).contains(&right),
+            "a match 380 columns along a 400 column row, in a 100 column \
+             window, has almost nothing to its right — the bound says {right}"
+        );
+        assert!(
+            (-360..-280).contains(&left),
+            "the head of that row is roughly 320 columns to its left — the \
+             bound says {left}"
+        );
+    }
+
+    /// "Pan to the end" is a question about the row the reader is on.
+    ///
+    /// The pan is shared, so rows of unequal length cannot all sit at their
+    /// tail at once. Answering with the longest row's travel leaves the
+    /// selected row clamped at its own tail with keystrokes still to spend
+    /// before it moves — which is what a reader reports as "Shift+arrow does
+    /// nothing". The whole tree's range still bounds the *stored* value, so
+    /// panning right does not stop early for the longer row.
+    #[test]
+    fn pan_bounds_can_be_asked_about_one_row() {
+        let long = {
+            let mut n = tnode(
+                &format!("{}M{}", "x".repeat(100), "y".repeat(300)),
+                0,
+                false,
+            );
+            n.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+                pinned: 0,
+                start: 100,
+                len: 1,
+            });
+            n
+        };
+        let short = {
+            let mut n = tnode(&format!("{}M{}", "x".repeat(100), "y".repeat(60)), 0, false);
+            n.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+                pinned: 0,
+                start: 100,
+                len: 1,
+            });
+            n
+        };
+        let tree = make_tree(
+            vec![short.clone(), long.clone()],
+            vec!["a", "b"],
+            0,
+            10,
+            vec![],
+            Some("t"),
+        );
+        let cols = 60u32;
+        let whole = pan_bounds(&tree, cols, None).1;
+        let just_short = pan_bounds(&tree, cols, Some(0)).1;
+        let just_long = pan_bounds(&tree, cols, Some(1)).1;
+        assert!(
+            just_short < whole,
+            "the short row reaches its tail before the tree does ({just_short} vs {whole})"
+        );
+        assert_eq!(
+            just_long, whole,
+            "the long row is what sets the tree's own bound"
+        );
+        // And the row-scoped answer is the row's real clamp: panning by it
+        // lands on the tail, one step more shows nothing new.
+        let at = |pan: i32| {
+            render_tree_row(&short, false, false, 1, false, cols, 0, pan)
+                .entry
+                .text
+        };
+        assert_ne!(at(just_short), at(just_short - PAN_COLUMNS));
+        assert_eq!(
+            at(just_short),
+            at(whole),
+            "past its own tail is still its tail"
+        );
+    }
+
+    /// The bound is the clamp the paint would apply, not an estimate of it:
+    /// panning by exactly it lands on the last column the row can show, and
+    /// one more column changes nothing.
+    #[test]
+    fn pan_bounds_agree_with_what_the_window_draws() {
+        let body = format!("{}MATCH{}", "x".repeat(200), "y".repeat(200));
+        let mut node = tnode(&body, 0, false);
+        node.window_anchor = Some(fresh_core::api::TextWindowAnchor {
+            pinned: 0,
+            start: 200,
+            len: 5,
+        });
+        let tree = make_tree(vec![node.clone()], vec!["a"], 0, 10, vec![], Some("t"));
+        let cols = 60u32;
+        let (left, right) = pan_bounds(&tree, cols, None);
+        let at = |pan: i32| {
+            render_tree_row(&node, false, false, 1, false, cols, 0, pan)
+                .entry
+                .text
+        };
+        assert_eq!(
+            at(right),
+            at(right + 40),
+            "past the right bound is not further right"
+        );
+        assert_ne!(at(right), at(right - 8), "the right bound is reachable");
+        assert_eq!(
+            at(left),
+            at(left - 40),
+            "past the left bound is not further left"
+        );
+        assert_ne!(at(left), at(left + 8), "the left bound is reachable");
+        assert!(
+            at(left).contains('x'),
+            "the left bound shows the head: {}",
+            at(left)
+        );
+        assert!(
+            at(right).ends_with('y'),
+            "the right bound shows the tail: {}",
+            at(right)
+        );
+    }
+
+    /// A row with no anchor rests at column zero: nothing to its left, its
+    /// whole length to its right. A kind whose paint cannot show a pan does
+    /// not accumulate one, and neither does a widget nothing has laid out.
+    #[test]
+    fn pan_bounds_without_an_anchor_a_tree_or_a_width() {
+        let tree = make_tree(
+            vec![tnode(&"x".repeat(400), 0, false)],
+            vec!["a"],
+            0,
+            10,
+            vec![],
+            Some("t"),
+        );
+        assert_eq!(
+            pan_bounds(&tree, 100, None).0,
+            0,
+            "nothing to the left of column zero"
+        );
+        assert!(pan_bounds(&tree, 100, None).1 > 300);
+        assert_eq!(
+            pan_bounds(&tree, 0, None),
+            (0, 0),
+            "a widget nothing has laid out has no width to be panned against"
+        );
+        assert_eq!(
+            pan_bounds(
+                &WidgetSpec::Spacer {
+                    cols: 1,
+                    flex: false,
+                    key: None,
+                },
+                100,
+                None
+            ),
+            (0, 0),
+            "a kind that never threads the pan has nothing to pan"
+        );
+    }
+
+    /// Trailing padding is not content on this path either: a row padded out
+    /// to the panel's width must not claim a pan that would show only spaces.
+    #[test]
+    fn pan_bounds_ignore_trailing_padding() {
+        let node = tnode(&format!("{}{}", "x".repeat(40), " ".repeat(360)), 0, false);
+        assert_eq!(
+            pan_bounds(
+                &make_tree(vec![node], vec!["a"], 0, 10, vec![], Some("t")),
+                100,
+                None
+            ),
+            (0, 0)
+        );
+    }
+
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_collapsed() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), false, false, 1, false, 80, 2);
+        let r = render_tree_row(
+            &tnode("file.txt", 0, true),
+            false,
+            false,
+            1,
+            false,
+            80,
+            2,
+            0,
+        );
         assert!(r.entry.text.starts_with('\u{25B6}'), "starts with ▶");
         assert!(r.entry.text.contains("file.txt"));
         assert!(r.disclosure_range.is_some());
@@ -5827,13 +6602,13 @@ pub mod tests {
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_expanded() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), true, false, 1, false, 80, 2);
+        let r = render_tree_row(&tnode("file.txt", 0, true), true, false, 1, false, 80, 2, 0);
         assert!(r.entry.text.starts_with('\u{25BC}'), "starts with ▼");
     }
 
     #[test]
     fn tree_row_leaf_uses_two_spaces_no_disclosure_hit() {
-        let r = render_tree_row(&tnode("match", 0, false), false, false, 1, false, 80, 2);
+        let r = render_tree_row(&tnode("match", 0, false), false, false, 1, false, 80, 2, 0);
         // No glyph, just spaces for alignment.
         assert!(r.entry.text.starts_with("  "));
         assert!(r.entry.text.contains("match"));
@@ -5842,7 +6617,7 @@ pub mod tests {
 
     #[test]
     fn tree_row_indents_by_depth_times_two() {
-        let r = render_tree_row(&tnode("nested", 2, false), false, false, 1, false, 80, 2);
+        let r = render_tree_row(&tnode("nested", 2, false), false, false, 1, false, 80, 2, 0);
         // depth=2 → 4 leading spaces, then 2 alignment spaces, then "nested".
         assert!(r.entry.text.starts_with("      nested"));
     }
@@ -5860,7 +6635,7 @@ pub mod tests {
             properties: Default::default(),
             unit: OffsetUnit::Byte,
         });
-        let r = render_tree_row(&node, false, false, 1, false, 80, 2);
+        let r = render_tree_row(&node, false, false, 1, false, 80, 2, 0);
         // depth=1 → 2 indent + 2 alignment = 4 prefix bytes (ASCII).
         // The plugin's [0..5] becomes [4..9].
         let plugin_overlay = r
@@ -5878,7 +6653,7 @@ pub mod tests {
         // Even with `checked: Some(_)`, no glyph if `checkable: false`.
         let mut node = tnode("file.rs", 0, false);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, false, 1, false, 80, 2);
+        let r = render_tree_row(&node, false, false, 1, false, 80, 2, 0);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -5890,7 +6665,7 @@ pub mod tests {
         // Lets a checkable tree mix non-checkbox-bearing nodes
         // (e.g. a separator or header) with checkbox rows.
         let node = tnode("section", 0, false);
-        let r = render_tree_row(&node, false, true, 1, false, 80, 2);
+        let r = render_tree_row(&node, false, true, 1, false, 80, 2, 0);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -5900,7 +6675,7 @@ pub mod tests {
     fn tree_row_renders_checked_glyph_after_disclosure() {
         let mut node = tnode("file.rs", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, true, true, 1, false, 80, 2);
+        let r = render_tree_row(&node, true, true, 1, false, 80, 2, 0);
         assert!(r.checkbox_range.is_some(), "checkbox range emitted");
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         // Layout: ▼(3 bytes UTF-8) + " " + [v] + " " + body
@@ -5912,7 +6687,7 @@ pub mod tests {
     fn tree_row_renders_unchecked_glyph_for_leaf() {
         let mut node = tnode("match-row", 1, false);
         node.checked = Some(false);
-        let r = render_tree_row(&node, false, true, 1, false, 80, 2);
+        let r = render_tree_row(&node, false, true, 1, false, 80, 2, 0);
         let (cb_start, cb_end) = r
             .checkbox_range
             .expect("checkbox range for leaf with checked: Some");
@@ -5927,7 +6702,7 @@ pub mod tests {
         // verbatim (no UTF-8 boundary issues from the disclosure).
         let mut node = tnode("path/with/é", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, true, 1, false, 80, 2);
+        let r = render_tree_row(&node, false, true, 1, false, 80, 2, 0);
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         assert!(r.entry.text.is_char_boundary(cb_start));
         assert!(r.entry.text.is_char_boundary(cb_end));
@@ -8331,6 +9106,7 @@ pub mod tests {
             focus_follows_cursor: false,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
+            h_pan: Default::default(),
         }
     }
 

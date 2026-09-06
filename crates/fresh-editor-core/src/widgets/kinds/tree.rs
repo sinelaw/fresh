@@ -16,6 +16,8 @@ use crate::widgets::render::{
 
 pub struct Tree;
 
+use crate::widgets::render::PAN_COLUMNS;
+
 impl WidgetImpl for Tree {
     fn on_wheel(
         &self,
@@ -208,6 +210,49 @@ impl WidgetImpl for Tree {
             }
             "Left" | "Right" => {
                 lateral(spec, widget_key, panel, key == "Right", fx);
+            }
+            // Panning. `Left`/`Right` are collapse/expand — the tree meaning
+            // every OS tree widget and the ARIA tree pattern give them — so
+            // sideways takes the one arrow chord whose conventional meaning a
+            // read-only, single-select tree does not have: extend selection.
+            // (`Alt`+arrows are back/forward, `Ctrl`+arrows word-wise; both
+            // are bound.) Issue #1580.
+            "S-Left" | "S-Right" | "S-Home" | "S-End" => {
+                let bounds = crate::widgets::render::pan_bounds(spec, viewport.cols, None);
+                // `S-End` is "the end of the row I am on", not "the end of
+                // the longest row": the pan is shared, rows of unequal length
+                // cannot all sit at their tail at once, and answering with
+                // the longest one leaves the selected row clamped with
+                // keystrokes still to spend before it moves.
+                let selected = resolve(spec, widget_key, &panel.instance_states).selected;
+                let end = usize::try_from(selected)
+                    .ok()
+                    .map(|r| crate::widgets::render::pan_bounds(spec, viewport.cols, Some(r)).1)
+                    // A row with nowhere to go — a file header among match
+                    // rows — would make the key a no-op while the rows around
+                    // it still had a tail to show. Fall back to the longest.
+                    .filter(|&r| r > 0)
+                    .unwrap_or(bounds.1);
+                let delta = match key {
+                    "S-Left" => Some(-PAN_COLUMNS),
+                    "S-Right" => Some(PAN_COLUMNS),
+                    // Home is where each row's content says it should rest —
+                    // its own match — not the head of the line. The head is a
+                    // few more `S-Left`s away, and a reader who wants the
+                    // match back should not have to pan to find it.
+                    "S-Home" => None,
+                    // Far enough that the per-row clamp lands every row on
+                    // its own tail — and no further, so `S-Left` walks back
+                    // from the end of the longest row rather than from a
+                    // number no content justifies.
+                    _ => Some(end),
+                };
+                if !panel.pan_h(widget_key, delta, bounds) {
+                    // Already home, or already at the value asked for: say so,
+                    // so the key can mean something else further out rather
+                    // than being swallowed by a tree that did nothing.
+                    return super::KeyDisposition::Pass;
+                }
             }
             "Enter" => {
                 if let Some(ev) = activate_event(spec, widget_key, panel) {
@@ -667,6 +712,10 @@ fn render_widget_tree(
     // The offset is the *last paint's*, not the tree's: the scroll fold
     // reads back its own previous value and republishes it below.
     let prev_scroll = ctx.painted(tree_key).map(|w| w.offset).unwrap_or(0);
+    // Sideways is the reader's, not the paint's — one delta for the whole
+    // tree, clamped per row against that row's own length so rows of
+    // different lengths slide together rather than drifting apart.
+    let h_pan = ctx.h_pan(tree_key);
 
     // Compute the visible (un-collapsed) flat slice of the
     // full `nodes` list. A node at depth d is visible iff
@@ -810,6 +859,7 @@ fn render_widget_tree(
                 rows: visible_rows,
                 items: visible_rows / per_node.max(1),
                 offset: scroll,
+                cols: panel_width,
             },
         );
     }
@@ -851,6 +901,7 @@ fn render_widget_tree(
             card_borders,
             panel_width,
             indent_cols,
+            h_pan,
         );
         let mut entry = rendered.entry;
         let is_selected = abs_idx as i32 == effective_sel_abs;

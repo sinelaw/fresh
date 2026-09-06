@@ -235,6 +235,13 @@ pub struct Ctx<'a> {
     /// `None` where there is genuinely no theme to render through: the unit
     /// tests, and `Ctx::plain`.
     pub markdown: Option<crate::widgets::MarkdownCtx<'a>>,
+    /// How far each keyed rows widget is panned sideways, in display columns.
+    ///
+    /// The runtime's fold, read here for the same reason `states` is: the rows
+    /// are fitted to the panel's width before the description sees them, so
+    /// the pan has to be applied where they are fitted. Empty for a surface
+    /// with no plugin panel behind it (`Ctx::plain`).
+    pub h_pan: &'a std::collections::HashMap<String, i32>,
 }
 
 /// The empty instance-state map, for a spec with no host state behind it.
@@ -247,6 +254,13 @@ pub fn no_state() -> &'static std::collections::HashMap<String, crate::widgets::
     use std::sync::OnceLock;
     static EMPTY: OnceLock<std::collections::HashMap<String, crate::widgets::WidgetInstanceState>> =
         OnceLock::new();
+    EMPTY.get_or_init(Default::default)
+}
+
+/// The empty pan map, for a surface with no plugin panel behind it.
+pub fn no_pan() -> &'static std::collections::HashMap<String, i32> {
+    use std::sync::OnceLock;
+    static EMPTY: OnceLock<std::collections::HashMap<String, i32>> = OnceLock::new();
     EMPTY.get_or_init(Default::default)
 }
 
@@ -268,6 +282,7 @@ impl Ctx<'static> {
             scrollbar_reveal: None,
             surface: panel_surface(),
             markdown: None,
+            h_pan: no_pan(),
         }
     }
 }
@@ -773,6 +788,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let inner = Ctx {
                 surface: band.clone().unwrap_or_else(|| cx.surface.clone()),
                 states: cx.states,
+                h_pan: cx.h_pan,
                 focus_key: cx.focus_key.clone(),
                 hovered_key: cx.hovered_key.clone(),
                 hovered_item_key: cx.hovered_item_key.clone(),
@@ -1575,6 +1591,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 expanded_keys.iter().cloned().collect();
             let visible = crate::widgets::collect_visible_tree_indices(nodes, item_keys, &expanded);
             let tree_key = key.clone().unwrap_or_default();
+            let h_pan = cx.h_pan.get(&tree_key).copied().unwrap_or(0);
             let mut blocks: Vec<Chunk> = Vec::with_capacity(visible.len());
             let mut at: u32 = 0;
             let mut selected: Option<usize> = None;
@@ -1594,6 +1611,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     true,
                     width as u32,
                     *indent_cols,
+                    h_pan,
                 );
                 let is_selected = abs as i32 == sel_abs;
                 if is_selected {
@@ -1720,6 +1738,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // things that belong at the panel's edge, the row band and the
             // overlay scrollbar, stop with it.
             let node = node.w(Sizing::Pct(100));
+            let node = pan_to_widget(node, cx.slot, &tree_key);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(tree_rows(at, *r))),
                 None => node.flex(1),
@@ -1746,6 +1765,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let nodes = Rc::new(nodes.clone());
             let keys = Rc::new(item_keys.clone());
             let tree_key = key.clone().unwrap_or_default();
+            let h_pan = cx.h_pan.get(&tree_key).copied().unwrap_or(0);
             let (slot, checkable, indent) = (cx.slot, *checkable, *indent_cols);
             let surface = cx.surface.clone();
             let sel_abs = live_selection(cx, key, *selected_index);
@@ -1770,6 +1790,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         false,
                         width as u32,
                         indent,
+                        h_pan,
                     );
                     let end = r.entry.text.len();
                     let hit = |kind: &'static str,
@@ -1883,6 +1904,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // not the element's own — see the `List` arm above.
             let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
             let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
+            let node = pan_to_widget(node, slot, &tree_key);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(tree_rows(n as u32, *r))),
                 None => node.flex(1),
@@ -2145,6 +2167,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     markdown: cx.markdown,
                     marker_gutter: cx.marker_gutter,
                     avail_height: cx.avail_height,
+                    // A markdown Text has no rows to pan.
+                    h_pan: None,
                     // A shadow render of ONE markdown Text, for its
                     // reflowed rows and its caret: no list, no window,
                     // nothing to carry.
@@ -3019,6 +3043,37 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
 /// completion list, whose window lives in `WidgetInstanceState::Text` — so the
 /// half the tree can do is say *which* widget was under the pointer, which is
 /// exactly what the arena was consulted for. See [`UiFact::WidgetWheel`].
+/// Claim the **sideways** notch on a rows widget and send it to the runtime.
+///
+/// The vertical notch is the library's — the description gives the element a
+/// viewport and it scrolls. Sideways has no such window to move: the rows
+/// arrive fitted to the panel's width, so the only thing that can honour a pan
+/// is the runtime that fits them. This names the widget and lets the vertical
+/// notch through untouched, so the two axes keep their separate owners.
+///
+/// Issue #1580.
+fn pan_to_widget(n: Node<UiMsg>, slot: Slot, widget_key: &str) -> Node<UiMsg> {
+    if widget_key.is_empty() {
+        return n;
+    }
+    let key = widget_key.to_string();
+    fresh_ui::gesture(n).on(
+        fresh_ui::GestureKind::Wheel,
+        std::rc::Rc::new(move |e: &fresh_ui::Event| {
+            // Vertical is not ours: let it reach the viewport beneath.
+            if e.axis != fresh_ui::Axis::Horizontal {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(super::msg::UiFact::WidgetPan {
+                slot,
+                widget: key.clone(),
+                delta: e.delta,
+            }))
+        }),
+    )
+}
+
 fn wheel_to_widget(n: Node<UiMsg>, slot: Slot, widget_key: &str) -> Node<UiMsg> {
     // An unkeyed widget has no instance state, so it has no window to move and
     // nothing to name — and claiming the notch anyway would swallow it on the
@@ -3745,6 +3800,7 @@ mod tests {
         Ctx {
             slot: Slot::Floating,
             states: no_state(),
+            h_pan: no_pan(),
             focus_key: String::new(),
             keyboard: true,
 
@@ -5126,6 +5182,7 @@ mod tests {
             has_children,
             checked: None,
             extra_lines: Vec::new(),
+            window_anchor: None,
         }
     }
 
@@ -5234,6 +5291,7 @@ mod tests {
             false,
             WIDTH as u32,
             2,
+            0,
         );
         let (gs, _) = r.disclosure_range.expect("a branch has a glyph");
         let col = r.entry.text[..gs].chars().count() as i32;
@@ -6153,6 +6211,7 @@ mod tests {
                     has_children: false,
                     checked: None,
                     extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
+                    window_anchor: None,
                 })
                 .collect(),
             item_keys: (0..n).map(|i| format!("s{i}")).collect(),
@@ -7016,6 +7075,7 @@ mod tests {
         let interior = super::super::panel::Interior {
             spec: spec.clone(),
             states: Default::default(),
+            h_pan: Default::default(),
             focus_key: String::new(),
             keyboard: true,
 
