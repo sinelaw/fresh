@@ -625,33 +625,35 @@ impl TextBuffer {
             format::detect_encoding_or_binary(&sample, file_size > sample_size);
         let is_binary = detected_binary && !force_text;
 
-        // Binary files skip encoding conversion to preserve raw bytes
-        if is_binary {
-            tracing::info!("Large binary file detected, loading without encoding conversion");
-            let contents = fs.read_file(path)?;
-            let mut buffer = Self::from_bytes_raw(contents, fs);
-            buffer.persistence.set_file_path(path.to_path_buf());
-            buffer.persistence.clear_modified();
-            buffer.file_kind.set_large_file(true);
-            buffer.format.set_default_encoding(encoding);
-            return Ok(buffer);
-        }
+        // Binary files skip encoding conversion to preserve raw bytes — and,
+        // like large text, they are never slurped. Reading a 2 GB zip into a
+        // `Vec<u8>` and indexing its line starts cost ~1.2x the file size in
+        // resident memory and froze the editor thread for the whole read plus
+        // scan (~13 s here, linear in size, and an OOM on a machine whose RAM
+        // is near the file size) — issue #3142. A binary buffer is opened
+        // read-only, so the lazy whole-file piece below serves it exactly as
+        // well: bytes are pulled in per chunk as the viewport touches them.
+        // The `requires_full_load` gates below exist to stop a
+        // non-resynchronizable *text* encoding from being decoded chunk-wise;
+        // binary content is never decoded at all, so — as before this change,
+        // which returned above them — they do not apply to it.
+        if !is_binary {
+            // Check if encoding requires full file loading
+            let requires_full_load = encoding.requires_full_file_load();
 
-        // Check if encoding requires full file loading
-        let requires_full_load = encoding.requires_full_file_load();
-
-        // For non-resynchronizable encodings, require confirmation unless forced
-        if requires_full_load && !force_full_load {
-            anyhow::bail!(LargeFileEncodingConfirmation {
-                path: path.to_path_buf(),
-                file_size,
-                encoding,
-            });
+            // For non-resynchronizable encodings, require confirmation unless forced
+            if requires_full_load && !force_full_load {
+                anyhow::bail!(LargeFileEncodingConfirmation {
+                    path: path.to_path_buf(),
+                    file_size,
+                    encoding,
+                });
+            }
         }
 
         // For encodings that require full load (non-resynchronizable or non-UTF-8),
         // load the entire file and convert
-        if !matches!(encoding, Encoding::Utf8 | Encoding::Ascii) {
+        if !is_binary && !matches!(encoding, Encoding::Utf8 | Encoding::Ascii) {
             tracing::info!(
                 "Large file with non-UTF-8 encoding ({:?}), loading fully for conversion",
                 encoding

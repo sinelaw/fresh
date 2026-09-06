@@ -474,6 +474,84 @@ mod large_file_support {
         );
     }
 
+    /// Issue #3142: a large *binary* file is opened lazily, exactly like large
+    /// text. It used to be read whole into a `Vec<u8>` and line-indexed, which
+    /// froze the editor thread for the length of the read plus the scan and
+    /// cost ~1.2x the file size in resident memory — a 2 GB zip meant an
+    /// 18-second freeze and an OOM risk. Nothing about a binary buffer needs
+    /// that: it opens read-only and the viewport pulls chunks on demand.
+    #[test]
+    fn test_load_large_binary_file_is_lazy() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("large.bin");
+
+        // NUL bytes and control codes: binary by any detector, and long
+        // enough that the 8 KB detection sample is only part of it.
+        let mut data = Vec::new();
+        for i in 0..20_000u32 {
+            data.extend_from_slice(&[0x00, 0x01, 0x02, (i % 251) as u8]);
+        }
+        File::create(&file_path).unwrap().write_all(&data).unwrap();
+
+        let buffer = TextBuffer::load_from_file_for_editing(&file_path, 1024, test_fs()).unwrap();
+
+        assert!(buffer.is_binary(), "NUL bytes must trip binary detection");
+        assert!(buffer.file_kind.is_large_file());
+        assert_eq!(buffer.total_bytes(), data.len());
+        assert!(
+            !buffer.buffers[0].is_loaded(),
+            "a large binary file must not be read into memory at open"
+        );
+        assert_eq!(
+            buffer.line_count(),
+            None,
+            "no line index is built at open either"
+        );
+    }
+
+    /// The lazy binary buffer still serves its bytes verbatim once something
+    /// asks for them — the read just moved to where the viewport needs it.
+    #[test]
+    fn test_large_binary_file_reads_back_verbatim() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("large.bin");
+
+        let data: Vec<u8> = (0..40_000u32).map(|i| (i % 256) as u8).collect();
+        File::create(&file_path).unwrap().write_all(&data).unwrap();
+
+        let mut buffer =
+            TextBuffer::load_from_file_for_editing(&file_path, 1024, test_fs()).unwrap();
+        assert!(buffer.is_binary());
+
+        assert_eq!(buffer.get_text_range_mut(0, 64).unwrap(), data[..64]);
+        assert_eq!(
+            buffer.get_text_range_mut(30_000, 1_000).unwrap(),
+            data[30_000..31_000]
+        );
+    }
+
+    /// A *small* binary file keeps the eager path: it is cheap to read, and
+    /// the line index it gets is what puts real line numbers in the gutter.
+    #[test]
+    fn test_small_binary_file_still_loads_eagerly() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("small.bin");
+
+        let data = b"\x00\x01\x02binary\x00content\n";
+        File::create(&file_path).unwrap().write_all(data).unwrap();
+
+        let buffer = TextBuffer::load_from_file_for_editing(
+            &file_path,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
+
+        assert!(buffer.is_binary());
+        assert!(!buffer.file_kind.is_large_file());
+        assert!(buffer.buffers[0].is_loaded());
+    }
+
     #[test]
     fn test_load_large_file_lazy_loading() {
         let temp_dir = TempDir::new().unwrap();
