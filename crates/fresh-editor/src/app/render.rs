@@ -340,7 +340,7 @@ impl Editor {
         // combination and terminal size — `tests/ui_shell_frame_parity.rs` is
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
-        // See docs/internal/fresh-editor-ui-migration.md (S1).
+        // See `docs/internal/retained-mode-ui.md` §3.1.
         // The settings search list's window, from the band the tree placed
         // last frame. This is the one mutation the description needs made
         // *before* it is built: the row it describes says "(1-3 of 298)", and
@@ -1455,7 +1455,7 @@ impl Editor {
         // separator, and `render_side` falls back to a literal for any element
         // whose colour does not equal `theme_of(key)` — so provenance is blank
         // over those cells today, with no plugin involved. That is defect
-        // **F.2** in `docs/internal/fresh-editor-retained-mode-plan.md`, and
+        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` §3.3, and
         // it is wider than "a plugin cannot register a named key".
 
         // Render tab drag drop zone overlay if dragging a tab

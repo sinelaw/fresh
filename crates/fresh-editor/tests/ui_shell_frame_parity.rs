@@ -1,5 +1,5 @@
 //! PoC for the **outside-in** migration shell (see
-//! `docs/internal/fresh-editor-ui-migration.md`).
+//! `docs/internal/retained-mode-ui.md`).
 //!
 //! The proposal: make the frame a `fresh-ui` tree on day one, with every
 //! region below it a `Host` leaf that the backend fold paints using today's

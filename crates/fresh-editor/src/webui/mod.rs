@@ -1060,7 +1060,7 @@ fn apply_paste(editor: &mut Editor, v: &Value) {
 /// panel only to be sent here. A request naming it now falls through the
 /// wildcard and does nothing, which is what it should do while there is no
 /// panel on the page to have clicked. See
-/// `docs/internal/fresh-editor-retained-mode-plan.md`.
+/// `docs/internal/retained-mode-ui.md` §3.9.
 fn apply_widget(editor: &mut Editor, v: &Value) {
     match v.get("surface").and_then(|s| s.as_str()) {
         Some("toolbar") => {

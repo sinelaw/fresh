@@ -130,8 +130,8 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 ///   - `Window::file_browser_layout` (the file-open dialog)
 ///
 /// This list is the ONE enumeration of the parallel geometry path
-/// (ruling 7d in `docs/internal/chrome-event-model-plan.md`).
-/// ADDING A SURFACE HERE REQUIRES A RULING in the plan doc — the
+/// (recorded by ruling; `docs/internal/retained-mode-ui.md` §3.7 retires it).
+/// ADDING A SURFACE HERE REQUIRES A RULING — the
 /// event-time derivation is the default, and this class must not
 /// grow surface by surface without one; retiring it entirely is the
 /// paint-time compositing arc (sinelaw/fresh#3024).

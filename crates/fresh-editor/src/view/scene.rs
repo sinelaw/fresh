@@ -1059,8 +1059,7 @@ impl Editor {
 // `boxes` for a *described* panel, and so the last reason the immediate-mode
 // collector had to run for one. Deleting it is what lets the retained tree be
 // the only thing that lays a plugin panel out. See
-// `docs/internal/fresh-editor-retained-mode-plan.md`, "The web's plugin panels,
-// and what bringing them back costs", for what the replacement is: the web
+// `docs/internal/retained-mode-ui.md` §3.9 for what the replacement is: the web
 // consuming the display list the TUI already folds, the way it consumes the
 // status bar, the settings dialog and the file browser.
 //

@@ -191,8 +191,8 @@ if (!((await scene(page)).regions.widgets || []).length) {
 }
 await page.waitForFunction(() => { const w = window.fresh.scene.regions.widgets; return w && w.length > 0; }, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
-// **The web's plugin-panel projection is deleted for now** (§6d of
-// `docs/internal/fresh-editor-retained-mode-plan.md`); it is being rebuilt from
+// **The web's plugin-panel projection is deleted for now** (see
+// `docs/internal/retained-mode-ui.md` §3.9); it is being rebuilt from
 // the display list rather than from the widget tree it used to read.
 //
 // Its absence is one recorded failure, and deliberately not a dead suite. Every

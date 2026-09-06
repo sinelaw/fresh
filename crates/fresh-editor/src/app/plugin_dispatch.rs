@@ -5249,7 +5249,7 @@ impl Editor {
             options.auto_focus_first(),
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
-        // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
+        // KNOWN LIMITATION (deliberate; retired by `docs/internal/retained-mode-ui.md` §3.5):
         // buffer-mounted panels consume only the base rows + hits —
         // `out.overlays` and `out.popup` are DROPPED, and the click
         // path resolves with `on_overlay=false`. The popup/overlay

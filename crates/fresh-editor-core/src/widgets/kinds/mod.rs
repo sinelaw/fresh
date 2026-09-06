@@ -1,6 +1,6 @@
 //! Per-kind widget behaviour behind a single trait.
 //!
-//! This is phase 1 of `docs/internal/widget-framework-v2-review.md` §4.3:
+//! This is the one behaviour authority `docs/internal/retained-mode-ui.md` §3.5 names:
 //! `WidgetSpec` stays a closed, serializable wire type (it crosses the
 //! plugin sandbox boundary and feeds the row and web renderers), while
 //! the *behaviour* for each kind lives in one `WidgetImpl` per kind,

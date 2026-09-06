@@ -43,7 +43,8 @@ The goals, in full:
 Explicit non-goals include a reactive dependency graph (no signals or
 observers — state flows down through constructor arguments, events flow up
 through callbacks), cell-level damage tracking, an animation system, mutable
-descriptions, and sub-cell precision. The full list is in the design doc.
+descriptions, and sub-cell precision. The full list is §1.3 of
+`docs/internal/retained-mode-ui.md`.
 
 ## The model — three trees
 
@@ -140,9 +141,8 @@ test binaries and the examples.
 
 ## Further reading
 
-- [`docs/internal/widget-library-design.md`](../../docs/internal/widget-library-design.md)
-  — the design specification: goals, the three trees, layout, focus, layers,
-  events, state and effects, and worked examples. The authority on architecture.
-- [`docs/internal/widget-library-implementation-plan.md`](../../docs/internal/widget-library-implementation-plan.md)
-  — the build plan, the deviation registers recording where the code diverged
-  from the design and how each divergence was closed, and the migration plan.
+- [`docs/internal/retained-mode-ui.md`](../../docs/internal/retained-mode-ui.md)
+  — the design authority for this library and the editor built on it: the
+  model as built (§1.1), the capabilities it still owes and the consumer each
+  one has (§1.2), what it does not do by decision (§1.3), and the road the
+  editor takes to using nothing else (§5).

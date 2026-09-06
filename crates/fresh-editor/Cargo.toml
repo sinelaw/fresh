@@ -181,9 +181,7 @@ fresh-core.workspace = true
 # cannot depend on them. `default-features = false` because this crate
 # forwards its own feature flags below.
 fresh-editor-core = { workspace = true, default-features = false }
-# The retained UI tree. Used so far by `view::shell` — the outside-in
-# migration shell (frame description + display-list fold). Not yet on the
-# render path; see docs/internal/fresh-editor-ui-migration.md.
+# The retained UI tree; see docs/internal/retained-mode-ui.md.
 fresh-ui.workspace = true
 fresh-update.workspace = true
 fresh-parser-js = { workspace = true, optional = true }
