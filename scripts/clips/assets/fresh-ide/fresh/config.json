@@ -1,0 +1,66 @@
+{
+  "theme": "builtin://word6",
+  "check_for_updates": false,
+  "editor": {
+    "animations": true
+  },
+  "file_explorer": {
+    "width": "0"
+  },
+  "keybindings": [
+    {
+      "keys": [
+        {
+          "key": "F4",
+          "modifiers": []
+        }
+      ],
+      "action": "workspace_trust_trust",
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {
+          "key": "F5",
+          "modifiers": []
+        }
+      ],
+      "action": "open_terminal_right",
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {
+          "key": "F6",
+          "modifiers": []
+        }
+      ],
+      "action": "focus_terminal",
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {
+          "key": "F7",
+          "modifiers": []
+        }
+      ],
+      "action": "focus_editor",
+      "when": "normal"
+    }
+  ],
+  "plugins": {
+    "dashboard": {
+      "enabled": false
+    },
+    "git_heatmap": {
+      "enabled": false
+    },
+    "markdown_compose": {
+      "enabled": false
+    },
+    "vi_mode": {
+      "enabled": false
+    }
+  }
+}

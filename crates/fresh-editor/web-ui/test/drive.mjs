@@ -1137,9 +1137,30 @@ check('Word: the real menu bar is lifted onto the band, between caption and tool
 // Clicking File still opens the editor's own dropdown from the lifted bar:
 // the lift is CSS only, so the element kept every handler it had.
 await page.locator('.menubar .menu', { hasText: 'File' }).first().click();
-await page.waitForTimeout(200);
+await page.waitForTimeout(250);
 check('Word: the lifted menu bar still opens the real File menu',
   (await page.locator('.mitem').count()) >= 4);
+// …and the menu came WITH it. The panel is placed on the cell row under the
+// menu bar, so the lift has to move the whole family by one shared offset or
+// the menu would hang off the grid's now-empty top row instead of off the bar
+// it was opened from. Same flushness the unthemed shell asserts, plus proof
+// the panel is up in the chrome rather than back down in the grid.
+const wdBar = await page.locator('.menubar').boundingBox();
+const wdDd = await page.locator('.dropdown').first().boundingBox();
+const wdAppTop = await page.evaluate(() => document.getElementById('app').getBoundingClientRect().top);
+check('Word: the dropdown follows the lifted bar (flush under it, above the grid)',
+  !!wdDd && !!wdBar && Math.abs(wdDd.y - (wdBar.y + wdBar.height)) <= 2 && wdDd.y < wdAppTop,
+  `gap=${wdDd && wdBar && (wdDd.y - (wdBar.y + wdBar.height))}px, appTop=${wdAppTop}`);
+// The rows ride along with their panel — they are siblings of it, not children.
+check('Word: the dropdown rows moved with their panel',
+  await page.evaluate(() => {
+    const p = document.querySelector('.dropdown').getBoundingClientRect();
+    const rows = [...document.querySelectorAll('.mitem')];
+    return rows.length > 0 && rows.every(m => {
+      const r = m.getBoundingClientRect();
+      return r.top >= p.top - 2 && r.bottom <= p.bottom + 2;
+    });
+  }));
 await page.keyboard.press('Escape');
 await page.waitForTimeout(200);
 check('Word: Windows 3.1 palette layered inline (navy selection, square corners), buffer stays monospace',

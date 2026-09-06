@@ -157,23 +157,39 @@
   body.theme-word .menubar{background:#fff;color:#000;
     box-shadow:inset 0 -1px 0 #000}
 
-  /* ---- the real menu bar, lifted into the chrome ----
+  /* ---- the real menu bar and its menus, lifted into the chrome ----
      Word's bands run caption, menu bar, toolbar, ruler, but fresh's menu bar
      is row 0 of the CELL GRID, which starts below the whole bezel — so left
      alone it lands under the ruler. Rebuilding it as furniture would mean a
      second File/Edit/View with none of the editor's hit-testing behind it, so
-     the REAL element is translated onto the band instead and keeps every
-     handler it already has. Row 0 of the grid is left blank in exchange; that
-     is the cost of the lift, not an artefact to reclaim.
-     The offset is the band's y less the bezel's height, because the grid's
-     origin sits exactly --bezel-top below the top of #device (layoutShell
-     pins the device there). Nothing needs a z-index: #app follows #device in
-     the document and neither is stacked, so the bar already paints over the
-     band. The band supplies the rules above and below, so the bar drops its
-     own rather than doubling the one under it. */
-  body.theme-word:not(.mobile) .menubar{
-    transform:translateY(calc(var(--wd-band-y) - var(--bezel-top)));
-    box-shadow:none}
+     the REAL element is translated onto the band and keeps every handler it
+     already has. Row 0 of the grid is left blank in exchange; that is the cost
+     of the lift, not an artefact to reclaim. The offset is the band's y less
+     the bezel's height, because layoutShell pins #device exactly --bezel-top
+     above the grid's origin.
+
+     The whole menu family moves, not just the bar: the pipeline places the
+     dropdown box on the row directly under the menu bar, so one shared offset
+     keeps the panel hanging off the bar at every zoom, and lifting the bar
+     alone would strand its menus on the empty top row. The rows are SIBLINGS
+     of the .dropdown that backs them, not children (js/80-input.js names the
+     same family for the same reason), and fitMenuWidths pairs them up by
+     client rect — which includes transforms — so a panel that moved without
+     its rows could no longer size itself. Their shared container is no
+     shortcut: it is display:contents and has no box to transform. The menus
+     covering the toolbar, ruler and document is correct — that is what a menu
+     does.
+
+     Nothing needs a z-index: #app follows #device and neither is stacked, so
+     this already paints over the bezel. The band draws the rules above and
+     below, so the bar drops its own rather than doubling the lower one. */
+  body.theme-word:not(.mobile) .menubar,
+  body.theme-word:not(.mobile) .dropdown,
+  body.theme-word:not(.mobile) .mitem,
+  body.theme-word:not(.mobile) .msep,
+  body.theme-word:not(.mobile) .mlabel{
+    transform:translateY(calc(var(--wd-band-y) - var(--bezel-top)))}
+  body.theme-word:not(.mobile) .menubar{box-shadow:none}
   body.theme-word .menu{color:#000}
   body.theme-word .menu:hover,body.theme-word .menu.open{background:#000080;color:#fff}
   /* Tabs: raised plates, the active one pressed into the frame. */

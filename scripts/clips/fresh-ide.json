@@ -1,0 +1,141 @@
+{
+  "name": "fresh-ide",
+  "capture": {
+    "geometry": "140x19",
+    "font": "DejaVu Sans Mono 15",
+    "screen": "2100x800x24",
+    "display": ":99",
+    "settle": 18,
+    "workdir": "~/.cache/fresh-clips/ide-demo",
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-ide/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 3
+      },
+      {
+        "key": "F4"
+      },
+      {
+        "sleep": 2
+      },
+      {
+        "record": "ide",
+        "seconds": 20,
+        "fps": 30
+      },
+      {
+        "sleep": 2
+      },
+      {
+        "key": "F5"
+      },
+      {
+        "sleep": 2
+      },
+      {
+        "type": "claude"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 6
+      },
+      {
+        "key": "F7"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "key": "Down",
+        "repeat": 10
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "key": "F6"
+      },
+      {
+        "sleep": 3
+      },
+      {
+        "key": "F7"
+      },
+      {
+        "sleep": 2
+      }
+    ],
+    "panes": {
+      "ide": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "src/main.rs"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1920,
+      1080
+    ],
+    "fps": 60,
+    "rows": 19,
+    "cols": 140,
+    "title": "Microsoft Word - FRESH.DOC",
+    "chrome": {
+      "style": "word6",
+      "assets": "~/Documents/fresh-clip-assets",
+      "scale": 3,
+      "layout": "side",
+      "headline_width": 0.3,
+      "header_block": 124,
+      "body_size": 22,
+      "body_lead": 27,
+      "body_lines": 4
+    },
+    "timing": {
+      "intro": 0,
+      "zoom": 0,
+      "hold": 20,
+      "pan": 0,
+      "outro": 0
+    },
+    "annotations": [
+      {
+        "shots": "ide",
+        "hold": 20,
+        "typewriter": 0.45,
+        "misspell": [
+          "multi-cursor"
+        ],
+        "head": [
+          "Fresh",
+          "IDE"
+        ],
+        "sub": [
+          "Fresh is an open-source terminal IDE for",
+          "the modern era: zero config, mouse, LSP,",
+          "multi-cursor, a command palette \u2014 and",
+          "coding agents running beside your code."
+        ]
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

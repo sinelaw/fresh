@@ -33,6 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-wave-logic.json` | solo, chrome | how the Wave animation actually works, explained inside Word 6.0 |
+| `fresh-ide.json` | solo, chrome | what fresh is, over a buffer and a coding agent side by side |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -116,3 +117,26 @@ The chrome needs period fonts and Word's toolbar artwork. Both are Microsoft's,
 licensed with the Windows they ship on, so they are gitignored and live outside
 the tree — see `~/Documents/fresh-clip-assets`. Without them the clip still
 renders, with free substitute faces and Wingdings buttons.
+
+## The IDE clip
+
+`fresh-ide.json` is the same shape as the Wave clip — Word 6.0 chrome, WordArt
+in a left column, the copy typing itself beside it — over a recording of fresh
+being used: `src/main.rs` in one pane, a coding agent in an embedded terminal in
+the other, focus moving between them.
+
+It needs its demo project built first, because it points `workdir` at a real
+directory rather than the scratch copy:
+
+```sh
+./assets/fresh-ide/make-repo.sh ~/.cache/fresh-clips/ide-demo
+```
+
+A real cargo project and a real git repo, not a lone file: an agent pointed at a
+directory with no manifest and no history has nothing to say about it, and the
+Orchestrator's unit of work is a worktree. `make-repo.sh` checks every line fits
+the split editor pane and fails if one does not — the clip halves a 140-column
+capture, so a long line is a line the viewer sees cut off.
+
+The copy is drawn from the feature table in the top-level README. Keep it that
+way: a clip that claims something fresh does not do is worse than no clip.
