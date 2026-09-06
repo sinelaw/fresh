@@ -673,6 +673,32 @@ impl<M: 'static> Ui<M> {
         &self.hover
     }
 
+    /// Forget where the pointer is, firing each hovered node's `Leave`.
+    ///
+    /// Hover is feedback for a pointer in use. When the keyboard takes over
+    /// the pointer stops meaning anything until it moves again, and a band
+    /// left under it competes with the selection the keys are moving — in
+    /// the review diff's file sidebar it read as a second, stale selection.
+    /// The next `Move` re-establishes it.
+    pub fn clear_hover(&mut self) -> bool {
+        if self.hover.is_empty() {
+            return false;
+        }
+        let left = std::mem::take(&mut self.hover);
+        let mut out = Vec::new();
+        for n in left.into_iter().rev() {
+            self.fire_at(
+                n,
+                GestureKind::Leave,
+                Point { x: -1, y: -1 },
+                Mods::NONE,
+                &mut out,
+            );
+        }
+        self.pending_messages.extend(out);
+        true
+    }
+
     pub fn captured(&self) -> Option<ElementId> {
         self.captured
     }

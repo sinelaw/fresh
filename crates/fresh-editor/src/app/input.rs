@@ -151,6 +151,18 @@ impl Editor {
             modifiers
         );
 
+        // The keyboard is driving now, so pointer feedback stops: a hover
+        // band left under an idle pointer competes with the selection the
+        // keys are moving, and reads as a second one. The next pointer move
+        // re-establishes it (`fresh_ui::Ui::clear_hover`).
+        if let Some(mut ui) = self.shell_ui.take() {
+            let cleared = ui.clear_hover();
+            self.shell_ui = Some(ui);
+            if cleared {
+                self.apply_settled_shell_messages();
+            }
+        }
+
         // Create key event for dispatch methods
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
 

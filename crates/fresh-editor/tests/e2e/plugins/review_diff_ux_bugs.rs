@@ -3276,3 +3276,261 @@ fn test_sidebar_highlight_survives_focusing_the_filter() {
         harness.screen_to_string()
     );
 }
+
+/// Clicking a sidebar row hands the keys to the sidebar, so the arrows go
+/// on working.
+///
+/// A click that lands on a widget is routed straight to it: the panel's
+/// buffer sees no `mouse_click` and no `buffer_activated`, so a widget
+/// event is the plugin's only word that focus moved. Missing it, the
+/// plugin kept routing arrows to the panel it last knew about — they did
+/// nothing at all, and Enter toggled a fold in the diff instead of opening
+/// the file that had just been clicked.
+#[test]
+fn test_clicking_a_file_hands_the_keys_to_the_sidebar() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let settle = |h: &mut EditorTestHarness| {
+        for _ in 0..8 {
+            h.tick_and_render().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            h.advance_time(std::time::Duration::from_millis(50));
+        }
+    };
+    let row_of = |h: &EditorTestHarness, name: &str| -> u16 {
+        h.screen_to_string()
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| l.chars().take(20).collect::<String>().contains(name))
+            .map(|(y, _)| y as u16)
+            .next()
+            .unwrap_or_else(|| panic!("no sidebar row for {name}"))
+    };
+
+    // Read the diff for a while — the keys are the diff's.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    settle(&mut harness);
+
+    // Reach over and click a file.
+    let row = row_of(&harness, "mod_003.rs");
+    harness.mouse_click(5, row).unwrap();
+    settle(&mut harness);
+    assert!(
+        selected_sidebar_row(&harness).is_some_and(|r| r.contains("mod_003.rs")),
+        "the click should select the row it landed on. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // The arrows now belong to the sidebar.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    settle(&mut harness);
+    assert!(
+        selected_sidebar_row(&harness).is_some_and(|r| r.contains("mod_004.rs")),
+        "Down should step the sidebar to the next file after a click put \
+         the keys there — it is on {:?}. Screen:\n{}",
+        selected_sidebar_row(&harness),
+        harness.screen_to_string()
+    );
+}
+
+/// A repo whose changed files nest, so the sidebar's tree order (a
+/// directory's subdirectories before the files beside them) differs from
+/// the flat path order the stream used to walk.
+fn repo_with_nested_changes() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    let paths = [
+        "src/aaa.rs",
+        "src/zzz.rs",
+        "src/nested/mid.rs",
+        "src/nested/deeper/leaf.rs",
+    ];
+    for p in paths {
+        let full = repo.path.join(p);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(&full, "pub fn before() {}\n").unwrap();
+    }
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    for p in paths {
+        fs::write(repo.path.join(p), "pub fn after() { /* CHANGED */ }\n").unwrap();
+    }
+    repo
+}
+
+/// The stream lists files in the order the sidebar does. The sidebar nests
+/// by directory — subdirectories before the files beside them — so walking
+/// the diff and reading the sidebar have to be the same sequence.
+#[test]
+fn test_stream_file_order_matches_the_sidebar() {
+    init_tracing_from_env();
+    let repo = repo_with_nested_changes();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let divider = screen
+        .lines()
+        .filter_map(|l| l.find('\u{2502}'))
+        .min()
+        .expect("the sidebar is drawn beside the diff");
+
+    // Sidebar: the file rows top to bottom (basenames, as the tree shows).
+    let names = ["aaa.rs", "zzz.rs", "mid.rs", "leaf.rs"];
+    let sidebar: Vec<&str> = screen
+        .lines()
+        .filter_map(|l| {
+            let left: String = l.chars().take(divider).collect();
+            names.iter().find(|n| left.contains(**n)).copied()
+        })
+        .collect();
+
+    // Stream: the file header rows top to bottom, right of the divider.
+    let stream: Vec<&str> = screen
+        .lines()
+        .filter_map(|l| {
+            let right: String = l.chars().skip(divider).collect();
+            if !right.contains("+1 / -1") {
+                return None;
+            }
+            names.iter().find(|n| right.contains(**n)).copied()
+        })
+        .collect();
+
+    assert_eq!(
+        sidebar.len(),
+        names.len(),
+        "every file should be listed in the sidebar. Screen:\n{screen}"
+    );
+    assert_eq!(
+        stream, sidebar,
+        "the stream's files should be in the sidebar's order. Screen:\n{screen}"
+    );
+}
+
+/// Sidebar rows carrying a background of their own, as (row, description).
+/// Two of them means two things claiming to be "the file you are on".
+fn sidebar_marked_rows(harness: &EditorTestHarness) -> Vec<(usize, String)> {
+    let screen = harness.screen_to_string();
+    let divider = screen
+        .lines()
+        .filter_map(|line| line.find('\u{2502}'))
+        .min()
+        .unwrap_or(20) as u16;
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut rows = Vec::new();
+    for (y, line) in screen.lines().enumerate() {
+        let left: String = line.chars().take(divider as usize).collect();
+        if !left.contains("mod_") {
+            continue;
+        }
+        let bg = format!(
+            "{:?}",
+            harness.get_cell_style(4, y as u16).and_then(|s| s.bg)
+        );
+        *counts.entry(bg.clone()).or_default() += 1;
+        rows.push((y, left, bg));
+    }
+    // The colour most rows share is the panel's ground; anything else is a
+    // marker.
+    let ground = counts
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .map(|(bg, _)| bg)
+        .unwrap_or_default();
+    rows.into_iter()
+        .filter(|(_, _, bg)| *bg != ground)
+        .map(|(y, left, bg)| (y, format!("{left:?} bg={bg}")))
+        .collect()
+}
+
+/// One marker in the sidebar, not two.
+///
+/// The pointer leaves a hover band on whatever row it rests on, and a
+/// terminal only hears about the pointer when it moves — so after clicking
+/// a file and reading on with the keyboard, that band sat on the clicked
+/// row while the selection moved to the file the cursor had reached: two
+/// highlights in two styles, one of them stale. Pointer feedback now ends
+/// when the keyboard takes over, and returns on the next pointer move.
+#[test]
+fn test_sidebar_shows_one_marker_while_the_keyboard_drives() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let settle = |h: &mut EditorTestHarness| {
+        for _ in 0..8 {
+            h.tick_and_render().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            h.advance_time(std::time::Duration::from_millis(50));
+        }
+    };
+    let row = harness
+        .screen_to_string()
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.chars()
+                .take(20)
+                .collect::<String>()
+                .contains("mod_001.rs")
+        })
+        .map(|(y, _)| y as u16)
+        .next()
+        .expect("the sidebar lists mod_001.rs");
+
+    // Click it and leave the pointer there, as a hand does.
+    harness.mouse_click(5, row).unwrap();
+    settle(&mut harness);
+    harness.mouse_move(5, row).unwrap();
+    settle(&mut harness);
+
+    // Read on with the keyboard, into a later file.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    settle(&mut harness);
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        settle(&mut harness);
+    }
+
+    let marked = sidebar_marked_rows(&harness);
+    assert_eq!(
+        marked.len(),
+        1,
+        "the sidebar should mark one file — the one being read. Marked: \
+         {marked:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
