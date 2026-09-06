@@ -76,7 +76,7 @@ fn main() {
             res.set("ProductName", "Fresh");
             res.set("FileDescription", "Fresh — fast terminal text editor");
             res.set("CompanyName", "Fresh");
-            res.set("LegalCopyright", "Licensed under GPL-2.0");
+            res.set("LegalCopyright", "Licensed under GPL-2.0-or-later");
             res.set("OriginalFilename", "fresh.exe");
             res.set("InternalName", "fresh");
 
