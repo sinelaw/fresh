@@ -131,6 +131,16 @@ pub struct Endpoints {
     pub releases_url: String,
     /// Base URL that release asset names are appended to.
     pub download_base: String,
+    /// Where the `releases/latest` redirect that names the newest release
+    /// lives — the route that costs no API budget (see [`crate::fetch`]).
+    ///
+    /// Derived from [`Endpoints::download_base`], because that is where it
+    /// sits: GitHub serves `…/releases/latest` beside `…/releases/download`,
+    /// and so does anything mirroring that layout. `None` once a feed has been
+    /// named explicitly — a caller who points `--releases-url` at a document
+    /// chose where versions come from, and resolving them somewhere else would
+    /// ignore that — or when the base has a shape we do not recognise.
+    pub redirect_url: Option<String>,
     /// `false` when either endpoint was overridden away from the pinned
     /// defaults. An untrusted endpoint may still be used — that is the point
     /// of the override — but the engine will not run a privileged install with
@@ -147,9 +157,11 @@ impl Default for Endpoints {
 impl Endpoints {
     /// The pinned defaults: GitHub, over TLS.
     pub fn production() -> Self {
+        let download_base = format!("https://github.com/{REPO}/releases/download");
         Endpoints {
             releases_url: DEFAULT_RELEASES_URL.to_string(),
-            download_base: format!("https://github.com/{REPO}/releases/download"),
+            redirect_url: redirect_beside(&download_base),
+            download_base,
             trusted: true,
         }
     }
@@ -183,12 +195,22 @@ impl Endpoints {
     pub fn set_releases_url(&mut self, url: String) -> Result<(), EndpointError> {
         self.trusted &= accept(&url)?;
         self.releases_url = url;
+        // A named feed is the answer to "which release?", so the redirect is
+        // no longer consulted — whichever order the two overrides arrive in.
+        self.redirect_url = None;
         Ok(())
     }
 
     /// Point asset downloads elsewhere, under the same policy.
+    ///
+    /// The redirect moves with them: it lives beside the downloads, so a base
+    /// that keeps GitHub's layout keeps the cheap route to the version, and one
+    /// that does not falls back to the feed.
     pub fn set_download_base(&mut self, base: String) -> Result<(), EndpointError> {
         self.trusted &= accept(&base)?;
+        if self.redirect_url.is_some() {
+            self.redirect_url = redirect_beside(&base);
+        }
         self.download_base = base;
         Ok(())
     }
@@ -215,11 +237,33 @@ impl Endpoints {
         }
     }
 
+    /// The web redirect that names the latest release without spending any of
+    /// the API's rate-limit budget: `…/releases/latest` answers 302 with that
+    /// release's page, and the tag is in the `Location` header.
+    ///
+    /// See [`Endpoints::redirect_url`] for when there is one, and
+    /// [`crate::fetch`] for what it can and cannot answer.
+    pub fn latest_redirect_url(&self) -> Option<String> {
+        self.redirect_url.clone()
+    }
+
     /// The URL of a release asset, given its filename.
     pub fn asset_url(&self, version: &str, file_name: &str) -> String {
         let base = self.download_base.trim_end_matches('/');
         format!("{base}/v{version}/{file_name}")
     }
+}
+
+/// The `releases/latest` redirect that sits beside a `releases/download` base.
+///
+/// One rule, applied to whatever base is in effect: replace the final
+/// `download` segment with `latest`. It yields GitHub's own redirect for the
+/// pinned base, the matching one for a mirror that keeps that layout, and
+/// `None` for a base shaped some other way — which reads as "ask the feed".
+fn redirect_beside(download_base: &str) -> Option<String> {
+    let base = download_base.trim_end_matches('/');
+    base.strip_suffix("/download")
+        .map(|stem| format!("{stem}/latest"))
 }
 
 /// Decide whether an overridden endpoint may be used at all.
@@ -276,6 +320,66 @@ mod endpoint_list_tests {
         ep.releases_url = "https://example.invalid/feed/latest".to_string();
         ep.trusted = false;
         assert_eq!(ep.list_url(), "https://example.invalid/feed/latest");
+    }
+}
+
+#[cfg(test)]
+mod redirect_tests {
+    use super::*;
+
+    #[test]
+    fn the_pinned_default_resolves_versions_through_the_web_redirect() {
+        let url = Endpoints::production()
+            .latest_redirect_url()
+            .expect("the pinned endpoints have one");
+        assert_eq!(url, format!("https://github.com/{REPO}/releases/latest"));
+        check(&url).expect("the redirect must satisfy the same policy");
+    }
+
+    /// A named feed is the caller's answer to "which release?", whichever
+    /// order the two overrides arrive in.
+    #[test]
+    fn naming_a_feed_takes_the_redirect_out_of_play() {
+        let mut ep = Endpoints::production();
+        ep.set_releases_url(format!(
+            "https://api.github.com/repos/{REPO}/releases/tags/v0.4.7"
+        ))
+        .expect("an allowlisted host is within policy");
+        assert_eq!(ep.latest_redirect_url(), None);
+
+        // …and the download base moving afterwards does not bring it back.
+        ep.set_download_base(format!("https://github.com/{REPO}/releases/download"))
+            .expect("within policy");
+        assert_eq!(ep.latest_redirect_url(), None);
+    }
+
+    /// The redirect lives beside the downloads, so it follows them: a mirror
+    /// keeping GitHub's layout keeps the route that costs no API budget.
+    #[test]
+    fn the_redirect_follows_the_download_base() {
+        let mut ep = Endpoints::production();
+        ep.set_download_base("https://github.com/other/repo/releases/download".to_string())
+            .expect("an allowlisted host is within policy");
+        assert_eq!(
+            ep.latest_redirect_url().as_deref(),
+            Some("https://github.com/other/repo/releases/latest")
+        );
+
+        // A base shaped some other way has no redirect beside it to guess at.
+        let mut ep = Endpoints::production();
+        match ep.set_download_base("https://github.com/other/repo/dl".to_string()) {
+            Ok(()) => assert_eq!(ep.latest_redirect_url(), None),
+            Err(e) => panic!("an allowlisted host should be accepted: {e}"),
+        }
+    }
+
+    #[test]
+    fn a_trailing_slash_does_not_hide_the_redirect() {
+        assert_eq!(
+            redirect_beside("https://github.com/a/b/releases/download/").as_deref(),
+            Some("https://github.com/a/b/releases/latest")
+        );
+        assert_eq!(redirect_beside("https://example.invalid/files"), None);
     }
 }
 
@@ -353,6 +457,7 @@ mod tests {
         let ep = Endpoints {
             releases_url: DEFAULT_RELEASES_URL.to_string(),
             download_base: "https://github.com/x/releases/download/".to_string(),
+            redirect_url: None,
             trusted: true,
         };
         assert_eq!(

@@ -1,6 +1,7 @@
 //! `fresh --cmd update`, end to end.
 //!
-//! Resolve provenance, fetch the release feed, then take one of four routes
+//! Resolve provenance, resolve the release (through the `releases/latest`
+//! redirect, not the API — see [`crate::fetch`]), then take one of four routes
 //! decided entirely by [`UpdateKind`]:
 //!
 //! * **Delegated / Toolchain** — print the owning package manager's own
@@ -47,7 +48,7 @@ use crate::feed::Release;
 use crate::net::{self, Transport};
 use crate::provenance::Provenance;
 use crate::registry::UpdateKind;
-use crate::{self_update, Channel};
+use crate::{self_update, Channel, SKIP_ATTESTATION_FLAG};
 use std::path::{Path, PathBuf};
 
 /// Options for one run of the engine.
@@ -64,6 +65,20 @@ pub struct UpdateOptions {
     /// Off by default, and the refusal is enforced in [`crate::feed::select`]
     /// rather than left to the endpoint: see the note there.
     pub allow_prerelease: bool,
+    /// Do not check the release attestation before installing.
+    ///
+    /// Lowers verification to the checksum sidecar alone — the same bar
+    /// `install.sh` sets, and a weaker one than this engine's default: the
+    /// sidecar is served from the same origin as the artifact, so it catches
+    /// corruption but not a release that was tampered with at the source. It
+    /// exists because the attestation lookup is the one request an update makes
+    /// to `api.github.com`, and a rate limit there is otherwise an hour's wait
+    /// with no way through.
+    ///
+    /// Deliberately a flag and not an environment variable: this is a decision
+    /// to be taken per run, not one to leave set in a shell profile where it
+    /// silently applies to every future update.
+    pub skip_attestation: bool,
     /// Run the install path even when already on the latest version.
     ///
     /// Distinct from `allow_downgrade`, which is about *which* versions are
@@ -85,6 +100,7 @@ impl Default for UpdateOptions {
             yes: false,
             allow_downgrade: false,
             allow_prerelease: false,
+            skip_attestation: false,
             force: false,
             execution: Execution::Install,
             // An out-of-policy override is refused outright in a release build,
@@ -165,16 +181,11 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
     );
 
     let transport = Transport::new(&opts.endpoints);
-    // Pre-releases are absent from `/releases/latest`, so opting in means
-    // asking the list endpoint; without the flag this is the pinned default.
-    let feed_url = if opts.allow_prerelease {
-        opts.endpoints.list_url()
-    } else {
-        opts.endpoints.releases_url.clone()
-    };
-    let body = transport.get_text(&feed_url, net::FEED_MAX_BYTES)?;
-    let release = crate::feed::select(&body, opts.allow_prerelease)?;
-    let latest = release.version().to_string();
+    // Resolves through the `releases/latest` redirect on the pinned endpoints —
+    // no API budget spent, so a `--check` cannot be refused by a rate limit
+    // somebody else used up. See `crate::fetch`.
+    let fetched = crate::fetch::latest(&transport, &opts.endpoints, opts.allow_prerelease)?;
+    let latest = fetched.release.version().to_string();
 
     println!("Current version: {current_version}");
     println!("Latest version:  {latest}");
@@ -218,7 +229,7 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
                 println!("An update is available. Run `fresh --cmd update` to fetch it.");
                 return Ok(UpdateStatus::Done);
             }
-            package(&prov, &release, &transport, opts)
+            package(&prov, &fetched, &transport, opts)
         }
         UpdateKind::Delegated | UpdateKind::Toolchain => {
             let cmd = plan.command.clone().unwrap_or_default();
@@ -251,9 +262,16 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
 
 /// Fetch the release artifact for a channel whose package manager has no
 /// repository to upgrade from, and hand it to the local package tool.
+///
+/// The artifact is named the way `scripts/install.sh` names it — from the
+/// version, with no request for the release's asset list — so a `.deb`/`.rpm`
+/// update spends no API budget either. That name is a prediction, so it is
+/// checked by using it: if the release does not publish it, the feed is asked
+/// for the real one, which costs the one request the construction was there to
+/// avoid and only when it was actually wrong.
 fn package(
     prov: &Provenance,
-    release: &Release,
+    fetched: &crate::fetch::Fetched,
     transport: &Transport,
     opts: &UpdateOptions,
 ) -> Result<UpdateStatus, String> {
@@ -269,28 +287,19 @@ fn package(
     )
     .ok_or_else(|| format!("no release package is published for {}", channel.label()))?;
 
-    let asset = release.find_package(asset_spec.extension, &asset_spec.arch)?;
-    // This URL comes out of the feed rather than being built from a pinned
-    // base, so on the production endpoint it gets the full host check — a feed
-    // we did not author must not be able to point the download anywhere.
-    //
-    // An overridden endpoint is the one case where that check is wrong rather
-    // than strict: a mirror's feed necessarily names assets *on the mirror*, so
-    // enforcing the GitHub allowlist there rejects every asset and makes
-    // `--releases-url` unusable for the air-gapped case it exists for. The
-    // endpoint is already marked untrusted, and nothing is installed from it.
-    if opts.endpoints.trusted {
-        crate::endpoint::check(&asset.browser_download_url).map_err(|e| e.to_string())?;
-    }
+    let mut asset = match constructed_asset(fetched, &asset_spec, opts) {
+        Some(asset) => asset,
+        // Either the feed is already in hand, or this extension has no naming
+        // we encode. Both mean: read the name off the release.
+        None => feed_asset(&fetched.release, &asset_spec, opts)?,
+    };
 
     // Display only: whether the printed command needs a `sudo` in front of it.
     let needs_privilege = crate::plan(prov).needs_privilege;
 
     if !opts.execution.may_download() {
         // "Show the command" means exactly that: no request for the artifact,
-        // nothing written to disk. The two commands are still nameable, because
-        // the release feed — already fetched, and the same request the daily
-        // background check makes — carries the asset's URL and filename.
+        // nothing written to disk.
         let cmd = crate::registry::install_command_with(
             channel,
             Path::new(&format!("./{}", asset.name)),
@@ -306,11 +315,35 @@ fn package(
         return Ok(UpdateStatus::ActionRequired);
     }
 
-    let bytes = fetch_and_verify(
+    let bytes = match fetch_and_verify(
         transport,
         &asset.browser_download_url,
         opts.endpoints.trusted,
-    )?;
+        opts.skip_attestation,
+    ) {
+        Ok(bytes) => bytes,
+        // The name we built is not what this release published — a packaging
+        // change, or a second revision of the same version. The feed knows the
+        // real one; ask it, and only now.
+        Err(DownloadError::Missing(_))
+            if fetched.source == crate::fetch::Source::ReleaseRedirect =>
+        {
+            tracing::warn!(
+                asset = %asset.name,
+                "constructed package name is not published; asking the release feed"
+            );
+            let release =
+                crate::fetch::from_feed(transport, &opts.endpoints, opts.allow_prerelease)?;
+            asset = feed_asset(&release, &asset_spec, opts)?;
+            fetch_and_verify(
+                transport,
+                &asset.browser_download_url,
+                opts.endpoints.trusted,
+                opts.skip_attestation,
+            )?
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     // The user installs this by hand, later, so it goes somewhere nothing
     // sweeps out from under them. (This used to be an ephemeral directory when
@@ -328,6 +361,52 @@ fn package(
     println!();
     show_command(&crate::elevate::elevated(&cmd, needs_privilege));
     Ok(UpdateStatus::ActionRequired)
+}
+
+/// The package this release should publish, named from its version and hosted
+/// under the pinned download base.
+///
+/// `None` when the release came from the feed (whose names are facts, so there
+/// is nothing to predict), when the endpoint is overridden (a mirror serves its
+/// own layout, and only its feed knows it), or when the extension has no naming
+/// we encode.
+fn constructed_asset(
+    fetched: &crate::fetch::Fetched,
+    spec: &crate::registry::PackageAsset,
+    opts: &UpdateOptions,
+) -> Option<crate::feed::Asset> {
+    if fetched.source.lists_assets() || !opts.endpoints.trusted {
+        return None;
+    }
+    let version = fetched.release.version();
+    let name = crate::feed::package_file_name(version, spec.extension, &spec.arch)?;
+    let browser_download_url = opts.endpoints.asset_url(version, &name);
+    Some(crate::feed::Asset {
+        name,
+        browser_download_url,
+    })
+}
+
+/// The package this release *does* publish, read off the feed.
+fn feed_asset(
+    release: &Release,
+    spec: &crate::registry::PackageAsset,
+    opts: &UpdateOptions,
+) -> Result<crate::feed::Asset, String> {
+    let asset = release.find_package(spec.extension, &spec.arch)?;
+    // This URL comes out of the feed rather than being built from a pinned
+    // base, so on the production endpoint it gets the full host check — a feed
+    // we did not author must not be able to point the download anywhere.
+    //
+    // An overridden endpoint is the one case where that check is wrong rather
+    // than strict: a mirror's feed necessarily names assets *on the mirror*, so
+    // enforcing the GitHub allowlist there rejects every asset and makes
+    // `--releases-url` unusable for the air-gapped case it exists for. The
+    // endpoint is already marked untrusted, and nothing is installed from it.
+    if opts.endpoints.trusted {
+        crate::endpoint::check(&asset.browser_download_url).map_err(|e| e.to_string())?;
+    }
+    Ok(asset.clone())
 }
 
 /// Verified in-place update for a self-contained install.
@@ -349,7 +428,12 @@ fn self_contained(
     let url = opts.endpoints.asset_url(latest, &asset);
 
     let bin_name = if cfg!(windows) { "fresh.exe" } else { "fresh" };
-    let archive = fetch_and_verify(transport, &url, opts.endpoints.trusted)?;
+    let archive = fetch_and_verify(
+        transport,
+        &url,
+        opts.endpoints.trusted,
+        opts.skip_attestation,
+    )?;
     let binary = if asset.ends_with(".zip") {
         crate::archive::from_zip(&archive, bin_name)?
     } else if asset.ends_with(".tar.gz") {
@@ -382,7 +466,12 @@ fn appimage(
         "AppImage install has no recorded install_root; reinstall via install.sh".to_string()
     })?;
 
-    let bytes = fetch_and_verify(transport, &url, opts.endpoints.trusted)?;
+    let bytes = fetch_and_verify(
+        transport,
+        &url,
+        opts.endpoints.trusted,
+        opts.skip_attestation,
+    )?;
 
     // Everything happens inside one private directory next to the install root
     // — same filesystem, so the final rename is atomic, and private so nothing
@@ -455,6 +544,40 @@ pub fn archive_ext(target: &str) -> &'static str {
     }
 }
 
+/// A download that did not produce verified bytes.
+///
+/// "That asset does not exist" is kept apart from every other failure because
+/// one caller can act on it: [`package`] builds a filename from a convention,
+/// and a 404 is the release telling it the convention did not hold. Everything
+/// else — a checksum mismatch, a missing attestation, a broken connection — is
+/// a failure to report, and collapsing the two would turn a tampered download
+/// into a retry against the feed.
+enum DownloadError {
+    /// The asset is not published under that name.
+    Missing(String),
+    /// Anything else, already phrased for the user.
+    Failed(String),
+}
+
+impl From<crate::net::FetchError> for DownloadError {
+    fn from(e: crate::net::FetchError) -> Self {
+        match e {
+            crate::net::FetchError::Status { status: 404, .. } => {
+                DownloadError::Missing(e.to_string())
+            }
+            other => DownloadError::Failed(other.to_string()),
+        }
+    }
+}
+
+impl From<DownloadError> for String {
+    fn from(e: DownloadError) -> String {
+        match e {
+            DownloadError::Missing(detail) | DownloadError::Failed(detail) => detail,
+        }
+    }
+}
+
 /// Download `url`, returning the bytes only if they check out at both origins.
 ///
 /// The sidecar shares an origin with the payload, so it catches corruption and
@@ -464,21 +587,34 @@ pub fn archive_ext(target: &str) -> &'static str {
 ///
 /// `trusted` tracks [`Endpoints::trusted`] — an overridden endpoint has no
 /// attestations to find, so the second check is skipped.
-fn fetch_and_verify(transport: &Transport, url: &str, trusted: bool) -> Result<Vec<u8>, String> {
+fn fetch_and_verify(
+    transport: &Transport,
+    url: &str,
+    trusted: bool,
+    skip_attestation: bool,
+) -> Result<Vec<u8>, DownloadError> {
     println!("Downloading {url} ...");
-    let scratch = crate::staging::ephemeral()?;
+    let scratch = crate::staging::ephemeral().map_err(DownloadError::Failed)?;
     let tmp = scratch.path().join("payload");
     transport.download(url, &tmp, net::ASSET_MAX_BYTES)?;
-    let bytes = std::fs::read(&tmp).map_err(|e| format!("read download: {e}"))?;
+    let bytes =
+        std::fs::read(&tmp).map_err(|e| DownloadError::Failed(format!("read download: {e}")))?;
 
     println!("Verifying checksum ...");
     let sha_url = format!("{url}.sha256");
     let expected = transport
         .get_text(&sha_url, net::SIDECAR_MAX_BYTES)
-        .map_err(|e| format!("could not fetch checksum ({sha_url}): {e}"))?;
-    self_update::verify_sha256(&bytes, expected.trim()).map_err(|e| e.to_string())?;
+        .map_err(|e| DownloadError::Failed(format!("could not fetch checksum ({sha_url}): {e}")))?;
+    self_update::verify_sha256(&bytes, expected.trim())
+        .map_err(|e| DownloadError::Failed(e.to_string()))?;
 
-    if trusted {
+    if skip_attestation {
+        // Said plainly, every time, because the user gave up the check that
+        // separates "these bytes are intact" from "GitHub published them".
+        println!("Skipping the release attestation check: these bytes are verified");
+        println!("only by a checksum from the same origin, which catches corruption");
+        println!("but not tampering.");
+    } else if trusted {
         println!("Verifying release attestation ...");
         // The digest is computed from the bytes on disk, never read from the
         // network — otherwise the second origin would be checking the first
@@ -486,12 +622,29 @@ fn fetch_and_verify(transport: &Transport, url: &str, trusted: bool) -> Result<V
         let digest = self_update::sha256_hex(&bytes);
         let asset = url.rsplit('/').next().unwrap_or(url);
         crate::attestation::verify(transport, crate::endpoint::REPO, asset, &digest)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| DownloadError::Failed(attestation_failure(&e)))?;
     } else {
         println!("Release endpoint overridden — skipping the attestation check.");
     }
 
     Ok(bytes)
+}
+
+/// What to tell the user when the attestation could not be confirmed.
+///
+/// The bypass is named for a rate limit and nothing else. Every other failure
+/// here is either "GitHub does not attest to these bytes" or "something got in
+/// the way of asking" — and pointing at a flag that skips the check would be
+/// suggesting the bypass in precisely the cases the check is for. A rate limit
+/// is different in kind: GitHub answered, over TLS, that it will not answer
+/// again for a while.
+fn attestation_failure(e: &crate::attestation::AttestationError) -> String {
+    let bypass = matches!(e, crate::attestation::AttestationError::RateLimited(_));
+    if bypass {
+        format!("{e} Re-run later, or {SKIP_ATTESTATION_FLAG} to install on the checksum alone.")
+    } else {
+        e.to_string()
+    }
 }
 
 /// Print a command for the user to run, rather than running it.
@@ -543,6 +696,141 @@ mod tests {
         }
     }
 
+    fn redirect_fetched(version: &str) -> crate::fetch::Fetched {
+        crate::fetch::Fetched {
+            release: Release::from_tag(format!("v{version}")),
+            source: crate::fetch::Source::ReleaseRedirect,
+        }
+    }
+
+    /// The point of the construction: a `.deb`/`.rpm` update names its
+    /// artifact from the version, so it needs no request to `api.github.com`
+    /// and cannot be refused by a rate limit somebody else used up. The URL
+    /// must land on the pinned host, exactly where `install.sh` fetches it.
+    #[test]
+    fn a_package_is_named_from_the_version_without_the_feed() {
+        let opts = UpdateOptions {
+            endpoints: Endpoints::production(),
+            ..UpdateOptions::default()
+        };
+        let spec = crate::registry::PackageAsset {
+            extension: ".deb",
+            arch: "amd64".to_string(),
+        };
+        let asset = constructed_asset(&redirect_fetched("0.4.10"), &spec, &opts)
+            .expect("a .deb name is one we encode");
+        assert_eq!(asset.name, "fresh-editor_0.4.10-1_amd64.deb");
+        assert_eq!(
+            asset.browser_download_url,
+            format!(
+                "https://github.com/{}/releases/download/v0.4.10/{}",
+                crate::endpoint::REPO,
+                asset.name
+            )
+        );
+        crate::endpoint::check(&asset.browser_download_url)
+            .expect("a constructed asset URL stays on a pinned host");
+    }
+
+    /// Two cases where predicting the name would be wrong rather than merely
+    /// unnecessary: the feed is already in hand and states the real names, or
+    /// the endpoint is a mirror whose layout we do not get to assume.
+    #[test]
+    fn a_name_is_never_predicted_when_the_release_can_be_asked() {
+        let spec = crate::registry::PackageAsset {
+            extension: ".deb",
+            arch: "amd64".to_string(),
+        };
+
+        let from_feed = crate::fetch::Fetched {
+            release: Release::from_tag("v0.4.10"),
+            source: crate::fetch::Source::Api,
+        };
+        let opts = UpdateOptions {
+            endpoints: Endpoints::production(),
+            ..UpdateOptions::default()
+        };
+        assert!(constructed_asset(&from_feed, &spec, &opts).is_none());
+
+        let opts = UpdateOptions {
+            endpoints: Endpoints {
+                releases_url: "http://127.0.0.1:9/release.json".to_string(),
+                download_base: "http://127.0.0.1:9".to_string(),
+                redirect_url: None,
+                trusted: false,
+            },
+            ..UpdateOptions::default()
+        };
+        assert!(constructed_asset(&redirect_fetched("0.4.10"), &spec, &opts).is_none());
+    }
+
+    /// The bypass is offered for a rate limit and for nothing else: naming it
+    /// when GitHub says these bytes are *not* attested would be suggesting the
+    /// way around the check in the one case the check exists for.
+    #[test]
+    fn only_a_rate_limit_is_told_how_to_go_around_the_attestation() {
+        use crate::attestation::AttestationError;
+
+        let limited = AttestationError::RateLimited("rate limited".to_string());
+        let message = attestation_failure(&limited);
+        assert!(
+            message.contains(SKIP_ATTESTATION_FLAG),
+            "a rate limit must name the way through: {message}"
+        );
+
+        for e in [
+            AttestationError::NotAttested {
+                asset: "fresh-editor.tar.gz".to_string(),
+                digest: "a".repeat(64),
+            },
+            AttestationError::NameMismatch {
+                asset: "fresh-editor.tar.gz".to_string(),
+                digest: "a".repeat(64),
+            },
+            AttestationError::Malformed("not json".to_string()),
+            AttestationError::Fetch("connection reset".to_string()),
+        ] {
+            let message = attestation_failure(&e);
+            assert!(
+                !message.contains(SKIP_ATTESTATION_FLAG),
+                "{e:?} must not advertise the bypass: {message}"
+            );
+        }
+    }
+
+    /// A 404 is the release saying the constructed name was wrong, and only
+    /// that failure may send the caller back to the feed. A checksum mismatch
+    /// or a missing attestation must never be retried as if it were a naming
+    /// problem.
+    #[test]
+    fn only_a_missing_asset_is_a_naming_problem() {
+        let missing: DownloadError = crate::net::FetchError::Status {
+            url: "https://github.com/x.deb".to_string(),
+            status: 404,
+        }
+        .into();
+        assert!(matches!(missing, DownloadError::Missing(_)));
+
+        for status in [403, 500, 502] {
+            let other: DownloadError = crate::net::FetchError::Status {
+                url: "https://github.com/x.deb".to_string(),
+                status,
+            }
+            .into();
+            assert!(
+                matches!(other, DownloadError::Failed(_)),
+                "HTTP {status} must not read as a naming problem"
+            );
+        }
+        let limited: DownloadError = crate::net::FetchError::RateLimited {
+            url: "https://api.github.com/x".to_string(),
+            wait: None,
+            authenticated: false,
+        }
+        .into();
+        assert!(matches!(limited, DownloadError::Failed(_)));
+    }
+
     /// Windows wins over the musl check, so a hypothetical
     /// `*-windows-musl` cannot be handed a tarball extension.
     #[test]
@@ -558,6 +846,7 @@ mod tests {
         let untrusted = Endpoints {
             releases_url: "http://127.0.0.1:9/release.json".to_string(),
             download_base: "http://127.0.0.1:9".to_string(),
+            redirect_url: None,
             trusted: false,
         };
         for channel in [Channel::Apt, Channel::Dnf, Channel::Zypper] {

@@ -21,6 +21,18 @@ use serde::Deserialize;
 /// differ, which is the distinction that broke receipt lookup once already.
 pub const PACKAGE_PREFIX: &str = "fresh-editor";
 
+/// The packaging revision in a `.deb`/`.rpm` filename: the `-1` in
+/// `fresh-editor_0.4.10-1_amd64.deb`.
+///
+/// It is a constant rather than a variable because the pipeline makes it one:
+/// `scripts/update-debian-changelog.sh` writes `(${VERSION}-1)` on every
+/// release, and `cargo generate-rpm` leaves its default release of `1`. A
+/// release that ever needs a second revision of the same version would have to
+/// change both, and this with them — which is why the name built from it is
+/// checked against the release rather than assumed (see
+/// [`package_file_name`]).
+pub const PACKAGE_REVISION: &str = "1";
+
 /// One published release asset.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Asset {
@@ -52,6 +64,21 @@ pub struct Release {
 }
 
 impl Release {
+    /// A release known only by its tag.
+    ///
+    /// This is what [`crate::fetch`] can recover when the API refuses to serve
+    /// the feed: the `releases/latest` redirect names the release and nothing
+    /// else. The empty asset list is *unknown*, not *empty*, and callers must
+    /// keep the two apart — [`crate::fetch::Source::lists_assets`] is how.
+    pub fn from_tag(tag_name: impl Into<String>) -> Self {
+        Release {
+            tag_name: tag_name.into(),
+            assets: Vec::new(),
+            prerelease: false,
+            draft: false,
+        }
+    }
+
     /// Parse a release-metadata document.
     pub fn parse(json: &str) -> Result<Self, String> {
         serde_json::from_str(json).map_err(|e| format!("could not read the release feed: {e}"))
@@ -164,6 +191,33 @@ pub fn select(json: &str, allow_prerelease: bool) -> Result<Release, String> {
     }
 }
 
+/// The filename this release publishes for `extension` and `arch`, built from
+/// the version alone.
+///
+/// This is the same construction `scripts/install.sh` does — it has no release
+/// feed either, and names `fresh-editor_${VERSION}-1_${ARCH}.deb` straight from
+/// the version — and it is what lets an update fetch a package without asking
+/// GitHub's API for the release's asset list. `None` for an extension whose
+/// naming we do not encode, which the caller must read as "ask the feed".
+///
+/// It is a *prediction*, not a fact: [`crate::engine`] downloads the name it
+/// returns and falls back to the feed if the release does not publish it, so a
+/// packaging change surfaces as one extra request rather than as a wrong
+/// answer.
+pub fn package_file_name(version: &str, extension: &str, arch: &str) -> Option<String> {
+    let rev = PACKAGE_REVISION;
+    match extension {
+        // dpkg: fresh-editor_0.4.10-1_amd64.deb
+        ".deb" => Some(format!("{PACKAGE_PREFIX}_{version}-{rev}_{arch}.deb")),
+        // rpm: fresh-editor-0.4.10-1.x86_64.rpm
+        ".rpm" => Some(format!("{PACKAGE_PREFIX}-{version}-{rev}.{arch}.rpm")),
+        // flatpak bundles carry no packaging revision:
+        // fresh-editor-0.4.10-x86_64.flatpak
+        ".flatpak" => Some(format!("{PACKAGE_PREFIX}-{version}-{arch}.flatpak")),
+        _ => None,
+    }
+}
+
 /// Whether `name` is our package artifact for `extension` and `arch`.
 ///
 /// The separator before the architecture matters: dpkg writes
@@ -239,6 +293,54 @@ mod tests {
         assert_eq!(
             release.find_package(".rpm", "x86_64").unwrap().name,
             "fresh-editor-0.4.7-1.x86_64.rpm"
+        );
+    }
+
+    /// The constructed name and the predicate that recognises one must agree:
+    /// they are the two halves of the same convention, and a release resolves
+    /// through whichever half the update path reached.
+    #[test]
+    fn a_constructed_name_is_one_the_matcher_recognises() {
+        for (extension, arch) in [
+            (".deb", "amd64"),
+            (".rpm", "x86_64"),
+            (".flatpak", "x86_64"),
+        ] {
+            let name = package_file_name("0.4.10", extension, arch).expect("a name");
+            assert!(
+                is_package_named(&name, extension, arch),
+                "built {name}, which the matcher rejects"
+            );
+        }
+        assert_eq!(
+            package_file_name("0.4.10", ".deb", "amd64").as_deref(),
+            Some("fresh-editor_0.4.10-1_amd64.deb")
+        );
+        assert_eq!(
+            package_file_name("0.4.10", ".rpm", "x86_64").as_deref(),
+            Some("fresh-editor-0.4.10-1.x86_64.rpm")
+        );
+        // An extension whose naming we do not encode must say so rather than
+        // guess: the caller asks the feed instead.
+        assert_eq!(package_file_name("0.4.10", ".pkg.tar.zst", "x86_64"), None);
+    }
+
+    /// The names in this test are the ones `scripts/install.sh` builds. If the
+    /// two ever disagree, one of them is downloading a 404.
+    #[test]
+    fn the_constructed_names_match_the_install_script() {
+        let script = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/install.sh"
+        ))
+        .expect("read install.sh");
+        assert!(
+            script.contains(r#"${BIN_NAME}_${VERSION}-1_${ARCH}.deb"#),
+            "install.sh no longer names .debs the way package_file_name does"
+        );
+        assert!(
+            script.contains(r#"${BIN_NAME}-${VERSION}-1.${ARCH}.rpm"#),
+            "install.sh no longer names .rpms the way package_file_name does"
         );
     }
 

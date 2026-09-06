@@ -55,6 +55,8 @@ pub mod attestation;
 #[cfg(feature = "engine")]
 pub mod engine;
 #[cfg(feature = "net")]
+pub mod fetch;
+#[cfg(feature = "net")]
 pub mod net;
 pub mod offer;
 
@@ -84,6 +86,14 @@ pub const TARGET_TRIPLE: &str = env!("FRESH_UPDATE_TARGET");
 /// installed either, so reporting success is the opposite lie. The editor's
 /// update indicator keys its `ActionRequired` state off this code.
 pub const EXIT_ACTION_REQUIRED: i32 = 2;
+
+/// The flag that turns the release-attestation check off, lowering
+/// verification to the checksum sidecar alone.
+///
+/// Lives here rather than in [`engine`] for the same reason
+/// [`EXIT_ACTION_REQUIRED`] does: it is part of the CLI's contract, and the
+/// argument parser reads it in builds compiled without the engine.
+pub const SKIP_ATTESTATION_FLAG: &str = "--skip-attestation";
 
 /// The build-time install channel embedded via `FRESH_BUILD_CHANNEL`, if any.
 /// `None` for the shared prebuilt archive and ordinary developer builds.

@@ -201,6 +201,7 @@ struct Args {
     update_yes: bool,
     update_allow_downgrade: bool,
     update_pre: bool,
+    update_skip_attestation: bool,
     update_print_command: bool,
     update_download_only: bool,
     update_force: bool,
@@ -243,7 +244,8 @@ impl From<Cli> for Args {
         };
 
         // `fresh --cmd update [--check] [--yes] [--allow-downgrade] [--force]
-        //                     [--print-command] [--releases-url U] [--download-base U]`
+        //                     [--print-command] [--skip-attestation]
+        //                     [--releases-url U] [--download-base U]`
         let update = cli.cmd.first().map(String::as_str) == Some("update");
         let update_check = update && cli.cmd.iter().any(|a| a == "--check");
         let update_yes = update && cli.cmd.iter().any(|a| a == "--yes" || a == "-y");
@@ -252,6 +254,15 @@ impl From<Cli> for Args {
         let update_download_only = update && cli.cmd.iter().any(|a| a == "--download-only");
         let update_force = update && cli.cmd.iter().any(|a| a == "--force");
         let update_pre = update && cli.cmd.iter().any(|a| a == "--pre");
+        // Verification down to the checksum alone — what `install.sh` does.
+        // Only useful when the attestation lookup itself is refused (GitHub's
+        // API rate limit), which is why the failure names it and nothing else
+        // advertises it.
+        let update_skip_attestation = update
+            && cli
+                .cmd
+                .iter()
+                .any(|a| a == fresh_update::SKIP_ATTESTATION_FLAG);
         // Value flags: `--flag VALUE`. Point the update at a mirror of the
         // release feed — an air-gapped/enterprise mirror in production, and the
         // way the packaging containers exercise the real install flow in tests.
@@ -537,6 +548,7 @@ impl From<Cli> for Args {
             update_yes,
             update_allow_downgrade,
             update_pre,
+            update_skip_attestation,
             update_print_command,
             update_download_only,
             update_force,
@@ -4959,6 +4971,7 @@ fn show_paths_command() -> AnyhowResult<()> {
 
 /// Handle `fresh update [--check] [--yes] [--allow-downgrade] [--force]
 ///                       [--download-only] [--print-command]
+///                       [--skip-attestation]
 ///                       [--releases-url U] [--download-base U]`.
 fn update_command(args: &Args) -> AnyhowResult<()> {
     #[cfg(feature = "self-update")]
@@ -4993,6 +5006,7 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             yes: args.update_yes,
             allow_downgrade: args.update_allow_downgrade,
             allow_prerelease: args.update_pre,
+            skip_attestation: args.update_skip_attestation,
             // Three rungs, most automatic first. `--print-command` wins if
             // both are given: it is the one that promises to touch nothing,
             // and a promise like that should not be overridden by accident.

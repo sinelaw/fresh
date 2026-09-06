@@ -327,14 +327,52 @@ pub fn plan_for(prov: &Provenance) -> UpdatePlan {
     fresh_update::plan(prov)
 }
 
+/// Resolve the latest release, over the network.
+///
+/// With the `http` feature this goes through `fresh_update::fetch`, which is
+/// the same path `fresh --cmd update` takes: it sends a `GITHUB_TOKEN` from
+/// the environment if there is one, and when GitHub's API refuses because the
+/// address's hourly budget is spent it reads the version from the
+/// `releases/latest` redirect instead. Sharing that matters here — the daily
+/// check is *also* an API request, and a check that silently gave up on a
+/// rate limit is how the indicator goes quiet for an hour at a time.
+#[cfg(feature = "http")]
+fn fetch_release(releases_url: &str) -> Result<fresh_update::feed::Release, String> {
+    // From the environment, so both overrides are honoured: which route the
+    // check takes depends on the download base too — a mirror's own feed is
+    // authoritative for a mirror, and GitHub's redirect is not.
+    let mut endpoints = fresh_update::endpoint::Endpoints::from_env().unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "ignoring an unusable release endpoint override");
+        fresh_update::endpoint::Endpoints::production()
+    });
+    if releases_url != endpoints.releases_url {
+        // A URL the policy refuses cannot reach here in a release build —
+        // `releases_url()` above already sanitised the env override — but a
+        // background check is not worth an error either way.
+        if let Err(e) = endpoints.set_releases_url(releases_url.to_string()) {
+            tracing::warn!(error = %e, "ignoring an unusable release endpoint; using the default");
+            endpoints = fresh_update::endpoint::Endpoints::production();
+        }
+    }
+    let transport = fresh_update::net::Transport::new(&endpoints);
+    Ok(fresh_update::fetch::latest(&transport, &endpoints, false)?.release)
+}
+
+/// Without the `http` feature there is no transport; `services::http` says so.
+#[cfg(not(feature = "http"))]
+fn fetch_release(releases_url: &str) -> Result<fresh_update::feed::Release, String> {
+    fresh_update::feed::Release::parse(&super::http::get_release_json(releases_url)?)
+}
+
 /// Check for a new release (blocking).
 ///
-/// Fetches the release feed here (HTTP lives in `services::http`) and hands the
-/// body to `fresh_update::check::evaluate`, which parses it, compares versions,
-/// and resolves provenance.
+/// Fetches the release feed and hands the result to
+/// `fresh_update::check::evaluate_release`, which compares versions and pairs
+/// them with this copy's provenance.
 pub fn check_for_update(releases_url: &str) -> Result<ReleaseCheckResult, String> {
-    let body = super::http::get_release_json(releases_url)?;
-    let check = fresh_update::check::evaluate(CURRENT_VERSION, &body)?;
+    let release = fetch_release(releases_url)?;
+    let check =
+        fresh_update::check::evaluate_release(CURRENT_VERSION, &release, fresh_update::resolve());
 
     tracing::debug!(
         current = CURRENT_VERSION,

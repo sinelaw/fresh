@@ -52,6 +52,19 @@ fn parse(v: &str) -> Option<Version> {
     })
 }
 
+/// `true` if `v` carries a semver pre-release suffix (`0.4.8-rc.1`).
+///
+/// The release feed states this in a `prerelease` flag; a tag on its own does
+/// not, and the tag is all the `releases/latest` redirect gives us. Reading it
+/// out of the version itself is how a stable install keeps refusing release
+/// candidates without the feed to ask — see [`crate::fetch`].
+///
+/// A tag that is not a version at all is not a pre-release; nothing else here
+/// treats it as one either.
+pub fn is_prerelease(v: &str) -> bool {
+    parse(v).is_some_and(|p| p.release_rank == 0)
+}
+
 /// `true` if `latest` is strictly newer than `current`.
 pub fn is_newer(current: &str, latest: &str) -> bool {
     match (parse(current), parse(latest)) {
@@ -63,6 +76,18 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pre_release_is_read_out_of_the_tag() {
+        assert!(is_prerelease("0.4.8-rc.1"));
+        assert!(is_prerelease("v0.4.8-beta"));
+        assert!(!is_prerelease("0.4.8"));
+        assert!(!is_prerelease("v0.4.8"));
+        // Build metadata is not a pre-release marker.
+        assert!(!is_prerelease("0.4.8+deadbeef"));
+        // Not a version at all: not our business to call it a pre-release.
+        assert!(!is_prerelease("nightly"));
+    }
 
     #[test]
     fn newer_comparison() {

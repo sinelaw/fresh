@@ -23,13 +23,31 @@ pub struct ReleaseCheck {
 /// from the live environment. Returns an error string if the body has no
 /// parseable `tag_name`.
 pub fn evaluate(current_version: &str, release_json: &str) -> Result<ReleaseCheck, String> {
-    let latest_version = Release::parse(release_json)?.version().to_string();
+    Ok(evaluate_release(
+        current_version,
+        &Release::parse(release_json)?,
+        provenance::resolve(),
+    ))
+}
+
+/// Evaluate an already-resolved release.
+///
+/// The caller that fetches over HTTP resolves the release itself — it may have
+/// come from the feed or, when the API is rate-limited, from the release
+/// redirect (see `fresh_update::fetch`) — so there is no document left to
+/// parse and nothing that can fail here.
+pub fn evaluate_release(
+    current_version: &str,
+    release: &Release,
+    provenance: Provenance,
+) -> ReleaseCheck {
+    let latest_version = release.version().to_string();
     let update_available = version::is_newer(current_version, &latest_version);
-    Ok(ReleaseCheck {
+    ReleaseCheck {
         latest_version,
         update_available,
-        provenance: provenance::resolve(),
-    })
+        provenance,
+    }
 }
 
 /// Like [`evaluate`] but with an explicit provenance (for tests / callers that
@@ -39,13 +57,11 @@ pub fn evaluate_with(
     release_json: &str,
     provenance: Provenance,
 ) -> Result<ReleaseCheck, String> {
-    let latest_version = Release::parse(release_json)?.version().to_string();
-    let update_available = version::is_newer(current_version, &latest_version);
-    Ok(ReleaseCheck {
-        latest_version,
-        update_available,
+    Ok(evaluate_release(
+        current_version,
+        &Release::parse(release_json)?,
         provenance,
-    })
+    ))
 }
 
 #[cfg(test)]

@@ -724,6 +724,9 @@ convention (`daemon`, `config`, `grammar`, `init`):
 - `fresh --cmd update --check` — report status only (current, latest, channel,
   what the update command would be); exit non-zero if outdated. Scriptable.
 - `fresh --cmd update --yes` — non-interactive (CI, dotfiles).
+- `fresh --cmd update --skip-attestation` — install with checksum verification
+  only (§10.1). A flag rather than an environment variable on purpose: it is a
+  decision per run, not one to leave sitting in a shell profile.
 - `fresh --cmd config paths` — extend to print resolved provenance + receipt
   path (for debugging "why does it think I installed via X").
 
@@ -736,6 +739,73 @@ Config (`config.rs`): keep `check_for_updates` and `--no-upgrade-check`. Add
 `editor.auto_update = false` (default) — reserved for a future opt-in that lets
 SelfContained installs update without a prompt; **off by default** per the
 non-goal on silent installs.
+
+### 10.1 GitHub's API rate limit
+
+`api.github.com` allows an unauthenticated caller **60 requests an hour per
+source address**, shared with everything else behind the same NAT. That used to
+be enough to break `fresh --cmd update` on a machine where
+`curl … install.sh | sh` worked seconds later — the install script never
+touches the API at all.
+
+So the updater resolves releases the way the script does, and the API is now a
+fallback rather than the route:
+
+| what | how | API budget |
+| --- | --- | --- |
+| the latest version (`--check`, the daily background check, any update) | `github.com/<repo>/releases/latest` → 302, tag in `Location` | none |
+| the archive for a self-contained install | built from the target triple, fetched from `github.com` | none |
+| the `.deb`/`.rpm`/`.flatpak` for a `DownloadPackage` channel | `feed::package_file_name`, the same construction `install.sh` does | none |
+| checksum sidecars | `<asset>.sha256` on `github.com` | none |
+| a pre-release (`--pre`) | the `/releases` list endpoint | 1 |
+| a package name the release turns out not to publish | the feed, after a 404 | 1 |
+| the release attestation, when an update installs | `api.github.com/repos/<repo>/attestations/sha256:<digest>` | 1 |
+
+A check therefore spends nothing, and an install spends exactly one request —
+the attestation, which is a *second origin* on purpose (§11) and so cannot be
+moved to `github.com` without becoming the thing it exists to improve on.
+
+If that one request is refused, the failure offers `--skip-attestation`, which
+installs on the checksum alone — exactly the verification `install.sh` does, and
+no more. The offer is made **only** for a rate limit: every other attestation
+failure is either "GitHub does not attest to these bytes" or "something got in
+the way of asking", and naming a bypass there would be advertising it in the
+cases the check exists for. Using it prints what was given up, every time.
+
+Three supporting pieces, in `fresh_update::net` / `fresh_update::fetch`:
+
+- **A rate limit is reported as itself.** GitHub answers both of its limits
+  with a 403 (or 429), so the status alone cannot distinguish "your budget is
+  gone" from "you may not have this". The headers can — `x-ratelimit-remaining:
+  0` for the primary limit, `retry-after` for the secondary — and only those
+  produce `FetchError::RateLimited`, whose message carries the wait and the way
+  out. A real 403 stays reported as a 403.
+- **A token lifts it.** `FRESH_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` (in
+  that order) is attached to `api.github.com` requests — and *only* to those,
+  over https, with `ureq` configured to drop `Authorization` across redirects,
+  so a hop to the asset CDN cannot carry the credential. A token needs no
+  scopes for a public repository and raises the limit to 5000/hour.
+- **Predicted names are checked by using them.** `package_file_name` builds
+  `fresh-editor_0.4.10-1_amd64.deb` from the version, because the pipeline
+  fixes that shape (`update-debian-changelog.sh` writes `-1`; `generate-rpm`
+  defaults to release `1`) — but it is a prediction. The engine downloads it and
+  falls back to the feed on a 404, so a packaging change costs one request
+  rather than producing a wrong answer. A checksum or attestation failure is
+  never retried that way: only `DownloadError::Missing` reopens the question.
+
+The guarantee `feed::select` carries — a stable install never offered a
+pre-release — survives the move, because it is re-derived from the tag itself
+(`version::is_prerelease`) rather than from a flag the redirect does not carry.
+Drafts need no equivalent: they are not public, so no redirect reaches one.
+
+The redirect URL is *derived from the download base* rather than hard-coded:
+GitHub serves `…/releases/latest` beside `…/releases/download`, and so does
+anything mirroring that layout. Naming a feed (`--releases-url`,
+`FRESH_RELEASES_URL`) clears it — the caller pointed at a document, and
+resolving the version elsewhere would ignore that — while pointing only the
+downloads elsewhere moves it with them. That is also what lets
+`self_update_spine.rs` drive the real binary through a real 302 without any
+test-only surface: it overrides the download base and nothing else.
 
 ---
 
@@ -769,6 +839,16 @@ non-goal on silent installs.
   An overridden endpoint skips the attestation check — a local test server has
   no attestations and never could — which is the same line already drawn for
   privilege: bytes from an overridden endpoint never reach `sudo`.
+
+  `--skip-attestation` skips it on the pinned endpoints too, and is the one
+  place this design lets the user lower the bar. It is not a hole so much as a
+  choice made explicit: without it, a `.deb` user whose address has run out of
+  API budget is told to wait an hour or download the same artifact by hand from
+  the same URL, verifying *nothing* — which is a worse outcome reached by a
+  longer road. So the flag exists, it is offered only when the limit is what
+  blocked the check, it must be typed on the command line each time (no
+  environment variable), and every run that uses it prints which guarantee it
+  dropped. What it never skips is the checksum.
 - **No privilege escalation, because nothing is executed.** `fresh` spawns no
   package manager, so there is no `sudo` to consent to and no credential path to
   get wrong. Where root is genuinely required it appears only as the `sudo` in
