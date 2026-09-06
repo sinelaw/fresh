@@ -2577,3 +2577,840 @@ fn test_restore_orphaned_active_unnamed_tab_renders_surviving_tab() {
         );
     }
 }
+
+/// Regression test for issue #1362: panic at render.rs:622 when launching from
+/// a directory. Simplest reproduction: create a fresh empty directory and render.
+/// The editor must not panic even with no files and no workspace.
+#[test]
+fn test_no_panic_launching_in_empty_directory() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("testdir");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir,
+    )
+    .unwrap();
+
+    // Simulate the startup sequence: process async messages, then render
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.is_empty(),
+        "Screen should render successfully in empty directory"
+    );
+}
+
+/// Regression test for issue #1362: launch from empty directory with full startup
+/// sequence (workspace restore + file explorer + process messages + render).
+/// Mimics `cd /mnt/testdir && fresh` where no workspace exists yet.
+#[test]
+fn test_no_panic_full_startup_in_empty_directory() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("mnt_testdir");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir,
+    )
+    .unwrap();
+
+    // Simulate the production startup sequence from handle_first_run_setup:
+    // 1. Try workspace restore (should find nothing for new directory)
+    let restored = harness.editor_mut().try_restore_workspace();
+    assert!(
+        matches!(restored, Ok(false)),
+        "Fresh directory should have no workspace"
+    );
+
+    // 2. Show file explorer (this is what happens when user passes a directory)
+    harness.editor_mut().show_file_explorer();
+
+    // 3. Process async messages (editor_tick equivalent)
+    harness.editor_mut().process_async_messages();
+
+    // 4. Render - must not panic
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(!screen.is_empty(), "Screen should render after full startup");
+}
+
+/// Regression test for issue #1362: panic at render.rs when workspace references
+/// files that no longer exist.
+///
+/// Scenario: User runs `fresh` in a directory, opens files, quits (workspace saved).
+/// Then deletes the files and runs `fresh` again in the same directory.
+/// The workspace restore finds stale file references. The orphan cleanup must NOT
+/// remove the initial buffer that the split manager still points to.
+///
+/// This is the same root cause as #1278 but exercises the render path rather than
+/// the file-open path.
+#[test]
+fn test_no_panic_when_workspace_references_deleted_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("hello.txt");
+    std::fs::write(&file1, "hello world").unwrap();
+
+    // First session: open a file and save workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
+        harness.assert_buffer_content("hello world");
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Delete the file so the workspace references a non-existent file
+    std::fs::remove_file(&file1).unwrap();
+
+    // Second session: restore stale workspace, then render.
+    // This must NOT panic. Before the fix for #1362, this would panic at
+    // render.rs with "called `Option::unwrap()` on a `None` value" because
+    // the orphan cleanup removed the initial buffer from self.buffers while
+    // the split manager still referenced it.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Restore the workspace (all referenced files are now missing)
+        let _restored = harness.editor_mut().try_restore_workspace();
+
+        // The critical operation: render must not panic
+        harness.render().unwrap();
+
+        // The editor should still be functional with an empty buffer
+        let screen = harness.screen_to_string();
+        // Screen should render without panic - content doesn't matter much,
+        // just verify the editor is alive and rendering
+        assert!(
+            !screen.is_empty(),
+            "Screen should render successfully after stale workspace restore"
+        );
+    }
+}
+
+/// Regression test for issue #1362: panic when workspace has multiple splits
+/// and all referenced files are deleted.
+///
+/// This tests the split restoration path where split_active is called during
+/// workspace restore with a buffer that might get orphaned.
+#[test]
+fn test_no_panic_when_split_workspace_references_deleted_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("left.txt");
+    let file2 = project_dir.join("right.txt");
+    std::fs::write(&file1, "left pane").unwrap();
+    std::fs::write(&file2, "right pane").unwrap();
+
+    // First session: open files in split view and save workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
+
+        // Split vertically and open second file
+        harness
+            .send_key(KeyCode::Char('\\'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+
+        harness.open_file(&file2).unwrap();
+        harness.render().unwrap();
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Delete both files
+    std::fs::remove_file(&file1).unwrap();
+    std::fs::remove_file(&file2).unwrap();
+
+    // Second session: restore stale split workspace, then render.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        let _restored = harness.editor_mut().try_restore_workspace();
+
+        // Must not panic during render
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.is_empty(),
+            "Screen should render successfully after stale split workspace restore"
+        );
+    }
+}
+
+/// Regression test for issue #1362: workspace references a terminal that can't
+/// be restored (e.g., the shell exited). Exercises the Terminal variant of
+/// restore_split_node where the terminal buffer doesn't exist.
+#[test]
+fn test_no_panic_when_workspace_has_dead_terminal() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("file.txt");
+    std::fs::write(&file1, "hello").unwrap();
+
+    // First session: open a file, open a terminal split, save workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
+
+        // Open terminal (this creates a terminal buffer + split)
+        harness
+            .send_key(KeyCode::Char('`'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Second session: the terminal can't be restored (it was a live process).
+    // The workspace references the terminal split but it can't be recreated.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        let _restored = harness.editor_mut().try_restore_workspace();
+
+        // Must not panic during render
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.is_empty(),
+            "Screen should render after workspace with dead terminal"
+        );
+    }
+}
+
+/// Regression test for issue #1362: manually crafted workspace JSON with a
+/// split layout where all files are deleted. Tests edge cases in workspace
+/// restore that the normal save/restore cycle might not produce.
+#[test]
+fn test_no_panic_crafted_split_workspace_all_deleted() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Write a workspace JSON directly (simulating an old saved workspace)
+    let workspace_path = get_workspace_path(&project_dir).unwrap();
+    std::fs::create_dir_all(workspace_path.parent().unwrap()).unwrap();
+
+    let canonical_dir = project_dir.canonicalize().unwrap();
+    let workspace_json = format!(
+        r#"{{
+  "version": 1,
+  "working_dir": "{}",
+  "split_layout": {{
+    "Split": {{
+      "direction": "Vertical",
+      "first": {{ "Leaf": {{ "file_path": "deleted_left.txt", "split_id": 0 }} }},
+      "second": {{ "Leaf": {{ "file_path": "deleted_right.txt", "split_id": 1 }} }},
+      "ratio": 0.5,
+      "split_id": 2
+    }}
+  }},
+  "active_split_id": 1,
+  "split_states": {{
+    "0": {{
+      "open_tabs": [{{"File": "deleted_left.txt"}}],
+      "active_tab_index": 0,
+      "open_files": [],
+      "active_file_index": 0,
+      "file_states": {{}},
+      "tab_scroll_offset": 0,
+      "view_mode": "Source"
+    }},
+    "1": {{
+      "open_tabs": [{{"File": "deleted_right.txt"}}],
+      "active_tab_index": 0,
+      "open_files": [],
+      "active_file_index": 0,
+      "file_states": {{}},
+      "tab_scroll_offset": 0,
+      "view_mode": "Source"
+    }}
+  }},
+  "config_overrides": {{}},
+  "file_explorer": {{ "visible": false, "width_percent": 20,
+                     "show_hidden": false, "show_gitignored": false }},
+  "histories": {{ "search": [], "replace": [], "goto_line": [] }},
+  "search_options": {{ "case_sensitive": false, "whole_word": false,
+                      "use_regex": false, "confirm_each": false }},
+  "bookmarks": {{}},
+  "terminals": [],
+  "external_files": [],
+  "saved_at": 0
+}}"#,
+        canonical_dir.display()
+    );
+
+    std::fs::write(&workspace_path, &workspace_json).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        24,
+        Config::default(),
+        project_dir.clone(),
+    )
+    .unwrap();
+
+    // This should not panic during restore or render
+    harness
+        .startup(true, &[])
+        .expect("startup must not panic with crafted split workspace");
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.is_empty(),
+        "Screen should render after crafted split workspace restore"
+    );
+
+    // Clean up workspace file
+    let _ = std::fs::remove_file(&workspace_path);
+}
+
+/// Regression test for issue #1362: panic when launching from a directory on a
+/// separate filesystem mount. Creates a loop mount and runs the editor from it.
+///
+/// This reproduces the exact scenario from the bug: /mnt/testdir is on a
+/// different filesystem than the root. Skips gracefully if not running as root.
+#[test]
+fn test_no_panic_launching_from_separate_mount() {
+    use std::process::Command;
+
+    // Create a loop mount - requires root, skip if not available
+    let img_path = std::env::temp_dir().join("fresh_test_mount.img");
+    let mount_dir = std::path::PathBuf::from("/mnt/fresh_test_mount");
+
+    // Create image file
+    let dd = Command::new("dd")
+        .args([
+            "if=/dev/zero",
+            &format!("of={}", img_path.display()),
+            "bs=1M",
+            "count=10",
+        ])
+        .stderr(std::process::Stdio::null())
+        .output();
+    if dd.is_err() || !dd.as_ref().unwrap().status.success() {
+        eprintln!("Skipping mount test: cannot create image file");
+        return;
+    }
+
+    // Format as ext4
+    let mkfs = Command::new("mkfs.ext4")
+        .args(["-q", &img_path.display().to_string()])
+        .output();
+    if mkfs.is_err() || !mkfs.as_ref().unwrap().status.success() {
+        let _ = std::fs::remove_file(&img_path);
+        eprintln!("Skipping mount test: cannot format filesystem");
+        return;
+    }
+
+    // Create mount point and mount
+    let _ = std::fs::create_dir_all(&mount_dir);
+    let mount = Command::new("mount")
+        .args([
+            "-o",
+            "loop",
+            &img_path.display().to_string(),
+            &mount_dir.display().to_string(),
+        ])
+        .output();
+    if mount.is_err() || !mount.as_ref().unwrap().status.success() {
+        let _ = std::fs::remove_file(&img_path);
+        let _ = std::fs::remove_dir(&mount_dir);
+        eprintln!("Skipping mount test: cannot mount (need root)");
+        return;
+    }
+
+    // Cleanup helper
+    let cleanup = || {
+        let _ = Command::new("umount").arg(&mount_dir).output();
+        let _ = std::fs::remove_dir(&mount_dir);
+        let _ = std::fs::remove_file(&img_path);
+    };
+
+    // Run editor from the mount point - catch panics for cleanup
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            mount_dir.clone(),
+        )
+        .unwrap();
+
+        // Full startup sequence matching production
+        let _restored = harness.editor_mut().try_restore_workspace();
+        harness.editor_mut().show_file_explorer();
+        harness.editor_mut().process_async_messages();
+
+        // This is where the panic would occur (render.rs:622)
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.is_empty(),
+            "Screen should render from separate mount point"
+        );
+    }));
+
+    cleanup();
+
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+/// Regression test for issue #1362: stale workspace on a remounted filesystem.
+/// Simulates: run fresh on mount → save workspace → unmount → remount empty → run fresh again.
+#[test]
+fn test_no_panic_stale_workspace_on_remounted_fs() {
+    use std::process::Command;
+
+    let img_path = std::env::temp_dir().join("fresh_test_remount.img");
+    let mount_dir = std::path::PathBuf::from("/mnt/fresh_test_remount");
+
+    // Setup: create and mount filesystem
+    let setup = || -> bool {
+        let dd = Command::new("dd")
+            .args([
+                "if=/dev/zero",
+                &format!("of={}", img_path.display()),
+                "bs=1M",
+                "count=10",
+            ])
+            .stderr(std::process::Stdio::null())
+            .output();
+        if dd.is_err() || !dd.as_ref().unwrap().status.success() {
+            return false;
+        }
+        let mkfs = Command::new("mkfs.ext4")
+            .args(["-q", &img_path.display().to_string()])
+            .output();
+        if mkfs.is_err() || !mkfs.as_ref().unwrap().status.success() {
+            return false;
+        }
+        let _ = std::fs::create_dir_all(&mount_dir);
+        let mount = Command::new("mount")
+            .args([
+                "-o",
+                "loop",
+                &img_path.display().to_string(),
+                &mount_dir.display().to_string(),
+            ])
+            .output();
+        mount.is_ok() && mount.unwrap().status.success()
+    };
+
+    let cleanup = || {
+        let _ = Command::new("umount").arg(&mount_dir).output();
+        let _ = std::fs::remove_dir(&mount_dir);
+        let _ = std::fs::remove_file(&img_path);
+    };
+
+    if !setup() {
+        let _ = std::fs::remove_file(&img_path);
+        let _ = std::fs::remove_dir(&mount_dir);
+        eprintln!("Skipping remount test: cannot create mount");
+        return;
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Session 1: create a file on the mount, open it, save workspace
+        let file_on_mount = mount_dir.join("data.txt");
+        std::fs::write(&file_on_mount, "mounted data").unwrap();
+
+        {
+            let mut harness = EditorTestHarness::with_config_and_working_dir(
+                80,
+                24,
+                Config::default(),
+                mount_dir.clone(),
+            )
+            .unwrap();
+
+            harness.open_file(&file_on_mount).unwrap();
+            harness.render().unwrap();
+            harness.editor_mut().save_workspace().unwrap();
+        }
+
+        // "Unmount and remount" - reformatting the filesystem loses all files
+        let _ = Command::new("umount").arg(&mount_dir).output();
+        let mkfs = Command::new("mkfs.ext4")
+            .args(["-q", "-F", &img_path.display().to_string()])
+            .output();
+        assert!(mkfs.is_ok() && mkfs.unwrap().status.success());
+        let mount = Command::new("mount")
+            .args([
+                "-o",
+                "loop",
+                &img_path.display().to_string(),
+                &mount_dir.display().to_string(),
+            ])
+            .output();
+        assert!(mount.is_ok() && mount.unwrap().status.success());
+
+        // Session 2: workspace exists but all files are gone - must not panic
+        {
+            let mut harness = EditorTestHarness::with_config_and_working_dir(
+                80,
+                24,
+                Config::default(),
+                mount_dir.clone(),
+            )
+            .unwrap();
+
+            // Use startup() to match production flow as closely as possible
+            harness
+                .startup(true, &[])
+                .expect("startup must not panic after remount with stale workspace");
+
+            let screen = harness.screen_to_string();
+            assert!(
+                !screen.is_empty(),
+                "Screen should render after remount with stale workspace"
+            );
+        }
+    }));
+
+    // Clean up workspace file for the mount path
+    if let Ok(ws_path) = get_workspace_path(&mount_dir) {
+        let _ = std::fs::remove_file(&ws_path);
+    }
+
+    cleanup();
+
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+/// Regression test for issue #1362: closing the initial buffer via close_buffer
+/// must create a replacement and render must not panic.
+/// This directly tests the code path where a buffer is removed from self.buffers
+/// while the split manager still references it - the replacement buffer must
+/// be correctly wired up.
+#[test]
+fn test_no_panic_after_closing_initial_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir,
+    )
+    .unwrap();
+
+    // Get the initial buffer ID
+    let initial_buf = harness.editor().active_buffer();
+
+    // Close it - this should create a replacement
+    harness.editor_mut().close_buffer(initial_buf).unwrap();
+
+    // The render must not panic - the replacement buffer should be active
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(!screen.is_empty(), "Screen should render after closing initial buffer");
+}
+
+/// Regression test for issue #1362: workspace with backward-compat format
+/// (open_files instead of open_tabs) where all files are deleted.
+#[test]
+fn test_no_panic_backward_compat_workspace_all_deleted() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let workspace_path = get_workspace_path(&project_dir).unwrap();
+    std::fs::create_dir_all(workspace_path.parent().unwrap()).unwrap();
+
+    let canonical_dir = project_dir.canonicalize().unwrap();
+    let workspace_json = format!(
+        r#"{{
+  "version": 1,
+  "working_dir": "{}",
+  "split_layout": {{ "Leaf": {{ "file_path": "deleted.txt", "split_id": 0 }} }},
+  "active_split_id": 0,
+  "split_states": {{
+    "0": {{
+      "open_tabs": [],
+      "open_files": ["deleted.txt"],
+      "active_file_index": 0,
+      "file_states": {{}},
+      "tab_scroll_offset": 0,
+      "view_mode": "Source"
+    }}
+  }},
+  "config_overrides": {{}},
+  "file_explorer": {{ "visible": false, "width_percent": 20,
+                     "show_hidden": false, "show_gitignored": false }},
+  "histories": {{ "search": [], "replace": [], "goto_line": [] }},
+  "search_options": {{ "case_sensitive": false, "whole_word": false,
+                      "use_regex": false, "confirm_each": false }},
+  "bookmarks": {{}},
+  "terminals": [],
+  "external_files": [],
+  "saved_at": 0
+}}"#,
+        canonical_dir.display()
+    );
+
+    std::fs::write(&workspace_path, &workspace_json).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir.clone(),
+    )
+    .unwrap();
+
+    harness
+        .startup(true, &[])
+        .expect("startup must not panic with backward-compat workspace");
+
+    let screen = harness.screen_to_string();
+    assert!(!screen.is_empty(), "Screen should render");
+
+    let _ = std::fs::remove_file(&workspace_path);
+}
+
+/// Regression test for issue #1362: a workspace saved for a parent directory
+/// must not interfere when launching from a subdirectory.
+///
+/// This reproduces the exact user scenario: "cd /mnt && fresh" works and saves
+/// a workspace, then "mkdir /mnt/testdir && cd /mnt/testdir && fresh" panics.
+/// Tests that workspaces are isolated per directory.
+#[test]
+fn test_no_panic_parent_workspace_does_not_affect_subdirectory() {
+    let temp_dir = TempDir::new().unwrap();
+    let parent_dir = temp_dir.path().join("mnt");
+    let child_dir = parent_dir.join("testdir");
+    std::fs::create_dir_all(&child_dir).unwrap();
+
+    let parent_file = parent_dir.join("parent.txt");
+    std::fs::write(&parent_file, "parent content").unwrap();
+
+    // First: run from parent directory, open file, save workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            parent_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&parent_file).unwrap();
+        harness.render().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Then: launch from the child (subdirectory) - should NOT load parent's workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            child_dir.clone(),
+        )
+        .unwrap();
+
+        // Full startup sequence
+        let restored = harness.editor_mut().try_restore_workspace();
+        assert!(
+            matches!(restored, Ok(false)),
+            "Subdirectory should not load parent's workspace"
+        );
+
+        harness.editor_mut().show_file_explorer();
+        harness.editor_mut().process_async_messages();
+
+        // Must not panic
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        assert!(!screen.is_empty(), "Screen should render in subdirectory");
+    }
+}
+
+/// Regression test for issue #1362: workspace saved, then ALL files deleted
+/// and directory recreated empty. This simulates mount/unmount cycles where
+/// /mnt/something is unmounted and remounted empty.
+/// Uses the `startup()` helper which closely mirrors the production startup path.
+#[test]
+fn test_no_panic_after_remount_empty_directory() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("mountpoint");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("data.txt");
+    let file2 = project_dir.join("config.txt");
+    std::fs::write(&file1, "data").unwrap();
+    std::fs::write(&file2, "config").unwrap();
+
+    // First session: open files with file explorer visible, save workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            100,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.open_file(&file2).unwrap();
+        harness.editor_mut().show_file_explorer();
+        harness.render().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Simulate "unmount + remount": delete everything and recreate empty dir
+    std::fs::remove_dir_all(&project_dir).unwrap();
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Second session: startup with no CLI files but stale workspace present.
+    // This exercises the full production startup: workspace restore → render.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            100,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // startup() calls try_restore_workspace, process_pending_file_opens, render
+        harness
+            .startup(true, &[])
+            .expect("startup must not panic after remount of empty directory");
+
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.is_empty(),
+            "Screen should render after remount of empty directory"
+        );
+    }
+}
+
+/// Regression test for issue #1362: panic when workspace has a mix of existing
+/// and deleted files.
+///
+/// This tests the case where some tabs still resolve but others don't, which
+/// exercises a different code path in the orphan cleanup.
+#[test]
+fn test_no_panic_when_workspace_has_mix_of_existing_and_deleted_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("exists.txt");
+    let file2 = project_dir.join("deleted.txt");
+    std::fs::write(&file1, "I still exist").unwrap();
+    std::fs::write(&file2, "I will be deleted").unwrap();
+
+    // First session: open both files and save workspace
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&file1).unwrap();
+        harness.open_file(&file2).unwrap();
+        harness.render().unwrap();
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Delete only one file
+    std::fs::remove_file(&file2).unwrap();
+
+    // Second session: restore workspace with partial file loss
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "Workspace should have been restored");
+
+        // Must not panic during render
+        harness.render().unwrap();
+
+        // The surviving file should be accessible
+        harness.assert_buffer_content("I still exist");
+    }
+}
