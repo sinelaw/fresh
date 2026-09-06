@@ -2081,14 +2081,18 @@ function finderOwnsVerticalKeys(): boolean {
  *  routes on its own: to the focused text widget when there is one, to
  *  the buffer otherwise. This page keeps Up and Down because on it they
  *  mean something the host cannot know: with the finder focused they
- *  walk its *hits*, which are plugin state, not text in the field. */
+ *  walk its *hits*, which are plugin state, not text in the field.
+ *
+ *  When the finder does not own them they are the editor's own motion,
+ *  run as the editor's own action — not a key name the page invents. The
+ *  caret they move is the buffer's, and the page follows it. */
 registerHandler("welcome_up", () => {
   if (finderOwnsVerticalKeys() && moveFinder(-1)) return;
-  dispatch(widgetKey("Up"));
+  editor.executeAction("move_up");
 });
 registerHandler("welcome_down", () => {
   if (finderOwnsVerticalKeys() && moveFinder(1)) return;
-  dispatch(widgetKey("Down"));
+  editor.executeAction("move_down");
 });
 
 

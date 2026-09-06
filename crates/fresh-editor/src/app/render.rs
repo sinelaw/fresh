@@ -6270,8 +6270,16 @@ impl Editor {
             keyboard: false,
             page: self.page_anchors.get(&key).cloned(),
             reading: self.page_reading.get(&key).copied(),
-            hovered_key: None,
-            hovered_item_key: String::new(),
+            compose: self.buffer_compose_width(buffer),
+            // **A mounted panel's rows light under the pointer too.** The memo
+            // is the registry's rather than a `Panel` record's, because a pane
+            // has no slot to hold one — see the `WidgetHover` arm in
+            // `shell_host`.
+            hovered_key: {
+                let (w, _) = self.widget_registry.hover_keys(&key);
+                Some(w).filter(|k| !k.is_empty())
+            },
+            hovered_item_key: self.widget_registry.hover_keys(&key).1,
             hovered_popup_row: String::new(),
             marker_gutter: false,
             avail_height: None,
@@ -6353,6 +6361,7 @@ impl Editor {
             page: None,
             // Not a page, so nothing reads a page.
             reading: None,
+            compose: None,
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),
             hovered_popup_row: panel.hovered_popup_row.clone(),

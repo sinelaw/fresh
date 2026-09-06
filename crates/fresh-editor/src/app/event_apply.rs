@@ -224,6 +224,8 @@ impl Editor {
         // clamped on the way in — and every one of those differences was
         // a hole while this matched on the event's shape instead.
         //
+        self.page_follows_caret();
+
         // 4. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
 

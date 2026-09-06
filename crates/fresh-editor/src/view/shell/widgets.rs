@@ -3235,7 +3235,18 @@ fn hit_node(
     // Only the panels. The settings dialog's rows carry their own hover facts
     // (`SettingsItemHover` and its siblings) onto settings state, and its
     // `Ctx` has no `hovered_key` to read, so a fact from here would be noise.
-    let hover = matches!(slot, Slot::Dock | Slot::Floating | Slot::Sidebar(_)).then(|| {
+    //
+    // **A pane's panel is one of the panels.** It was left out while
+    // `update_widget_hover` was the only thing that lit a widget and it probed
+    // two surfaces, so a mounted panel's controls did not answer the pointer
+    // at all — the welcome page's links and cards stayed the same colour under
+    // it. The memo the fact writes is the registry's, not a `Panel` record's,
+    // because a pane has no slot to hold one.
+    let hover = matches!(
+        slot,
+        Slot::Dock | Slot::Floating | Slot::Sidebar(_) | Slot::Pane(_)
+    )
+    .then(|| {
         let (widget, item) = (
             hit.widget_key.clone(),
             hit.payload
@@ -7010,6 +7021,7 @@ mod tests {
 
             page: None,
             reading: None,
+            compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),

@@ -159,6 +159,20 @@ pub struct Interior {
     /// coordinates inside the scrolled content is the caret, and it travels
     /// with the page the way every other row does.
     pub reading: Option<(u32, u16)>,
+    /// The column a composed panel is laid out and centred in
+    /// (`setLayoutHints({ composeWidth })`), when it is narrower than the
+    /// pane. `None` for every surface that fills the box it was given.
+    ///
+    /// **The page's margins are the pane's, not the page's.** A composed
+    /// buffer used to get its paper-on-desk flanks from the buffer painter,
+    /// which a described panel never reaches; without them the panel filled
+    /// the pane, and everything that sizes itself to the content width — a
+    /// `flexSpacer`, a rule, a right-aligned control — measured the terminal
+    /// instead of the column. The plugin's own centring hid it: a row centred
+    /// in the pane and a row centred in a column centred in the pane land in
+    /// the same place, so only the right-aligned switch showed the page was
+    /// fifteen columns too wide.
+    pub compose: Option<u16>,
     pub hovered_key: Option<String>,
     pub hovered_item_key: String,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
@@ -980,6 +994,7 @@ mod tests {
 
             page: None,
             reading: None,
+            compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1217,6 +1232,7 @@ mod tests {
 
             page: None,
             reading: None,
+            compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1270,6 +1286,7 @@ mod tests {
 
             page: None,
             reading: None,
+            compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1336,6 +1353,7 @@ mod tests {
 
             page: None,
             reading: None,
+            compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
@@ -1391,6 +1409,7 @@ mod tests {
 
             page: None,
             reading: None,
+            compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),

@@ -257,7 +257,7 @@ pub fn fold_band(
             // A wash keeps the text it covers: the theme's ground over the
             // cells, their symbols and foregrounds as they were.
             Draw::Wash => wash(buf, rect, style, clip),
-            Draw::Border(bs) => border(buf, rect, style, clip, *bs),
+            Draw::Border(bs) => border(buf, item.rect, style, clip, *bs),
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything
             // behind this is receding" — so this one *is* a patch over what is
@@ -280,14 +280,21 @@ pub fn fold_band(
                 // The library's own backends make the same guarantee.
                 let clip = intersect(clip, rect);
                 for (i, line) in lines.iter().enumerate() {
-                    let y = rect.y.saturating_add(i as u16);
+                    // The row is the item's own, so a block whose first rows
+                    // have scrolled off the top loses those rows rather than
+                    // sliding the rest down. Same rule as the outline above.
+                    let y = item.rect.y + i as i32;
+                    if !(0..=u16::MAX as i32).contains(&y) {
+                        continue;
+                    }
+                    let y = y as u16;
                     // By display width, not by char — the library's policy
                     // (`fresh_ui::glyph`): a wide glyph keeps both cells
                     // layout measured for it, a mark rides in its base's
                     // cell, and a glyph the clip would halve is a blank.
                     for g in glyphs_in(
                         line,
-                        i32::from(rect.x),
+                        item.rect.x,
                         i32::from(clip.x),
                         i32::from(clip.x.saturating_add(clip.width)),
                     ) {
@@ -437,13 +444,33 @@ pub(crate) mod test_palette {
 // cell writing
 // ---------------------------------------------------------------------------
 
+/// A library rectangle as a buffer one: the part of it the screen has.
+///
+/// **What is off the top is cut, not moved.** The library places a scrolled
+/// item at its true position, which for one whose top has left the window is a
+/// negative `y`; clamping that to zero and keeping the height slid the whole
+/// box down the screen by however far it had scrolled. A fill only looked
+/// taller for it, but a bordered card carried its bottom edge along — the
+/// frame of a section that was half off the top closed several rows into the
+/// section after it.
 fn to_rect(r: fresh_ui::Rect) -> Rect {
+    let (x, y) = (r.x.max(0), r.y.max(0));
+    let cut = |lost: i32, extent: u16| extent.saturating_sub(lost.min(u16::MAX as i32) as u16);
     Rect {
-        x: r.x.max(0) as u16,
-        y: r.y.max(0) as u16,
-        width: r.w,
-        height: r.h,
+        x: x as u16,
+        y: y as u16,
+        width: cut(x - r.x, r.w),
+        height: cut(y - r.y, r.h),
     }
+}
+
+/// One cell of a draw whose geometry is the library's, in the library's
+/// coordinates: off the top or the left of the screen is nothing to paint.
+fn put_at(buf: &mut Buffer, x: i32, y: i32, ch: char, style: Style, clip: Rect) {
+    if x < 0 || y < 0 || x > u16::MAX as i32 || y > u16::MAX as i32 {
+        return;
+    }
+    put(buf, x as u16, y as u16, ch, style, clip);
 }
 
 fn intersect(a: Rect, b: Rect) -> Rect {
@@ -517,21 +544,26 @@ fn wash(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
     }
 }
 
-fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect, bs: BorderStyle) {
-    if r.width < 2 || r.height < 2 {
+/// **The outline is drawn at the box's own corners, not the window's.** It
+/// takes the library's rectangle rather than the screen one so an edge that
+/// has scrolled out of view is simply not drawn; a box clamped into the window
+/// first would grow a top edge it does not have and lose the bottom one it
+/// does.
+fn border(buf: &mut Buffer, r: fresh_ui::Rect, style: Style, clip: Rect, bs: BorderStyle) {
+    if r.w < 2 || r.h < 2 {
         return;
     }
     let (l, t) = (r.x, r.y);
-    let right = r.x + r.width - 1;
-    let bottom = r.y + r.height - 1;
+    let right = r.x + r.w as i32 - 1;
+    let bottom = r.y + r.h as i32 - 1;
     let (h, v, tl, tr, br, bl) = bs.glyphs();
     for x in l..=right {
-        put(buf, x, t, h, style, clip);
-        put(buf, x, bottom, h, style, clip);
+        put_at(buf, x, t, h, style, clip);
+        put_at(buf, x, bottom, h, style, clip);
     }
     for y in t..=bottom {
-        put(buf, l, y, v, style, clip);
-        put(buf, right, y, v, style, clip);
+        put_at(buf, l, y, v, style, clip);
+        put_at(buf, right, y, v, style, clip);
     }
     // **The corners are the description's, not this backend's.** This used to
     // be an unconditional `┌┐└┘`, matching ratatui's `BorderType::Plain` and
@@ -540,10 +572,10 @@ fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect, bs: BorderStyle) 
     // have always been drawn `╭╮╰╯` by `widgets::render`, so describing one
     // silently squared it off: the code-tour panel's `╭─ Steps`, and the dock's
     // card density, are what noticed.
-    put(buf, l, t, tl, style, clip);
-    put(buf, right, t, tr, style, clip);
-    put(buf, l, bottom, bl, style, clip);
-    put(buf, right, bottom, br, style, clip);
+    put_at(buf, l, t, tl, style, clip);
+    put_at(buf, right, t, tr, style, clip);
+    put_at(buf, l, bottom, bl, style, clip);
+    put_at(buf, right, bottom, br, style, clip);
 }
 
 // ---------------------------------------------------------------------------
