@@ -533,10 +533,7 @@ fn pane_rows(harness: &EditorTestHarness, pane: fresh::model::event::LeafId) -> 
 /// with the default empty registry there is no classification and — correctly —
 /// no frame to assert about (see `markdown_compose_code_frame`).
 #[cfg(feature = "plugins")]
-fn compose_split_harness(
-    md: &str,
-    full_grammar: bool,
-) -> (EditorTestHarness, tempfile::TempDir) {
+fn compose_split_harness(md: &str, full_grammar: bool) -> (EditorTestHarness, tempfile::TempDir) {
     init_tracing_from_env();
 
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -684,7 +681,8 @@ fn test_composing_one_split_leaves_a_sibling_splits_line_wrap_alone() {
         .filter(|r| r.contains("word"))
         .count();
     assert_eq!(
-        rows_now, rows_with_wrap_off,
+        rows_now,
+        rows_with_wrap_off,
         "composing the sibling split turned line wrap back on in the source \
          split: its long line now occupies {rows_now} rows instead of \
          {rows_with_wrap_off}.\nScreen:\n{}",

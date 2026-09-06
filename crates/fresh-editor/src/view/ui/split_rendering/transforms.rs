@@ -11,10 +11,10 @@
 use super::style::{create_wrapped_virtual_lines, token_style_from_ratatui};
 use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
+use crate::view::compose_only::is_compose_only_virtual_text;
 use crate::view::soft_break::SoftBreakRender;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
-use crate::view::compose_only::is_compose_only_virtual_text;
 use crate::view::virtual_text::VirtualTextPosition;
 use crate::view::wrap_machine::{WrapMachine, WrapRule};
 use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};

@@ -257,12 +257,7 @@ fn wrapped_table_row_keeps_every_visual_line() {
     let screen = harness.screen_to_string();
     let top = row_of(&screen, "┌");
     let bottom = row_of(&screen, "└");
-    for (offset, line) in screen
-        .lines()
-        .skip(top)
-        .take(bottom - top + 1)
-        .enumerate()
-    {
+    for (offset, line) in screen.lines().skip(top).take(bottom - top + 1).enumerate() {
         assert!(
             line.contains('│') || line.contains('┌') || line.contains('├') || line.contains('└'),
             "row {} of the table frame is blank — a wrapped row's visual line \
