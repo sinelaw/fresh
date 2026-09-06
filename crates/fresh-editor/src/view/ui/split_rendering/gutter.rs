@@ -96,9 +96,15 @@ pub(super) fn render_left_margin(
             style = style.bg(bg);
         }
         push_span_with_map(line_spans, line_view_map, "●".to_string(), style, None);
-    } else if lookup_key.is_some_and(|k| {
-        ctx.fold_indicators.contains_key(&k) && !ctx.line_indicators.contains_key(&k)
-    }) {
+    } else if ctx.state.diff_gutter.is_none()
+        && lookup_key.is_some_and(|k| {
+            ctx.fold_indicators.contains_key(&k) && !ctx.line_indicators.contains_key(&k)
+        })
+    {
+        // A diff stream draws its own collapse glyphs, in the text, on
+        // the rows that can be collapsed; a margin glyph beside them
+        // would be a second, differently-placed answer to the same
+        // question.
         let fold = ctx.fold_indicators.get(&lookup_key.unwrap()).unwrap();
         let symbol = if fold.collapsed { "▸" } else { "▾" };
         let mut style = Style::default().fg(ctx.theme.line_number_fg);
@@ -136,6 +142,19 @@ pub(super) fn render_left_margin(
             style = style.bg(ctx.theme.current_line_bg);
         }
         push_span_with_map(line_spans, line_view_map, blank, style, None);
+    } else if let Some(gutter) = ctx.state.diff_gutter.as_ref() {
+        // A diff stream numbers its rows from their hunk headers, not from
+        // their position in the buffer.
+        let rendered_text = gutter.render(ctx.gutter_num);
+        let mut margin_style = if is_cursor_line {
+            Style::default().fg(ctx.theme.editor_fg)
+        } else {
+            Style::default().fg(ctx.theme.line_number_fg)
+        };
+        if use_cursor_line_bg {
+            margin_style = margin_style.bg(ctx.theme.current_line_bg);
+        }
+        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else if ctx.byte_offset_mode && ctx.show_line_numbers {
         let rendered_text = format!("{:>width$}", ctx.gutter_num, width = ctx.margin.width);
         let mut margin_style = if is_cursor_line {

@@ -4362,6 +4362,22 @@ interface EditorAPI {
 	*/
 	setBufferShowCursors(bufferId: number, show: boolean): boolean;
 	/**
+	* Choose the grammar a virtual buffer is highlighted with.
+	*
+	* Panel buffers are named `*<panel id>*`, which resolves to no grammar.
+	* A plugin composing a known text shape into one calls this so the host
+	* highlights it instead of the plugin painting per-row overlays. `name`
+	* is resolved like a virtual buffer's own name, so an extension in it
+	* (`"stream.diff"`) selects the grammar.
+	*/
+	setBufferLanguage(bufferId: number, name: string): boolean;
+	/**
+	* Show old/new diff line numbers in a composed diff stream's gutter. The
+	* host derives them from the stream's `@@` headers when the content is
+	* set, so the plugin never numbers a row itself.
+	*/
+	setBufferDiffGutter(bufferId: number, enabled: boolean): boolean;
+	/**
 	* Set a line indicator in the gutter
 	*/
 	setLineIndicator(bufferId: number, line: number, namespace: string, symbol: string, r: number, g: number, b: number, priority: number): boolean;

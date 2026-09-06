@@ -756,6 +756,12 @@ impl Editor {
             } => {
                 self.handle_set_buffer_cursor(buffer_id, position);
             }
+            PluginCommand::SetBufferLanguage { buffer_id, name } => {
+                self.handle_set_buffer_language(buffer_id, &name);
+            }
+            PluginCommand::SetBufferDiffGutter { buffer_id, enabled } => {
+                self.handle_set_buffer_diff_gutter(buffer_id, enabled);
+            }
             PluginCommand::SetBufferShowCursors { buffer_id, show } => {
                 self.handle_set_buffer_show_cursors(buffer_id, show);
             }
@@ -1697,7 +1703,18 @@ impl Editor {
                 panel_name,
                 entries,
             } => {
-                self.perf_counters.panel_content_rows += entries.len() as u64;
+                self.perf_counters.panel_content_rows += entries
+                    .iter()
+                    .map(|e| {
+                        let full = e.text.matches('\n').count() as u64;
+                        // A trailing line with no newline is still a row.
+                        if e.text.is_empty() || e.text.ends_with('\n') {
+                            full
+                        } else {
+                            full + 1
+                        }
+                    })
+                    .sum::<u64>();
                 self.set_panel_content(group_id, panel_name, entries);
             }
             PluginCommand::CloseBufferGroup { group_id } => {
@@ -4627,6 +4644,47 @@ impl Editor {
             .read()
             .unwrap()
             .resolve_callback(callback_id, json);
+    }
+
+    fn handle_set_buffer_language(&mut self, buffer_id: BufferId, name: &str) {
+        // An `Arc` clone, so no borrow of `self` outlives the buffer lookup.
+        let registry = self.grammar_registry.clone();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.set_language_from_name(name, &registry);
+        } else {
+            tracing::warn!("SetBufferLanguage: buffer {:?} not found", buffer_id);
+        }
+    }
+
+    fn handle_set_buffer_diff_gutter(&mut self, buffer_id: BufferId, enabled: bool) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            if enabled {
+                // Built from whatever the buffer holds now; setting content
+                // later rebuilds it from the text that arrives.
+                let gutter = state
+                    .buffer
+                    .to_string()
+                    .map(|text| crate::view::diff_gutter::DiffGutter::build(&text))
+                    .unwrap_or_default();
+                state.diff_gutter = Some(gutter);
+            } else {
+                state.diff_gutter = None;
+            }
+        } else {
+            tracing::warn!("SetBufferDiffGutter: buffer {:?} not found", buffer_id);
+        }
     }
 
     fn handle_set_buffer_show_cursors(&mut self, buffer_id: BufferId, show: bool) {

@@ -185,7 +185,10 @@ fn push_left_margin(
     }
 
     // Line number (or byte offset in byte_offset_mode).
-    let rendered_text = if ctx.byte_offset_mode && ctx.show_line_numbers {
+    let rendered_text = if ctx.state.diff_gutter.is_some() {
+        // No row, so no diff numbers.
+        " ".repeat(ctx.margin.width)
+    } else if ctx.byte_offset_mode && ctx.show_line_numbers {
         format!("{:>width$}", implicit_gutter_num, width = ctx.margin.width)
     } else {
         let estimated_lines =

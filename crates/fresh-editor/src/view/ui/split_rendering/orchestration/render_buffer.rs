@@ -82,14 +82,21 @@ pub(crate) fn resolve_gutter_layout(
     area: Rect,
     compose_width: Option<u16>,
     estimated_lines: usize,
+    diff_gutter_width: Option<usize>,
 ) -> GutterLayout {
     let mut margin = margins.resolved_left_config(show_line_numbers, estimated_lines);
-    // The diagnostic/indicator gutter is kept when line numbers are off only in
-    // compose mode, where the render below reclaims its width from the desk
-    // margin (issue #2146). In normal editor mode, line-numbers-off means no
-    // gutter at all — otherwise the 1-col indicator slot would eat into the
-    // text width and shift content right.
-    if !show_line_numbers && !matches!(view_mode, ViewMode::PageView) {
+    if let Some(width) = diff_gutter_width {
+        // A diff stream numbers its rows from their hunk headers, whatever
+        // the pane's line-number setting says.
+        margin.enabled = true;
+        margin.show_separator = true;
+        margin.width = width;
+    } else if !show_line_numbers && !matches!(view_mode, ViewMode::PageView) {
+        // The diagnostic/indicator gutter is kept when line numbers are off only in
+        // compose mode, where the render below reclaims its width from the desk
+        // margin (issue #2146). In normal editor mode, line-numbers-off means no
+        // gutter at all — otherwise the 1-col indicator slot would eat into the
+        // text width and shift content right.
         margin.enabled = false;
         margin.width = 0;
     }
@@ -231,6 +238,7 @@ pub(crate) fn compute_buffer_layout(
         area,
         compose_width,
         estimated_lines,
+        state.diff_gutter.as_ref().map(|g| g.width()),
     );
     let GutterLayout {
         margin,

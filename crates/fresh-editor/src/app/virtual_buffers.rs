@@ -462,6 +462,11 @@ impl crate::app::window::Window {
         }
         state.buffer.insert(0, &text);
 
+        // A diff gutter is derived from the text, so it is rebuilt with it.
+        if state.diff_gutter.is_some() {
+            state.diff_gutter = Some(crate::view::diff_gutter::DiffGutter::build(&text));
+        }
+
         // Clear modified flag since this is virtual buffer content setting, not user edits
         state.buffer.clear_modified();
 
