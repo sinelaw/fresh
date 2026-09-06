@@ -455,34 +455,69 @@ impl Editor {
             .any(|w| w.animations.has_dismissable())
     }
 
-    /// Dismiss the wave animation everywhere it's running.
+    /// Dismiss the wave animation everywhere it's running, and take down the
+    /// status line it posted with it.
+    ///
+    /// The message ("press any key or move the mouse to stop") is an
+    /// instruction for a show that is now over, so it must not outlive it —
+    /// it used to sit in the status bar until the next thing that wrote one.
+    /// Only that exact message is cleared: anything a later action posted on
+    /// top of it belongs to that action.
     pub fn cancel_wave_animation(&mut self) {
+        let posted = t!("wave.triggered").to_string();
         for w in self.windows.values_mut() {
             w.animations.cancel_dismissable();
+            if w.status_message.as_deref() == Some(posted.as_str()) {
+                w.clear_status_message();
+            }
         }
     }
 
     /// If the interactive wave animation is running, decide whether this raw
-    /// terminal event should dismiss it. Any key press or mouse activity ends
-    /// the show; that event is then *consumed* (it only stops the animation,
-    /// it doesn't also act on the editor).
+    /// terminal event should dismiss it. Anything that says the reader is
+    /// back at the editor ends the show.
     ///
-    /// Returns `true` when the event was consumed — the caller must skip
-    /// normal input handling for it and re-render. This lives on `Editor` so
-    /// every event loop (the local terminal loop in `main.rs` and the daemon
-    /// server loop) shares one dismissal path rather than duplicating it.
+    /// A key press or any mouse report is the obvious signal. **Focus is the
+    /// third**, and it is the one the screensaver needs: the wave starts
+    /// after minutes of idling, which is time spent in another window — and
+    /// a terminal reports pointer motion only over its own window, so the
+    /// mouse the status line promises never moves *here* on the way back.
+    /// What does arrive is `FocusGained`, the moment the reader returns.
+    /// Without it the show outlived the return until a key was pressed.
+    /// A bracketed paste is the same story told by the clipboard.
+    ///
+    /// `FocusLost` and `Resize` are deliberately not dismissals: the first
+    /// is the reader leaving, and the second is the window manager, not the
+    /// reader (the effect re-snapshots and carries on across a resize).
+    ///
+    /// Ending the show and *consuming* the event are two different things.
+    /// A key or a mouse report means nothing here but "stop", so it is
+    /// swallowed. Focus and a paste carry work of their own — focus drives
+    /// the editor's on-return housekeeping, and pasted text is content the
+    /// reader asked for — so they end the wave and then go on to be handled
+    /// normally.
+    ///
+    /// Returns `true` only when the event was consumed — the caller must
+    /// then skip normal input handling for it and re-render. This lives on
+    /// `Editor` so every frontend (the local terminal loop in `main.rs`, the
+    /// daemon server loop, the web bridge and the GUI window) shares one
+    /// dismissal path rather than duplicating the rule.
     pub fn maybe_dismiss_wave_animation(&mut self, event: &fresh_input_parser::Event) -> bool {
         use crate::input::is_keystroke;
         use fresh_input_parser::Event;
         if !self.wave_animation_active() {
             return false;
         }
-        let dismiss = matches!(event, Event::Key(k) if is_keystroke(k.kind))
-            || matches!(event, Event::Mouse(_));
+        let (dismiss, consume) = match event {
+            Event::Key(k) => (is_keystroke(k.kind), true),
+            Event::Mouse(_) => (true, true),
+            Event::FocusGained | Event::Paste(_) => (true, false),
+            Event::FocusLost | Event::Resize(_, _) => (false, false),
+        };
         if dismiss {
             self.cancel_wave_animation();
         }
-        dismiss
+        dismiss && consume
     }
 
     /// The configured screensaver idle threshold, or `None` when the

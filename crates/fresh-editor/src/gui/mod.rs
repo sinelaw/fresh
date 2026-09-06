@@ -12,6 +12,7 @@ use anyhow::{Context, Result as AnyhowResult};
 use crossterm::event::{
     KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState, MouseEvent as CtMouseEvent,
 };
+use fresh_input_parser::Event;
 
 use crate::app::Editor;
 use crate::config;
@@ -198,6 +199,19 @@ impl GuiApplication for EditorApp {
             key_event.modifiers
         );
 
+        // The interactive wave animation runs until the reader does something:
+        // the first key press dismisses it and is CONSUMED (it only stops the
+        // show, it doesn't also act on the editor). Parity with the TUI loops
+        // in `main.rs` and the daemon server, and with the web bridge — this
+        // window used to be the one frontend where the wave could not be
+        // stopped at all, so it ran to its 600-second safety cap.
+        if self
+            .editor
+            .maybe_dismiss_wave_animation(&Event::key(key_event))
+        {
+            return Ok(());
+        }
+
         // Event debug dialog intercepts ALL key events before normal processing.
         if self.editor.active_window().is_event_debug_active() {
             let raw_event = crossterm::event::KeyEvent {
@@ -218,6 +232,17 @@ impl GuiApplication for EditorApp {
     }
 
     fn on_mouse(&mut self, mouse: CtMouseEvent) -> AnyhowResult<bool> {
+        // Same rule as the key path above: any mouse activity — a move, a
+        // click, a wheel notch — ends the wave and is consumed. The window
+        // reports pointer motion the moment the pointer is over it, so this
+        // is the dismissal a reader coming back to the screensaver reaches
+        // for first.
+        if self
+            .editor
+            .maybe_dismiss_wave_animation(&Event::Mouse(mouse))
+        {
+            return Ok(true);
+        }
         self.editor.handle_mouse(mouse)
     }
 
