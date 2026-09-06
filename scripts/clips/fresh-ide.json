@@ -21,24 +21,28 @@
         "sleep": 3
       },
       {
-        "key": "F4"
+        "key": "F3"
       },
       {
-        "sleep": 2
+        "sleep": 1.5
       },
       {
-        "record": "ide",
-        "seconds": 20,
-        "fps": 30
+        "key": "t"
       },
       {
-        "sleep": 2
+        "sleep": 1
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 2.5
       },
       {
         "key": "F5"
       },
       {
-        "sleep": 2
+        "sleep": 2.5
       },
       {
         "type": "claude"
@@ -47,13 +51,33 @@
         "key": "Return"
       },
       {
-        "sleep": 6
+        "sleep": 7
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "sleep": 0.5
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 7
       },
       {
         "key": "F7"
       },
       {
-        "sleep": 1
+        "sleep": 1.5
+      },
+      {
+        "record": "ide",
+        "seconds": 16,
+        "fps": 30
+      },
+      {
+        "sleep": 2
       },
       {
         "key": "Down",
@@ -66,13 +90,26 @@
         "key": "F6"
       },
       {
-        "sleep": 3
+        "sleep": 3.5
       },
       {
         "key": "F7"
       },
       {
-        "sleep": 2
+        "sleep": 1.5
+      },
+      {
+        "key": "Down",
+        "repeat": 8
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "key": "F6"
+      },
+      {
+        "sleep": 3
       }
     ],
     "panes": {
@@ -109,14 +146,14 @@
     "timing": {
       "intro": 0,
       "zoom": 0,
-      "hold": 20,
+      "hold": 16,
       "pan": 0,
       "outro": 0
     },
     "annotations": [
       {
         "shots": "ide",
-        "hold": 20,
+        "hold": 16,
         "typewriter": 0.45,
         "misspell": [
           "multi-cursor"

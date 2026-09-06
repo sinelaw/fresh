@@ -11,12 +11,12 @@
     {
       "keys": [
         {
-          "key": "F4",
+          "key": "F3",
           "modifiers": []
         }
       ],
-      "action": "workspace_trust_trust",
-      "when": "normal"
+      "action": "workspace_trust_prompt",
+      "when": "global"
     },
     {
       "keys": [
@@ -26,7 +26,7 @@
         }
       ],
       "action": "open_terminal_right",
-      "when": "normal"
+      "when": "global"
     },
     {
       "keys": [
@@ -36,7 +36,7 @@
         }
       ],
       "action": "focus_terminal",
-      "when": "normal"
+      "when": "global"
     },
     {
       "keys": [
@@ -46,7 +46,7 @@
         }
       ],
       "action": "focus_editor",
-      "when": "normal"
+      "when": "global"
     }
   ],
   "plugins": {
