@@ -36,6 +36,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Settings: `Delete` works in a text field again** in the Edit Item dialog (#2875, reported by @asukaminato0721).
 * **Dim text in the integrated terminal is dim again** (#3123, reported by @fiatcode-gh).
 * **Quitting no longer panics** while a plugin's off-loop work is still in flight.
+* **A signal no longer leaves the terminal unusable** - an editor stopped from outside (a `pkill`, a container stop) exited straight out of raw mode and the alternate screen, so the shell that got the terminal back echoed nothing and printed an escape burst on every click. The modes are now undone before the process goes.
 * **Git and review commands are grouped under two palette prefixes**, `Review Diff:` and `Git Log:` (#3098).
 * **Review Diff works with an external difftool** instead of showing an empty diff (#3066, by @asukaminato0721).
 * **Review Diff's `D` on a fully staged file now actually discards it**, with an honest report if it can't (#2318).

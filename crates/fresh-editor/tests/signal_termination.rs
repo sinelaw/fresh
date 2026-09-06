@@ -9,8 +9,9 @@
 //! used to leave `SIGTERM` ending in `SIGABRT`, `SIGSEGV`, or nothing at all.
 //!
 //! These drive the real binary, because the behaviour is the process's
-//! rather than the library's, and read the log the run produced — that log
-//! *is* the feature.
+//! rather than the library's, and read what the run left behind: the log,
+//! which *is* the diagnostic, and the terminal the editor was handed, which
+//! it has to give back on the way out.
 //!
 //! Linux-gated with `common::pty`, which needs `ptsname_r`.
 #![cfg(target_os = "linux")]
@@ -105,6 +106,55 @@ fn a_terminating_signal_is_reported_without_sweeping_every_thread() {
     assert!(
         !log.contains(SWEPT),
         "the per-thread sweep should not run unless asked for; log was:\n{log}"
+    );
+}
+
+/// A signalled editor hands the terminal back before it goes.
+///
+/// The reporting thread leaves through `process::exit`, which runs no
+/// destructors, so the guard that normally undoes the modes never gets to:
+/// the shell came back in raw mode, still on the alternate screen, with
+/// mouse reporting on. Typing echoed nothing and a click pasted an escape
+/// burst at the prompt, and `reset` was the only way out.
+///
+/// The modes going *on* are asserted first, so a run where the editor never
+/// took the terminal cannot pass this by leaving nothing to restore.
+#[test]
+fn a_terminating_signal_leaves_the_terminal_usable() {
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut editor = running_editor(isolated_fresh(home.path()));
+
+    assert!(
+        !editor.cooked(),
+        "the editor should hold the terminal in raw mode while it runs"
+    );
+    assert!(
+        editor.modes().alternate_screen(),
+        "the editor should be drawing on the alternate screen"
+    );
+
+    sigterm_and_reap(&mut editor);
+
+    assert!(
+        editor.cooked(),
+        "raw mode should be undone, or the shell that gets the terminal back echoes nothing"
+    );
+    assert!(
+        !editor.modes().alternate_screen(),
+        "the alternate screen should be left, or the shell draws over the editor's last frame"
+    );
+    assert_eq!(
+        editor.modes().mouse_protocol_mode(),
+        vt100::MouseProtocolMode::None,
+        "mouse reporting should be off, or every click types an escape burst at the prompt"
+    );
+    assert!(
+        !editor.modes().bracketed_paste(),
+        "bracketed paste should be off, or a paste arrives at the shell wrapped in markers"
     );
 }
 

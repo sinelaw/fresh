@@ -20,6 +20,10 @@
 //! Rust with no restrictions, and the interrupted thread carries on and
 //! releases whatever it was holding.
 //!
+//! The terminal is handed back first, ahead of the dump: the process leaves
+//! through `process::exit`, which runs no destructors, so nothing else
+//! undoes raw mode and the alternate screen.
+//!
 //! Three things guarantee the process still dies, which is the part that
 //! must not depend on the dump working:
 //!
@@ -273,6 +277,8 @@ mod unix {
     /// Everything the old handler did, on an ordinary thread where it is
     /// allowed to allocate, lock, log and call into plugin code.
     fn report_and_exit(signal: libc::c_int) -> ! {
+        restore_terminal();
+
         tracing::error!("=== SIGNAL {signal} RECEIVED - Dumping debug info ===");
 
         tracing::error!("--- JavaScript State ---");
@@ -295,6 +301,24 @@ mod unix {
 
         tracing::error!("=== Debug dump complete, terminating process ===");
         std::process::exit(EXIT_CODE);
+    }
+
+    /// Hand the terminal back, before the report rather than after it.
+    ///
+    /// The process leaves here through `process::exit` — no destructors, so
+    /// the `TerminalModes` guard that normally undoes raw mode, the
+    /// alternate screen, mouse capture and bracketed paste never runs — and
+    /// the watchdog's `_exit` can cut in earlier still. Undoing the modes
+    /// first means both exits give the shell back a usable terminal instead
+    /// of one that echoes nothing and prints mouse reports at the prompt.
+    ///
+    /// Only when the terminal is ours to restore: a headless run (the
+    /// daemon under systemd, a `--cmd` invocation in a pipeline) would
+    /// otherwise write escape sequences into whatever is reading its stdout.
+    fn restore_terminal() {
+        if nix::unistd::isatty(std::io::stdout()).unwrap_or(false) {
+            crate::services::terminal_modes::emergency_cleanup();
+        }
     }
 
     fn install_termination_handler() {
