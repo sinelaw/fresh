@@ -439,6 +439,10 @@ type LineTarget = {
 	*/
 	into?: string;
 };
+type BreadcrumbItem = {
+	label: string;
+	position: number;
+};
 type PaneDescription = {
 	/**
 	* Pass to `openFileInSplit`, `focusSplit`, `setSplitRatio`, ...
@@ -2972,6 +2976,11 @@ interface EditorAPI {
 	*/
 	setStatusBarValue(bufferId: number, tokenName: string, value: string): boolean;
 	/**
+	* Replace the breadcrumb trail shown above a buffer. Each item carries
+	* the byte position used when the user clicks it.
+	*/
+	setBreadcrumbs(bufferId: number, items: BreadcrumbItem[]): boolean;
+	/**
 	* Translate a string - reads plugin name from __pluginName__ global
 	* Args is optional - can be omitted, undefined, null, or an object
 	*/
@@ -3044,16 +3053,18 @@ interface EditorAPI {
 	*/
 	getCursorLine(): number;
 	/**
-	* Get the byte offset of the start of a line (0-indexed line number)
-	* Returns null if the line number is out of range
+	* Get the byte offset of the start of a line (0-indexed line number).
+	* `bufferId` defaults to the active buffer when omitted.
+	* Returns null if the line number is out of range.
 	*/
-	getLineStartPosition(line: number): Promise<number | null>;
+	getLineStartPosition(line: number, bufferId?: number): Promise<number | null>;
 	/**
-	* Get the byte offset of the end of a line (0-indexed line number)
-	* Returns the position after the last character of the line (before newline)
-	* Returns null if the line number is out of range
+	* Get the byte offset of the end of a line (0-indexed line number).
+	* `bufferId` defaults to the active buffer when omitted. Returns the
+	* position after the last character of the line (before newline), or null
+	* if the line number is out of range.
 	*/
-	getLineEndPosition(line: number): Promise<number | null>;
+	getLineEndPosition(line: number, bufferId?: number): Promise<number | null>;
 	/**
 	* Get the total number of lines in the active buffer
 	* Returns null if buffer not found

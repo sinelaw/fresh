@@ -165,6 +165,28 @@ pub struct VirtualBufferResult {
     pub split_id: Option<u64>,
 }
 
+/// One entry in the breadcrumb trail displayed above an editor buffer.
+/// `position` is the byte offset to jump to when the entry is clicked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct BreadcrumbItem {
+    pub label: String,
+    #[ts(type = "number")]
+    pub position: u64,
+}
+
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for BreadcrumbItem {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "BreadcrumbItem",
+            message: Some(e.to_string()),
+        })
+    }
+}
+
 /// A rectangular region, in cells. Used by the animation plugin API so
 /// callers can target arbitrary screen regions without going through a
 /// virtual buffer.
@@ -3380,6 +3402,14 @@ pub enum PluginCommand {
         buffer_id: u64,
         key: String,
         value: String,
+    },
+
+    /// Replace the breadcrumb trail displayed for a buffer. An empty list
+    /// clears the row and gives its screen line back to the editor viewport.
+    SetBreadcrumbs {
+        plugin_name: String,
+        buffer_id: u64,
+        items: Vec<BreadcrumbItem>,
     },
 
     /// Unregister a command by name

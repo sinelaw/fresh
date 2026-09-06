@@ -41,7 +41,7 @@ while true; do
         "initialized") ;;
         "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
         "textDocument/documentSymbol")
-            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"location":{"uri":"file://test.ts","range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}}}},{"name":"constructor","kind":9,"location":{"uri":"file://test.ts","range":{"start":{"line":1,"character":2},"end":{"line":3,"character":3}}}},{"name":"myMethod","kind":6,"location":{"uri":"file://test.ts","range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}}}}]}'
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}},"children":[{"name":"constructor","kind":9,"range":{"start":{"line":1,"character":2},"end":{"line":3,"character":3}},"selectionRange":{"start":{"line":1,"character":2},"end":{"line":1,"character":13}}},{"name":"myMethod","kind":6,"range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}},"selectionRange":{"start":{"line":5,"character":2},"end":{"line":5,"character":10}}}]}]}'
             ;;
         "shutdown")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
@@ -186,6 +186,41 @@ fn test_lsp_navigation_symbols() -> anyhow::Result<()> {
     harness.wait_until(|h| {
         selected_suggestion_text(h).is_some_and(|t| t.contains("[method] myMethod"))
     })?;
+
+    Ok(())
+}
+
+/// The top-of-buffer breadcrumb row follows the cursor through nested LSP
+/// DocumentSymbols, and each visible crumb is a navigation target.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_render_update_and_navigate() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Enter the constructor body. The hierarchical response should produce
+    // both its enclosing class and the innermost method in the row below tabs.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.contains("MyClass > constructor"))
+    })?;
+
+    let screen = harness.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("MyClass > constructor"))
+        .expect("nested breadcrumb row should be visible");
+    let class_col = line.find("MyClass").expect("class crumb") as u16;
+
+    // Move elsewhere, then click the outer crumb. The host uses its stored
+    // byte target, so this lands on the class name (line 1, column 7).
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    }
+    harness.mouse_click(class_col, row as u16)?;
+    harness.wait_until(|h| h.screen_to_string().contains("Ln 1, Col 7"))?;
 
     Ok(())
 }

@@ -2135,9 +2135,9 @@ impl Editor {
         None
     }
 
-    /// Remove every registry entry and per-buffer value belonging to a plugin.
+    /// Remove every status-bar and breadcrumb contribution belonging to a plugin.
     /// Called when a plugin is unloaded.
-    fn remove_plugin_status_bar_elements(&mut self, plugin_name: &str) {
+    fn remove_plugin_ui_contributions(&mut self, plugin_name: &str) {
         let prefix = format!("{}:", plugin_name);
         self.status_bar_token_registry
             .lock()
@@ -2146,6 +2146,15 @@ impl Editor {
         for window in self.windows.values_mut() {
             for values in window.status_bar_values.values_mut() {
                 values.retain(|k, _| !k.starts_with(&prefix));
+            }
+            let owned: Vec<_> = window
+                .breadcrumb_owners
+                .iter()
+                .filter_map(|(buffer_id, owner)| (owner == plugin_name).then_some(*buffer_id))
+                .collect();
+            for buffer_id in owned {
+                window.breadcrumb_owners.remove(&buffer_id);
+                window.breadcrumbs.remove(&buffer_id);
             }
         }
     }

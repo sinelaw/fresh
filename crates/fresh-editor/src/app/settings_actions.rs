@@ -748,7 +748,7 @@ impl Editor {
                     self.set_status_message(format!("Failed to unload plugin '{}': {}", name, e));
                 } else {
                     // Clean up status bar tokens for this plugin
-                    self.remove_plugin_status_bar_elements(&name);
+                    self.remove_plugin_ui_contributions(&name);
                 }
             }
         }
