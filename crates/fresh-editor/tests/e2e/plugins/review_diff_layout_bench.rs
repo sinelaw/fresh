@@ -266,3 +266,108 @@ fn bench_plain_buffer_frame_cost() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Opening the review: how the one-time layout scales
+// ---------------------------------------------------------------------------
+
+/// Build a repo whose diff is spread over many files and many *hunks per
+/// file*, the way a real review is.
+///
+/// [`repo_with_big_diff`] rewrites every line, so each file diffs as one
+/// enormous hunk. That shape hides anything that is per-hunk or per-file:
+/// with one hunk per file, a scan over every hunk in the review is a scan
+/// over one item per file. Real reviews are the other shape — hundreds of
+/// files, tens of small hunks each — so this fixture changes one line in
+/// every `change_every`, which git emits as its own hunk with three lines
+/// of context on each side.
+fn repo_with_scattered_diff(
+    files: usize,
+    lines_per_file: usize,
+    change_every: usize,
+) -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+    let body = |f: usize, changed: bool| -> String {
+        (0..lines_per_file)
+            .map(|l| {
+                if changed && l % change_every == 0 {
+                    format!("fn changed_{f}_{l}() {{ let y = {l}; }}\n")
+                } else {
+                    format!("fn original_{f}_{l}() {{ let x = {l}; }}\n")
+                }
+            })
+            .collect()
+    };
+    for f in 0..files {
+        // Spread across nested directories, like a real tree.
+        repo.create_file(&format!("src/mod{}/file{}.rs", f % 7, f), &body(f, false));
+    }
+    repo.git_add_all();
+    repo.git_commit("baseline");
+    for f in 0..files {
+        repo.create_file(&format!("src/mod{}/file{}.rs", f % 7, f), &body(f, true));
+    }
+    repo
+}
+
+/// Time only the open — the phase that lays the review out — and report
+/// it. Returns the elapsed milliseconds so a caller can compare shapes.
+fn bench_open(label: &str, repo: &GitTestRepo, note: &str) -> u128 {
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let open_start = Instant::now();
+    harness.run_palette_command("Review Diff").unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("next hunk") && !s.contains("Generating Review")
+        })
+        .unwrap();
+    // The toolbar lands before the stream does; wait for real diff rows.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("_0_0"))
+        .unwrap();
+    let open_ms = open_start.elapsed().as_millis();
+
+    println!("BENCH open {label}: {note} open={open_ms}ms");
+    open_ms
+}
+
+/// The headline number: how long `Review Diff` takes to become readable
+/// on a review the size of a large feature branch.
+#[test]
+#[ignore = "benchmark: run explicitly with --nocapture"]
+fn bench_review_open_large() {
+    let repo = repo_with_scattered_diff(300, 600, 10);
+    bench_open("large", &repo, "files=300 lines=600 change_every=10");
+}
+
+/// Same total work, three shapes. Any gap between them is something that
+/// scales in the file or hunk count rather than in the size of the diff.
+#[test]
+#[ignore = "benchmark: run explicitly with --nocapture"]
+fn bench_review_open_shapes() {
+    let tall = repo_with_scattered_diff(20, 3000, 10);
+    bench_open("tall", &tall, "files=20 lines=3000 change_every=10");
+    let mixed = repo_with_scattered_diff(150, 400, 10);
+    bench_open("mixed", &mixed, "files=150 lines=400 change_every=10");
+    let wide = repo_with_scattered_diff(600, 100, 10);
+    bench_open("wide", &wide, "files=600 lines=100 change_every=10");
+}
+
+/// A cheap shape for quick before/after loops while iterating.
+#[test]
+#[ignore = "benchmark: run explicitly with --nocapture"]
+fn bench_review_open_small() {
+    let repo = repo_with_scattered_diff(150, 200, 10);
+    bench_open("small", &repo, "files=150 lines=200 change_every=10");
+}
