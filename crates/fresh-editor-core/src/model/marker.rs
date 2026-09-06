@@ -124,6 +124,41 @@ impl MarkerList {
         id
     }
 
+    /// Create the three markers an overlay needs — a start point, an end
+    /// point and a span covering both — for many ranges at once.
+    ///
+    /// Ids are handed out exactly as calling [`create`](Self::create),
+    /// `create` and [`create_span`](Self::create_span) per range in order
+    /// would hand them out, so the markers are indistinguishable from the
+    /// one-at-a-time path; only the tree construction differs. Returns
+    /// `(start, end, span)` per range, in range order.
+    pub fn create_overlay_markers_bulk(
+        &mut self,
+        ranges: &[std::ops::Range<usize>],
+    ) -> Vec<(MarkerId, MarkerId, MarkerId)> {
+        let mut intervals: Vec<(u64, u64)> = Vec::with_capacity(ranges.len() * 3);
+        for range in ranges {
+            let (start, end) = (range.start as u64, range.end.max(range.start) as u64);
+            intervals.push((start, start));
+            intervals.push((range.end as u64, range.end as u64));
+            intervals.push((start, end));
+        }
+        let ids = self.tree.insert_many(&intervals);
+        let mut out = Vec::with_capacity(ranges.len());
+        for triple in ids.chunks_exact(3) {
+            let (s, e, span) = (
+                MarkerId(triple[0]),
+                MarkerId(triple[1]),
+                MarkerId(triple[2]),
+            );
+            self._affinity_map.insert(s, false);
+            self._affinity_map.insert(e, false);
+            self._affinity_map.insert(span, false);
+            out.push((s, e, span));
+        }
+        out
+    }
+
     /// Delete a marker
     pub fn delete(&mut self, id: MarkerId) {
         self.tree.delete(id.0);

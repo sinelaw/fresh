@@ -476,26 +476,30 @@ impl crate::app::window::Window {
         // first and bulk-add it so the OverlayManager sorts exactly once;
         // a per-overlay `add` re-sorts every time and is O(n² log n) for
         // N entries (a big git-show diff can be ~500k overlays).
+        //
+        // The markers behind those overlays are built in bulk for the same
+        // reason: each overlay is three markers in the buffer's interval
+        // tree, and adding them one at a time is that many independent
+        // descents through a tree growing under them.
         {
             use crate::view::overlay::{Overlay, OverlayFace};
             use fresh_core::overlay::OverlayNamespace;
 
             let inline_ns = OverlayNamespace::from_string("_inline".to_string());
-            let mut new_overlays = Vec::with_capacity(collected_overlays.len());
-
+            let mut specs = Vec::with_capacity(collected_overlays.len());
+            let mut extras = Vec::with_capacity(collected_overlays.len());
             for co in collected_overlays {
                 let face = OverlayFace::from_options(&co.options);
-                let mut overlay = Overlay::with_namespace(
-                    &mut state.marker_list,
-                    co.range,
-                    face,
-                    inline_ns.clone(),
-                );
-                overlay.extend_to_line_end = co.options.extend_to_line_end;
-                if let Some(url) = co.options.url {
+                extras.push((co.options.extend_to_line_end, co.options.url));
+                specs.push((co.range, face));
+            }
+            let mut new_overlays =
+                Overlay::many_with_namespace(&mut state.marker_list, specs, inline_ns);
+            for (overlay, (extend_to_line_end, url)) in new_overlays.iter_mut().zip(extras) {
+                overlay.extend_to_line_end = extend_to_line_end;
+                if let Some(url) = url {
                     overlay.url = Some(url);
                 }
-                new_overlays.push(overlay);
             }
             state.overlays.extend(new_overlays);
         }

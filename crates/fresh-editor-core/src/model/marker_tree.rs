@@ -168,6 +168,13 @@ impl Node {
 // ---
 
 impl IntervalTree {
+    /// Below this many markers in one batch, the descent-per-insert path is
+    /// cheaper than collecting and re-sorting the tree.
+    const BULK_INSERT_MIN: usize = 64;
+    /// ...and so it is whenever the tree already holds much more than the
+    /// batch adds, since the bulk build's cost is in the total, not the batch.
+    const BULK_INSERT_MAX_EXISTING_RATIO: usize = 4;
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -244,6 +251,74 @@ impl IntervalTree {
 
         self.marker_map.insert(id, new_node);
         id
+    }
+
+    /// Insert many right-gravity position markers in one balanced build.
+    ///
+    /// Equivalent to calling [`insert`](Self::insert) on each interval in
+    /// turn: ids are handed out in argument order, so the result is
+    /// indistinguishable from the one-at-a-time path. What changes is how the
+    /// tree gets there — bottom-up from a sorted slice, instead of N
+    /// independent root-to-leaf descents each rebalancing on the way back up.
+    ///
+    /// Worth it when a single operation installs tens of thousands of markers
+    /// at once, which is what replacing the contents of a decorated buffer
+    /// does: one overlay per row, three markers per overlay.
+    pub fn insert_many(&mut self, intervals: &[(u64, u64)]) -> Vec<MarkerId> {
+        if intervals.is_empty() {
+            return Vec::new();
+        }
+        // The bulk build has to collect and re-sort everything already in the
+        // tree, so it only pays off on a batch that is both large in absolute
+        // terms and large relative to what is already there.
+        if intervals.len() < Self::BULK_INSERT_MIN
+            || self.marker_map.len() > intervals.len() * Self::BULK_INSERT_MAX_EXISTING_RATIO
+        {
+            return intervals
+                .iter()
+                .map(|&(start, end)| self.insert(start, end))
+                .collect();
+        }
+
+        // Existing nodes are reused rather than rebuilt, so every live
+        // MarkerId — and the `marker_map` entry behind it — stays valid.
+        let mut nodes: Vec<Rc<RefCell<Node>>> =
+            Vec::with_capacity(self.marker_map.len() + intervals.len());
+        Self::collect_nodes_in_order(&self.root, &mut nodes);
+        for node in &nodes {
+            let mut n = node.borrow_mut();
+            // `collect_nodes_in_order` resolved every lazy delta on the way in,
+            // so the intervals here are the true ones.
+            debug_assert_eq!(n.lazy_delta, 0);
+            n.left = None;
+            n.right = None;
+            n.parent = Weak::new();
+        }
+
+        let mut ids = Vec::with_capacity(intervals.len());
+        for &(start, end) in intervals {
+            let id = self.next_id;
+            self.next_id += 1;
+            let node = Node::new(
+                Marker {
+                    id,
+                    interval: Interval { start, end },
+                    marker_type: MarkerType::Position,
+                    right_gravity: true,
+                },
+                Weak::new(),
+            );
+            self.marker_map.insert(id, Rc::clone(&node));
+            nodes.push(node);
+            ids.push(id);
+        }
+
+        nodes.sort_unstable_by_key(|n| {
+            let n = n.borrow();
+            (n.marker.interval.start, n.marker.id)
+        });
+        self.root = Self::build_from_sorted(&nodes);
+        ids
     }
 
     /// Insert a line anchor at a specific position
@@ -960,6 +1035,9 @@ impl IntervalTree {
 
 #[cfg(test)]
 impl IntervalTree {
+    fn height(&self) -> i32 {
+        Node::height(&self.root)
+    }
     fn debug_dump(&self) -> Vec<(MarkerId, u64, u64, bool)> {
         let mut out = Vec::new();
         Self::debug_collect(&self.root, 0, &mut out);
@@ -1606,6 +1684,112 @@ mod tests {
                         "tree node count {} != live marker count {}",
                         dump.len(),
                         live
+                    );
+                }
+            }
+
+            /// `insert_many` must produce a tree that behaves exactly like
+            /// one built by inserting the same intervals one at a time: same
+            /// ids, same positions, same response to a later edit stream, and
+            /// the BST/AVL invariants intact so those later edits stay cheap.
+            ///
+            /// The batch is padded past `BULK_INSERT_MIN` so the bulk path is
+            /// actually taken rather than falling through to the per-insert
+            /// one, and some markers are seeded first so the build has an
+            /// existing tree to fold in rather than only the empty case.
+            #[test]
+            fn prop_bulk_insert_matches_sequential(
+                seed in prop::collection::vec((0..1000u64, 0..40u64), 0..30),
+                batch in prop::collection::vec((0..1000u64, 0..40u64), 70..140),
+                raw_edits in prop::collection::vec((0..60u64, 0..20u64, 0..20u64), 0..15),
+            ) {
+                let mut sequential = IntervalTree::new();
+                let mut bulk = IntervalTree::new();
+                for (start, len) in &seed {
+                    let (s, e) = (*start, start + len);
+                    prop_assert_eq!(sequential.insert(s, e), bulk.insert(s, e));
+                }
+
+                let intervals: Vec<(u64, u64)> =
+                    batch.iter().map(|(start, len)| (*start, start + len)).collect();
+                let seq_ids: Vec<MarkerId> = intervals
+                    .iter()
+                    .map(|&(s, e)| sequential.insert(s, e))
+                    .collect();
+                let bulk_ids = bulk.insert_many(&intervals);
+                prop_assert_eq!(&seq_ids, &bulk_ids, "bulk insert handed out different ids");
+
+                // Both trees hold the same markers at the same positions.
+                prop_assert_eq!(
+                    sequential.debug_dump(),
+                    bulk.debug_dump(),
+                    "bulk-built tree holds different markers than the sequential one"
+                );
+
+                // Same edit stream through both. Point markers — which is what
+                // an overlay's own extent is made of — must stay in lockstep.
+                // Spanning ends are deliberately not compared: whether the
+                // per-edit path shifts an end that straddles the edit depends
+                // on where the node sits in the tree (`adjust_recursive` case
+                // 2 never descends left), so any two differently shaped trees
+                // disagree there, bulk build or not. See the note on
+                // `prop_bulk_adjust_matches_sequential`.
+                let mut edits: Vec<(u64, i64)> = Vec::new();
+                let mut cursor = 0u64;
+                for (gap, del_len, ins_len) in raw_edits {
+                    cursor += gap;
+                    let delta = ins_len as i64 - del_len as i64;
+                    if delta != 0 {
+                        edits.push((cursor, delta));
+                    }
+                    cursor += del_len.max(1);
+                }
+                for (pos, delta) in &edits {
+                    sequential.adjust_for_edit(*pos, *delta);
+                    bulk.adjust_for_edit(*pos, *delta);
+                }
+
+                for (id, (_, len)) in bulk_ids.iter().zip(&batch) {
+                    if *len != 0 {
+                        continue;
+                    }
+                    prop_assert_eq!(
+                        bulk.get_position(*id),
+                        sequential.get_position(*id),
+                        "point marker {} diverged from the sequential tree after edits {:?}",
+                        id,
+                        edits
+                    );
+                }
+
+                let bulk_dump = bulk.debug_dump();
+
+                // Both dumps are in-order traversals, so this pins the BST
+                // invariant on the bulk-built tree as well as the contents.
+                for w in bulk_dump.windows(2) {
+                    prop_assert!(
+                        w[0].1 <= w[1].1,
+                        "BST position order violated: id {}@{} before id {}@{}",
+                        w[0].0, w[0].1, w[1].0, w[1].1
+                    );
+                }
+
+                // A batch this size must not leave a degenerate tree: the
+                // whole point is that later operations stay logarithmic.
+                let n = (seed.len() + batch.len()) as u32;
+                let max_avl_height = (2.0 * (n as f64 + 1.0).log2() + 1.0).ceil() as i32;
+                prop_assert!(
+                    bulk.height() <= max_avl_height,
+                    "bulk-built tree height {} exceeds the AVL bound {} for {} markers",
+                    bulk.height(), max_avl_height, n
+                );
+
+                // Every marker is still reachable by id.
+                for (id, (start, len)) in bulk_ids.iter().zip(&batch) {
+                    prop_assert!(
+                        bulk.get_position(*id).is_some(),
+                        "marker {} ({}..{}) vanished from the bulk-built tree",
+                        id, start, start + len
                     );
                 }
             }

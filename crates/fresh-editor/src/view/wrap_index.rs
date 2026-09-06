@@ -623,6 +623,11 @@ impl WrapIndex {
         let mut lines = Vec::with_capacity(line_count);
         for line in 0..line_count {
             let vrows = line_virtual_rows(buffer, line, decorations);
+            if let Some(flat) = try_build_line_flat(buffer, line, geometry.rule, vrows, decorations)
+            {
+                lines.push(flat);
+                continue;
+            }
             lines.push(build_line(
                 buffer,
                 line,
@@ -1244,6 +1249,60 @@ pub(crate) fn line_drawn_row_starts(
     let out = WrapMachine::run(tokens, rule);
     let (row_starts, _, _) = rows_to_starts(&out, line_start, 0);
     row_starts
+}
+
+/// One-row shortcut for wrap-off lines, bypassing tokenisation entirely.
+///
+/// With soft wrap off the rule is a `Chop` safety bound, so a line shorter
+/// than that bound cannot break and occupies exactly one row. Deriving that
+/// row from the line's byte range is the same answer the machine reaches,
+/// so this is a shortcut rather than a second opinion — the count-only
+/// mirrors this module warns about were a *reimplementation* of wrapping,
+/// which is what made them drift.
+///
+/// Returns `None` for anything the reasoning does not cover, so the full
+/// pipeline stays the default. `flat_matches_full_pipeline` holds the two
+/// against each other across the shapes that reach it.
+fn try_build_line_flat(
+    buffer: &mut Buffer,
+    line: usize,
+    rule: WrapRule,
+    virtual_rows: u32,
+    decorations: &IndexDecorations,
+) -> Option<LineWrap> {
+    let WrapRule::Chop { chars } = rule else {
+        return None;
+    };
+    // Decorations splice, conceal and break the token stream; all of that
+    // is row structure this shortcut cannot see.
+    if !decorations.is_empty() {
+        return None;
+    }
+    let line_start = buffer.line_start_offset(line)?;
+    let line_end = buffer
+        .line_start_offset(line + 1)
+        .unwrap_or_else(|| buffer.len())
+        .min(buffer.len());
+    let span = line_end.saturating_sub(line_start);
+    // A char is at least one byte, so a byte count under the bound puts the
+    // character count under it too — conservative in the safe direction.
+    if span >= chars {
+        return None;
+    }
+    // A line with no source bytes of its own produces a row the pipeline
+    // marks unresumable, having no source token to resume at. Rather than
+    // reproduce that reasoning, decline anything short enough to be one:
+    // two bytes covers an empty line under either line ending.
+    if span <= 2 {
+        return None;
+    }
+    Some(LineWrap {
+        row_starts: vec![0],
+        carries: vec![RowCarry::default()],
+        resumable: vec![true],
+        virtual_rows,
+        hidden: false,
+    })
 }
 
 fn build_line(
@@ -2777,6 +2836,113 @@ mod tests {
         }
         let last = index.total_rows() - 1;
         assert_eq!(index.resumable_row_at_or_before(&buffer, last), (last, 0));
+    }
+
+    /// The wrap-off shortcut must be indistinguishable from the tokenising
+    /// pipeline wherever it fires. Anything it declines falls through, so
+    /// only agreement matters — a shape it refuses is not a failure.
+    ///
+    /// The corpus is deliberately awkward: the shapes that produce tokens
+    /// other than a plain run are exactly the ones a byte-range shortcut
+    /// could get wrong.
+    #[test]
+    fn flat_matches_full_pipeline() {
+        let chop = WrapRule::Chop { chars: 10_000 };
+        let decorations = IndexDecorations::default();
+        let bodies = [
+            "plain ascii line",
+            "",
+            "    leading spaces",
+            "trailing spaces   ",
+            "\tleading tab",
+            "mid\ttab\there",
+            "unicode \u{e9}\u{e8}\u{ea} accents",
+            "wide \u{4f60}\u{597d}\u{4e16}\u{754c}",
+            "emoji \u{1f600} here",
+            "   ",
+            "a",
+            "\u{7f}control",
+            "combining e\u{301}",
+            "rtl \u{5e9}\u{5dc}\u{5d5}\u{5dd}",
+            "many     interior     spaces",
+        ];
+        // Each body as its own line, plus a final line with no newline.
+        let text = format!("{}\nno trailing newline", bodies.join("\n"));
+        let mut buffer = Buffer::from_str(&text, 0, test_fs());
+        let line_count = buffer.line_count().unwrap_or(1).max(1);
+        assert!(
+            line_count > bodies.len(),
+            "corpus did not produce its lines"
+        );
+
+        let mut fired = 0usize;
+        for line in 0..line_count {
+            let Some(flat) = try_build_line_flat(&mut buffer, line, chop, 0, &decorations) else {
+                continue;
+            };
+            fired += 1;
+            let full = build_line(&mut buffer, line, chop, LineEnding::LF, 0, &decorations);
+            assert_eq!(
+                format!("{:?}", flat),
+                format!("{:?}", full),
+                "line {line} ({:?}) disagrees between the wrap-off shortcut \
+                 and the tokenising pipeline",
+                buffer
+                    .line_start_offset(line)
+                    .zip(buffer.line_start_offset(line + 1))
+                    .map(|(a, b)| text.get(a..b.min(text.len())).unwrap_or("")),
+            );
+        }
+        // Only the shortest lines fall through. Without a floor here the
+        // test would pass vacuously if the shortcut started declining
+        // everything.
+        assert!(
+            fired * 4 >= line_count * 3,
+            "the shortcut covered only {fired} of {line_count} lines, so it \
+             is no longer exercising what this test claims",
+        );
+    }
+
+    /// A line at or beyond the chop bound really does break, so the
+    /// shortcut must decline it rather than claim a single row.
+    #[test]
+    fn flat_declines_lines_that_reach_the_chop_bound() {
+        let chop = WrapRule::Chop { chars: 16 };
+        let decorations = IndexDecorations::default();
+        let text = format!("{}\nshort", "x".repeat(64));
+        let mut buffer = Buffer::from_str(&text, 0, test_fs());
+        assert!(
+            try_build_line_flat(&mut buffer, 0, chop, 0, &decorations).is_none(),
+            "the over-long line must fall through to the wrap machine",
+        );
+        assert!(
+            try_build_line_flat(&mut buffer, 1, chop, 0, &decorations).is_some(),
+            "the short line should still take the shortcut",
+        );
+        let full = build_line(&mut buffer, 0, chop, LineEnding::LF, 0, &decorations);
+        assert!(
+            full.row_starts.len() > 1,
+            "the corpus line was supposed to exceed the bound and wrap",
+        );
+    }
+
+    /// Soft wrap on is not this shortcut's business.
+    #[test]
+    fn flat_declines_when_soft_wrap_is_on() {
+        let decorations = IndexDecorations::default();
+        let mut buffer = Buffer::from_str("some text here", 0, test_fs());
+        assert!(try_build_line_flat(
+            &mut buffer,
+            0,
+            WrapRule::Word {
+                content_width: 40,
+                gutter_width: 0,
+                hanging_indent: false,
+            },
+            0,
+            &decorations,
+        )
+        .is_none());
     }
 }
 
