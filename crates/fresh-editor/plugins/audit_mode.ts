@@ -78,6 +78,21 @@ interface ReviewComment {
 }
 
 /**
+ * One file's block of `git diff` output, kept as git wrote it. The stream
+ * shows these bytes verbatim: the host's diff grammar colours them (file
+ * by file, in each file's own language) and its diff gutter numbers them
+ * from the hunk headers, so nothing here is laid out per row.
+ */
+interface RawFile {
+  path: string;
+  gitStatus: 'staged' | 'unstaged' | 'untracked';
+  /** `diff --git` through the end of the last hunk, newline-terminated.
+   *  The `diff --git` row is what retargets the highlighter to this
+   *  file's language; the stream shows it as the file's header. */
+  text: string;
+}
+
+/**
  * A diff hunk (block of changes)
  */
 interface Hunk {
@@ -89,8 +104,33 @@ interface Hunk {
   lines: string[];
   status?: string;
   contextHeader: string;
-  byteOffset: number; // Position in the virtual buffer
   gitStatus?: 'staged' | 'unstaged' | 'untracked';
+  /** The block this hunk came from, and where in it (offsets into
+   *  `raw.text`): its `@@` row, its first body row, and the end of its
+   *  last one, past the newline. */
+  raw: RawFile;
+  headerStart: number;
+  bodyStart: number;
+  end: number;
+}
+
+/** A note box spliced into a hunk's body: it follows `hunk.lines[afterLine]`
+ *  and takes `rows` rows. */
+interface StreamNote {
+  afterLine: number;
+  rows: number;
+  commentId: string;
+}
+
+/** A hunk as laid out in the stream. */
+interface StreamHunk {
+  hunk: Hunk;
+  /** 1-indexed row of the `@@` line. */
+  headerRow: number;
+  /** Rows the hunk spans, header and note boxes included. */
+  rowCount: number;
+  /** Note boxes in body order. */
+  notes: StreamNote[];
 }
 
 /**
@@ -216,15 +256,22 @@ interface ReviewState {
   // attached to (not the comment-display row itself). Lets the comments
   // panel jump the cursor straight to the source line.
   diffLineRowByCommentId: Record<string, number>;
-  // Maps 1-indexed row -> the entry's properties. Lets handlers look up
-  // type / hunkId / fileKey / etc. by cursor row directly, bypassing
-  // editor.getTextPropertiesAtCursor (which can return the previous
-  // row's props when the cursor sits at a row-boundary byte).
-  entryPropsByRow: Record<number, Record<string, unknown>>;
-  // Where the stream carries code, for the host's highlighter (#3104):
-  // built with the rows, declared on the buffer right after they are
-  // mounted. See `SyntaxRegion` in the plugin API.
-  syntaxRegions: TsSyntaxRegion[];
+  // The stream's hunks in order, with where each one's rows are. What a
+  // row is — which hunk, which line of it, which note — is answered from
+  // this and `Hunk.lines` when asked (`streamRowAt`), not from a record
+  // built for every row up front.
+  streamHunks: StreamHunk[];
+  streamHunkById: Map<string, StreamHunk>;
+  // The chrome rows, by 1-indexed row: section headers to their category,
+  // file headers to their file key.
+  sectionByRow: Map<number, string>;
+  fileByRow: Map<number, string>;
+  // Per file key, the byte range of its `diff --git` row and the label
+  // `applyFolds` conceals over it (with the file's collapse glyph).
+  fileHeaderConceals: Map<string, { start: number; end: number; label: string }>;
+  // The buffer whose language and gutter are already set up for the
+  // stream, so the mount does that once per buffer, not per rebuild.
+  streamBufferPrepared: number | null;
   // Byte ranges of collapsible bodies, captured at build time. Tab /
   // mouse / z a / z r register these as host folds (see applyFolds)
   // — no buffer rebuild on collapse / expand.
@@ -256,10 +303,6 @@ interface ReviewState {
   // (per-file by construction) that renders one file. The unified stream
   // lays out the whole changeset, however big.
   focusOnly: boolean;
-  // When true, the focused file renders as a two-column side-by-side
-  // (OLD | NEW) in the center panel instead of the unified stream. The
-  // `1`/`2` keys toggle it; the sidebar and other panels stay put.
-  splitView: boolean;
   // Which of the two optional side panels are on screen. Both start
   // hidden so the diff owns the full width — the reading surface is what
   // a review is about. `F` / `C` (or the toolbar buttons, or the `✕` in a
@@ -369,8 +412,12 @@ const state: ReviewState = {
   collapsedHunks: new Set(),
   hunkRowByHunkId: {},
   diffLineRowByCommentId: {},
-  entryPropsByRow: {},
-  syntaxRegions: [],
+  streamHunks: [],
+  streamHunkById: new Map(),
+  sectionByRow: new Map(),
+  fileByRow: new Map(),
+  fileHeaderConceals: new Map(),
+  streamBufferPrepared: null,
   sectionBodyRange: {},
   fileBodyRange: {},
   hunkBodyRange: {},
@@ -384,7 +431,6 @@ const state: ReviewState = {
   panelWidths: {},
   panelHeights: {},
   focusOnly: true,
-  splitView: false,
   commentsSelectedId: null,
   commentsHighlightId: null,
   stickyCurrentFile: null,
@@ -437,7 +483,6 @@ const STYLE_COMMENT: OverlayColorSpec = "diagnostic.warning_fg";
 // Dracula). selection_bg is reserved for the cursor-line overlay so
 // using it here would blend the two highlights.
 const STYLE_FILE_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
-const STYLE_HUNK_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
 // File-header foreground: brightest reliable foreground in any theme.
 // `editor.fg` is white-ish on dark themes and black-ish on light, so it
 // always reads as the most prominent text color. Bolded for extra weight.
@@ -448,40 +493,24 @@ const STYLE_FILE_HEADER_FG: OverlayColorSpec = "editor.fg";
 // bg in dark themes, light text on dark bg in light themes.
 const STYLE_INVERSE_FG: OverlayColorSpec = "editor.bg";
 const STYLE_INVERSE_BG: OverlayColorSpec = "editor.fg";
-// Dim foreground for the per-row old/new line-number gutter. Same key
-// the editor uses for its own gutter — already chosen per-theme to be
-// readable but visibly subordinate to content fg.
-const STYLE_LINE_NUM_FG: OverlayColorSpec = "editor.line_number_fg";
-
-// Width of each line-number column. 4 chars fits up to 9999 lines —
-// past that we just let the number overflow rather than expanding the
-// gutter (extremely rare in review-diff context).
-const LINE_NUM_W = 4;
-
-/** Disclosure triangles for collapsible headers (sections, files,
- *  hunks). The buffer text always carries `GLYPH_EXPANDED`; `applyFolds`
- *  overlays `GLYPH_COLLAPSED` as a replacement conceal while the body is
- *  folded, so collapsing never rewrites the buffer. Both are one column
- *  and the same length in bytes — `TRIANGLE_BYTES` — which is what lets
- *  the conceal target a fixed range after the header's leading space. */
-const GLYPH_EXPANDED = '▾';
-const GLYPH_COLLAPSED = '▸';
-const TRIANGLE_BYTES = getByteLength(GLYPH_EXPANDED);
-
-/** Format the per-row "OLD  NEW " prefix (with trailing space). Either
- *  side passes `undefined` for blank — removed lines blank the new
- *  column, added lines blank the old column. */
-function lineNumPrefix(oldNum: number | undefined, newNum: number | undefined): string {
-    const o = oldNum !== undefined ? String(oldNum).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
-    const n = newNum !== undefined ? String(newNum).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
-    return ` ${o} ${n} `;
-}
-
-
 /**
- * Calculate UTF-8 byte length of a string manually since TextEncoder is not available
+ * Calculate UTF-8 byte length of a string manually since TextEncoder is not
+ * available.
+ *
+ * The values are byte offsets the host places overlays at, so the slow path
+ * has to stay exact — including the surrogate pair, which is one code point
+ * and four bytes, not two characters of three.
+ *
+ * An all-ASCII string has a byte length equal to its character length, and
+ * diff text is overwhelmingly ASCII, so the interpreted per-character loop
+ * is skipped whenever a single engine-level regex scan says it can be. The
+ * regex is non-global on purpose: a `/g/` one carries `lastIndex` between
+ * calls and would start half its scans in the middle of the string.
  */
+const NON_ASCII = /[^\x00-\x7F]/;
+
 function getByteLength(str: string): number {
+    if (!NON_ASCII.test(str)) return str.length;
     let s = 0;
     for (let i = 0; i < str.length; i++) {
         const code = str.charCodeAt(i);
@@ -493,6 +522,19 @@ function getByteLength(str: string): number {
     }
     return s;
 }
+
+/** Disclosure triangles for collapsible headers. Collapsing never
+ *  rewrites the buffer; `applyFolds` shows the state with conceals. A
+ *  section header (and a file header the plugin wrote itself) starts
+ *  with `GLYPH_EXPANDED`, replaced by `GLYPH_COLLAPSED` while folded —
+ *  both one column and `TRIANGLE_BYTES` long, so the conceal targets a
+ *  fixed range at the head of the row. A file with a diff has git's
+ *  `diff --git` row for a header, concealed under its label and the
+ *  glyph; a hunk header is git's `@@` row, concealed as `▸ @@` while
+ *  folded. */
+const GLYPH_EXPANDED = '▾';
+const GLYPH_COLLAPSED = '▸';
+const TRIANGLE_BYTES = getByteLength(GLYPH_EXPANDED);
 
 // --- Persistence ---
 //
@@ -674,6 +716,19 @@ function diffStrings(oldStr: string, newStr: string): DiffPart[] {
         suf++;
     }
 
+    // Both walks count UTF-16 units, so a boundary can land between the
+    // halves of a surrogate pair — two lines differing only in the low
+    // half of an emoji share its high half, and the prefix swallows it.
+    // That leaves a lone surrogate at the end of one part and another at
+    // the start of the next, and `getByteLength` charges four bytes for
+    // each: every offset built from these parts is then a whole character
+    // out, and the highlight lands past the end of its row. Pull either
+    // boundary back onto a code-point boundary.
+    const isHigh = (c: number) => c >= 0xd800 && c <= 0xdbff;
+    const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+    if (pre > 0 && isHigh(oldStr.charCodeAt(pre - 1)) && isLow(oldStr.charCodeAt(pre))) pre--;
+    if (suf > 0 && isHigh(oldStr.charCodeAt(n - suf - 1)) && isLow(oldStr.charCodeAt(n - suf))) suf--;
+
     const parts: DiffPart[] = [];
     if (pre > 0) parts.push({ text: oldStr.slice(0, pre), type: 'unchanged' });
     if (pre < n - suf) parts.push({ text: oldStr.slice(pre, n - suf), type: 'removed' });
@@ -682,50 +737,72 @@ function diffStrings(oldStr: string, newStr: string): DiffPart[] {
     return parts;
 }
 
+/**
+ * Split `git diff` output into hunks without taking it apart: each hunk
+ * records where it sits in its file's block, and the block is what the
+ * stream shows. The pass is an `indexOf` per row and a first-byte test;
+ * only `Hunk.lines`, which staging and note anchoring read, is split out.
+ */
 function parseDiffOutput(stdout: string, gitStatus: 'staged' | 'unstaged' | 'untracked'): Hunk[] {
-    const lines = stdout.split('\n');
+    if (stdout.length > 0 && !stdout.endsWith('\n')) stdout += '\n';
     const hunks: Hunk[] = [];
-    let currentFile = "";
-    let currentHunk: Hunk | null = null;
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.startsWith('diff --git')) {
-            const match = line.match(/diff --git a\/(.+) b\/(.+)/);
+    let file: RawFile | null = null;
+    let fileStart = 0;
+    let hunk: Hunk | null = null;
+    const closeHunk = (at: number) => {
+        if (hunk === null) return;
+        hunk.end = at - fileStart;
+        const lines = stdout.slice(fileStart + hunk.bodyStart, at).split('\n');
+        lines.pop(); // the terminating newline leaves an empty tail
+        hunk.lines = lines;
+        hunk = null;
+    };
+    const closeFile = (at: number) => {
+        closeHunk(at);
+        if (file === null) return;
+        file.text = stdout.slice(fileStart, at);
+        file = null;
+    };
+    const n = stdout.length;
+    let pos = 0;
+    while (pos < n) {
+        let nl = stdout.indexOf('\n', pos);
+        if (nl < 0) nl = n;
+        const c = stdout.charCodeAt(pos);
+        if (c === 0x64 /* d */ && stdout.startsWith('diff --git ', pos)) {
+            closeFile(pos);
+            const match = stdout.slice(pos, nl).match(/diff --git a\/(.+) b\/(.+)/);
             if (match) {
-                currentFile = match[2];
-                currentHunk = null;
+                fileStart = pos;
+                file = { path: match[2], gitStatus, text: '' };
             }
-        } else if (line.startsWith('@@')) {
-            const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
-            if (match && currentFile) {
+        } else if (c === 0x40 /* @ */ && file !== null && stdout.startsWith('@@ ', pos)) {
+            closeHunk(pos);
+            const match = stdout.slice(pos, nl).match(/@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
+            if (match) {
                 const oldStart = parseInt(match[1]);
                 const newStart = parseInt(match[2]);
-                currentHunk = {
-                    id: `${currentFile}:${newStart}:${gitStatus}`,
-                    file: currentFile,
+                hunk = {
+                    id: `${file.path}:${newStart}:${gitStatus}`,
+                    file: file.path,
                     range: { start: newStart, end: newStart },
                     oldRange: { start: oldStart, end: oldStart },
                     type: 'modify',
                     lines: [],
                     status: 'pending',
                     contextHeader: match[3]?.trim() || "",
-                    byteOffset: 0,
-                    gitStatus
+                    gitStatus,
+                    raw: file,
+                    headerStart: pos - fileStart,
+                    bodyStart: nl + 1 - fileStart,
+                    end: nl + 1 - fileStart,
                 };
-                hunks.push(currentHunk);
-            }
-        } else if (currentHunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' ') || line.startsWith('\\'))) {
-            // Keep the "\ No newline at end of file" marker (starts with
-            // a backslash) so buildHunkPatch can reproduce the exact
-            // end-of-file newline state; without it git refuses to apply
-            // the reconstructed patch (e.g. discarding a hunk that adds an
-            // unterminated final line).
-            if (!line.startsWith('---') && !line.startsWith('+++')) {
-                 currentHunk.lines.push(line);
+                hunks.push(hunk);
             }
         }
+        pos = nl + 1;
     }
+    closeFile(n);
     return hunks;
 }
 
@@ -888,6 +965,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
             const hunks = parseDiffOutput(result.stdout, 'untracked');
             for (const h of hunks) {
                 h.file = f.path;
+                h.raw.path = f.path;
                 h.id = `${f.path}:${h.range.start}:untracked`;
                 h.type = 'add';
             }
@@ -907,68 +985,100 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
     return allHunks;
 }
 
-// --- New magit-style rendering (Step 2 of rewrite) ---
+// --- Derived views of `state.hunks` ---
+//
+// Everything that needs "the hunks for this file" or "how many lines this
+// file changes" used to answer it by scanning every hunk in the review.
+// Per file that is O(files x hunks) and, once the line counts are wanted
+// too, O(files x total diff lines) — on a large changeset the scans cost
+// more than parsing the diff did.
+//
+// So the answers are derived once, in a single pass, and keyed by
+// `fileKey`. The cache is guarded by identity of the array it was built
+// from: `state.hunks` is only ever replaced wholesale (hunk objects are
+// filled in during parsing, before the array is installed), so a new
+// array is exactly the event that invalidates the derivation.
 
-const STYLE_DIVIDER: OverlayColorSpec = "ui.split_separator_fg";
-const STYLE_FOOTER: OverlayColorSpec = "ui.status_bar_fg";
-const STYLE_HUNK_HEADER: OverlayColorSpec = "syntax.keyword";
-
-interface ListLine {
-    text: string;
-    type: 'section-header' | 'file';
-    fileIndex?: number;     // index into state.files[]
-    style?: Partial<OverlayOptions>;
-    inlineOverlays?: InlineOverlay[];
+interface HunkIndex {
+    /** Hunks per `fileKey`, in `state.hunks` order. */
+    byFileKey: Map<string, Hunk[]>;
+    /** +added / -removed line counts per `fileKey`. */
+    countsByFileKey: Map<string, { added: number; removed: number }>;
+    /** The git output block per `fileKey`. */
+    rawByFileKey: Map<string, RawFile>;
+    /** The largest line number any hunk reaches, on either side. */
+    maxLine: number;
 }
 
-interface DiffLine {
-    text: string;
-    type: 'hunk-header' | 'add' | 'remove' | 'context' | 'empty' | 'comment' | 'file-header' | 'section-header';
-    filePath?: string;   // for file-header rows
-    fileKey?: string;    // for file-header rows
-    fileIndex?: number;  // for file-header rows
-    style?: Partial<OverlayOptions>;
-    inlineOverlays?: InlineOverlay[];
-    // For a code row: what it is written in and which parser streams
-    // (one per hunk side) it feeds. See `SyntaxRegion` in the plugin API.
-    syntax?: RowSyntax;
-    // Line metadata for comment attachment
-    hunkId?: string;
-    file?: string;
-    lineType?: 'add' | 'remove' | 'context';
-    oldLine?: number;
-    newLine?: number;
-    lineContent?: string;
-    commentId?: string;
+const NO_HUNKS: readonly Hunk[] = [];
+const NO_CHANGES: Readonly<{ added: number; removed: number }> = { added: 0, removed: 0 };
+
+let hunkIndexCache: { source: Hunk[]; index: HunkIndex } | null = null;
+
+function hunkIndex(): HunkIndex {
+    const source = state.hunks;
+    if (hunkIndexCache !== null && hunkIndexCache.source === source) {
+        return hunkIndexCache.index;
+    }
+    const byFileKey = new Map<string, Hunk[]>();
+    const countsByFileKey = new Map<string, { added: number; removed: number }>();
+    const rawByFileKey = new Map<string, RawFile>();
+    let maxLine = 1;
+    for (const h of source) {
+        const key = fileKeyOf(h.file, h.gitStatus || 'unstaged');
+        let group = byFileKey.get(key);
+        let counts = countsByFileKey.get(key);
+        if (group === undefined || counts === undefined) {
+            group = [];
+            counts = { added: 0, removed: 0 };
+            byFileKey.set(key, group);
+            countsByFileKey.set(key, counts);
+            rawByFileKey.set(key, h.raw);
+        }
+        group.push(h);
+        // `counts` runs over the whole file; the reach of *this* hunk is
+        // its own lines, so the two are counted apart. Adding the file's
+        // running total to one hunk's start overstates the last line by
+        // everything changed above it, and sizes the gutter too wide.
+        let context = 0;
+        let added = 0;
+        let removed = 0;
+        for (const line of h.lines) {
+            if (line[0] === '+') { counts.added++; added++; }
+            else if (line[0] === '-') { counts.removed++; removed++; }
+            else if (line[0] !== '\\') context++;
+        }
+        maxLine = Math.max(maxLine, h.oldRange.start + removed + context, h.range.start + added + context);
+    }
+    const index: HunkIndex = { byFileKey, countsByFileKey, rawByFileKey, maxLine };
+    hunkIndexCache = { source, index };
+    return index;
 }
 
-/** Language, parser streams and gutter width of a code row; see
- *  `DiffLine.syntax`. */
-interface RowSyntax {
-    language: string;
-    streams: number[];
-    /** Bytes before the code: this row's line-number gutter plus its
-     *  one-byte diff marker. Measured from the text actually emitted,
-     *  never assumed — `lineNumPrefix` pads a number to `LINE_NUM_W` but
-     *  does not truncate one, so a file past 9,999 lines has a wider
-     *  gutter, and a row of it whose prefix was guessed would hand the
-     *  language parser the tail of its own line number. */
-    prefix: number;
+// The index owns these arrays and count records, so both accessors hand
+// back read-only views: a caller that mutated one would corrupt every
+// later reader of the same file.
+
+/** The hunks belonging to `key` (a `fileKey`), in review order. */
+function hunksForKey(key: string): readonly Hunk[] {
+    return hunkIndex().byFileKey.get(key) || NO_HUNKS;
+}
+
+/** The hunks belonging to `file`, in review order. */
+function hunksForFile(file: FileEntry): readonly Hunk[] {
+    return hunksForKey(fileKey(file));
 }
 
 /** Compute +N / -M line counts for a file. */
-function fileChangeCounts(file: FileEntry): { added: number; removed: number } {
-    let added = 0;
-    let removed = 0;
-    for (const h of state.hunks) {
-        if (h.file === file.path && h.gitStatus === file.category) {
-            for (const line of h.lines) {
-                if (line[0] === '+') added++;
-                else if (line[0] === '-') removed++;
-            }
-        }
-    }
-    return { added, removed };
+function fileChangeCounts(file: FileEntry): Readonly<{ added: number; removed: number }> {
+    return hunkIndex().countsByFileKey.get(fileKey(file)) || NO_CHANGES;
+}
+
+/** Columns the host's diff gutter puts in front of every stream row: the
+ *  indicator slot, the two line-number columns, and the separator. */
+function diffGutterColumns(): number {
+    const digits = String(hunkIndex().maxLine).length;
+    return 1 + (2 * digits + 1) + 3;
 }
 
 // Inline review-note box sizing. The note renders as a bordered, wrapped
@@ -1023,458 +1133,73 @@ function diffPanelWidth(): number {
 }
 
 /**
- * Push inline comment box rows for a given diff line into the lines array.
- * Each comment becomes a bordered, word-wrapped callout whose border title
- * is the line reference. Every row carries the same `commentId` so cursor
- * hit-testing, deletion, and comment navigation resolve from any box row.
+ * The rows of one inline note box: a bordered, word-wrapped callout whose
+ * border title is the line reference. The host's gutter sits in front of
+ * every row, so the box needs no indent of its own — and none of its rows
+ * may start with a space, `+` or `-`, which the diff grammar would read
+ * as a diff row.
  */
-function pushLineComments(
-    lines: DiffLine[], hunk: Hunk,
-    lineType: 'add' | 'remove' | 'context',
-    oldLine: number | undefined, newLine: number | undefined
-) {
-    if (!state.showComments) return;
-    const lineComments = state.comments.filter(c =>
-        c.hunk_id === hunk.id && (
-            (c.line_type === 'add' && c.new_line === newLine) ||
-            (c.line_type === 'remove' && c.old_line === oldLine) ||
-            (c.line_type === 'context' && c.new_line === newLine)
-        )
-    );
-    if (lineComments.length === 0) return;
-    // Indent the box so its left border aligns with the diff content
-    // column (just past the OLD/NEW number gutter and the +/- indicator).
-    const commentIndent = ' '.repeat(LINE_NUM_W + 1 + LINE_NUM_W + 1 + 1 + 1);
-    // Box outer width, clamped to the visible content area. The diff
-    // panel's own width (not the terminal's) is what the box has to fit
-    // in — with a side panel open they differ, and nothing soft-wraps a
-    // box that overshoots any more; it just gets clipped.
-    const boxW = Math.max(
+/** Outer width of a note box, clamped to the visible content area. The
+ *  diff panel's own width (not the terminal's) is what the box has to fit
+ *  in — with a side panel open they differ, and nothing soft-wraps a box
+ *  that overshoots any more; it just gets clipped. */
+function noteBoxWidth(): number {
+    return Math.max(
         COMMENT_BOX_MIN_W,
-        Math.min(COMMENT_BOX_MAX_W, diffPanelWidth() - commentIndent.length - 1)
+        Math.min(COMMENT_BOX_MAX_W, diffPanelWidth() - diffGutterColumns() - 1)
     );
-    const innerW = boxW - 4; // "| " + content + " |"
-    for (const comment of lineComments) {
-        const lineRef = comment.line_type === 'add'
-            ? `+${comment.new_line}`
-            : comment.line_type === 'remove'
-            ? `-${comment.old_line}`
-            : `${comment.new_line}`;
-        const pushRow = (text: string, italic: boolean) => lines.push({
-            text: commentIndent + text,
-            type: 'comment',
-            commentId: comment.id,
-            style: { fg: STYLE_COMMENT, italic },
-        });
-        // Top border carries the line reference as its title.
-        const titleSeg = `\u256d\u2500 ${lineRef} `;
-        const topFill = '\u2500'.repeat(Math.max(0, boxW - titleSeg.length - 1));
-        pushRow(`${titleSeg}${topFill}\u256e`, false);
-        for (const wl of wrapText(comment.text, innerW)) {
-            pushRow(`\u2502 ${wl.padEnd(innerW)} \u2502`, true);
-        }
-        pushRow(`\u2570${'\u2500'.repeat(Math.max(0, boxW - 2))}\u256f`, false);
-    }
 }
 
-/**
- * Render a single hunk as two side-by-side columns (OLD | NEW) into
- * `lines`. Removed lines sit on the left, added on the right, aligned
- * row-by-row; context lines appear on both sides. Per-column add/remove
- * backgrounds are applied via inline overlays so each side keeps its own
- * tint around the central separator. Used when `state.splitView` is on.
- */
-function pushSideBySideHunk(lines: DiffLine[], hunk: Hunk) {
-    const centerW = Math.max(40, Math.floor(state.viewportWidth * 0.6));
-    const colW = Math.max(12, Math.floor((centerW - 3) / 2));
-    const SEP = ' │ ';
-    const gutterLen = LINE_NUM_W + 1;
+function noteBoxRows(comment: ReviewComment): string[] {
+    const boxW = noteBoxWidth();
+    const innerW = boxW - 4; // "| " + content + " |"
+    const lineRef = comment.line_type === 'add'
+        ? `+${comment.new_line}`
+        : comment.line_type === 'remove'
+        ? `-${comment.old_line}`
+        : `${comment.new_line}`;
+    const rows: string[] = [];
+    // Top border carries the line reference as its title.
+    const titleSeg = `\u256d\u2500 ${lineRef} `;
+    const topFill = '\u2500'.repeat(Math.max(0, boxW - titleSeg.length - 1));
+    rows.push(`${titleSeg}${topFill}\u256e`);
+    for (const wl of wrapText(comment.text, innerW)) {
+        rows.push(`\u2502 ${wl.padEnd(innerW)} \u2502`);
+    }
+    rows.push(`\u2570${'\u2500'.repeat(Math.max(0, boxW - 2))}\u256f`);
+    return rows;
+}
 
-    const cell = (num: number | undefined, text: string): string => {
-        const g = num !== undefined ? String(num).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
-        let body = `${g} ${text}`;
-        body = body.length > colW ? body.slice(0, colW) : body.padEnd(colW);
-        return body;
-    };
+/** Whether `c` is attached to the diff row with these line numbers. */
+function commentAnchorsAt(
+    c: ReviewComment,
+    lineType: 'add' | 'remove' | 'context',
+    oldLine: number | undefined,
+    newLine: number | undefined,
+): boolean {
+    return c.line_type === lineType && (
+        lineType === 'remove' ? c.old_line === oldLine : c.new_line === newLine
+    );
+}
 
+/** Where each of `comments` attaches in `hunk`: the index into
+ *  `hunk.lines` of its anchor row, in body order. Comments whose row is
+ *  not in the hunk are left out. */
+function noteAnchors(hunk: Hunk, comments: ReviewComment[]): Array<{ comment: ReviewComment; afterLine: number }> {
+    const out: Array<{ comment: ReviewComment; afterLine: number }> = [];
     let oldN = hunk.oldRange.start;
     let newN = hunk.range.start;
-    let rem: { n: number; t: string }[] = [];
-    let add: { n: number; t: string }[] = [];
-
-    const pushRow = (
-        left: string, right: string,
-        leftFilled: boolean, rightFilled: boolean,
-        oldLine: number | undefined, newLine: number | undefined,
-    ) => {
-        const text = left + SEP + right;
-        const rightStart = getByteLength(left + SEP);
-        const overlays: InlineOverlay[] = [
-            { start: 0, end: gutterLen, style: { fg: STYLE_LINE_NUM_FG } },
-            { start: rightStart, end: rightStart + gutterLen, style: { fg: STYLE_LINE_NUM_FG } },
-        ];
-        if (leftFilled && oldLine !== undefined && newLine === undefined) {
-            overlays.push({ start: 0, end: getByteLength(left), style: { bg: STYLE_REMOVE_BG } });
+    for (let i = 0; i < hunk.lines.length; i++) {
+        const c = hunk.lines[i][0];
+        if (c === '\\') continue;
+        const lineType = c === '+' ? 'add' : c === '-' ? 'remove' : 'context';
+        for (const comment of comments) {
+            if (commentAnchorsAt(comment, lineType, oldN, newN)) out.push({ comment, afterLine: i });
         }
-        if (rightFilled && newLine !== undefined && oldLine === undefined) {
-            overlays.push({ start: rightStart, end: rightStart + getByteLength(right), style: { bg: STYLE_ADD_BG } });
-        }
-        const type: DiffLine['type'] = leftFilled && !rightFilled ? 'remove'
-            : rightFilled && !leftFilled ? 'add' : 'context';
-        lines.push({
-            text, type,
-            hunkId: hunk.id, file: hunk.file,
-            lineType: type === 'add' ? 'add' : type === 'remove' ? 'remove' : 'context',
-            oldLine, newLine,
-            inlineOverlays: overlays,
-        });
-    };
-
-    const flush = () => {
-        const n = Math.max(rem.length, add.length);
-        for (let i = 0; i < n; i++) {
-            const l = rem[i];
-            const r = add[i];
-            const left = l ? cell(l.n, l.t) : ' '.repeat(colW);
-            const right = r ? cell(r.n, r.t) : ' '.repeat(colW);
-            pushRow(left, right, !!l, !!r, l ? l.n : undefined, r ? r.n : undefined);
-            if (r) pushLineComments(lines, hunk, 'add', undefined, r.n);
-            else if (l) pushLineComments(lines, hunk, 'remove', l.n, undefined);
-        }
-        rem = [];
-        add = [];
-    };
-
-    for (const raw of hunk.lines) {
-        const p = raw[0];
-        const content = raw.substring(1);
-        if (p === '-') {
-            rem.push({ n: oldN++, t: content });
-        } else if (p === '+') {
-            add.push({ n: newN++, t: content });
-        } else if (p === '\\') {
-            // "\ No newline at end of file" — not a real line.
-        } else {
-            flush();
-            pushRow(cell(oldN, content), cell(newN, content), true, true, oldN, newN);
-            pushLineComments(lines, hunk, 'context', oldN, newN);
-            oldN++;
-            newN++;
-        }
+        if (c !== '+') oldN++;
+        if (c !== '-') newN++;
     }
-    flush();
-}
-
-/**
- * Build the diff lines for the unified stream.
- * Emits one file-header row per file, followed by its hunks inline.
- * When the file is collapsed, only the header is emitted.
- */
-function buildDiffLines(_rightWidth: number): DiffLine[] {
-    const lines: DiffLine[] = [];
-    if (state.files.length === 0) {
-        if (state.emptyState === 'not_git') {
-            lines.push({
-                text: editor.t("status.not_git_repo") || "Not a git repository",
-                type: 'empty',
-                style: { fg: STYLE_SECTION_HEADER, italic: true },
-            });
-        } else if (state.emptyState === 'clean') {
-            lines.push({
-                text: editor.t("panel.no_changes") || "No changes to review.",
-                type: 'empty',
-                style: { fg: STYLE_SECTION_HEADER, italic: true },
-            });
-        }
-        return lines;
-    }
-
-    let lastCategory: string | undefined;
-    const hunkOrdinal = new Map<Hunk, number>();
-    state.hunks.forEach((h, i) => hunkOrdinal.set(h, i));
-    for (let fi = 0; fi < state.files.length; fi++) {
-        const file = state.files[fi];
-
-        // Honor the active `/` filter — skip non-matching files entirely so
-        // the center matches the sidebar.
-        if (!fileMatchesFilter(file)) continue;
-
-        // Section header — full-line-wide INVERSE band, uppercase, bold.
-        // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
-        // makes the band read as a hard divider between Staged /
-        // Unstaged / Untracked sections regardless of theme.
-        if (file.category !== lastCategory) {
-            lastCategory = file.category;
-            let label: string = file.category;
-            // Range mode reuses the `unstaged` bucket for every hunk as
-            // an impl shortcut — surface the range label so the user
-            // isn't told their commit review is "Unstaged".
-            if (state.mode === 'range' && state.range) {
-                label = state.range.label;
-            } else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
-            else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
-            else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
-            const sectionCount = state.files.filter(f => f.category === file.category && fileMatchesFilter(f)).length;
-            // Always render the expanded triangle. Collapse state is
-            // shown by overlaying a `▸` replacement-conceal on the
-            // triangle byte range (see `applyFolds`) — the buffer text
-            // never changes, so toggling collapse never has to rebuild.
-            // Range labels (e.g. `main..HEAD`) carry case already — don't
-            // mangle them with the section uppercase; worktree category
-            // names are lowercase words and need the uppercase.
-            const displayLabel = state.mode === 'range' ? label : label.toUpperCase();
-            lines.push({
-                text: ` ${GLYPH_EXPANDED} ${displayLabel}  (${sectionCount})`,
-                type: 'section-header',
-                file: file.category, // store category in 'file' field for reuse
-                filePath: file.category,
-                style: {
-                    fg: STYLE_INVERSE_FG,
-                    bg: STYLE_INVERSE_BG,
-                    bold: true,
-                    extendToLineEnd: true,
-                },
-            });
-        }
-
-        // File header — always emit the expanded triangle; the
-        // conceal in `applyFolds` shows the collapsed view.
-        const counts = fileChangeCounts(file);
-        const key = fileKey(file);
-        const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const headerText = ` ${GLYPH_EXPANDED} ${filename}   +${counts.added} / -${counts.removed}`;
-        lines.push({
-            text: headerText,
-            type: 'file-header',
-            file: file.path,
-            filePath: file.path,
-            fileKey: key,
-            fileIndex: fi,
-            style: {
-                fg: STYLE_FILE_HEADER_FG,
-                bg: STYLE_FILE_HEADER_BG,
-                bold: true,
-                extendToLineEnd: true,
-            },
-        });
-
-        // The composite draws one file, so while it is up the stream
-        // carries headers only. The unified stream renders every file.
-        if (!fileBodyRendered(key)) {
-            lines.push({ text: '', type: 'empty' });
-            continue;
-        }
-
-        // Find hunks for this file
-        const fileHunks = state.hunks.filter(
-            h => h.file === file.path && h.gitStatus === file.category
-        );
-
-        if (fileHunks.length === 0) {
-            if (file.status === 'R' && file.origPath) {
-                lines.push({ text: `  Renamed from ${file.origPath}`, type: 'empty', style: { fg: STYLE_SECTION_HEADER } });
-            } else if (file.status === 'D') {
-                lines.push({ text: "  (file deleted)", type: 'empty' });
-            } else if (file.status === 'T') {
-                lines.push({ text: "  (type change: file ↔ symlink)", type: 'empty', style: { fg: STYLE_SECTION_HEADER } });
-            } else if (file.status === '?' && file.path.endsWith('/')) {
-                lines.push({ text: "  (untracked directory)", type: 'empty' });
-            } else {
-                lines.push({ text: "  (no diff available)", type: 'empty' });
-            }
-            lines.push({ text: '', type: 'empty' });
-            continue;
-        }
-
-        for (const hunk of fileHunks) {
-        // The hunk's two sides are two parser streams for the host's
-        // highlighter: its rows interleave, but each side is contiguous
-        // text and is parsed as such. A context row feeds both, and is
-        // coloured by the first it names — the new side, the one the
-        // reader is looking at.
-        const oldStream = 2 * (hunkOrdinal.get(hunk) ?? 0);
-        const newStream = oldStream + 1;
-        const oldStreams = [oldStream];
-        const newStreams = [newStream];
-        const bothStreams = [newStream, oldStream];
-        const rowSyntax = (streams: number[], contentStart: number): RowSyntax =>
-            ({ language: hunk.file, streams, prefix: contentStart });
-        // Hunk header — always emit the expanded triangle; collapse
-        // overlays a `▸` replacement-conceal (see `applyFolds`).
-        const headerInner = hunk.contextHeader
-            ? `@@ ${hunk.contextHeader} @@`
-            : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
-        const header = ` ${GLYPH_EXPANDED} ${headerInner}`;
-
-        lines.push({
-            text: header,
-            type: 'hunk-header',
-            hunkId: hunk.id,
-            file: hunk.file,
-            style: {
-                fg: STYLE_HUNK_HEADER,
-                bg: STYLE_HUNK_HEADER_BG,
-                bold: true,
-                extendToLineEnd: true,
-            },
-        });
-
-        // (Body always emitted — collapse is handled by overlay
-        // conceals on the body's byte range.)
-
-        // (Comments are line-based — they appear under their attached
-        // diff line via pushLineComments below, never as hunk-level.)
-
-        // Side-by-side layout: render this hunk as two columns and skip
-        // the unified per-line emission below.
-        if (state.splitView) {
-            pushSideBySideHunk(lines, hunk);
-            continue;
-        }
-
-        // Track actual file line numbers as we iterate
-        let oldLineNum = hunk.oldRange.start;
-        let newLineNum = hunk.range.start;
-
-        // Diff content lines with word-level highlighting for adjacent -/+ pairs
-        for (let li = 0; li < hunk.lines.length; li++) {
-            const line = hunk.lines[li];
-            if (line[0] === '\\') {
-                // "\ No newline at end of file": informational marker, not a
-                // real line. Render it dim with no line numbers and don't
-                // advance the line counters. It still occupies exactly one
-                // row so hunk.lines stays 1:1 with displayed rows (which
-                // selectionLineRange relies on).
-                lines.push({
-                    text: line, type: 'context',
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType: 'context', oldLine: undefined, newLine: undefined,
-                    lineContent: line,
-                    style: { fg: STYLE_LINE_NUM_FG },
-                });
-                continue;
-            }
-            const nextLine = hunk.lines[li + 1];
-            const prefix = line[0];
-            const lineType: 'add' | 'remove' | 'context' =
-                prefix === '+' ? 'add' : prefix === '-' ? 'remove' : 'context';
-            const curOldLine = lineType !== 'add' ? oldLineNum : undefined;
-            const curNewLine = lineType !== 'remove' ? newLineNum : undefined;
-
-            // Detect adjacent -/+ pair for word-level diff
-            if (prefix === '-' && nextLine && nextLine[0] === '+') {
-                const oldContent = line.substring(1);
-                const newContent = nextLine.substring(1);
-                const parts = diffStrings(oldContent, newContent);
-
-                // Removed-side line: " OLD       -content"
-                const removePrefix = lineNumPrefix(curOldLine, undefined);
-                const removeText = removePrefix + line;
-                const removePrefixLen = getByteLength(removePrefix);
-                const removeOverlays: InlineOverlay[] = [
-                    { start: 0, end: removePrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
-                ];
-                const removeContentStart = removePrefixLen + getByteLength(line[0]); // skip diff marker
-                let rOffset = removeContentStart;
-                for (const part of parts) {
-                    const pLen = getByteLength(part.text);
-                    if (part.type === 'removed') {
-                        removeOverlays.push({ start: rOffset, end: rOffset + pLen, style: { fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG, bold: true } });
-                    }
-                    if (part.type !== 'added') rOffset += pLen;
-                }
-                lines.push({
-                    text: removeText, type: 'remove',
-                    style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType: 'remove', oldLine: curOldLine, newLine: undefined, lineContent: line,
-                    inlineOverlays: removeOverlays,
-                    syntax: rowSyntax(oldStreams, removeContentStart),
-                });
-                // Inline comments for the removed line
-                pushLineComments(lines, hunk, 'remove', curOldLine, undefined);
-                oldLineNum++;
-
-                // Added-side line: "      NEW +content"
-                const addPrefix = lineNumPrefix(undefined, newLineNum);
-                const addText = addPrefix + nextLine;
-                const addPrefixLen = getByteLength(addPrefix);
-                const addOverlays: InlineOverlay[] = [
-                    { start: 0, end: addPrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
-                ];
-                const addContentStart = addPrefixLen + getByteLength(nextLine[0]);
-                let aOffset = addContentStart;
-                for (const part of parts) {
-                    const pLen = getByteLength(part.text);
-                    if (part.type === 'added') {
-                        addOverlays.push({ start: aOffset, end: aOffset + pLen, style: { fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG, bold: true } });
-                    }
-                    if (part.type !== 'removed') aOffset += pLen;
-                }
-                lines.push({
-                    text: addText, type: 'add',
-                    style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType: 'add', oldLine: undefined, newLine: newLineNum, lineContent: nextLine,
-                    inlineOverlays: addOverlays,
-                    syntax: rowSyntax(newStreams, addContentStart),
-                });
-                pushLineComments(lines, hunk, 'add', undefined, newLineNum);
-                newLineNum++;
-                li++; // skip the + line we already processed
-                continue;
-            }
-
-            const numPrefix = lineNumPrefix(curOldLine, curNewLine);
-            const decoratedText = numPrefix + line;
-            const numPrefixLen = getByteLength(numPrefix);
-            const dimNumOverlay: InlineOverlay = {
-                start: 0, end: numPrefixLen, style: { fg: STYLE_LINE_NUM_FG },
-            };
-            const contentStart = numPrefixLen + getByteLength(line[0]);
-
-            if (prefix === '+') {
-                lines.push({
-                    text: decoratedText, type: 'add',
-                    style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
-                    inlineOverlays: [dimNumOverlay],
-                    syntax: rowSyntax(newStreams, contentStart),
-                });
-                newLineNum++;
-            } else if (prefix === '-') {
-                lines.push({
-                    text: decoratedText, type: 'remove',
-                    style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
-                    inlineOverlays: [dimNumOverlay],
-                    syntax: rowSyntax(oldStreams, contentStart),
-                });
-                oldLineNum++;
-            } else {
-                lines.push({
-                    text: decoratedText, type: 'context',
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
-                    inlineOverlays: [dimNumOverlay],
-                    syntax: rowSyntax(bothStreams, contentStart),
-                });
-                oldLineNum++;
-                newLineNum++;
-            }
-
-            // Render inline comments attached to this line
-            pushLineComments(lines, hunk, lineType, curOldLine, curNewLine);
-        }
-        }
-
-        // Blank separator between files
-        lines.push({ text: '', type: 'empty' });
-    }
-
-    return lines;
+    return out;
 }
 
 /**
@@ -1581,166 +1306,489 @@ function renderToolbar(): void {
 }
 
 /**
- * Build the unified-diff stream entries. Emits one row per file header
- * followed by all of that file's hunks inline, plus inline comments and
- * a blank separator between files. As a side effect, populates
- * `state.hunkHeaderRows`, `state.diffLineByteOffsets`, and
- * `state.fileHeaderRows` so the rest of the plugin can map cursor rows
- * back to hunks/files.
+ * Build the unified stream: git's own output, file by file, with the
+ * plugin's rows — section headers, note boxes, placeholders — spliced in
+ * between. A file's `diff --git` row is its header: the host's diff
+ * grammar reads the language off it, and the reader sees the file's
+ * label concealed over it (see `applyFolds`). The `index` / `---` / `+++`
+ * rows that follow it in git's output say nothing the grammar needs and
+ * are left out.
+ *
+ * A row of the plugin's own never starts with a space, `+` or `-`; the
+ * grammar would take it for a diff row and the gutter would number it.
+ *
+ * Populates the row and byte maps the rest of the plugin navigates by:
+ * the hunk layout (`streamHunks`), header rows, fold ranges, and one byte
+ * offset per row. The offsets come from a newline scan per block — a
+ * block that is all ASCII (nearly every one) needs no per-row measuring.
  */
-function buildDiffPanelEntries(): TextPropertyEntry[] {
+function buildStreamContent(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
-
+    const offsets: number[] = [];
     const hunkHeaderRows: number[] = [];
-    const diffLineByteOffsets: number[] = [];
     const fileHeaderRows: Record<string, number> = {};
     const sectionHeaderRows: Record<string, number> = {};
     const hunkRowByHunkId: Record<string, number> = {};
     const diffLineRowByCommentId: Record<string, number> = {};
-    const entryPropsByRow: Record<number, Record<string, unknown>> = {};
-    // Runs of code rows for the host's highlighter (see `RowSyntax`):
-    // consecutive rows with the same language and streams share one
-    // region, so a hunk is a handful of regions, not one per row.
-    const syntaxRegions: TsSyntaxRegion[] = [];
-    let openRegion: (TsSyntaxRegion & { key: string }) | null = null;
-    // Byte ranges of collapsible bodies, captured in this same single
-    // pass so collapse later just registers a host fold (no rebuild).
-    // The "body" of an entity is the byte range from the byte after
-    // its header's newline up to the byte before the next header that
-    // ends it.
     const sectionBodyRange: Record<string, { start: number; end: number }> = {};
     const fileBodyRange: Record<string, { start: number; end: number }> = {};
     const hunkBodyRange: Record<string, { start: number; end: number }> = {};
-    let curSection: string | null = null;
-    let curFile: string | null = null;
-    let curHunk: string | null = null;
-    let sectionBodyStart = 0;
-    let fileBodyStart = 0;
-    let hunkBodyStart = 0;
+    const fileHeaderConceals = new Map<string, { start: number; end: number; label: string }>();
+    const streamHunks: StreamHunk[] = [];
+    const streamHunkById = new Map<string, StreamHunk>();
+    const sectionByRow = new Map<number, string>();
+    const fileByRow = new Map<number, string>();
 
-    let runningByte = 0;
-    let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
-    let lastDiffLineRow = 0; // 1-indexed row of the most recent +/-/context line
-
-    const pushEntry = (entry: TextPropertyEntry, syntax?: RowSyntax) => {
-        diffLineByteOffsets.push(runningByte);
-        const start = runningByte;
-        runningByte += getByteLength(entry.text);
-        entries.push(entry);
-        row++;
-        const key = syntax
-            ? `${syntax.language}\0${syntax.streams.join(',')}\0${syntax.prefix}`
-            : null;
-        if (openRegion && openRegion.key === key) {
-            openRegion.end = runningByte;
-            return;
-        }
-        if (openRegion) {
-            const { key: _key, ...region } = openRegion;
-            syntaxRegions.push(region);
-            openRegion = null;
-        }
-        if (syntax && key !== null) {
-            openRegion = {
-                key, start, end: runningByte,
-                language: syntax.language, prefix: syntax.prefix, streams: syntax.streams,
-            };
+    let row = 0;  // rows emitted so far; the last one is row `row`
+    let byte = 0; // bytes emitted so far
+    // Unstyled text is held back and handed over as one entry, so the
+    // host gets an entry per styled row, not per row.
+    let plain: string[] = [];
+    const flushPlain = () => {
+        if (plain.length > 0) {
+            entries.push({ text: plain.join('') });
+            plain = [];
         }
     };
+    const pushRow = (text: string, style?: Partial<OverlayOptions>) => {
+        const t = text + '\n';
+        offsets.push(byte);
+        row++;
+        byte += getByteLength(t);
+        if (style) {
+            flushPlain();
+            entries.push({ text: t, style });
+        } else {
+            plain.push(t);
+        }
+    };
+    // Newline-terminated rows of git output, verbatim.
+    const pushRaw = (text: string) => {
+        if (text.length === 0) return;
+        if (!NON_ASCII.test(text)) {
+            let pos = 0;
+            while (pos < text.length) {
+                offsets.push(byte + pos);
+                row++;
+                pos = text.indexOf('\n', pos) + 1;
+                if (pos === 0) break;
+            }
+            byte += text.length;
+        } else {
+            let pos = 0;
+            while (pos < text.length) {
+                let nl = text.indexOf('\n', pos);
+                if (nl < 0) nl = text.length - 1;
+                offsets.push(byte);
+                row++;
+                byte += getByteLength(text.slice(pos, nl + 1));
+                pos = nl + 1;
+            }
+        }
+        plain.push(text);
+    };
 
-    const lines = buildDiffLines(state.viewportWidth);
-    for (const line of lines) {
-        const props: Record<string, unknown> = { type: line.type };
-        if (line.hunkId !== undefined) props.hunkId = line.hunkId;
-        if (line.file !== undefined) props.file = line.file;
-        if (line.lineType !== undefined) props.lineType = line.lineType;
-        if (line.oldLine !== undefined) props.oldLine = line.oldLine;
-        if (line.newLine !== undefined) props.newLine = line.newLine;
-        if (line.lineContent !== undefined) props.lineContent = line.lineContent;
-        if (line.commentId !== undefined) props.commentId = line.commentId;
-        if (line.filePath !== undefined) props.filePath = line.filePath;
-        if (line.fileKey !== undefined) props.fileKey = line.fileKey;
-        if (line.fileIndex !== undefined) props.fileIndex = line.fileIndex;
-
-        const entryStart = runningByte;
-
-        // Header bookkeeping — close any in-progress body for the
-        // entities about to be replaced, then open a new body range.
-        if (line.type === 'section-header' && line.filePath) {
-            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
-            if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: entryStart };
-            if (curSection) sectionBodyRange[curSection] = { start: sectionBodyStart, end: entryStart };
-            curSection = line.filePath;
-            curFile = null;
-            curHunk = null;
+    if (state.files.length === 0) {
+        if (state.emptyState === 'not_git') {
+            pushRow(editor.t("status.not_git_repo") || "Not a git repository",
+                { fg: STYLE_SECTION_HEADER, italic: true });
+        } else if (state.emptyState === 'clean') {
+            pushRow(editor.t("panel.no_changes") || "No changes to review.",
+                { fg: STYLE_SECTION_HEADER, italic: true });
         }
-        if (line.type === 'file-header' && line.fileKey) {
-            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
-            if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: entryStart };
-            curFile = line.fileKey;
-            curHunk = null;
-        }
-        if (line.type === 'hunk-header' && line.hunkId) {
-            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
-            curHunk = line.hunkId;
-        }
-
-        if (line.type === 'hunk-header') {
-            hunkHeaderRows.push(row + 1);
-            if (line.hunkId) hunkRowByHunkId[line.hunkId] = row + 1;
-        }
-        if (line.type === 'file-header' && line.fileKey) {
-            fileHeaderRows[line.fileKey] = row + 1;
-        }
-        if (line.type === 'section-header' && line.filePath) {
-            sectionHeaderRows[line.filePath] = row + 1;
-        }
-        if (line.type === 'add' || line.type === 'remove' || line.type === 'context') {
-            lastDiffLineRow = row + 1;
-        }
-        if (line.type === 'comment' && line.commentId) {
-            diffLineRowByCommentId[line.commentId] = lastDiffLineRow || (row + 1);
-        }
-
-        entryPropsByRow[row + 1] = props;
-
-        pushEntry({
-            text: (line.text || "") + "\n",
-            style: line.style,
-            inlineOverlays: line.inlineOverlays,
-            properties: props,
-        }, line.syntax);
-
-        // After the header is pushed, runningByte points to the first
-        // byte of the body that follows.
-        if (line.type === 'section-header') sectionBodyStart = runningByte;
-        if (line.type === 'file-header') fileBodyStart = runningByte;
-        if (line.type === 'hunk-header') hunkBodyStart = runningByte;
     }
 
-    // Close trailing bodies.
-    if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: runningByte };
-    if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: runningByte };
-    if (curSection) sectionBodyRange[curSection] = { start: sectionBodyStart, end: runningByte };
-
-    diffLineByteOffsets.push(runningByte);
-    if (openRegion) {
-        const { key: _key, ...region } = openRegion as TsSyntaxRegion & { key: string };
-        syntaxRegions.push(region);
+    const commentsByHunk = new Map<string, ReviewComment[]>();
+    if (state.showComments) {
+        for (const c of state.comments) {
+            const list = commentsByHunk.get(c.hunk_id);
+            if (list === undefined) commentsByHunk.set(c.hunk_id, [c]);
+            else list.push(c);
+        }
     }
 
-    state.syntaxRegions = syntaxRegions;
+    // The "body" of a section or file is the byte range from the byte
+    // after its header's newline up to the byte before the next header
+    // that ends it.
+    let curSection: string | null = null;
+    let curFile: string | null = null;
+    let sectionBodyStart = 0;
+    let fileBodyStart = 0;
+    const closeFile = () => {
+        if (curFile !== null) fileBodyRange[curFile] = { start: fileBodyStart, end: byte };
+        curFile = null;
+    };
+    const closeSection = () => {
+        closeFile();
+        if (curSection !== null) sectionBodyRange[curSection] = { start: sectionBodyStart, end: byte };
+        curSection = null;
+    };
+
+    let lastCategory: string | undefined;
+    for (let fi = 0; fi < state.files.length; fi++) {
+        const file = state.files[fi];
+
+        // Honor the active `/` filter — skip non-matching files entirely so
+        // the center matches the sidebar.
+        if (!fileMatchesFilter(file)) continue;
+
+        // Section header — full-line-wide INVERSE band, uppercase, bold.
+        // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
+        // makes the band read as a hard divider between Staged /
+        // Unstaged / Untracked sections regardless of theme.
+        if (file.category !== lastCategory) {
+            lastCategory = file.category;
+            closeSection();
+            let label: string = file.category;
+            // Range mode reuses the `unstaged` bucket for every hunk as
+            // an impl shortcut — surface the range label so the user
+            // isn't told their commit review is "Unstaged".
+            if (state.mode === 'range' && state.range) {
+                label = state.range.label;
+            } else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
+            else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
+            else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
+            const sectionCount = state.files.filter(f => f.category === file.category && fileMatchesFilter(f)).length;
+            // Always render the expanded triangle. Collapse state is
+            // shown by overlaying a `▸` replacement-conceal on the
+            // triangle byte range (see `applyFolds`) — the buffer text
+            // never changes, so toggling collapse never has to rebuild.
+            // Range labels (e.g. `main..HEAD`) carry case already — don't
+            // mangle them with the section uppercase; worktree category
+            // names are lowercase words and need the uppercase.
+            const displayLabel = state.mode === 'range' ? label : label.toUpperCase();
+            pushRow(`${GLYPH_EXPANDED} ${displayLabel}  (${sectionCount})`, {
+                fg: STYLE_INVERSE_FG,
+                bg: STYLE_INVERSE_BG,
+                bold: true,
+                extendToLineEnd: true,
+            });
+            sectionHeaderRows[file.category] = row;
+            sectionByRow.set(row, file.category);
+            curSection = file.category;
+            sectionBodyStart = byte;
+        }
+
+        closeFile();
+        const counts = fileChangeCounts(file);
+        const key = fileKey(file);
+        const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
+        const label = `${filename}   +${counts.added} / -${counts.removed}`;
+        const headerStyle: Partial<OverlayOptions> = {
+            fg: STYLE_FILE_HEADER_FG,
+            bg: STYLE_FILE_HEADER_BG,
+            bold: true,
+            extendToLineEnd: true,
+        };
+        const fileHunks = hunksForKey(key);
+        const raw = hunkIndex().rawByFileKey.get(key);
+        const hasBlock = fileHunks.length > 0 && raw !== undefined;
+
+        if (hasBlock) {
+            // git's own `diff --git` row, with the label concealed over it.
+            const headerLine = raw.text.slice(0, raw.text.indexOf('\n'));
+            const start = byte;
+            pushRow(headerLine, headerStyle);
+            fileHeaderConceals.set(key, { start, end: byte - 1, label });
+        } else {
+            // Nothing for the grammar to read: a row of the plugin's own,
+            // whose triangle `applyFolds` conceals when collapsed.
+            pushRow(`${GLYPH_EXPANDED} ${label}`, headerStyle);
+        }
+        fileHeaderRows[key] = row;
+        fileByRow.set(row, key);
+        curFile = key;
+        fileBodyStart = byte;
+
+        // The composite draws one file, so while it is up the stream
+        // carries headers only. The unified stream renders every file.
+        if (!fileBodyRendered(key)) {
+            pushRow('');
+            continue;
+        }
+
+        if (!hasBlock) {
+            if (file.status === 'R' && file.origPath) {
+                pushRow(`Renamed from ${file.origPath}`, { fg: STYLE_SECTION_HEADER });
+            } else if (file.status === 'D') {
+                pushRow("(file deleted)");
+            } else if (file.status === 'T') {
+                pushRow("(type change: file ↔ symlink)", { fg: STYLE_SECTION_HEADER });
+            } else if (file.status === '?' && file.path.endsWith('/')) {
+                pushRow("(untracked directory)");
+            } else {
+                pushRow("(no diff available)");
+            }
+            pushRow('');
+            continue;
+        }
+
+        for (const hunk of fileHunks) {
+            const headerRow = row + 1;
+            hunkHeaderRows.push(headerRow);
+            hunkRowByHunkId[hunk.id] = headerRow;
+            pushRaw(raw.text.slice(hunk.headerStart, hunk.bodyStart));
+            const bodyStart = byte;
+            const notes: StreamNote[] = [];
+            const hunkComments = commentsByHunk.get(hunk.id);
+            if (hunkComments === undefined) {
+                pushRaw(raw.text.slice(hunk.bodyStart, hunk.end));
+            } else {
+                // Cut the body after each annotated row and splice the
+                // note box in. `from` and `cut` are offsets into
+                // `raw.text`; `lineIdx` is the line starting at `cut`.
+                let from = hunk.bodyStart;
+                let cut = hunk.bodyStart;
+                let lineIdx = 0;
+                let anchorRow = row;
+                for (const { comment, afterLine } of noteAnchors(hunk, hunkComments)) {
+                    while (lineIdx <= afterLine) {
+                        cut += hunk.lines[lineIdx].length + 1;
+                        lineIdx++;
+                    }
+                    if (cut > from) {
+                        pushRaw(raw.text.slice(from, cut));
+                        from = cut;
+                        anchorRow = row;
+                    }
+                    diffLineRowByCommentId[comment.id] = anchorRow;
+                    const box = noteBoxRows(comment);
+                    for (let i = 0; i < box.length; i++) {
+                        pushRow(box[i], { fg: STYLE_COMMENT, italic: i > 0 && i < box.length - 1 });
+                    }
+                    notes.push({ afterLine, rows: box.length, commentId: comment.id });
+                }
+                if (hunk.end > from) pushRaw(raw.text.slice(from, hunk.end));
+            }
+            hunkBodyRange[hunk.id] = { start: bodyStart, end: byte };
+            const sh: StreamHunk = { hunk, headerRow, rowCount: row + 1 - headerRow, notes };
+            streamHunks.push(sh);
+            streamHunkById.set(hunk.id, sh);
+        }
+
+        // Blank separator between files
+        pushRow('');
+    }
+    closeSection();
+    flushPlain();
+    offsets.push(byte);
+
     state.hunkHeaderRows = hunkHeaderRows;
-    state.diffLineByteOffsets = diffLineByteOffsets;
+    state.diffLineByteOffsets = offsets;
     state.fileHeaderRows = fileHeaderRows;
     state.sectionHeaderRows = sectionHeaderRows;
     state.hunkRowByHunkId = hunkRowByHunkId;
     state.diffLineRowByCommentId = diffLineRowByCommentId;
-    state.entryPropsByRow = entryPropsByRow;
     state.sectionBodyRange = sectionBodyRange;
     state.fileBodyRange = fileBodyRange;
     state.hunkBodyRange = hunkBodyRange;
+    state.fileHeaderConceals = fileHeaderConceals;
+    state.streamHunks = streamHunks;
+    state.streamHunkById = streamHunkById;
+    state.sectionByRow = sectionByRow;
+    state.fileByRow = fileByRow;
     return entries;
+}
+
+// --- Reading the stream back by row ---
+//
+// A row is identified on demand from the hunk layout: which hunk starts
+// at or before it (a binary search), then which of that hunk's rows it
+// is, note boxes accounted for. Line numbers come from counting the hunk's
+// lines up to it. Nothing is stored per row.
+
+type StreamRow =
+    | { kind: 'section'; category: string }
+    | { kind: 'file'; key: string }
+    | { kind: 'hunk-header'; sh: StreamHunk }
+    | { kind: 'line'; sh: StreamHunk; lineIdx: number }
+    | { kind: 'note'; sh: StreamHunk; commentId: string; afterLine: number };
+
+/** Index into `state.streamHunks` of the last hunk whose header is at or
+ *  before `row`, or -1. */
+function streamHunkIndexAtRow(row: number): number {
+    const shs = state.streamHunks;
+    let lo = 0;
+    let hi = shs.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (shs[mid].headerRow <= row) {
+            best = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return best;
+}
+
+/** What body row `bodyIdx` (0 = the row after the header) of `sh` is. */
+function bodyRowOf(sh: StreamHunk, bodyIdx: number): { lineIdx: number } | { note: StreamNote } {
+    let shift = 0;
+    for (const note of sh.notes) {
+        const noteStart = note.afterLine + 1 + shift;
+        if (bodyIdx < noteStart) break;
+        if (bodyIdx < noteStart + note.rows) return { note };
+        shift += note.rows;
+    }
+    return { lineIdx: bodyIdx - shift };
+}
+
+/** 1-indexed stream row of `sh.hunk.lines[lineIdx]`. */
+function rowOfLine(sh: StreamHunk, lineIdx: number): number {
+    let shift = 0;
+    for (const note of sh.notes) {
+        if (note.afterLine >= lineIdx) break;
+        shift += note.rows;
+    }
+    return sh.headerRow + 1 + lineIdx + shift;
+}
+
+function streamRowAt(row: number): StreamRow | null {
+    const category = state.sectionByRow.get(row);
+    if (category !== undefined) return { kind: 'section', category };
+    const key = state.fileByRow.get(row);
+    if (key !== undefined) return { kind: 'file', key };
+    const i = streamHunkIndexAtRow(row);
+    if (i < 0) return null;
+    const sh = state.streamHunks[i];
+    if (row >= sh.headerRow + sh.rowCount) return null;
+    if (row === sh.headerRow) return { kind: 'hunk-header', sh };
+    const body = bodyRowOf(sh, row - sh.headerRow - 1);
+    if ('note' in body) {
+        return { kind: 'note', sh, commentId: body.note.commentId, afterLine: body.note.afterLine };
+    }
+    return { kind: 'line', sh, lineIdx: body.lineIdx };
+}
+
+/** Kind and line numbers of `hunk.lines[lineIdx]`; the side a row is
+ *  absent from is undefined. A `\ No newline at end of file` marker is
+ *  a context row with no numbers. */
+function lineNumbersAt(hunk: Hunk, lineIdx: number): {
+    lineType: 'add' | 'remove' | 'context'; oldLine?: number; newLine?: number;
+} {
+    let oldN = hunk.oldRange.start;
+    let newN = hunk.range.start;
+    for (let i = 0; i < lineIdx; i++) {
+        const c = hunk.lines[i][0];
+        if (c === '\\') continue;
+        if (c !== '+') oldN++;
+        if (c !== '-') newN++;
+    }
+    const c = hunk.lines[lineIdx][0];
+    if (c === '\\') return { lineType: 'context' };
+    if (c === '+') return { lineType: 'add', newLine: newN };
+    if (c === '-') return { lineType: 'remove', oldLine: oldN };
+    return { lineType: 'context', oldLine: oldN, newLine: newN };
+}
+
+/** The properties of a stream row — type, hunk, file, line numbers —
+ *  derived when asked. */
+function propsAtRow(row: number): Record<string, unknown> | null {
+    const r = streamRowAt(row);
+    if (r === null) return null;
+    switch (r.kind) {
+        case 'section':
+            return { type: 'section-header', file: r.category, filePath: r.category };
+        case 'file': {
+            const fileIndex = state.files.findIndex(f => fileKey(f) === r.key);
+            const path = fileIndex >= 0 ? state.files[fileIndex].path : undefined;
+            return { type: 'file-header', file: path, filePath: path, fileKey: r.key, fileIndex };
+        }
+        case 'hunk-header':
+            return { type: 'hunk-header', hunkId: r.sh.hunk.id, file: r.sh.hunk.file };
+        case 'note':
+            return { type: 'comment', commentId: r.commentId, hunkId: r.sh.hunk.id, file: r.sh.hunk.file };
+        case 'line': {
+            const hunk = r.sh.hunk;
+            const n = lineNumbersAt(hunk, r.lineIdx);
+            return {
+                type: n.lineType, hunkId: hunk.id, file: hunk.file,
+                lineType: n.lineType, oldLine: n.oldLine, newLine: n.newLine,
+                lineContent: hunk.lines[r.lineIdx],
+            };
+        }
+    }
+}
+
+/** Stream row of the diff line an anchor names, if the stream carries it. */
+function rowOfAnchorLine(anchor: ReviewAnchor): number | undefined {
+    if (anchor.lineType === undefined) return undefined;
+    for (const h of hunksForKey(anchor.fileKey)) {
+        const sh = state.streamHunkById.get(h.id);
+        if (sh === undefined) continue;
+        let oldN = h.oldRange.start;
+        let newN = h.range.start;
+        for (let i = 0; i < h.lines.length; i++) {
+            const c = h.lines[i][0];
+            if (c === '\\') continue;
+            const lineType = c === '+' ? 'add' : c === '-' ? 'remove' : 'context';
+            if (lineType === anchor.lineType
+                && (lineType === 'remove' ? oldN === anchor.oldLine : newN === anchor.newLine)) {
+                return rowOfLine(sh, i);
+            }
+            if (c !== '+') oldN++;
+            if (c !== '-') newN++;
+        }
+    }
+    return undefined;
+}
+
+const NS_WORD_DIFF = "review-word-diff";
+
+/** Rows `[first, last]` the word-level highlights currently cover. */
+let wordDiffWindow: { first: number; last: number } | null = null;
+
+/**
+ * Word-level highlights for the `-`/`+` pairs around `aroundRow` (a
+ * 0-indexed viewport row). Painted for the rows on screen and a few
+ * screens past them, not for the whole stream: the pairs are found by
+ * walking only the hunks that reach into that window, and a move that
+ * leaves the window repaints it.
+ */
+function paintWordDiff(aroundRow: number): void {
+    wordDiffWindow = null;
+    if (state.groupId === null || state.centerComposite) return;
+    const diffId = state.panelBuffers["diff"];
+    if (diffId === undefined) return;
+    editor.clearNamespace(diffId, NS_WORD_DIFF);
+    const height = Math.max(1, state.panelHeights["diff"] ?? state.viewportHeight);
+    const first = Math.max(1, aroundRow + 1 - height);
+    const last = aroundRow + 1 + 3 * height;
+    const shs = state.streamHunks;
+    const offsets = state.diffLineByteOffsets;
+    for (let i = Math.max(0, streamHunkIndexAtRow(first)); i < shs.length && shs[i].headerRow <= last; i++) {
+        const sh = shs[i];
+        const lines = sh.hunk.lines;
+        for (let li = 0; li + 1 < lines.length; li++) {
+            if (lines[li][0] !== '-' || lines[li + 1][0] !== '+') continue;
+            const removeRow = rowOfLine(sh, li);
+            const addRow = rowOfLine(sh, li + 1);
+            if (addRow < first) continue;
+            if (removeRow > last) break;
+            const parts = diffStrings(lines[li].substring(1), lines[li + 1].substring(1));
+            // Past each row's diff marker.
+            let rOffset = offsets[removeRow - 1] + 1;
+            let aOffset = offsets[addRow - 1] + 1;
+            for (const part of parts) {
+                const len = getByteLength(part.text);
+                if (part.type === 'removed') {
+                    editor.addOverlay(diffId, NS_WORD_DIFF, rOffset, rOffset + len,
+                        { fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG, bold: true });
+                    rOffset += len;
+                } else if (part.type === 'added') {
+                    editor.addOverlay(diffId, NS_WORD_DIFF, aOffset, aOffset + len,
+                        { fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG, bold: true });
+                    aOffset += len;
+                } else {
+                    rOffset += len;
+                    aOffset += len;
+                }
+            }
+        }
+    }
+    wordDiffWindow = { first, last };
 }
 
 /**
@@ -2534,7 +2582,7 @@ function markStreamDirty(): void {
  *  carries only that file's body (`fileBodyRendered`).
  *
  *  The panel's width counts only while notes are on screen: comment boxes
- *  are the one thing wrapped to it (`pushLineComments`), and the host
+ *  are the one thing wrapped to it (`noteBoxWidth`), and the host
  *  reports the panel's real width a moment after the stream is first laid
  *  out — so treating every width as significant put a full relayout in
  *  the reader's way seconds into a review that had no notes in it. */
@@ -2543,7 +2591,10 @@ function streamSignature(): string {
     return [
         state.streamRevision,
         state.focusOnly ? state.filesCurrentKey : '*',
-        widthShapesTheStream ? diffPanelWidth() : '*',
+        // The width the boxes were actually laid out to, not the panel's:
+        // a wide panel clamps them to the same width whatever it reports,
+        // and a relayout of the whole stream is not free.
+        widthShapesTheStream ? noteBoxWidth() : '*',
     ].join('|');
 }
 
@@ -2568,16 +2619,19 @@ function updateMagitDisplay(): void {
 /** Conceal namespace owning the collapsed-header triangles, so
  *  `applyFolds` can drop the whole set in one host call. */
 const NS_COLLAPSE_TRIANGLE = "review-collapse-triangle";
+/** Conceal namespace of the file labels drawn over `diff --git` rows. */
+const NS_FILE_HEADER = "review-file-header";
 
-/** Byte range of the `▾` in a header row, given its 1-indexed row.
- *  Every collapsible header is emitted as `" ▾ …"`, so the glyph is the
- *  `TRIANGLE_BYTES` bytes after the leading space. Returns null when the
- *  row index has no recorded offset (stale state between rebuilds). */
+/** Byte range of the `▾` in a section header row, or a file header row
+ *  of the plugin's own, given its 1-indexed row. Every such header is
+ *  emitted as `"▾ …"`, so the glyph is the row's first `TRIANGLE_BYTES`
+ *  bytes. Returns null when the row
+ *  index has no recorded offset (stale state between rebuilds). */
 function headerTriangleRange(row1: number | undefined): { start: number; end: number } | null {
     if (row1 === undefined) return null;
     const start = state.diffLineByteOffsets[row1 - 1];
     if (start === undefined) return null;
-    return { start: start + 1, end: start + 1 + TRIANGLE_BYTES };
+    return { start, end: start + TRIANGLE_BYTES };
 }
 
 /**
@@ -2595,10 +2649,10 @@ function headerTriangleRange(row1: number | undefined): { start: number; end: nu
  * resolve. Conceals are rendering-only: the buffer text never changes,
  * so this keeps collapse a rebuild-free operation.
  *
- * Toggling collapse on a 5000-line diff is O(collapsed_set_size)
- * `addFold` + `addConceal` calls. `clearFolds` /
- * `clearConcealNamespace` each drop the whole set in one host call so
- * re-applying after a state change is also cheap.
+ * Toggling collapse costs one `addConceal` per file with a diff (the
+ * header labels are re-issued whole, collapsed or not) plus one
+ * `addFold` + `addConceal` per collapsed item. `clearFolds` /
+ * `clearConcealNamespace` each drop a whole set in one host call.
  */
 function applyFolds(): void {
     if (state.groupId === null) return;
@@ -2606,6 +2660,12 @@ function applyFolds(): void {
     if (diffId === undefined) return;
     editor.clearFolds(diffId);
     editor.clearConcealNamespace(diffId, NS_COLLAPSE_TRIANGLE);
+    editor.clearConcealNamespace(diffId, NS_FILE_HEADER);
+    // A file header is git's `diff --git` row wearing the file's label.
+    for (const [key, header] of state.fileHeaderConceals) {
+        const glyph = state.collapsedFiles.has(key) ? GLYPH_COLLAPSED : GLYPH_EXPANDED;
+        editor.addConceal(diffId, NS_FILE_HEADER, header.start, header.end, `${glyph} ${header.label}`);
+    }
     const collapseTriangle = (row1: number | undefined): void => {
         const range = headerTriangleRange(row1);
         if (range) {
@@ -2620,13 +2680,21 @@ function applyFolds(): void {
     for (const key of state.collapsedFiles) {
         const body = state.fileBodyRange[key];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
-        collapseTriangle(state.fileHeaderRows[key]);
+        if (!state.fileHeaderConceals.has(key)) collapseTriangle(state.fileHeaderRows[key]);
     }
     for (const id of state.collapsedHunks) {
         const body = state.hunkBodyRange[id];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
-        collapseTriangle(state.hunkRowByHunkId[id]);
+        // A hunk header is git's `@@ … @@` row: its leading `@@` reads as
+        // `▸ @@` while the body is folded.
+        const row = state.hunkRowByHunkId[id];
+        const start = row !== undefined ? state.diffLineByteOffsets[row - 1] : undefined;
+        if (start !== undefined) {
+            editor.addConceal(diffId, NS_COLLAPSE_TRIANGLE, start, start + 2, `${GLYPH_COLLAPSED} @@`);
+        }
     }
+    // Folding changes which rows are on screen without a scroll.
+    paintWordDiff(state.diffViewportTopRow);
 }
 
 /**
@@ -2748,9 +2816,7 @@ function jumpToFile(file: FileEntry): void {
     // (see `applyFolds`) and their hunk headers are still in the stream,
     // so the Nth counted hunk was not the Nth row — clicking the sticky
     // header with a collapsed file above landed inside that file instead.
-    const firstHunk = state.hunks.find(
-        h => h.file === file.path && h.gitStatus === file.category
-    );
+    const firstHunk = hunksForKey(key)[0];
     if (firstHunk) {
         const row = state.hunkRowByHunkId[firstHunk.id];
         if (row !== undefined) { jumpDiffCursorToRow(row); return; }
@@ -2882,9 +2948,7 @@ function jumpToComment(commentId: string): void {
     // jumpDiffCursorToRow path is inert when the composite is showing). Switch
     // to the comment's file if needed and rebuild focused on that hunk.
     if (state.centerComposite && cFile) {
-        const fileHunks = state.hunks.filter(
-            h => h.file === hunk.file && (h.gitStatus || 'unstaged') === hunk.gitStatus
-        );
+        const fileHunks = hunksForKey(fileKeyOf(hunk.file, hunk.gitStatus || 'unstaged'));
         const idx = Math.max(0, fileHunks.findIndex(h => h.id === hunk.id));
         state.filesCurrentKey = fileKey(cFile);
         state.commentsHighlightId = commentId;
@@ -3042,6 +3106,10 @@ function on_review_viewport_changed(data: { split_id: number; buffer_id: number;
     const topRow = data.top_line ?? rowFromByte(data.top_byte);
     state.diffViewportTopRow = topRow;
     refreshStickyHeader(topRow);
+    if (wordDiffWindow === null || topRow + 1 < wordDiffWindow.first
+        || topRow + data.height > wordDiffWindow.last) {
+        paintWordDiff(topRow);
+    }
 }
 registerHandler("on_review_viewport_changed", on_review_viewport_changed);
 
@@ -3138,12 +3206,12 @@ function currentFileFromCursor(): FileEntry | null {
     return bestFile;
 }
 
-/** Look up the entry's properties for the cursor's current row. Uses
- *  the per-row props map populated during build, which is exact —
- *  unlike `editor.getTextPropertiesAtCursor`, which can return the
- *  previous row's properties when the cursor sits at a row boundary. */
+/** The properties of the cursor's current row, derived from the hunk
+ *  layout (`propsAtRow`) — exact, unlike `editor.getTextPropertiesAtCursor`,
+ *  which can return the previous row's properties when the cursor sits at
+ *  a row boundary. */
 function propsAtCursorRow(): Record<string, unknown> | null {
-    return state.entryPropsByRow[state.diffCursorRow] || null;
+    return propsAtRow(state.diffCursorRow);
 }
 
 function sectionUnderCursor(): string | null {
@@ -3455,24 +3523,23 @@ function review_open_working_file() {
         editor.setStatus(editor.t("status.file_deleted_no_open") || "File was deleted — no working copy to open");
         return;
     }
-    const props = propsAtCursorRow();
+    const r = streamRowAt(state.diffCursorRow);
     let line: number | undefined;
-    if (props) {
-        const t = props["type"];
-        if (t === 'add' || t === 'remove' || t === 'context') {
-            const nl = props["newLine"];
-            if (typeof nl === 'number') {
-                line = nl;
-            } else {
-                // Pure-removed row: scan forward to the next row carrying a
-                // newLine, so we land where the deletion happened. Stop at the
-                // end of the stream or when we leave this file's diff body.
-                const maxRow = state.diffLineByteOffsets.length - 1;
-                for (let r = state.diffCursorRow + 1; r <= maxRow; r++) {
-                    const p = state.entryPropsByRow[r];
-                    if (!p) continue;
-                    if (typeof p["newLine"] === 'number') { line = p["newLine"] as number; break; }
-                    if (p["type"] === 'file-header' || p["type"] === 'section-header') break;
+    if (r !== null && r.kind === 'line') {
+        line = lineNumbersAt(r.sh.hunk, r.lineIdx).newLine;
+        if (line === undefined) {
+            // Pure-removed row: the deletion happened where the next row
+            // the working file still has sits — in this hunk, or in a
+            // later hunk of the same file.
+            const shs = state.streamHunks;
+            let li = r.lineIdx + 1;
+            for (let i = streamHunkIndexAtRow(state.diffCursorRow);
+                line === undefined && i < shs.length && shs[i].hunk.raw === r.sh.hunk.raw;
+                i++, li = 0) {
+                const h = shs[i].hunk;
+                for (; li < h.lines.length; li++) {
+                    const c = h.lines[li][0];
+                    if (c === ' ' || c === '+') { line = lineNumbersAt(h, li).newLine; break; }
                 }
             }
         }
@@ -3586,14 +3653,22 @@ function selectionLineRange(): { hunk: Hunk; range: { start: number; end: number
     // `hunkHeaderRows`, which overshot whenever the focused hunk wasn't the
     // first one rendered (e.g. a line in the second file), yielding a null
     // range and the spurious "no add/remove lines" error.
-    const headerRow = state.hunkRowByHunkId[hunk.id];
-    if (headerRow === undefined) return null;
+    const sh = state.streamHunkById.get(hunk.id);
+    if (sh === undefined) return null;
 
     const lo = Math.min(sel.startRow, sel.endRow);
     const hi = Math.max(sel.startRow, sel.endRow);
-    const startInHunk = lo - headerRow - 1; // -1 because the header row itself is not in hunk.lines
-    const endInHunk = hi - headerRow - 1;
-    if (startInHunk < 0 || endInHunk >= hunk.lines.length) return null;
+    // A selection edge on a note box takes the line next to it, inward.
+    const lineAt = (row: number, roundDown: boolean): number | null => {
+        if (row <= sh.headerRow || row >= sh.headerRow + sh.rowCount) return null;
+        const body = bodyRowOf(sh, row - sh.headerRow - 1);
+        if ('lineIdx' in body) return body.lineIdx;
+        return roundDown ? body.note.afterLine : body.note.afterLine + 1;
+    };
+    const startInHunk = lineAt(lo, false);
+    const endInHunk = lineAt(hi, true);
+    if (startInHunk === null || endInHunk === null) return null;
+    if (startInHunk > endInHunk || endInHunk >= hunk.lines.length) return null;
 
     // Reject context-only selections.
     let hasChange = false;
@@ -3850,24 +3925,9 @@ async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> 
 }
 
 /**
- * Merge all text-property records at the cursor of the given panel buffer
- * into a single object. There's typically only one record covering each
- * cursor position; merging keeps callers simple.
- */
-function readPropsAtCursor(panel: 'files' | 'diff'): Record<string, unknown> | null {
-    const bufId = state.panelBuffers[panel];
-    if (bufId === undefined) return null;
-    const records = editor.getTextPropertiesAtCursor(bufId);
-    if (!records || records.length === 0) return null;
-    const merged: Record<string, unknown> = {};
-    for (const r of records) Object.assign(merged, r);
-    return merged;
-}
-
-/**
  * Get the hunk under the cursor in the diff panel, or null.
  *
- * Reads the `hunkId` text property embedded by `buildDiffPanelEntries`. Falls
+ * Reads the row's `hunkId` (see `propsAtRow`). Falls
  * back to the first hunk of the selected file when the cursor is somewhere
  * without a hunkId (e.g. the panel header) so commands like `s` still do
  * something useful.
@@ -3885,9 +3945,7 @@ async function getHunkAtCursor(): Promise<Hunk | null> {
         // Fallback: the focused file's first hunk.
         const file = state.files.find(f => fileKey(f) === cc.fileKey);
         if (file) {
-            return state.hunks.find(
-                h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-            ) || null;
+            return hunksForFile(file)[0] || null;
         }
         return null;
     }
@@ -3904,9 +3962,7 @@ function getHunkAtDiffCursor(): Hunk | null {
     // Fallback: first hunk for the file under the cursor (if any).
     const cur = currentFileFromCursor();
     if (!cur) return null;
-    return state.hunks.find(
-        h => h.file === cur.path && h.gitStatus === cur.category
-    ) || null;
+    return hunksForFile(cur)[0] || null;
 }
 
 /**
@@ -4869,7 +4925,7 @@ function contentToEntries(content: string): TextPropertyEntry[] {
     return text.length > 0 ? [{ text }] : [];
 }
 
-function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
+function compositeHunksForFile(fileHunks: readonly Hunk[]): TsCompositeHunk[] {
     return fileHunks.map(fh => {
         let oldCount = 0, newCount = 0;
         for (const line of fh.lines) {
@@ -4906,8 +4962,7 @@ function closeComposite(cc: { compositeBufId: number; oldBufId: number; newBufId
  *  whole-file buffers and an alignment pass are worth skipping when none
  *  of this has moved — and worth redoing the moment any of it has. */
 function compositeSignature(file: FileEntry): string {
-    const ranges = state.hunks
-        .filter(h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category)
+    const ranges = hunksForFile(file)
         .map(h => `${h.oldRange.start}-${h.oldRange.end}:${h.range.start}-${h.range.end}`)
         .join(',');
     // The comment count is in the pane label, so it is part of what was built.
@@ -5034,9 +5089,7 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     const { oldContent, newContent, absPath } = await fetchFileVersions(file);
     if (token !== state.centerBuildToken || state.groupId === null) return;
 
-    const fileHunks = state.hunks.filter(
-        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-    );
+    const fileHunks = hunksForFile(file);
     const compositeHunks = compositeHunksForFile(fileHunks);
 
     const oldEntries: TextPropertyEntry[] = contentToEntries(oldContent);
@@ -5196,12 +5249,16 @@ function mountStreamContent(): void {
     if (state.groupId === null) return;
     const signature = streamSignature();
     if (state.streamMountedSignature === signature) return;
-    editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
-    // The rows are up; say which of them are code, and in what, so the
-    // host colours them (#3104). Content replacement cleared the previous
-    // set, and the regions are byte ranges of *this* content.
     const diffId = state.panelBuffers["diff"];
-    if (diffId !== undefined) editor.setSyntaxRegions(diffId, state.syntaxRegions);
+    if (diffId !== undefined && state.streamBufferPrepared !== diffId) {
+        // The stream is git's own output: the host's diff grammar colours
+        // it, file by file, and its diff gutter numbers the rows from the
+        // hunk headers. Both are set before the first content lands.
+        editor.setBufferLanguage(diffId, "review.diff");
+        editor.setBufferDiffGutter(diffId, true);
+        state.streamBufferPrepared = diffId;
+    }
+    editor.setPanelContent(state.groupId, "diff", buildStreamContent());
     state.streamMountedSignature = signature;
     // Fresh content, so the host's folds went with the old rows.
     applyFolds();
@@ -5500,9 +5557,7 @@ function anchorHunk(anchor: ReviewAnchor): Hunk | undefined {
 function anchorHunkIndex(anchor: ReviewAnchor): number {
     const file = state.files.find(f => fileKey(f) === anchor.fileKey);
     if (!file) return 0;
-    const fileHunks = state.hunks.filter(
-        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-    );
+    const fileHunks = hunksForFile(file);
     // The hunk the anchor names outright wins: a header row has no line
     // to place inside a range.
     if (anchor.hunkId !== undefined) {
@@ -5554,18 +5609,10 @@ function restoreReviewAnchor(anchor: ReviewAnchor): void {
         if (fileRow !== undefined) jumpDiffCursorToRow(fileRow);
         return;
     }
-    for (const rowStr of Object.keys(state.entryPropsByRow)) {
-        const row = Number(rowStr);
-        const props = state.entryPropsByRow[row];
-        if (props["type"] !== anchor.lineType) continue;
-        if (props["file"] !== state.files.find(f => fileKey(f) === anchor.fileKey)?.path) continue;
-        const matches = anchor.lineType === 'remove'
-            ? props["oldLine"] === anchor.oldLine
-            : props["newLine"] === anchor.newLine;
-        if (matches) {
-            jumpDiffCursorToRow(row);
-            return;
-        }
+    const lineRow = rowOfAnchorLine(anchor);
+    if (lineRow !== undefined) {
+        jumpDiffCursorToRow(lineRow);
+        return;
     }
     // The line isn't in the stream at all. Side-by-side shows the whole
     // file, so the cursor can sit a long way from any change; unified
@@ -5593,8 +5640,7 @@ function nearestHunkRowToAnchor(anchor: ReviewAnchor): number | undefined {
     const useOld = anchor.lineType === 'remove';
     let before: Hunk | undefined;
     let after: Hunk | undefined;
-    for (const h of state.hunks) {
-        if (h.file !== file.path || (h.gitStatus || 'unstaged') !== file.category) continue;
+    for (const h of hunksForFile(file)) {
         const start = useOld ? h.oldRange.start : h.range.start;
         const end = useOld ? h.oldRange.end : h.range.end;
         if (end <= line) before = h;              // hunks come in file order
@@ -5761,13 +5807,27 @@ function visibleFiles(): FileEntry[] {
  *  commands. */
 function nearestDiffRow(): number | null {
     const cur = state.diffCursorRow;
+    const r = streamRowAt(cur);
+    if (r !== null && r.kind === 'line') return cur;
+    // Off a diff line, the nearest one is at the edge of the hunk the
+    // cursor is in or next to — or, on a note box, the line it follows.
+    const shs = state.streamHunks;
+    const i = streamHunkIndexAtRow(cur);
+    const candidates: number[] = [];
+    const edges = (sh: StreamHunk) => {
+        if (sh.hunk.lines.length === 0) return;
+        candidates.push(rowOfLine(sh, 0), rowOfLine(sh, sh.hunk.lines.length - 1));
+    };
+    if (r !== null && r.kind === 'note') {
+        candidates.push(rowOfLine(r.sh, r.afterLine));
+        if (r.afterLine + 1 < r.sh.hunk.lines.length) candidates.push(rowOfLine(r.sh, r.afterLine + 1));
+    }
+    if (i >= 0) edges(shs[i]);
+    if (i > 0) edges(shs[i - 1]);
+    if (i + 1 < shs.length) edges(shs[i + 1]);
     let best: number | null = null;
-    for (const k of Object.keys(state.entryPropsByRow)) {
-        const r = Number(k);
-        const t = state.entryPropsByRow[r]?.["type"];
-        if (t === 'add' || t === 'remove' || t === 'context') {
-            if (best === null || Math.abs(r - cur) < Math.abs(best - cur)) best = r;
-        }
+    for (const row of candidates) {
+        if (best === null || Math.abs(row - cur) < Math.abs(best - cur)) best = row;
     }
     return best;
 }
@@ -6558,9 +6618,7 @@ async function compositeHunkNav(dir: 1 | -1): Promise<void> {
     const cc = state.centerComposite;
     if (cc) {
         const file = state.files.find(f => fileKey(f) === cc.fileKey);
-        const fileHunks = file ? state.hunks.filter(
-            h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-        ) : [];
+        const fileHunks = file ? hunksForFile(file) : NO_HUNKS;
         const target = state.compositeHunkIdx + dir;
         if (target >= 0 && target < fileHunks.length) {
             // Within the focused file: step the composite hunk cursor and
@@ -6650,9 +6708,7 @@ async function getCompositeLineInfo(): Promise<PendingCommentInfo | null> {
         (newLine !== undefined && oldLine === undefined) ? 'add'
             : (oldLine !== undefined && newLine === undefined) ? 'remove'
                 : 'context';
-    const fileHunks = state.hunks.filter(
-        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-    );
+    const fileHunks = hunksForFile(file);
     let hunk = fileHunks.find(h =>
         (newLine !== undefined && newLine >= h.range.start && newLine <= h.range.end) ||
         (oldLine !== undefined && oldLine >= h.oldRange.start && oldLine <= h.oldRange.end)
@@ -7125,7 +7181,11 @@ function resetPerSessionState(): void {
     state.diffCursorRow = 1;
     state.hunkHeaderRows = [];
     state.diffLineByteOffsets = [];
-    state.syntaxRegions = [];
+    state.streamHunks = [];
+    state.streamHunkById = new Map();
+    state.sectionByRow = new Map();
+    state.fileByRow = new Map();
+    state.fileHeaderConceals = new Map();
     state.fileHeaderRows = {};
     state.collapsedFiles = new Set();
     state.collapsedSections = new Set();
@@ -7330,6 +7390,7 @@ function stop_review_diff() {
     teardownCenterComposite();
     discardParkedComposite();
     state.streamMountedSignature = null;
+    state.streamBufferPrepared = null;
     // Unmount before the buffers go away, so the host drops the panels'
     // widget state instead of holding it against dead buffer ids.
     for (const panel of [toolbarPanel, filesPanel, commentsPanel]) panel?.unmount();
@@ -7707,6 +7768,12 @@ function on_review_cursor_moved(data: {
         // (top_line can be null). Tracking the cursor row gives a snappy
         // "what file am I in" indicator regardless.
         refreshStickyHeader(Math.max(0, data.line - 1));
+        // The viewport event is the usual trigger; a jump the host reports
+        // late (or not at all, for a virtual buffer) still gets its rows
+        // painted from here.
+        if (wordDiffWindow === null || data.line < wordDiffWindow.first || data.line > wordDiffWindow.last) {
+            paintWordDiff(Math.max(0, data.line - 1));
+        }
         updateReviewStatus();
         // Re-render the comments panel only when the highlighted comment
         // actually changes — avoids re-emitting the panel on every
@@ -7792,37 +7859,22 @@ async function side_by_side_diff_current_file() {
         diffOutput = result.stdout;
     }
 
-    // Parse hunks from diff output
-    const lines = diffOutput.split('\n');
-    const fileHunks: Hunk[] = [];
-    let currentHunk: Hunk | null = null;
-
-    for (const line of lines) {
-        if (line.startsWith('@@')) {
-            const match = line.match(/@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@(.*)/);
-            if (match) {
-                const oldStart = parseInt(match[1]);
-                const oldCount = match[2] ? parseInt(match[2]) : 1;
-                const newStart = parseInt(match[3]);
-                const newCount = match[4] ? parseInt(match[4]) : 1;
-                currentHunk = {
-                    id: `${filePath}:${newStart}`,
-                    file: filePath,
-                    range: { start: newStart, end: newStart + newCount - 1 },
-                    oldRange: { start: oldStart, end: oldStart + oldCount - 1 },
-                    type: isUntracked ? 'add' : 'modify',
-                    lines: [],
-                    status: 'pending',
-                    contextHeader: match[5]?.trim() || "",
-                    byteOffset: 0
-                };
-                fileHunks.push(currentHunk);
-            }
-        } else if (currentHunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' '))) {
-            if (!line.startsWith('---') && !line.startsWith('+++')) {
-                currentHunk.lines.push(line);
-            }
+    // Parse hunks from diff output. This view aligns whole files, so it
+    // wants each hunk's real extent on both sides.
+    const fileHunks = parseDiffOutput(diffOutput, 'unstaged');
+    for (const h of fileHunks) {
+        h.id = `${filePath}:${h.range.start}`;
+        h.file = filePath;
+        h.type = isUntracked ? 'add' : 'modify';
+        h.lines = h.lines.filter(l => l[0] !== '\\');
+        let oldCount = 0;
+        let newCount = 0;
+        for (const l of h.lines) {
+            if (l[0] !== '+') oldCount++;
+            if (l[0] !== '-') newCount++;
         }
+        h.oldRange.end = h.oldRange.start + oldCount - 1;
+        h.range.end = h.range.start + newCount - 1;
     }
 
     if (fileHunks.length === 0) {

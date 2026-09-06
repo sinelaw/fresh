@@ -114,10 +114,11 @@ fn start_server(config: Config) {
 
 /// Switch on the git settings that rewrite `git diff`'s output. Each is
 /// something a real user's config may carry, and each on its own is enough to
-/// stop Review Diff's parser producing usable hunks: an external driver prints
-/// its own format, a textconv filter diffs converted text, forced colour wraps
-/// every line in escapes, and the prefix settings strip the `a/`/`b/` paths the
-/// parser matches on.
+/// stop Review Diff's parser producing usable hunks, or to misnumber them: an
+/// external driver prints its own format, a textconv filter diffs converted
+/// text, forced colour wraps every line in escapes, the prefix settings strip
+/// the `a/`/`b/` paths the parser matches on, and `suppressBlankEmpty` takes
+/// the marker off an empty context line.
 ///
 /// `core.pager` is deliberately not configured: git only starts a pager when
 /// stdout is a tty, and `editor.spawnProcess` reads through a pipe, so a pager
@@ -167,6 +168,11 @@ fn configure_hostile_diff_output(repo: &GitTestRepo) {
             ("color.diff", "always"),
             ("diff.noprefix", "true"),
             ("diff.mnemonicPrefix", "true"),
+            // Drops the leading space from an empty context line. The row's
+            // first byte is what the host's diff gutter counts it by, so an
+            // unsuppressed empty line belongs to neither side and every
+            // number below it in the hunk comes out one short.
+            ("diff.suppressBlankEmpty", "true"),
         ],
     );
 }
@@ -192,18 +198,23 @@ fn set_git_config(repo: &GitTestRepo, pairs: &[(&str, &str)]) {
 /// The new-file line number the review panel prints in its gutter for the row
 /// carrying `marker`.
 ///
-/// A row reads `<old> <new> +<content>`, drawn to the right of the file-list
-/// divider, so this scans back from the diff prefix rather than assuming a
-/// column: the rightmost `+` before the marker is the diff prefix, and the
-/// last whitespace-separated token in front of it is the new-file number.
-/// Added lines leave the old-number field blank, which is why the last token
-/// is unambiguous.
+/// A row reads `<old> <new> │ +<content>`, drawn to the right of the
+/// file-list divider, so this scans back from the diff prefix rather than
+/// assuming a column: the rightmost `+` before the marker is the diff
+/// prefix, and the last number in front of it is the new-file number.
+/// Added lines leave the old-number field blank, which is why the last
+/// number is unambiguous.
 #[cfg(unix)]
 fn marker_new_line_number(screen: &str, marker: &str) -> Option<u32> {
     let row = screen.lines().find(|l| l.contains(marker))?;
     let (before_marker, _) = row.split_once(marker)?;
     let (gutter, _) = before_marker.rsplit_once('+')?;
-    gutter.split_whitespace().last()?.parse().ok()
+    // The gutter is the host's: `OLD NEW │`, with the old column blank on
+    // an added row. Take its last number, past the separator.
+    gutter
+        .split_whitespace()
+        .filter_map(|tok| tok.parse::<u32>().ok())
+        .next_back()
 }
 
 /// Stash the working tree so `Review Diff: Stash` has something to show. Reverts the
@@ -2920,6 +2931,61 @@ fn test_files_panel_scrollbar_press_scrolls_the_tree() {
     assert_ne!(
         before, after,
         "pressing the sidebar's scrollbar should scroll its tree. \
+         Screen:\n{screen}"
+    );
+}
+
+/// A hunk carrying an empty context line is still numbered by counting
+/// that line.
+///
+/// `diff.suppressBlankEmpty` prints an empty context line as `` rather
+/// than `` ``, and a row's first byte is exactly what the host's diff
+/// gutter classifies it by: with the marker gone the row counts as
+/// neither side, and every number below it in the hunk is one short of
+/// the line the plugin stages and anchors comments to. The two would
+/// then disagree, and the reader would stage a line other than the one
+/// the gutter names.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_numbers_rows_past_an_empty_context_line() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // The blank line is line 2, inside the hunk and above the change, so
+    // a gutter that skips it misnumbers the marker.
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("first commit");
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n\n    let x = 1;\n    let y = 2;\n    let z = 4; // BLANK_CONTEXT_MARKER\n}\n",
+    );
+    configure_hostile_diff_output(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("BLANK_CONTEXT_MARKER"),
+        "the changed line should be on screen. Screen:\n{screen}"
+    );
+    assert_eq!(
+        marker_new_line_number(&screen, "BLANK_CONTEXT_MARKER"),
+        Some(5),
+        "the marker is line 5 of the working file; a gutter that does not \
+         count the empty context line above it numbers this row 4, and the \
+         reader then stages the line above the one the gutter names. \
          Screen:\n{screen}"
     );
 }
