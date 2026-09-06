@@ -2158,12 +2158,31 @@ impl Editor {
                 entered,
             } => {
                 use crate::view::shell::widgets::Slot;
-                // The prompt toolbar's memo is its registry entry's, the
-                // way a pane's is; the leave rule below is the same.
-                if slot == Slot::PromptToolbar {
-                    let Some(key) = self.prompt_toolbar_key() else {
-                        return;
-                    };
+                // **A memo the registry keeps, for a panel with no slot.** The
+                // dock and the floating panel have a `Panel` record to write
+                // to; the prompt toolbar and a pane-mounted panel do not, and
+                // their entry in the registry is the only thing that outlives
+                // the frame. The leave rule below is the same for both.
+                let entry = match slot {
+                    Slot::PromptToolbar => self.prompt_toolbar_key(),
+                    // A pane's panel is its buffer's. Nothing here knew that
+                    // until the tree described one: `update_widget_hover`
+                    // probed the dock and the floating panel and no other
+                    // surface, so a mounted panel's rows never lit under the
+                    // pointer at all.
+                    Slot::Pane(leaf) => self
+                        .window_panes()
+                        .into_iter()
+                        .find(|(l, _)| *l == leaf)
+                        .and_then(|(_, buffer)| {
+                            self.widget_registry
+                                .panels_for_buffer(buffer)
+                                .into_iter()
+                                .next()
+                        }),
+                    _ => None,
+                };
+                if let Some(key) = entry {
                     let (w, i) = self.widget_registry.hover_keys(&key);
                     let next = match entered {
                         true => Some((widget, item)),
@@ -2180,10 +2199,8 @@ impl Editor {
                 let panel = match slot {
                     Slot::Dock => crate::app::PanelSlot::Dock,
                     Slot::Floating => crate::app::PanelSlot::Floating,
-                    // Gated at the source; nothing else has a panel memo. A
-                    // pane-mounted panel has none *yet* — it never had one,
-                    // because `update_widget_hover` only ever probed the two
-                    // above — so its highlight comes with C.5's second step.
+                    // The two surfaces with a `Panel` record of their own;
+                    // everything else was answered above.
                     _ => return,
                 };
                 if let Some(p) = self.panel_mut(panel) {

@@ -477,6 +477,138 @@ impl Editor {
         }
     }
 
+    /// The described page in the pane that holds the keyboard, if there is
+    /// one.
+    pub(crate) fn active_page_panel(&self) -> Option<crate::widgets::PanelKey> {
+        let buffer = self.active_buffer();
+        self.widget_registry
+            .panels_for_buffer(buffer)
+            .into_iter()
+            .find(|k| self.widget_registry.get(k).is_some_and(|p| p.page))
+    }
+
+    /// **The page follows the caret.** Run after every event that could have
+    /// moved it — an arrow key, a page key, a click on the text, and equally
+    /// an edit, which moves the caret without being a `MoveCursor`.
+    ///
+    /// This is the whole of a page's navigation, and it is why the page binds
+    /// nothing. The mirror buffer under a described pane is a real buffer with
+    /// a real cursor, so every motion the editor already has — the arrows,
+    /// `Home`/`End`, `Ctrl+Home`/`Ctrl+End`, the page keys, word motions, vi
+    /// operators, and whatever the user rebound them to — moves it for free.
+    /// The page's job is to *read* where that caret ended up: bring its row
+    /// into the window, draw the caret there, and point the keyboard at
+    /// whatever control the row carries.
+    ///
+    /// The caret is read off the buffer rather than out of the event. Those
+    /// differ — an edit has no new-position field at all, a `Batch` can nest
+    /// another whose last move is the one that counts, and a position can be
+    /// clamped on the way in — and every one of those differences was a hole
+    /// while the page matched on key names instead.
+    pub(super) fn page_follows_caret(&mut self) {
+        let Some(key) = self.active_page_panel() else {
+            return;
+        };
+        let follows = self
+            .widget_registry
+            .get(&key)
+            .is_some_and(|p| p.focus_follows_cursor);
+        let position = self.active_window().active_cursors().primary().position;
+        let st = self.active_state();
+        let row = st.buffer.get_line_number(position);
+        let col = st
+            .buffer
+            .line_start_offset(row)
+            .map(|start| position.saturating_sub(start))
+            .unwrap_or(0);
+        let at = (row as u32, col.min(u16::MAX as usize) as u16);
+        if self.page_reading.get(&key) == Some(&at) {
+            return;
+        }
+        // **A page with no reader still follows one.** `focusFollowsCursor`
+        // decides whether the caret is *drawn* and whether focus is seated on
+        // its row; the window follows the caret either way, because a page
+        // whose text scrolled away from the cursor it reports in the status
+        // bar is a page that has lost its place.
+        if follows {
+            self.page_reading.insert(key.clone(), at);
+        }
+        if let Some(anchor) = self.page_anchors.get(&key) {
+            anchor.reveal(at.0);
+        }
+        self.shell_description_stale = true;
+        if follows {
+            self.sync_widget_focus_to_reading_row(&key);
+        }
+    }
+
+    /// An editor action a page answers for itself, applied to its window.
+    ///
+    /// **The page does not re-bind anything.** Its keys are the editor's —
+    /// resolved once, by the one resolver, against the user's own keymap —
+    /// and this is the short list of *actions* whose subject is the window
+    /// rather than a buffer's cursor. Everything else the editor still does:
+    /// a page mounted in a pane switches tabs, opens the palette and quits
+    /// with the same keys as any other pane, because nothing here claims
+    /// them.
+    ///
+    /// Returns whether the action was the page's.
+    pub(crate) fn page_takes_action(&mut self, action: &crate::input::keybindings::Action) -> bool {
+        use crate::input::keybindings::Action;
+        // **A page key moves the window by a page too**, so the caret keeps
+        // its place on screen — which is what paging *is* in every other
+        // buffer, and the one thing a minimal reveal cannot do: revealed
+        // alone, a caret a page further down lands on the window's last row,
+        // and the page after that reads as one row of movement.
+        //
+        // The caret's own move stays the editor's, so a page key is not
+        // consumed here: the window goes first and the action follows it.
+        enum Step {
+            Rows(i32),
+            Pages(i32),
+        }
+        let (step, consumed) = match action {
+            Action::ScrollUp => (Step::Rows(-1), true),
+            Action::ScrollDown => (Step::Rows(1), true),
+            Action::MovePageUp | Action::SelectPageUp => (Step::Pages(-1), false),
+            Action::MovePageDown | Action::SelectPageDown => (Step::Pages(1), false),
+            _ => return false,
+        };
+        let Some(key) = self.active_page_panel() else {
+            return false;
+        };
+        let Some(anchor) = self.page_anchors.get(&key) else {
+            return false;
+        };
+        match step {
+            Step::Rows(n) => anchor.scroll_by(n),
+            Step::Pages(n) => anchor.scroll_by_pages(n),
+        }
+        self.shell_description_stale = true;
+        consumed
+    }
+
+    /// The column a composed buffer is painted into, or `None` when it is
+    /// not composing.
+    ///
+    /// The narrow half of [`Self::widget_panel_width`]'s reading, on its own
+    /// because a described panel needs the number the *pane* is flanked by
+    /// rather than the number its rows are laid out to. Read from this
+    /// buffer's state and not through the split's deref, for the reason
+    /// argued there: `SplitViewState` answers for whichever buffer is active
+    /// in the split, which is the neighbouring tab whenever this panel is
+    /// behind one.
+    pub(crate) fn buffer_compose_width(&self, buffer_id: BufferId) -> Option<u16> {
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)?
+            .values()
+            .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.width > 0)
+            .and_then(|vs| vs.buffer_state(buffer_id))
+            .and_then(|b| b.compose_width)
+    }
+
     /// Best-effort width for a buffer's containing split. Returns
     /// the most recent `SplitViewState::viewport.width` for any
     /// split rendering this buffer; falls back to terminal width
@@ -1102,65 +1234,6 @@ impl Editor {
         }
         .cloned();
         let widget = widget.as_ref();
-        // **A page whose focus follows its reader moves the reader, not the
-        // window.** The window then follows, minimally, because that is what
-        // the reveal in `move_page_reader_to` is — so the two are one gesture
-        // and cannot drift, which is the whole of what `focusFollowsCursor`
-        // asks for. A page that did not ask for it scrolls instead, below.
-        if self
-            .widget_registry
-            .get(panel_key)
-            .is_some_and(|p| p.page && p.focus_follows_cursor)
-        {
-            if let Some(moved) = self.move_page_reader_by(panel_key, key) {
-                if moved {
-                    self.sync_widget_focus_to_reading_row(panel_key);
-                }
-                return;
-            }
-        }
-        // **A page's navigation keys scroll the page** when no widget took
-        // them: the window is the tree's, and the anchor is the host's word
-        // to it. Applied by the layout that measured the page, on the next
-        // frame — which the stale mark below asks for.
-        if let Some(anchor) = self
-            .widget_registry
-            .get(panel_key)
-            .filter(|p| p.page)
-            .and_then(|_| self.page_anchors.get(panel_key))
-        {
-            let scrolled = match key {
-                "Up" => {
-                    anchor.scroll_by(-1);
-                    true
-                }
-                "Down" => {
-                    anchor.scroll_by(1);
-                    true
-                }
-                "PageUp" => {
-                    anchor.scroll_by_pages(-1);
-                    true
-                }
-                "PageDown" => {
-                    anchor.scroll_by_pages(1);
-                    true
-                }
-                "Home" => {
-                    anchor.scroll_to(fresh_ui::Point::new(0, 0));
-                    true
-                }
-                "End" => {
-                    anchor.scroll_to_end();
-                    true
-                }
-                _ => false,
-            };
-            if scrolled {
-                self.shell_description_stale = true;
-                return;
-            }
-        }
         match key {
             "Tab" => self.handle_widget_focus_advance(panel_key, 1),
             "Shift+Tab" => self.handle_widget_focus_advance(panel_key, -1),
@@ -1914,58 +1987,6 @@ impl Editor {
         };
         self.move_page_reader_to(&panel_key, at);
         self.sync_widget_focus_to_reading_row(&panel_key);
-    }
-
-    /// Move the reader by a navigation key, or `None` for a key that is not
-    /// one. `Some(false)` means the key was this page's and the reader was
-    /// already at that end.
-    ///
-    /// **Rows, in the page's own content**, so the reader steps past a card
-    /// the same way it steps past a paragraph — and the column is carried, so
-    /// walking down a page of three-across cards stays in the column it
-    /// started in. That is the rule `page_focus_target_at` is written against.
-    fn move_page_reader_by(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        key: &str,
-    ) -> Option<bool> {
-        // The extent and the window are the tree's, so it has to carry the
-        // page as it is now.
-        self.lay_out_shell_if_stale();
-        let vp = self.page_viewport(panel_key)?;
-        let ui = self.shell_ui.as_ref()?;
-        let (_, content) = ui.scroll(vp);
-        let window = ui.rect_of(vp).h.max(1) as u32;
-        let last = (content.h as u32).saturating_sub(1);
-        let (row, col) = self.page_reading.get(panel_key).copied().unwrap_or((0, 0));
-        let to = match key {
-            "Up" => row.saturating_sub(1),
-            "Down" => (row + 1).min(last),
-            "PageUp" => row.saturating_sub(window),
-            "PageDown" => (row + window).min(last),
-            "Home" => 0,
-            "End" => last,
-            _ => return None,
-        };
-        if to == row {
-            return Some(false);
-        }
-        // **A page key moves the window by a page too.** Every other movement
-        // key leaves the window alone until the reader reaches its edge, which
-        // is what following means; a page key is the reader asking for the
-        // *next screenful*, and a minimal reveal would answer it by pinning
-        // them to the bottom edge with the page they asked for above them.
-        // Moving both keeps the reader where they were looking, which is what
-        // a page key does everywhere else in the editor.
-        if let Some(anchor) = self.page_anchors.get(panel_key) {
-            match key {
-                "PageUp" => anchor.scroll_by_pages(-1),
-                "PageDown" => anchor.scroll_by_pages(1),
-                _ => {}
-            }
-        }
-        self.move_page_reader_to(panel_key, (to, col));
-        Some(true)
     }
 
     /// Put the reader at `(row, col)` and bring that row into the window.

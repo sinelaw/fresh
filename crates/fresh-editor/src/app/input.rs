@@ -532,6 +532,7 @@ impl Editor {
                 .focus_key(&panel_key)
                 .map(str::to_string),
             focused_widget_is_text: self.panel_focused_widget_is_text(&panel_key),
+            page: self.widget_registry.get(&panel_key).is_some_and(|p| p.page),
         };
         let outcome = {
             let kb = self.keybindings.read().unwrap();

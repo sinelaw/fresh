@@ -608,6 +608,7 @@ impl Editor {
             page: None,
             // Not a page, so nothing reads a page.
             reading: None,
+            compose: None,
             hovered_key: Some(hovered).filter(|k| !k.is_empty()),
             hovered_item_key: hovered_item,
             hovered_popup_row: String::new(),

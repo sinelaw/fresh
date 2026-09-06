@@ -1740,27 +1740,18 @@ impl crate::app::window::Window {
                     active_buffer_id = view_state.buffer_tab_ids().next();
                 }
 
-                // For buffers without saved file_state (e.g., terminals), apply split-level
-                // view_mode/compose_width as fallback (backward compatibility)
-                let restored_view_mode = match split_state.view_mode {
-                    SerializedViewMode::Source => ViewMode::Source,
-                    SerializedViewMode::PageView => ViewMode::PageView,
-                };
-
+                // **A buffer restores its own view state or none.** What used
+                // to stand here read the split's `view_mode` and
+                // `compose_width` — a copy of whatever buffer was active when
+                // the session was saved — onto whatever buffer came up active
+                // now, whenever that buffer had no state of its own. A scratch
+                // buffer never has state of its own, so the session saved with
+                // the welcome page in front reopened with that page's column
+                // around an empty buffer. Both fields are gone from the split
+                // (see `SerializedSplitViewState`); the per-buffer restore
+                // above is the only one there is.
                 if let Some(active_buf_id) = active_buffer_id {
-                    // Switch the split to the active buffer
                     view_state.switch_buffer(active_buf_id);
-
-                    // If no per-buffer file_state was saved, apply split-level settings
-                    let active_has_file_state = split_state.file_states.keys().any(|rel_path| {
-                        path_to_buffer.get(rel_path).copied() == Some(active_buf_id)
-                    });
-                    if !active_has_file_state {
-                        view_state.active_state_mut().view_mode = restored_view_mode.clone();
-                        view_state.active_state_mut().compose_width = split_state.compose_width;
-                    }
-
-                    // Cursors now live in SplitViewState, no need to sync to EditorState
                 }
                 view_state.tab_scroll_offset = split_state.tab_scroll_offset;
                 active_buffer_id
@@ -3337,18 +3328,6 @@ fn serialize_split_view_state(
         );
     }
 
-    // Active buffer's view_mode/compose_width for the split-level fields (backward compat)
-    let active_view_mode = active_buffer
-        .and_then(|id| view_state.keyed_states.get(&id))
-        .map(|bs| match bs.view_mode {
-            ViewMode::Source => SerializedViewMode::Source,
-            ViewMode::PageView => SerializedViewMode::PageView,
-        })
-        .unwrap_or(SerializedViewMode::Source);
-    let active_compose_width = active_buffer
-        .and_then(|id| view_state.keyed_states.get(&id))
-        .and_then(|bs| bs.compose_width);
-
     SerializedSplitViewState {
         open_tabs,
         active_tab_index,
@@ -3356,8 +3335,6 @@ fn serialize_split_view_state(
         active_file_index,
         file_states,
         tab_scroll_offset: view_state.tab_scroll_offset,
-        view_mode: active_view_mode,
-        compose_width: active_compose_width,
     }
 }
 

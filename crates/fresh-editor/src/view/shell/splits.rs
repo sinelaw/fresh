@@ -1414,6 +1414,39 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
     )
 }
 
+/// One flank of a composed panel's paper-on-desk margin.
+///
+/// `[desk][paper]` on the left, `[paper][desk]` on the right — the layout
+/// `render_compose_margins` paints for a composed *buffer*, said as two boxes
+/// instead of two `Block`s. Nothing here is hittable: a press in the margin is
+/// still a press on the pane, and the pane's own gesture is what should get it.
+fn compose_margin(width: u16, height: u16, desk_first: bool) -> Node<UiMsg> {
+    use crate::app::shell_host::shell_theme::Ink;
+    let paper = width.min(1);
+    let desk = width - paper;
+    let edge = || {
+        row()
+            .w(Sizing::Cells(paper))
+            .h(Sizing::Cells(height))
+            .theme(super::widgets::pane_surface().to_string())
+    };
+    let felt = || {
+        row()
+            .w(Sizing::Cells(desk))
+            .h(Sizing::Cells(height))
+            .theme(Ink::keys("editor.fg", "ui.compose_margin_bg").to_string())
+    };
+    let flank = row()
+        .w(Sizing::Cells(width))
+        .h(Sizing::Cells(height))
+        .pointer_mode(PointerMode::Ignore);
+    if desk_first {
+        flank.child(felt()).child(edge())
+    } else {
+        flank.child(edge()).child(felt())
+    }
+}
+
 /// A mounted plugin panel, as the pane's content.
 ///
 /// Laid out inside a `layout_reader` for both extents, and that is the point
@@ -1430,6 +1463,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     let rests_here = active && !super::widgets::marks(&i.spec, &i.focus_key);
     let page = i.page.clone();
     let reading = i.reading;
+    let compose = i.compose;
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         // **The whole pane, not `widget_panel_width`'s.** The runtime lays a
         // mounted spec two columns short — "reserve 2 cols for gutter /
@@ -1445,7 +1479,32 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
         // There the two columns are *taken* — one by the painter's divider,
         // one by the slack it wraps against — and the description may not use
         // them. Here nothing takes them.
-        let inner_w = info.constraints.max_w.max(1);
+        let pane_w = info.constraints.max_w.max(1);
+        let pane_h = info.constraints.max_h;
+        // **A composed panel is a column in the pane, not the pane.** The
+        // margins either side are the ones the buffer painter drew for a
+        // composed buffer (`render_compose_margins`), described here because a
+        // described panel never reaches that painter: desk outside, one column
+        // of paper edge inside, the page between them. Without them the page
+        // filled the pane and every width the plugin asked the host for — a
+        // `flexSpacer`'s fill, a rule, a right-aligned control — was the
+        // terminal's.
+        //
+        // **The column, less the one the plugin was told to hold back.**
+        // `widget_panel_width` hands the plugin `composeWidth - 1`, because a
+        // row filling the render area exactly wraps, and the page lays its
+        // rows out to that number — so the node gets the same one, or a
+        // right-aligned control comes out a column past where the plugin put
+        // everything else. The held-back column joins the right margin, which
+        // is where the composed buffer's painter left it too.
+        let (left_pad, right_pad, inner_w) = match compose.map(|cw| cw.max(11)) {
+            Some(cw) if cw < pane_w => {
+                let inner = cw - 1;
+                let left = (pane_w - cw) / 2;
+                (left, pane_w - left - inner, inner)
+            }
+            _ => (0, 0, pane_w),
+        };
         let widgets = super::widgets::node(
             &i.spec,
             inner_w,
@@ -1473,53 +1532,77 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
             },
         )
         .w(Sizing::Cells(inner_w));
-        match &page {
+        let content = match &page {
             // **A page scrolls as a whole.** Its content is as tall as it
             // is, inside one viewport the pane sizes; the wheel, the bar and
             // the anchor's commands move the window, and nothing inside it
             // windows itself.
             Some(anchor) => fresh_ui::viewport(
-                match reading {
-                    // **A page's reader is drawn by the description**, because
-                    // there is nothing else on screen that could: the pane
-                    // shows this tree rather than the mirror buffer, so the
-                    // mirror's cursor is a report and not a caret. A
-                    // zero-width marker at the reader's cell, laid over the
-                    // content and scrolled with it, is that caret — the same
-                    // marker a focused field places, at coordinates the host
-                    // owns instead of a byte the field owns.
-                    Some((at_row, at_col)) => stack().children([
-                        widgets,
-                        // **Nothing here is hittable.** A stack's children all
-                        // get the whole rect and the later one is hit first, so
-                        // a caret layer that took hits would swallow every
-                        // press on the page — which is how the reader gets to
-                        // a control in the first place.
-                        col()
-                            .pointer_mode(PointerMode::Ignore)
-                            .child(row().h(Sizing::Cells(at_row.min(u16::MAX as u32) as u16)))
-                            .child(
-                                row()
-                                    .h(Sizing::Cells(1))
-                                    .child(row().w(Sizing::Cells(at_col)))
-                                    .child(
-                                        text("")
-                                            .key(super::widgets::caret_key(
-                                                super::widgets::Slot::Pane(id),
-                                            ))
-                                            .w(Sizing::Cells(0))
-                                            .h(Sizing::Cells(1))
-                                            .cursor_byte(0),
-                                    ),
-                            ),
-                    ]),
-                    None => widgets,
-                }
-                .w(Sizing::Cells(inner_w)),
+                fresh_ui::row().children([
+                    match reading {
+                        // **A page's reader is drawn by the description**, because
+                        // there is nothing else on screen that could: the pane
+                        // shows this tree rather than the mirror buffer, so the
+                        // mirror's cursor is a report and not a caret. A
+                        // zero-width marker at the reader's cell, laid over the
+                        // content and scrolled with it, is that caret — the same
+                        // marker a focused field places, at coordinates the host
+                        // owns instead of a byte the field owns.
+                        Some((at_row, at_col)) => stack().children([
+                            widgets,
+                            // **Nothing here is hittable.** A stack's children all
+                            // get the whole rect and the later one is hit first, so
+                            // a caret layer that took hits would swallow every
+                            // press on the page — which is how the reader gets to
+                            // a control in the first place.
+                            col()
+                                .pointer_mode(PointerMode::Ignore)
+                                .child(row().h(Sizing::Cells(at_row.min(u16::MAX as u32) as u16)))
+                                .child(
+                                    row()
+                                        .h(Sizing::Cells(1))
+                                        .child(row().w(Sizing::Cells(at_col)))
+                                        .child(
+                                            text("")
+                                                .key(super::widgets::caret_key(
+                                                    super::widgets::Slot::Pane(id),
+                                                ))
+                                                .w(Sizing::Cells(0))
+                                                .h(Sizing::Cells(1))
+                                                .cursor_byte(0),
+                                        ),
+                                ),
+                        ]),
+                        None => widgets,
+                    }
+                    .w(Sizing::Cells(inner_w)),
+                    // **The window is wider than the page.** A viewport stretches
+                    // its child to its own width, and the window reaches the
+                    // pane's edge so its bar can hang there — so the page is
+                    // packed to the left of a row that fills the window, and the
+                    // slack beside it is the right margin showing through.
+                    fresh_ui::row()
+                        .w(Sizing::Cells(right_pad))
+                        .pointer_mode(PointerMode::Ignore),
+                ]),
             )
             .scrollbar()
+            // **The same bar the pane draws**, in the same two colours: an
+            // unthemed one falls back to the editor's own ground, which paints
+            // the track in the background it sits on — a thumb floating on
+            // nothing, with no track to click. See `splits::scrollbar`.
+            .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg"))
             .anchor_to(anchor.clone())
-            .w(Sizing::Cells(inner_w))
+            // **The bar hangs on the pane's edge, not the column's.** A
+            // composed buffer's bar does, because the painter drew it in the
+            // pane's own scrollbar column outside the margins; a viewport
+            // draws its bar at its own right edge, so a window that stopped
+            // where the text stops put the bar fifteen columns inboard with
+            // the desk beside it. The window reaches the pane's edge instead
+            // and the right margin is painted *under* it — which also leaves
+            // the window's left edge where the text starts, so the row and
+            // column a press lands on are still the page's own.
+            .w(Sizing::Cells(inner_w.saturating_add(right_pad)))
             .h(Sizing::Flex(1)),
             // **The panel is the height of the pane, not of its content.** A
             // `Tree` or `List` the plugin left auto-sized (`visible_rows:
@@ -1530,7 +1613,40 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
             // would have no window to scroll and no bar to say how far
             // through it you are.
             None => widgets.h(Sizing::Flex(1)),
+        };
+        // **The pane's ground is the panel's too.** The buffer painter filled
+        // the content rect with the editor's own background before it drew a
+        // line of text; a described panel reaches no painter, so the rows it
+        // does not cover were the terminal's default ground rather than the
+        // theme's — invisible on a black terminal and wrong on any other.
+        let ground = super::widgets::pane_surface().to_string();
+        if left_pad == 0 && right_pad == 0 {
+            return content.theme(ground);
         }
+        // The margins are a layer of their own, under the content: the page's
+        // window overlaps the right one so its bar can reach the pane's edge,
+        // and a flank drawn beside the window instead would be the thing the
+        // bar is drawn over.
+        stack()
+            .w(Sizing::Cells(pane_w))
+            .h(Sizing::Flex(1))
+            .theme(ground)
+            .child(
+                row()
+                    .w(Sizing::Cells(pane_w))
+                    .h(Sizing::Cells(pane_h))
+                    .pointer_mode(PointerMode::Ignore)
+                    .child(compose_margin(left_pad, pane_h, true))
+                    .child(row().w(Sizing::Cells(inner_w)))
+                    .child(compose_margin(right_pad, pane_h, false)),
+            )
+            .child(
+                row()
+                    .w(Sizing::Cells(pane_w))
+                    .h(Sizing::Flex(1))
+                    .child(row().w(Sizing::Cells(left_pad)))
+                    .child(content),
+            )
     });
     // **The press stays the pane's, unchanged.** The first instinct here was
     // that a panel has no byte to put a caret at, so a press only needed to

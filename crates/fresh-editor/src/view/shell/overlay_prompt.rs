@@ -604,6 +604,7 @@ mod tests {
             keyboard: true,
             page: None,
             reading: None,
+            compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),

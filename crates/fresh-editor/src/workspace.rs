@@ -242,15 +242,17 @@ pub struct SerializedSplitViewState {
     /// Tab scroll offset
     #[serde(default)]
     pub tab_scroll_offset: usize,
-
-    /// View mode
-    #[serde(default)]
-    pub view_mode: SerializedViewMode,
-
-    /// Compose width if in compose mode
-    #[serde(default)]
-    pub compose_width: Option<u16>,
 }
+
+// **A split has no view mode and no compose width.** Both were written here
+// as a copy of whatever buffer happened to be active when the session was
+// saved, and read back onto whatever buffer happened to come up active — so a
+// session saved with a composed page in front handed that page's column to an
+// unrelated buffer, margins and all. They are per-buffer values with exactly
+// one owner each (`SerializedFileState`), and a buffer with no saved state of
+// its own has no view mode and no compose width to restore, rather than
+// inheriting a neighbour's. Old sessions carrying the two fields still load;
+// the fields are simply ignored.
 
 /// Per-file state within a split
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1620,8 +1622,6 @@ mod tests {
                 active_file_index: 0,
                 file_states: HashMap::new(),
                 tab_scroll_offset: 0,
-                view_mode: SerializedViewMode::Source,
-                compose_width: None,
             },
         );
 

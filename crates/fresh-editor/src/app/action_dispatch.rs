@@ -111,6 +111,16 @@ impl Editor {
             }
         }
 
+        // **A page's window is not a buffer's viewport.** Scrolling a pane
+        // that shows a described page has to move the tree's own window;
+        // `Event::Scroll` would move the mirror's, which nothing draws. Every
+        // other action goes on to mean what it always meant — this is the one
+        // place a page reinterprets the editor's vocabulary, and it
+        // reinterprets two entries of it.
+        if self.page_takes_action(&action) {
+            return Ok(());
+        }
+
         match action {
             Action::Quit => self.quit(),
             Action::ForceQuit => {

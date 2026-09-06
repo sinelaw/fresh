@@ -151,6 +151,22 @@ pub struct WidgetPanelView {
     pub focus_key: Option<String>,
     /// The focused widget is a Text input (clipboard chords belong to it).
     pub focused_widget_is_text: bool,
+    /// The panel is a *page* (`WidgetPanelOptions::page`): a described
+    /// document in a pane, over a mirror buffer whose caret is where the
+    /// reader is.
+    ///
+    /// **A page binds no motion.** Its caret is the buffer's, so the arrows,
+    /// the page keys and `Home`/`End` are the editor's own — resolved once,
+    /// against the user's own keymap, by the machinery every other pane uses
+    /// — and the page reads where the caret ended up (`page_follows_caret`).
+    /// A page that named those keys itself re-implemented a fraction of that
+    /// vocabulary and swallowed the rest: `Ctrl+PageDown` stopped switching
+    /// tabs and `Ctrl+Up` stopped scrolling, because a claim is a claim
+    /// whatever the modifier.
+    ///
+    /// A focused text field is the exception, and the reason is the same one:
+    /// there the keys are the *field's*, and nothing above it wants them.
+    pub page: bool,
 }
 
 /// What a key aimed at a floating widget panel means. The Editor executes
@@ -219,6 +235,11 @@ pub fn widget_panel_key(
         return CancelAndUnmount;
     }
 
+    // **Reading, not editing a field**: a page whose caret is the buffer's,
+    // with no text widget holding the keyboard. Every motion key belongs to
+    // the editor there. See [`WidgetPanelView::page`].
+    let reader = view.page && !view.focused_widget_is_text;
+
     let key_name: Option<String> = match code {
         KeyCode::Tab => Some(
             if modifiers.contains(KeyModifiers::SHIFT) {
@@ -240,8 +261,14 @@ pub fn widget_panel_key(
             let ctrl = modifiers.contains(KeyModifiers::CONTROL);
             Some(format!("{}{base}", if ctrl { "C-" } else { "" }))
         }
-        KeyCode::PageUp => Some("PageUp".to_string()),
-        KeyCode::PageDown => Some("PageDown".to_string()),
+        KeyCode::PageUp | KeyCode::PageDown if !reader => Some(
+            if code == KeyCode::PageUp {
+                "PageUp"
+            } else {
+                "PageDown"
+            }
+            .to_string(),
+        ),
         // The caret keys carry their modifiers: a field's selection is
         // extended by Shift and its words are stepped by Ctrl, and the
         // kinds name those `S-Left`, `C-Right`, `C-S-Left` (`Text::on_key`).
@@ -250,7 +277,9 @@ pub fn widget_panel_key(
         | KeyCode::Left
         | KeyCode::Right
         | KeyCode::Up
-        | KeyCode::Down => {
+        | KeyCode::Down
+            if !reader =>
+        {
             let base = match code {
                 KeyCode::Home => "Home",
                 KeyCode::End => "End",
@@ -668,6 +697,7 @@ mod tests {
             pane: false,
             focus_key: Some("sessions".to_string()),
             focused_widget_is_text: false,
+            page: false,
         };
         assert_eq!(
             widget_panel_key(&view(true), &kb, KeyCode::Esc, KeyModifiers::NONE),
@@ -687,6 +717,7 @@ mod tests {
             pane: false,
             focus_key: None,
             focused_widget_is_text: false,
+            page: false,
         };
         let ctrl_p = (KeyCode::Char('p'), KeyModifiers::CONTROL);
         // A centered modal must not leak Ctrl+P to the palette…
@@ -712,6 +743,7 @@ mod tests {
             pane: true,
             focus_key: Some("lst".to_string()),
             focused_widget_is_text: false,
+            page: false,
         };
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Down, KeyModifiers::NONE),
@@ -948,6 +980,7 @@ mod tests {
             pane: false,
             focus_key: Some("path".to_string()),
             focused_widget_is_text: true,
+            page: false,
         };
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Char('v'), KeyModifiers::CONTROL),
