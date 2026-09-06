@@ -5,6 +5,7 @@
 use crate::services::process_hidden::HideWindow;
 use crate::services::remote::channel::AgentChannel;
 use crate::services::remote::protocol::AgentResponse;
+use crate::services::remote::transport::agent_bootstrap_pycode;
 use crate::services::remote::AGENT_SOURCE;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -534,15 +535,6 @@ async fn read_ssh_stderr(stderr: Option<ChildStderr>) -> Option<String> {
         .map(str::to_string)
 }
 
-// factored out to test
-fn agent_bootstrap_python() -> String {
-    format!(
-        // read exactly N bytes, text-mode stdin can miscount CRLF
-        "import sys;exec(sys.stdin.buffer.read({}).decode('utf-8'))",
-        AGENT_SOURCE.len()
-    )
-}
-
 /// Append the shared `ssh` flags for a non-interactive agent carrier, the host
 /// target, and the python agent bootstrap onto `cmd`.
 ///
@@ -573,7 +565,7 @@ fn configure_agent_carrier_ssh(cmd: &mut Command, params: &ConnectionParams) {
     // the remote: python reads exactly N bytes (the agent source), execs it, and
     // the agent then keeps reading stdin for protocol messages. ssh runs the
     // remote command through a shell, hence the double quotes.
-    cmd.arg(format!("python3 -u -c \"{}\"", agent_bootstrap_python()));
+    cmd.arg(format!("python3 -u -c \"{}\"", agent_bootstrap_pycode()));
 }
 
 /// Detach a carrier `ssh` child from the editor's controlling terminal.
@@ -936,7 +928,7 @@ mod tests {
         // the ready line must not require EOF.
         let mut child = StdCommand::new("py.exe")
             .args(["-3", "-u", "-c"])
-            .arg(agent_bootstrap_python())
+            .arg(agent_bootstrap_pycode())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
