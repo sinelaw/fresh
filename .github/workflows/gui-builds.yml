@@ -38,7 +38,7 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -267,7 +267,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       FRESH_VERSION: ${{ inputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 

@@ -22,7 +22,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
