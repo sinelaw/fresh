@@ -2017,7 +2017,21 @@ fn handle_vertical_down(
         let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
         iter.next_line(); // consume current line
 
-        if let Some((next_line_start, next_line_content)) = iter.next_line() {
+        // `next_line` yields an over-long logical line in `MAX_LINE_BYTES`
+        // pieces, so on a file that is one enormous line the "next line" is the
+        // next read *piece* of the line the cursor is already on — a byte
+        // behind it. Taking it threw the cursor back to byte 100,000 (or
+        // 200,000) from the last row, and the view followed, so walking down
+        // such a file looped instead of stopping at the end (issue #1806).
+        //
+        // A genuine next line always starts after the cursor, which is the one
+        // thing every caller of this can rely on; anything else is this line
+        // continuing, and there is no line below.
+        let next = iter
+            .next_line()
+            .filter(|(next_line_start, _)| *next_line_start > from_pos);
+
+        if let Some((next_line_start, next_line_content)) = next {
             let next_line_text = next_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(next_line_text, goal_visual_column);
             let mut new_pos = next_line_start + byte_offset;
