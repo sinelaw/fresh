@@ -312,3 +312,55 @@ fn showing_the_explorer_opens_a_section_the_reader_collapsed() {
         h.screen_to_string()
     );
 }
+
+/// The same claim for a plugin section: focusing one the reader collapsed
+/// opens it, rather than leaving the keyboard under a header with no rows.
+///
+/// `Focus Next Sidebar Section` cycles explorer → plugin sections → editor,
+/// so the second step lands on the collapsed section — and before the fix it
+/// landed there invisibly: the header wore the focus accent and every key
+/// went to a panel the reader could not see.
+#[test]
+fn focusing_a_plugin_section_opens_one_the_reader_collapsed() {
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project = temp_dir.path().join("project");
+    fs::create_dir(&project).unwrap();
+    fs::write(project.join("a.txt"), "hello\n").unwrap();
+    install_plugin(&project);
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // An inside cell of a header row, clear of the chevron and the `×`.
+    let x = 6u16;
+
+    let mut h = launch(&project, &dir_context);
+    h.editor_mut()
+        .restore_active_window_on_launch(false)
+        .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+    run_palette_command(&mut h, "SidebarTest: Mount");
+    h.wait_until(|h| h.screen_to_string().contains("alpha"))
+        .unwrap();
+
+    // **Collapse the plugin's section** with a click on its header.
+    let header = row_of(&h, "▼ Outline").expect("the section's header");
+    h.mouse_click(x, header).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("▶ Outline"))
+        .unwrap();
+    assert!(row_of(&h, "alpha").is_none(), "the body went with it");
+
+    // **Cycle the keyboard into it**: explorer first, then the section,
+    // which opens rather than take the keys out of sight.
+    run_palette_command(&mut h, "Focus Next Sidebar Section");
+    h.wait_until(|h| h.screen_to_string().contains("▼ File Explorer"))
+        .unwrap();
+    run_palette_command(&mut h, "Focus Next Sidebar Section");
+    h.wait_until(|h| h.screen_to_string().contains("alpha"))
+        .unwrap();
+    assert!(
+        row_of(&h, "▼ Outline").is_some(),
+        "the focused section is open\n{}",
+        h.screen_to_string()
+    );
+}
