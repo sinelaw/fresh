@@ -6,6 +6,19 @@ use anyhow::Result as AnyhowResult;
 
 use super::{ChromeComponent, Editor};
 
+/// Per-file ceiling on the blob `git diff` will expand, as a top-level `git`
+/// override.
+///
+/// `--numstat` prints two numbers, but git still has to diff the blob in full
+/// to produce them, and this runs on hover. Above the threshold git reports
+/// `-`/`-` instead — which the caller already renders as "Binary file
+/// changed" — for the cost of reading the blob's size.
+///
+/// This is the same cap the plugins pin in `plugins/lib/git_repo.ts`
+/// (`BIG_FILE_THRESHOLD`), which documents the reasoning behind the value.
+/// The two runtimes cannot share a constant; keep them in sync.
+const BIG_FILE_ARGS: [&str; 2] = ["-c", "core.bigFileThreshold=1m"];
+
 pub(crate) struct FileExplorer;
 
 impl ChromeComponent for FileExplorer {
@@ -326,6 +339,7 @@ impl Editor {
 
         // Run git diff --numstat for the file
         let output = Command::new("git")
+            .args(BIG_FILE_ARGS)
             .args(["diff", "--numstat", "--"])
             .arg(path)
             .current_dir(self.working_dir())
@@ -360,6 +374,7 @@ impl Editor {
 
         // Also check staged changes
         let staged_output = Command::new("git")
+            .args(BIG_FILE_ARGS)
             .args(["diff", "--numstat", "--cached", "--"])
             .arg(path)
             .current_dir(self.working_dir())

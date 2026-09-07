@@ -127,28 +127,46 @@ const DIFF_FORMAT_CONFIG = [
 ];
 
 /**
- * Per-file ceiling on what a patch-producing `git` call is allowed to expand.
+ * Per-file ceiling on the blob any `git diff` in the editor will expand.
  *
  * `core.bigFileThreshold` is git's own "this blob is not worth treating as
- * text" switch: above it `git diff` emits the one-line `Binary files ...
- * differ` in place of a patch. Git's default is 512 MiB, which is a sane
- * ceiling for a batch tool writing to a pipe and a ruinous one for a panel
- * that has to carry every byte across the plugin boundary, parse it into
- * hunks, and lay it out as styled rows — a cost linear in the patch, paid on
- * the editor's own thread.
+ * text" switch: above it git emits the one-line `Binary files ... differ` in
+ * place of a patch, and reports `-`/`-` in `--numstat`. Git's default is 512
+ * MiB — a sane ceiling for a batch tool writing to a pipe, and a ruinous one
+ * for an editor, where the patch has to be carried across the plugin
+ * boundary, parsed into hunks, and laid out as styled rows, all at a cost
+ * linear in the patch and all on the editor's own thread.
  *
  * So the threshold *is* the worst-case stall, and it has to be set from what
  * a reader can use rather than from what git can produce. A single untracked
  * 60 MiB file is a 60 MiB patch; on the review watch's timer that is a
- * multi-second freeze every tick with nothing on screen saying why.
- * 4 MiB is around 100k lines: already far past what anyone reads hunk by
- * hunk, and still ~100x the largest file written by hand.
+ * multi-second freeze every tick with nothing on screen saying why. 1 MiB is
+ * already around 25k lines — well past what anyone reads hunk by hunk, and
+ * far past any file written by hand.
  *
  * This caps the *rendering*, not the review: the file keeps its row in the
  * file list and its header in the stream, carrying the binary-shaped block
  * git hands back instead of a patch nobody would have read.
  */
-const BIG_FILE_THRESHOLD = "4m";
+export const BIG_FILE_THRESHOLD = "1m";
+
+/**
+ * The threshold as a top-level `git` override, for the `git diff` callers that
+ * do not go through `diffArgs`.
+ *
+ * `diffArgs` covers everything that *parses a patch*, but it is not the whole
+ * exposure: `--numstat` and `--shortstat` produce almost no output and still
+ * make git diff the blob to get there, so an uncapped one stalls just as long
+ * for a summary line nobody could have read anyway. Every `git diff` the
+ * editor runs takes the cap, whatever it asks git to print.
+ *
+ * The Rust side runs its own `git diff --numstat` for the file explorer's
+ * status tooltip (`app/chrome/file_explorer.rs`) and cannot import this;
+ * it pins the same value, and the two must stay in sync.
+ */
+export const BIG_FILE_ARGS: readonly string[] = [
+  "-c", `core.bigFileThreshold=${BIG_FILE_THRESHOLD}`,
+];
 
 /**
  * Build the `git` argv for a patch-producing sub-command whose stdout a plugin
@@ -169,7 +187,7 @@ export function diffArgs(subcommand: string[], ...rest: string[]): string[] {
     // the tick reaches for.
     "--no-optional-locks",
     ...DIFF_FORMAT_CONFIG,
-    "-c", `core.bigFileThreshold=${BIG_FILE_THRESHOLD}`,
+    ...BIG_FILE_ARGS,
     ...subcommand,
     "--no-ext-diff",
     "--no-textconv",

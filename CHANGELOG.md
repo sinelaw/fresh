@@ -27,7 +27,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * Review Diff follows the working tree and no longer stacks a duplicate panel on re-run (#3126, reported by @asukaminato0721)
     * Review Diff's files sidebar scrolls properly on large reviews, shows full filenames, and a click moves the highlight and keyboard focus together (#3063, #3188)
     * Review Diff, Git Log & Side-by-Side Diff parse `git`'s output correctly under more git configs - quoted paths, blank context lines, `diff.relative`, submodules, signed commits (#3199)
-    * Review Diff no longer freezes on a huge file - an untracked or committed file over 4 MiB is listed and marked instead of being expanded into a multi-million-line patch, and binary files now appear in a range review instead of vanishing from it
+    * Review Diff no longer freezes on a huge file - an untracked or committed file over 1 MiB is listed and marked instead of being expanded into a multi-million-line patch, and binary files now appear in a range review instead of vanishing from it. Every `git diff` the editor runs takes the same cap, so the orchestrator's session poll and the file explorer's status tooltip no longer diff a multi-megabyte blob in full either
 * **Multi-cursor editing**
     * A keystroke that only moves the cursor no longer vanishes, and a plain click collapses cursors back to one (#3125, reported by @X-Ryl669)
     * A skip-over now lands past its delimiter even when another cursor's edit shifts it (#3166)

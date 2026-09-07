@@ -27,7 +27,7 @@ Inside a review:
 - **`n` / `p`** jump to the next and previous hunk.
 - Stage, unstage, or discard the hunk, file, or a line-level visual selection on the cursor row.
 - **Big changesets** — a range spanning a hundred commits is laid out in full, like any other review; scrolling and hunk navigation cover the whole diff.
-- **Very large files** — a single file over 4 MiB is listed and marked `(binary or too large to diff)` rather than expanded. A multi-million-line patch is not something a review reads, and rendering one stalls the editor; open the file itself to see it. Binary files are marked the same way.
+- **Very large files** — a single file over 1 MiB is listed and marked `(binary or too large to diff)` rather than expanded. A patch that long is not something a review reads, and rendering one stalls the editor; open the file itself to see it. Binary files are marked the same way. The cap applies to every `git diff` the editor runs, so no feature stalls on a huge blob.
 - **Comments** — leave a line comment or a review-wide note. Comments persist per repository across editor restarts, so you can close the editor mid-review and pick up where you left off. A dedicated Comments panel lets you jump through them, edit, delete, or export to Markdown.
 
 ## Git Log

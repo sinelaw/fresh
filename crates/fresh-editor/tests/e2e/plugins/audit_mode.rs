@@ -1475,12 +1475,12 @@ fn test_review_diff_caps_oversized_untracked_file() {
     repo.git_add_all();
     repo.git_commit("Initial commit");
 
-    // Comfortably over the 4 MiB threshold, and plain text — so nothing but
+    // Comfortably over the 1 MiB threshold, and plain text — so nothing but
     // the cap keeps git from emitting a patch for it. The marker is what a
     // patch would have put on screen.
     let big_path = repo.path.join("generated_dump.txt");
-    let mut big = String::with_capacity(6 * 1024 * 1024);
-    while big.len() < 6 * 1024 * 1024 {
+    let mut big = String::with_capacity(3 * 1024 * 1024);
+    while big.len() < 3 * 1024 * 1024 {
         big.push_str("UNIQUEMARKERROW filler filler filler filler filler\n");
     }
     fs::write(&big_path, &big).expect("Failed to write oversized file");
