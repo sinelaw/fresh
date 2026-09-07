@@ -10,10 +10,17 @@
 //!    window's preserve list, deleting the background workspace's
 //!    auto-recovery files. The edit was unrecoverable on the next start, and
 //!    the user was never warned at any point.
+//!
+//! Two more places had the same active-window blind spot and the same
+//! consequence, covered at the bottom of this file: the periodic
+//! auto-recovery save (so a *crash* lost a background workspace's edits even
+//! though a clean exit no longer does), and `close_window`, which drops a
+//! workspace's buffers without asking about or preserving what they hold.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use fresh_core::WindowId;
 use std::path::{Path, PathBuf};
 
 /// Recovery entries (`<id>.meta.json`) sitting in `dir`.
@@ -35,10 +42,13 @@ fn recovery_entry_ids(dir: &Path) -> Vec<String> {
 /// Harness with a dirty, file-backed buffer in the starting workspace and a
 /// second, clean workspace active — the exact state of the bug report.
 ///
-/// Returns the harness, the dirty file's path, and the recovery directory the
+/// Returns the harness, the dirty file's path, the recovery directory the
 /// editor is actually writing to (captured *before* the workspace switch,
-/// since the store is scoped to the launch working directory).
-fn two_workspaces_with_dirty_background(config: Config) -> (EditorTestHarness, PathBuf, PathBuf) {
+/// since the store is scoped to the launch working directory), and the id of
+/// the now-background workspace holding the dirty buffer.
+fn two_workspaces_with_dirty_background(
+    config: Config,
+) -> (EditorTestHarness, PathBuf, PathBuf, WindowId) {
     let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
     let project_dir = harness.project_dir().unwrap();
 
@@ -49,6 +59,7 @@ fn two_workspaces_with_dirty_background(config: Config) -> (EditorTestHarness, P
     harness.render().unwrap();
 
     let recovery_dir = harness.recovery_dir().unwrap();
+    let dirty_window = harness.editor().active_window_id();
 
     // A second Orchestrator workspace over a different root, with nothing
     // unsaved in it, and make it the active one.
@@ -60,7 +71,7 @@ fn two_workspaces_with_dirty_background(config: Config) -> (EditorTestHarness, P
     harness.editor_mut().set_active_window(other);
     harness.render().unwrap();
 
-    (harness, file_path, recovery_dir)
+    (harness, file_path, recovery_dir, dirty_window)
 }
 
 /// Defect 1: the unsaved-changes prompt must count buffers in *every* open
@@ -69,7 +80,7 @@ fn two_workspaces_with_dirty_background(config: Config) -> (EditorTestHarness, P
 fn quit_from_clean_workspace_prompts_for_dirty_background_workspace() {
     let mut config = Config::default();
     config.editor.hot_exit = true;
-    let (mut harness, _file, _recovery_dir) = two_workspaces_with_dirty_background(config);
+    let (mut harness, _file, _recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
 
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
@@ -92,7 +103,7 @@ fn quit_from_clean_workspace_prompts_for_dirty_background_workspace() {
 fn quit_prompt_counts_dirty_buffers_across_workspaces() {
     let mut config = Config::default();
     config.editor.hot_exit = true;
-    let (mut harness, _file, _recovery_dir) = two_workspaces_with_dirty_background(config);
+    let (mut harness, _file, _recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
 
     // Dirty a second file, this time in the (now active) second workspace.
     let project_dir = harness.project_dir().unwrap();
@@ -118,7 +129,7 @@ fn quit_prompt_counts_dirty_buffers_across_workspaces() {
 fn clean_exit_preserves_recovery_for_dirty_background_workspace() {
     let mut config = Config::default();
     config.editor.hot_exit = true;
-    let (mut harness, file, recovery_dir) = two_workspaces_with_dirty_background(config);
+    let (mut harness, file, recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
 
     // Exit exactly as production does (the "quit, recoverable" outcome).
     harness.shutdown(true).unwrap();
@@ -154,7 +165,7 @@ fn clean_exit_preserves_recovery_for_dirty_background_workspace() {
 fn save_and_quit_writes_background_workspace_buffers_to_disk() {
     let mut config = Config::default();
     config.editor.hot_exit = true;
-    let (mut harness, file, recovery_dir) = two_workspaces_with_dirty_background(config);
+    let (mut harness, file, recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
 
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
@@ -192,7 +203,7 @@ fn save_and_quit_writes_background_workspace_buffers_to_disk() {
 fn discard_and_quit_drops_background_workspace_recovery() {
     let mut config = Config::default();
     config.editor.hot_exit = true;
-    let (mut harness, file, recovery_dir) = two_workspaces_with_dirty_background(config);
+    let (mut harness, file, recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
 
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
@@ -249,5 +260,81 @@ fn quit_still_exits_immediately_when_no_workspace_is_dirty() {
     assert!(
         harness.should_quit(),
         "with nothing unsaved anywhere, Ctrl+Q must still exit without a prompt"
+    );
+}
+
+/// The periodic auto-recovery save has to sweep every workspace. It only ever
+/// ran against the active window, so a buffer edited and then left behind had
+/// recovery data no newer than the last tick it was on screen for — and a
+/// crash, which gets no chance to flush the way a clean exit does, lost
+/// everything typed since.
+#[test]
+fn periodic_recovery_save_covers_background_workspaces() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    // Every call is past the rate limit, so one call is one full sweep.
+    config.editor.auto_recovery_save_interval_secs = 0;
+    let (mut harness, _file, recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
+
+    // No shutdown, no quit: just the tick the event loop runs every frame.
+    harness
+        .editor_mut()
+        .auto_recovery_save_dirty_buffers()
+        .unwrap();
+
+    let ids = recovery_entry_ids(&recovery_dir);
+    assert_eq!(
+        ids.len(),
+        1,
+        "the background workspace's dirty buffer must be swept into recovery \
+         without waiting for a clean exit; found {ids:?}"
+    );
+    let saved = std::fs::read_to_string(recovery_dir.join(format!("{}.chunk.0", ids[0]))).unwrap();
+    assert!(
+        saved.contains("DIRTY-EDIT"),
+        "the swept chunk must hold the unsaved edit, got {saved:?}"
+    );
+}
+
+/// Closing a workspace drops its buffers outright — nothing on that path asks
+/// the user about unsaved changes. The content must at least be flushed to
+/// recovery on the way out, and must then survive the exit that follows: with
+/// its buffers gone the entry is one no live buffer backs, which is exactly
+/// the case `end_session_accounting` refuses to clean up.
+#[test]
+fn closing_a_workspace_preserves_its_unsaved_content() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    let (mut harness, _file, recovery_dir, dirty_window) =
+        two_workspaces_with_dirty_background(config);
+
+    // The dirty workspace is the one we started in; the clean second one is
+    // active (close_window refuses to close the active window).
+    assert!(
+        harness.editor_mut().close_window(dirty_window),
+        "closing the non-active workspace must succeed"
+    );
+
+    let ids = recovery_entry_ids(&recovery_dir);
+    assert_eq!(
+        ids.len(),
+        1,
+        "closing a workspace must flush its unsaved buffers to recovery; found {ids:?}"
+    );
+    let chunk = recovery_dir.join(format!("{}.chunk.0", ids[0]));
+    assert!(
+        std::fs::read_to_string(&chunk)
+            .unwrap()
+            .contains("DIRTY-EDIT"),
+        "the flushed chunk must hold the unsaved edit"
+    );
+
+    // And the exit that follows must not undo that: no live buffer backs the
+    // entry any more, so it is unaccounted for and kept.
+    harness.shutdown(true).unwrap();
+    assert_eq!(
+        recovery_entry_ids(&recovery_dir),
+        ids,
+        "a closed workspace's flushed content must survive the exit too"
     );
 }

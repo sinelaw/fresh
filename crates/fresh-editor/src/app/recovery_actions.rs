@@ -10,6 +10,7 @@
 use anyhow::Result as AnyhowResult;
 
 use crate::model::event::BufferId;
+use fresh_core::WindowId;
 
 use super::Editor;
 
@@ -77,6 +78,39 @@ impl Editor {
             .lock()
             .unwrap()
             .end_session_accounting(&preserve_ids, &known_ids)?)
+    }
+
+    /// Flush every modified buffer in `window_id` to recovery storage.
+    ///
+    /// Called just before a workspace is dropped. `close_window` tears the
+    /// `Window` down with its buffers and asks nothing about unsaved changes —
+    /// the confirmation belongs to the Orchestrator UI that drives the close
+    /// (Delete / Archive / Kill), not to a function the plugin calls after the
+    /// user has already decided. What *is* this layer's job is making sure the
+    /// content is somewhere recoverable before it goes: without this the
+    /// buffer's most recent edits exist nowhere but memory, and closing the
+    /// workspace destroys them (issue #3189). Afterwards the entry is one no
+    /// live buffer backs, which `end_session_accounting` will preserve rather
+    /// than clean up, so it survives to the next start.
+    ///
+    /// Gated on `hot_exit` to match [`Editor::end_recovery_session`]: with hot
+    /// exit off, recovery is a crash net that a clean exit clears, and writing
+    /// content nothing will offer back would only leave litter.
+    ///
+    /// Returns the number of buffers written. Never fails the close: a
+    /// recovery-write error is logged by the caller.
+    pub(crate) fn flush_window_recovery(&mut self, window_id: WindowId) -> AnyhowResult<usize> {
+        if !self.config.editor.hot_exit || !self.windows.contains_key(&window_id) {
+            return Ok(0);
+        }
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            for (_, state) in &mut window.buffers {
+                if state.buffer.is_modified() {
+                    state.buffer.set_recovery_pending(true);
+                }
+            }
+        }
+        self.with_window_retargeted(window_id, |editor| editor.save_pending_recovery_buffers())
     }
 
     /// Collect recovery IDs for all buffers that should be preserved across
@@ -474,6 +508,20 @@ impl Editor {
 
     /// Perform auto-recovery-save for all modified buffers if needed.
     /// Called frequently (every frame); rate-limited by `auto_recovery_save_interval_secs`.
+    ///
+    /// Sweeps **every** open workspace, not just the active one. A buffer
+    /// edited in one workspace and then left behind for another still holds
+    /// unsaved content, and an active-window-only sweep left it with recovery
+    /// data no newer than the last tick it was on screen for — so a crash
+    /// (where, unlike a clean exit, there is no chance to flush) lost
+    /// everything typed since (issue #3189). The sweep is close to free: a
+    /// background window's buffers cannot become `recovery_pending` again
+    /// without edits, and edits only happen while a window is active, so each
+    /// one is written once after the user switches away and then skipped.
+    ///
+    /// The rate limit still reads the active window's clock — one editor-wide
+    /// tick, not one per workspace — and every window's stamp is advanced with
+    /// it so a later switch doesn't re-tick immediately on a stale timer.
     pub fn auto_recovery_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {
         if !self.recovery_service.lock().unwrap().is_enabled() {
             return Ok(0);
@@ -490,8 +538,16 @@ impl Editor {
             return Ok(0);
         }
 
-        let saved = self.save_pending_recovery_buffers()?;
-        self.active_window_mut().last_auto_recovery_save = self.time_source.now();
+        let mut saved = 0;
+        for window_id in self.window_ids_sorted() {
+            saved += self.with_window_retargeted(window_id, |editor| {
+                editor.save_pending_recovery_buffers()
+            })?;
+        }
+        let now = self.time_source.now();
+        for window in self.windows.values_mut() {
+            window.last_auto_recovery_save = now;
+        }
         Ok(saved)
     }
 

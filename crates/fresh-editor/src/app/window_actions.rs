@@ -1435,6 +1435,18 @@ impl crate::app::Editor {
             );
             return false;
         }
+        // Last chance to keep this workspace's unsaved work: its buffers are
+        // dropped with the window a line below, and nothing on this path asks
+        // the user about them (issue #3189). See `flush_window_recovery`.
+        match self.flush_window_recovery(id) {
+            Ok(n) if n > 0 => {
+                tracing::info!(
+                    "close_window: flushed {n} unsaved buffer(s) of window {id} to recovery"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("close_window: recovery flush for window {id} failed: {e}"),
+        }
         if self.windows.remove(&id).is_none() {
             tracing::warn!("close_window: unknown session id {id}");
             return false;
