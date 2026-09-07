@@ -374,6 +374,7 @@ mod tests {
             has_children,
             checked: None,
             extra_lines: Vec::new(),
+            window_anchor: None,
         }
     }
 

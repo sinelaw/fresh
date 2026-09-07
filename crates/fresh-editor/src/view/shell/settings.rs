@@ -935,6 +935,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
         let cx = |surface: &Ink| super::widgets::Ctx {
             slot: super::widgets::Slot::Settings,
             states: &states,
+            h_pan: super::widgets::no_pan(),
             focus_key: focus_key.clone(),
             keyboard: true,
             hovered_key: None,

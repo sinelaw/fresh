@@ -599,6 +599,12 @@ impl Editor {
                     .cloned()
                     .unwrap_or_default(),
             ),
+            h_pan: Rc::new(
+                self.widget_registry
+                    .get(&key)
+                    .map(|p| p.h_pan.clone())
+                    .unwrap_or_default(),
+            ),
             focus_key: self
                 .widget_registry
                 .focus_key(&key)

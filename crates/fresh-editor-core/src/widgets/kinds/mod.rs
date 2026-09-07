@@ -139,6 +139,13 @@ pub struct Viewport {
     /// How many terminal rows the window is — the unit a `Tree`'s offset
     /// moves in.
     pub rows: u32,
+    /// How many display columns wide the window is.
+    ///
+    /// The horizontal counterpart to `rows`, and there because a sideways
+    /// pan is a question about the width: how far a row can travel before it
+    /// is showing its own end depends on how much of it is on screen. Zero
+    /// when nothing has laid the widget out yet — the spec alone cannot say.
+    pub cols: u32,
 }
 
 impl Viewport {
@@ -172,6 +179,8 @@ impl Viewport {
         Viewport {
             rows,
             items: (rows / spec_item_rows(spec)).max(1),
+            // The spec says nothing about width; the first paint will.
+            cols: 0,
         }
     }
 }

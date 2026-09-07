@@ -3365,3 +3365,391 @@ fn test_search_replace_unlocatable_pattern_renders_line_head() {
          left-hand elision. Row:\n{row}"
     );
 }
+
+/// Drive the panel to a state where the results tree has focus and the
+/// selection sits on a match row (not the file row above it).
+///
+/// The panel puts focus on the matches tree once a search settles; `Down`
+/// then moves off the file node onto its first child. Every panning test
+/// starts here, because a pan is addressed to the focused widget.
+fn focus_first_match_row(harness: &mut EditorTestHarness, pattern: &str) {
+    open_search_replace_via_palette(harness);
+    harness.type_text(pattern).unwrap();
+    wait_for_search_finished(harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("long.txt:1"))
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
+
+/// Press Shift+`code` `n` times, rendering after each — one press is one
+/// pan step, and the steps accumulate.
+fn press_shift(harness: &mut EditorTestHarness, code: KeyCode, n: usize) {
+    for _ in 0..n {
+        harness.send_key(code, KeyModifiers::SHIFT).unwrap();
+        harness.render().unwrap();
+    }
+}
+
+fn row_containing(harness: &EditorTestHarness, needle: &str) -> String {
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .find(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("no row containing {needle:?}. Screen:\n{screen}"))
+        .to_string()
+}
+
+/// A long line with a distinct marker at each end and the match far along
+/// it, so "which part of the line is on screen" is answerable from the
+/// rendered row alone.
+///
+/// Filler alone cannot distinguish the head of a line from a slice of the
+/// filler — that is how a test on #3154 passed against the bug it targeted —
+/// so each end carries a marker that appears nowhere else.
+fn write_panning_fixture(project_root: &std::path::Path) {
+    let line = format!(
+        "HEADMARK {}NEEDLE_MARKER{}TAILMARK{}",
+        "x".repeat(250),
+        "y".repeat(100),
+        "z".repeat(30),
+    );
+    fs::write(project_root.join("long.txt"), format!("{line}\n")).unwrap();
+    // A short row, to hold the "a row that fits never moves" half.
+    fs::write(project_root.join("short.txt"), "a NEEDLE_MARKER here\n").unwrap();
+}
+
+fn panning_harness(project_root: &std::path::Path) -> EditorTestHarness {
+    // Tall enough that every fixture's rows are on screen at once: these
+    // tests read the rows, so none of them may be scrolled off.
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        44,
+        Config::default(),
+        project_root.to_path_buf(),
+    )
+    .unwrap();
+    harness.open_file(&project_root.join("short.txt")).unwrap();
+    harness.render().unwrap();
+    harness
+}
+
+/// Shift+Left walks back through the head of a long line — the part that no
+/// key could reach before, because the row the host received had already been
+/// cut to the panel's width around the match.
+#[test]
+fn test_search_replace_pan_left_reaches_the_line_head() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    let mut harness = panning_harness(&project_root);
+
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+
+    // The premise: at rest the row is windowed onto its match, so the head of
+    // the line is NOT on screen. Without this the test could pass vacuously
+    // on a build that never windowed at all.
+    let rested = row_containing(&harness, "long.txt:1");
+    assert!(
+        rested.contains("NEEDLE_MARKER"),
+        "the row should rest on its own match. Row:\n{rested}"
+    );
+    assert!(
+        !rested.contains("HEADMARK"),
+        "the head of the line should be off screen at rest, or this test \
+         cannot tell panning from doing nothing. Row:\n{rested}"
+    );
+
+    press_shift(&mut harness, KeyCode::Left, 30);
+
+    let panned = row_containing(&harness, "long.txt:1");
+    assert!(
+        panned.contains("HEADMARK"),
+        "Shift+Left did not reach the head of the line. Row:\n{panned}\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Shift+Right runs to the tail, past everything the resting window showed.
+#[test]
+fn test_search_replace_pan_right_reaches_the_line_tail() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    let mut harness = panning_harness(&project_root);
+
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+    let rested = row_containing(&harness, "long.txt:1");
+    assert!(
+        !rested.contains("TAILMARK"),
+        "the tail should be off screen at rest. Row:\n{rested}"
+    );
+
+    press_shift(&mut harness, KeyCode::Right, 12);
+
+    let panned = row_containing(&harness, "long.txt:1");
+    assert!(
+        panned.contains("TAILMARK"),
+        "Shift+Right did not reach the tail of the line. Row:\n{panned}\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Shift+Home returns every row to the window its own content asks for, and
+/// Shift+End takes them to their tails.
+#[test]
+fn test_search_replace_pan_home_and_end() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    let mut harness = panning_harness(&project_root);
+
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+
+    press_shift(&mut harness, KeyCode::Left, 30);
+    assert!(
+        row_containing(&harness, "long.txt:1").contains("HEADMARK"),
+        "precondition: panned to the head"
+    );
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    let homed = row_containing(&harness, "long.txt:1");
+    assert!(
+        homed.contains("NEEDLE_MARKER") && !homed.contains("HEADMARK"),
+        "Shift+Home should rest the row back on its own match, not on \
+         column zero. Row:\n{homed}"
+    );
+
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
+    harness.render().unwrap();
+    let ended = row_containing(&harness, "long.txt:1");
+    assert!(
+        ended.contains("TAILMARK"),
+        "Shift+End should reach the tail. Row:\n{ended}"
+    );
+}
+
+/// Shift+End is walkable back with Shift+Left, in a number of presses the
+/// line's own length explains.
+///
+/// The stored pan is what the *next* keystroke moves from, so "jump to the
+/// end" cannot leave a number no row can reach: it did — `i32::MAX / 4` — and
+/// eight columns a press put the head of the line sixty-seven million presses
+/// away, with `Shift+Home` the only way out.
+#[test]
+fn test_search_replace_pan_end_is_walkable_back() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    let mut harness = panning_harness(&project_root);
+
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
+    harness.render().unwrap();
+    assert!(
+        row_containing(&harness, "long.txt:1").contains("TAILMARK"),
+        "precondition: panned to the tail"
+    );
+
+    // **One press, not sixty.** The stored pan is held to what the paint can
+    // honour, so `Shift+End` lands *on* the tail rather than past it and the
+    // very next `Shift+Left` moves the row. Asserting on the first press is
+    // what makes this a test of the bound rather than of arithmetic: an
+    // over-estimate of any size fails here, and the earlier one was 8 presses
+    // wide on this fixture.
+    let ended = row_containing(&harness, "long.txt:1");
+    press_shift(&mut harness, KeyCode::Left, 1);
+    assert_ne!(
+        row_containing(&harness, "long.txt:1"),
+        ended,
+        "the first Shift+Left after Shift+End must move the row; the pan \
+         stored by Shift+End is past anything the row can show. Row:\n{ended}"
+    );
+
+    // And the head is still reachable: the bound is a clamp on the stored
+    // value, not a shorter leash.
+    press_shift(&mut harness, KeyCode::Left, 60);
+    let panned = row_containing(&harness, "long.txt:1");
+    assert!(
+        panned.contains("HEADMARK"),
+        "Shift+Left no longer reaches the head of the line. Row:\n{panned}\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The row's `path:line` is pinned: it is which match the row *is*, and rows
+/// that panned it away could not be told apart.
+///
+/// A row that fits the panel is untouched by the same keystrokes.
+#[test]
+fn test_search_replace_pan_pins_the_location_and_leaves_short_rows_alone() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    let mut harness = panning_harness(&project_root);
+
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+    let short_before = row_containing(&harness, "short.txt:1");
+
+    press_shift(&mut harness, KeyCode::Right, 12);
+
+    let long_row = row_containing(&harness, "long.txt:1");
+    assert!(
+        long_row.contains("TAILMARK"),
+        "precondition: the long row panned. Row:\n{long_row}"
+    );
+    // `long.txt:1` is still there — `row_containing` found the row by it —
+    // and it is still at the head of the row rather than somewhere in the
+    // middle of the panned content.
+    let body = long_row.trim_start().trim_start_matches("[v] ");
+    assert!(
+        body.starts_with("long.txt:1"),
+        "the row's location should stay pinned at the head while the \
+         context slides under it. Row:\n{long_row}"
+    );
+
+    assert_eq!(
+        row_containing(&harness, "short.txt:1"),
+        short_before,
+        "a row that fits the panel must not move when the tree pans"
+    );
+}
+
+/// A wide-character row shows its match and stays inside the panel.
+///
+/// This is the case an ASCII-only fixture cannot catch: the width accounting
+/// counted codepoints on both sides while the screen counts columns, so 100
+/// CJK characters measured as 100 and drew as 200 — the row overflowed the
+/// panel and the terminal cut it, taking the match off the right edge. That
+/// is the #1580 symptom, and it survived the row-windowing fix.
+#[test]
+fn test_search_replace_wide_char_row_is_fitted_to_the_panel() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    // 60 wide characters are 60 codepoints and **120 columns**. That gap is
+    // the whole test: a budget counted in codepoints sees a match ending at
+    // codepoint 73 and concludes the head of the line fits, so it head-
+    // truncates — putting the match at column 142 of a 120-column panel,
+    // where nothing can be read and nothing could scroll to it. Counted in
+    // columns the row does not fit, so the window slides onto the match.
+    let wide = format!("{}NEEDLE_MARKER{}", "漢".repeat(60), "y".repeat(200));
+    fs::write(project_root.join("wide.txt"), format!("{wide}\n")).unwrap();
+
+    let mut harness = panning_harness(&project_root);
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+
+    let row = row_containing(&harness, "wide.txt:1");
+    assert!(
+        row.contains("NEEDLE_MARKER"),
+        "a match behind a wide-character prefix is not on screen — the row \
+         was measured in codepoints and drawn in columns, so it was built \
+         wider than the panel and cut. Row:\n{row}"
+    );
+    // And the ASCII row beside it is unaffected, so a failure above is about
+    // width accounting rather than about the search.
+    assert!(
+        row_containing(&harness, "long.txt:1").contains("NEEDLE_MARKER"),
+        "control: the ASCII long-line row still shows its match"
+    );
+}
+
+/// Shift+arrows still extend the selection in the panel's own text fields.
+///
+/// This is the reason the pan chord is routed on the focused widget rather
+/// than bound in the panel's mode: mode bindings resolve ahead of the arm
+/// that extends a widget text selection, so a `S-Left` binding would have
+/// taken the chord from the Search field too. Must pass before *and* after.
+#[test]
+fn test_search_replace_shift_arrow_still_selects_in_the_search_field() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    let mut harness = panning_harness(&project_root);
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("NEEDLE_MARKER").unwrap();
+    wait_for_search_finished(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("long.txt:1"))
+        .unwrap();
+
+    // Focus is on the Search field: Shift+Left selects, and then typing
+    // replaces the selection — which is what makes the selection observable
+    // on screen without inspecting widget state.
+    let rows_before = row_containing(&harness, "long.txt:1");
+    press_shift(&mut harness, KeyCode::Left, 6);
+    harness.type_text("Z").unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("NEEDLE_Z"),
+        "Shift+Left in the Search field should have selected the last six \
+         characters, so typing replaced them. Screen:\n{screen}"
+    );
+    // And the keystrokes went to the field alone: the results tree did not
+    // pan under them. (The rows are re-read from the pre-retype screen, so
+    // this compares like with like.)
+    assert!(
+        !rows_before.contains("TAILMARK"),
+        "precondition: the row was at its resting window. Row:\n{rows_before}"
+    );
+}
+
+/// A pan does not survive a change of subject: a fresh search opens at each
+/// row's resting window rather than wherever the last one was left.
+#[test]
+fn test_search_replace_pan_homes_on_a_new_search() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    write_panning_fixture(&project_root);
+    // A second pattern that also hits the long line, so the row survives the
+    // re-search and the only thing that can differ is where its window rests.
+    let mut harness = panning_harness(&project_root);
+
+    focus_first_match_row(&mut harness, "NEEDLE_MARKER");
+    press_shift(&mut harness, KeyCode::Right, 12);
+    assert!(
+        row_containing(&harness, "long.txt:1").contains("TAILMARK"),
+        "precondition: panned to the tail"
+    );
+
+    // Back to the Search field — the focus ring wraps from the tree to it —
+    // and retype, which replaces the tree's rows.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    for _ in 0.."NEEDLE_MARKER".len() {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness.type_text("HEADMARK").unwrap();
+    // The status line still carries the *previous* search's "Found N
+    // matches", so waiting on that alone would return before this search has
+    // run. Wait for the field to hold the new pattern, then for its results.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search: [HEADMARK"))
+        .unwrap();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("long.txt:1") && !s.contains("short.txt:1")
+        })
+        .unwrap();
+
+    let row = row_containing(&harness, "long.txt:1");
+    assert!(
+        row.contains("HEADMARK") && !row.contains("TAILMARK"),
+        "a new search should open at the new match's resting window, not \
+         where the last search was panned to. Row:\n{row}"
+    );
+}
