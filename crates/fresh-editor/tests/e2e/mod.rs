@@ -128,6 +128,7 @@ pub mod issue_3079_guide_and_tab_marker;
 pub mod issue_3090_angle_brackets_not_rainbow;
 pub mod issue_3148_block_selection_tabs;
 pub mod issue_3150_block_selection_offset;
+pub mod issue_3189_multi_workspace_quit;
 pub mod issue_3192_scrollbar_drag_cursor;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;

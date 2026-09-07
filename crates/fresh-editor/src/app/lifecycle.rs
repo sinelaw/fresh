@@ -3,6 +3,7 @@
 //! piping, and the should_quit confirmation flow that walks modified buffers.
 
 use super::*;
+use fresh_core::WindowId;
 
 impl Editor {
     /// Check if the editor should quit
@@ -258,32 +259,58 @@ impl Editor {
     /// When `auto_save_enabled` is true, file-backed buffers are excluded
     /// (they will be saved to disk on exit).
     fn count_modified_buffers_needing_prompt(&self) -> usize {
+        self.modified_buffers_needing_prompt().len()
+    }
+
+    /// Every `(window, buffer)` pair, across **all** open Orchestrator
+    /// workspaces, whose buffer is modified and has to be resolved before the
+    /// editor may exit.
+    ///
+    /// Cross-window on purpose. `Ctrl+Q` quits the whole editor, not the
+    /// workspace on screen, so a dirty buffer parked in a background
+    /// workspace is exactly as unsaved as one in the foreground. Looking only
+    /// at the active window let a quit from a clean workspace exit with no
+    /// prompt at all while another workspace held unsaved work — and the
+    /// exit path then deleted that workspace's recovery data on the way out,
+    /// so the edit was gone for good (issue #3189).
+    ///
+    /// Buffers that are not user-owned file content — composite, hidden, and
+    /// plugin-virtual buffers — are skipped: they cannot be saved to disk and
+    /// are never written to recovery, so a prompt naming them would offer the
+    /// user nothing to act on. Background workspaces are full of them (dock
+    /// and panel buffers), which is why this filter matters now that every
+    /// window is counted.
+    pub(crate) fn modified_buffers_needing_prompt(&self) -> Vec<(WindowId, BufferId)> {
         let hot_exit = self.config.editor.hot_exit;
         let auto_save = self.config.editor.auto_save_enabled;
 
-        self.windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .iter()
-            .filter(|(buffer_id, state)| {
-                if !state.buffer.is_modified() {
-                    return false;
+        let mut out = Vec::new();
+        for window_id in self.window_ids_sorted() {
+            let Some(window) = self.windows.get(&window_id) else {
+                continue;
+            };
+            for (buffer_id, state) in window.buffers.iter() {
+                if !state.buffer.is_modified() || state.is_composite_buffer {
+                    continue;
                 }
-                if let Some(meta) = self.active_window().buffer_metadata.get(buffer_id) {
+                if let Some(meta) = window.buffer_metadata.get(buffer_id) {
+                    if meta.hidden_from_tabs || meta.is_virtual() {
+                        continue;
+                    }
                     if let Some(path) = meta.file_path() {
                         let is_unnamed = path.as_os_str().is_empty();
                         if is_unnamed && hot_exit {
-                            return false; // unnamed buffer, auto-recovered via hot exit
+                            continue; // unnamed buffer, auto-recovered via hot exit
                         }
                         if !is_unnamed && auto_save {
-                            return false; // file-backed, will be auto-saved on exit
+                            continue; // file-backed, will be auto-saved on exit
                         }
                     }
                 }
-                true
-            })
-            .count()
+                out.push((window_id, *buffer_id));
+            }
+        }
+        out
     }
 
     /// Handle terminal focus gained event

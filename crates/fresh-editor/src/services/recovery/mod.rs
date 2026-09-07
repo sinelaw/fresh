@@ -208,32 +208,83 @@ impl RecoveryService {
     ///
     /// When `preserve_ids` is provided, recovery files matching those IDs
     /// are kept (used to persist unnamed buffer contents across sessions).
+    ///
+    /// Every *other* entry is deleted, which is only correct when the caller
+    /// really did have every entry's content in memory. Callers that cannot
+    /// promise that must use [`Self::end_session_accounting`] instead.
     pub fn end_session_preserving(&mut self, preserve_ids: &[String]) -> io::Result<()> {
+        self.end_session_inner(preserve_ids, None)
+    }
+
+    /// End the session cleanly, deleting only recovery data this session can
+    /// actually account for.
+    ///
+    /// * `preserve_ids` — entries behind live buffers that still hold unsaved
+    ///   content. Kept, so hot exit can restore them next launch.
+    /// * `known_ids` — every entry id this session held a live buffer for. An
+    ///   id in `known_ids` but not in `preserve_ids` is *resolved*: that
+    ///   buffer was written to disk, or the user explicitly discarded it, so
+    ///   its recovery data has done its job and is deleted.
+    ///
+    /// Anything in neither list is **unaccounted for**: recovery data for work
+    /// that no window in this session ever held in memory. The common source
+    /// is a background Orchestrator workspace that was never materialized —
+    /// its unsaved content was never shown to the user, never offered in a
+    /// quit prompt, and deleting it destroys the edit with no warning at any
+    /// point (issue #3189). So it is kept, and only garbage-collected once it
+    /// has aged past `max_recovery_age_secs`, which bounds the store rather
+    /// than letting stale entries pile up forever.
+    pub fn end_session_accounting(
+        &mut self,
+        preserve_ids: &[String],
+        known_ids: &[String],
+    ) -> io::Result<()> {
+        self.end_session_inner(preserve_ids, Some(known_ids))
+    }
+
+    /// Shared body of the `end_session*` family. `known_ids` of `None` means
+    /// "treat every entry as accounted for", i.e. the legacy
+    /// delete-everything-not-preserved behaviour.
+    fn end_session_inner(
+        &mut self,
+        preserve_ids: &[String],
+        known_ids: Option<&[String]>,
+    ) -> io::Result<()> {
         if !self.config.enabled || !self.session_started {
             return Ok(());
         }
 
-        if preserve_ids.is_empty() {
-            // No IDs to preserve - clean up everything (original behavior)
-            let cleaned = self.storage.cleanup_all()?;
-            tracing::info!("Cleaned up {} recovery files", cleaned);
-        } else {
-            // Selectively clean up, preserving unnamed buffer recovery files
-            let entries = self.storage.list_entries()?;
-            let mut cleaned = 0;
-            for entry in entries {
-                if !preserve_ids.contains(&entry.id)
-                    && self.storage.delete_recovery(&entry.id).is_ok()
-                {
+        let entries = self.storage.list_entries()?;
+        let mut cleaned = 0;
+        let mut preserved = 0;
+        let mut kept_unaccounted = 0;
+        let mut aged_out = 0;
+        for entry in entries {
+            if preserve_ids.contains(&entry.id) {
+                preserved += 1;
+                continue;
+            }
+            let accounted = known_ids.is_none_or(|known| known.contains(&entry.id));
+            if accounted {
+                if self.storage.delete_recovery(&entry.id).is_ok() {
                     cleaned += 1;
                 }
+            } else if entry.age_seconds() > self.config.max_recovery_age_secs {
+                if self.storage.delete_recovery(&entry.id).is_ok() {
+                    aged_out += 1;
+                }
+            } else {
+                kept_unaccounted += 1;
             }
-            tracing::info!(
-                "Cleaned up {} recovery files, preserved {} unnamed buffer(s)",
-                cleaned,
-                preserve_ids.len()
-            );
         }
+        tracing::info!(
+            "Cleaned up {} recovery files ({} aged out), preserved {} unsaved buffer(s) \
+             and {} entry/entries this session never held",
+            cleaned,
+            aged_out,
+            preserved,
+            kept_unaccounted,
+        );
 
         // Remove session lock
         self.storage.remove_session_lock()?;
@@ -538,6 +589,93 @@ mod tests {
         // End session
         service.end_session().unwrap();
         assert!(!service.session_started);
+    }
+
+    /// Issue #3189: a clean exit must not delete recovery data this session
+    /// never had in memory. Such an entry belongs to a workspace that was
+    /// never materialized, so its unsaved content was never offered to the
+    /// user; wiping it destroys the edit with no warning at any point.
+    #[test]
+    fn end_session_accounting_keeps_entries_this_session_never_held() {
+        let (mut service, _temp) = create_test_service();
+        service.start_session().unwrap();
+
+        let save = |service: &mut RecoveryService, path: &str| -> String {
+            let path = Path::new(path);
+            let id = service.get_buffer_id(Some(path));
+            let chunks = vec![RecoveryChunk::new(0, 0, b"unsaved work".to_vec())];
+            service
+                .save_buffer(&id, chunks, Some(path), None, Some(1), 0, 12)
+                .unwrap();
+            id
+        };
+
+        let still_dirty = save(&mut service, "/test/dirty.txt");
+        let resolved = save(&mut service, "/test/saved.txt");
+        let unaccounted = save(&mut service, "/test/other-workspace.txt");
+
+        service
+            .end_session_accounting(
+                &[still_dirty.clone()],
+                &[still_dirty.clone(), resolved.clone()],
+            )
+            .unwrap();
+
+        let surviving: Vec<String> = service
+            .storage
+            .list_entries()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert!(
+            surviving.contains(&still_dirty),
+            "an explicitly preserved entry must survive"
+        );
+        assert!(
+            !surviving.contains(&resolved),
+            "an entry this session accounted for and did not preserve was saved \
+             or discarded, so it is cleaned up"
+        );
+        assert!(
+            surviving.contains(&unaccounted),
+            "an entry no live buffer backed must survive — this session has no \
+             standing to decide the user is done with it"
+        );
+    }
+
+    /// The keep-what-you-cannot-account-for rule is still bounded: an
+    /// unaccounted entry older than `max_recovery_age_secs` is collected, so
+    /// the store cannot grow without limit.
+    #[test]
+    fn end_session_accounting_ages_out_stale_unaccounted_entries() {
+        let (mut service, temp) = create_test_service();
+        service.start_session().unwrap();
+
+        let path = Path::new("/test/ancient.txt");
+        let id = service.get_buffer_id(Some(path));
+        let chunks = vec![RecoveryChunk::new(0, 0, b"old".to_vec())];
+        service
+            .save_buffer(&id, chunks, Some(path), None, Some(1), 0, 3)
+            .unwrap();
+
+        // Backdate the entry past the max age. Rewriting `updated_at` is how
+        // `age_seconds()` reads it, and is far less brittle than sleeping out
+        // a real interval.
+        let meta_path = temp.path().join(format!("{id}.meta.json"));
+        let mut meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
+        meta["updated_at"] = serde_json::json!(1u64);
+        std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap()).unwrap();
+
+        // Nothing preserved, nothing accounted for: the entry is unaccounted,
+        // but it is older than `max_recovery_age_secs`.
+        service.end_session_accounting(&[], &[]).unwrap();
+
+        assert!(
+            service.storage.list_entries().unwrap().is_empty(),
+            "an unaccounted entry past max_recovery_age_secs is garbage-collected"
+        );
     }
 
     #[test]

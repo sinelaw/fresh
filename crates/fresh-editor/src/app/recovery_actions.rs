@@ -32,76 +32,126 @@ impl Editor {
     }
 
     /// End the recovery session cleanly (call on normal shutdown)
+    ///
+    /// Everything here spans **every open workspace**, not just the active
+    /// one. Exiting closes them all, so a dirty buffer in a background
+    /// Orchestrator workspace has to be flushed to recovery and preserved
+    /// exactly like a foreground one; flushing and preserving only the active
+    /// window is what let a quit from a clean workspace delete another
+    /// workspace's unsaved work (issue #3189).
     pub fn end_recovery_session(&mut self) -> AnyhowResult<()> {
         let hot_exit = self.config.editor.hot_exit;
 
         if hot_exit {
             // Force all modified buffers to be re-saved by marking them pending,
-            // then reuse the existing periodic recovery save logic.
-            for (_, state) in self
-                .windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present")
-            {
-                if state.buffer.is_modified() {
-                    state.buffer.set_recovery_pending(true);
+            // then reuse the existing periodic recovery save logic. The flush
+            // matters most for background workspaces: the periodic auto-save
+            // only ever runs against the active window, so a buffer edited and
+            // then switched away from within the auto-save interval has
+            // nothing on disk at all until this runs.
+            for window in self.windows.values_mut() {
+                for (_, state) in &mut window.buffers {
+                    if state.buffer.is_modified() {
+                        state.buffer.set_recovery_pending(true);
+                    }
                 }
             }
-            self.save_pending_recovery_buffers()?;
-
-            // Collect recovery IDs for buffers that should survive this session
-            let preserve_ids = self.recovery_ids_to_preserve();
-            Ok(self
-                .recovery_service
-                .lock()
-                .unwrap()
-                .end_session_preserving(&preserve_ids)?)
-        } else {
-            Ok(self.recovery_service.lock().unwrap().end_session()?)
+            for window_id in self.window_ids_sorted() {
+                self.with_window_retargeted(window_id, |editor| {
+                    editor.save_pending_recovery_buffers()
+                })?;
+            }
         }
+
+        // Collect recovery IDs for buffers that should survive this session,
+        // plus the ids this session can account for at all. Entries in
+        // neither set belong to work no window here ever held — see
+        // `end_session_accounting`. With `hot_exit` off nothing is preserved
+        // (the quit prompt has already forced every live buffer to be saved
+        // or discarded), but the accounting still protects a workspace this
+        // session never materialized.
+        let preserve_ids = self.recovery_ids_to_preserve();
+        let known_ids = self.live_recovery_ids();
+        Ok(self
+            .recovery_service
+            .lock()
+            .unwrap()
+            .end_session_accounting(&preserve_ids, &known_ids)?)
     }
 
-    /// Collect recovery IDs for all buffers that should be preserved across sessions.
+    /// Collect recovery IDs for all buffers that should be preserved across
+    /// sessions, across every open workspace.
     fn recovery_ids_to_preserve(&self) -> Vec<String> {
         let hot_exit = self.config.editor.hot_exit;
+        if !hot_exit {
+            return Vec::new();
+        }
 
-        self.active_window()
-            .buffer_metadata
-            .iter()
-            .filter_map(|(buffer_id, meta)| {
+        let mut out = Vec::new();
+        for window in self.windows.values() {
+            for (buffer_id, meta) in window.buffer_metadata.iter() {
                 if meta.hidden_from_tabs || meta.is_virtual() {
-                    return None;
+                    continue;
                 }
-                if !hot_exit {
-                    return None;
-                }
-                let state = self
-                    .windows
-                    .get(&self.active_window)
-                    .map(|w| &w.buffers)
-                    .expect("active window present")
-                    .get(buffer_id)?;
+                let Some(state) = window.buffers.get(buffer_id) else {
+                    continue;
+                };
                 if !state.buffer.is_modified() {
-                    return None;
+                    continue;
                 }
-                let path = meta.file_path()?;
+                let Some(path) = meta.file_path() else {
+                    continue;
+                };
                 let is_unnamed = path.as_os_str().is_empty();
                 if is_unnamed && state.buffer.total_bytes() == 0 {
-                    return None;
+                    continue;
                 }
                 // Use stored recovery_id, or compute from path for file-backed buffers
-                meta.recovery_id.clone().or_else(|| {
-                    let file_path = state.buffer.file_path().map(|p| p.to_path_buf());
-                    Some(
-                        self.recovery_service
-                            .lock()
-                            .unwrap()
-                            .get_buffer_id(file_path.as_deref()),
-                    )
-                })
-            })
-            .collect()
+                if let Some(id) = meta.recovery_id.clone().or_else(|| {
+                    state
+                        .buffer
+                        .file_path()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(crate::services::recovery::path_hash)
+                }) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
+    /// Recovery ids this session actually has a live buffer for, across every
+    /// open workspace.
+    ///
+    /// This is the "accounted for" set handed to
+    /// [`RecoveryService::end_session_accounting`]: an on-disk entry in this
+    /// set that is not also being preserved was resolved during the session
+    /// (saved to disk, or discarded at the quit prompt) and is safe to delete.
+    /// An entry outside it was never in memory here, so this session has no
+    /// standing to throw it away.
+    fn live_recovery_ids(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for window in self.windows.values() {
+            for (buffer_id, meta) in window.buffer_metadata.iter() {
+                if let Some(id) = &meta.recovery_id {
+                    out.push(id.clone());
+                    continue;
+                }
+                // File-backed buffers derive their id from the path, so a
+                // buffer that never needed a recovery save still owns the
+                // entry a previous session may have written for that file.
+                let Some(state) = window.buffers.get(buffer_id) else {
+                    continue;
+                };
+                if let Some(path) = state.buffer.file_path() {
+                    if !path.as_os_str().is_empty() {
+                        out.push(crate::services::recovery::path_hash(path));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Check if there are files to recover from a crash
