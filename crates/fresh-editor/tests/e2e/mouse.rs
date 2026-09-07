@@ -609,12 +609,18 @@ fn extract_scrollbar_thumb_info(
     }
 }
 
-/// Test that dragging the scrollbar updates the cursor position
-/// Bug: When dragging the scrollbar, the cursor stays at its old position
-/// even though the viewport has scrolled. The cursor should be moved to
-/// somewhere within the newly visible area.
+/// Test that dragging the scrollbar scrolls the viewport and leaves the
+/// cursor where the user left it.
+///
+/// This test used to assert the opposite - that the drag pulled the cursor
+/// to the new `top_byte` - which is the behaviour issue #3192 reports as a
+/// bug: the wheel never moved the cursor, and the relocation was invisible
+/// until the next keypress typed onto a line the user never navigated to.
+/// Scrolling is a viewport operation; the ruling is now the wheel's.
+/// `e2e::issue_3192_scrollbar_drag_cursor` covers the same ground from
+/// rendered output.
 #[test]
-fn test_scrollbar_drag_updates_cursor_position() {
+fn test_scrollbar_drag_leaves_cursor_alone() {
     // Initialize tracing
     use tracing_subscriber::EnvFilter;
     let _ = tracing_subscriber::fmt()
@@ -666,19 +672,18 @@ fn test_scrollbar_drag_updates_cursor_position() {
         "Viewport should have scrolled down significantly (was line {initial_top_line}, now line {top_line_after_drag})"
     );
 
-    // VERIFY: Cursor should have moved to be within the visible area
-    // The cursor should no longer be at the beginning of the file
-    // It should be somewhere near the scrolled viewport position
-    assert!(
-        cursor_pos_after_drag > initial_cursor_pos,
-        "Cursor should have moved from position {initial_cursor_pos} after scrollbar drag, but is still at {cursor_pos_after_drag}"
+    // VERIFY: the cursor has not moved. The scroll left it off-screen, which
+    // is exactly the case the old fixup fired on and the wheel never did.
+    assert_eq!(
+        cursor_pos_after_drag, initial_cursor_pos,
+        "Scrollbar drag should leave the cursor at {initial_cursor_pos}, but it moved to {cursor_pos_after_drag}"
     );
 
-    // VERIFY: Cursor should be at the top of the visible area (or close to it)
-    // When scrollbar is dragged, the cursor is moved to top_byte
-    assert_eq!(
+    // VERIFY: and it was not pulled to the top of the new viewport - the
+    // specific relocation #3192 reports.
+    assert_ne!(
         cursor_pos_after_drag, top_byte_after_drag,
-        "Cursor position {cursor_pos_after_drag} should be at the top of the viewport (top_byte={top_byte_after_drag})"
+        "Cursor should not have been relocated to the viewport top (top_byte={top_byte_after_drag})"
     );
 }
 
