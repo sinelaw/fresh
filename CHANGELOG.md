@@ -52,6 +52,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Settings dialog** - `Delete` works again in the Edit Item text field (#2875, reported by @asukaminato0721)
 * **Quitting** no longer panics while plugin work is still in flight
 * **Rendering fixes** - whitespace markers, indent guides, block-selection rectangles, misread angle brackets; File Explorer got a scrollbar (#3077, #3079, #3148, #3090, reported by @Korkman; #2859, reported by @asukaminato0721)
+* **The block-selection highlight is exactly what a block copy takes** - the rectangle used to be painted one column wider than `Ctrl+C` copied, and a zero-width block (Alt+Shift+Down with no sideways movement) painted a column it did not select, then copied a bare newline per line (#3150, reported by @Korkman)
 * **Conceals spanning a line break** no longer crash the editor (#3139)
 * **New file/folder names with slashes** create their missing parent directories (#2640, requested by @akarinotomoshibi)
 * **`fresh --cmd update`** no longer fails on GitHub's shared API rate limit - resolves releases the way `install.sh` does, honours `GITHUB_TOKEN`, and adds `--skip-attestation` as a fallback (#3198)
