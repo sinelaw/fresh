@@ -1729,11 +1729,14 @@ impl Editor {
                 }
             }
             Action::TerminalPaste => {
-                // Paste clipboard contents into terminal as a single batch
+                // Paste clipboard contents into terminal as a single batch.
+                // Same normalization and bracketing as the terminal route in
+                // `paste_text`: CRLF/CR → LF, then wrapped in the paste
+                // markers when the child asked for DECSET 2004.
                 if self.active_window().focused_terminal_live() {
                     if let Some(text) = self.clipboard.paste() {
-                        self.active_window_mut()
-                            .send_terminal_input(text.as_bytes());
+                        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                        self.active_window_mut().send_terminal_paste(&normalized);
                     }
                 }
             }

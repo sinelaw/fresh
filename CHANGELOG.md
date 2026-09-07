@@ -36,6 +36,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **LSP diagnostics no longer get stuck reporting errors you already fixed** (#3038, reported by @thedadams).
 * **Settings: `Delete` works in a text field again** in the Edit Item dialog (#2875, reported by @asukaminato0721).
 * **Dim text in the integrated terminal is dim again** (#3123, reported by @fiatcode-gh).
+* **A multi-line paste into a terminal arrives whole instead of only its last line.** Pasting several lines into a shell or an agent CLI ran every line but the tail, which was left sitting on the input line — the paste read as typing, because that is exactly what it was: fresh handed the child the raw clipboard bytes, and a line editor takes each newline in them for the Enter key. A program that asks for bracketed paste (which readline in bash/zsh/fish does, as does an agent's input box) now gets the paste wrapped in the markers that say "this is pasted text, not keystrokes", so it lands as one inert block. A program that has not asked for it still gets keystrokes, now with line breaks as the carriage return the Enter key actually produces.
 * **Quitting no longer panics** while a plugin's off-loop work is still in flight.
 * **Git and review commands are grouped under two palette prefixes**, `Review Diff:` and `Git Log:` (#3098).
 * **Review Diff works with an external difftool** instead of showing an empty diff (#3066, by @asukaminato0721).

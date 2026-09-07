@@ -969,6 +969,19 @@ impl TerminalState {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// Check if the child asked for bracketed paste (DECSET 2004).
+    ///
+    /// Every line editor worth the name — bash/zsh/fish's readline, and the
+    /// input box of a TUI like an agent CLI — turns this on so it can tell a
+    /// paste apart from typing. Text sent to such a child *without* the
+    /// `ESC [ 200 ~` … `ESC [ 201 ~` wrapper is read as keystrokes: each
+    /// newline is an Enter that submits the line before it, so a multi-line
+    /// paste runs (or sends) every line but the last and only the tail is
+    /// left on the input line.
+    pub fn is_bracketed_paste(&self) -> bool {
+        self.term.mode().contains(TermMode::BRACKETED_PASTE)
+    }
+
     // =========================================================================
     // Incremental scrollback streaming
     // =========================================================================

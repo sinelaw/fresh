@@ -57,6 +57,13 @@ pub(crate) fn terminal_backing_fs() -> Arc<dyn crate::model::filesystem::FileSys
     Arc::new(crate::model::filesystem::StdFileSystem)
 }
 
+/// Bracketed-paste start marker, sent to a child that asked for DECSET 2004
+/// before the pasted text. See [`Window::send_terminal_paste`].
+const PASTE_START: &str = "\x1b[200~";
+
+/// Bracketed-paste end marker, sent after the pasted text.
+const PASTE_END: &str = "\x1b[201~";
+
 /// How often [`Window::sync_terminal_titles`] polls each terminal's
 /// foreground process group for tmux-style tab auto-naming. Frequent enough
 /// to feel responsive when a command starts/exits, infrequent enough that
@@ -2134,6 +2141,42 @@ impl Window {
                 handle.write(data);
             }
         }
+    }
+
+    /// Send `text` to this window's active terminal as a **paste**, rather
+    /// than as the keystrokes the same bytes would be.
+    ///
+    /// Which of those the child sees is its own decision, announced by
+    /// DECSET 2004: a line editor (readline in bash/zsh/fish, an agent CLI's
+    /// input box) turns bracketed paste on precisely so it can tell one from
+    /// the other, and then reads a bare `\n` as the Enter key. Handing such a
+    /// child the raw clipboard bytes therefore submits every line but the
+    /// last — the paste "only pastes the tail", because everything before it
+    /// already ran. Wrapping the text in `ESC [ 200 ~` … `ESC [ 201 ~` is what
+    /// makes it arrive as one inert block.
+    ///
+    /// `ESC` is stripped from the wrapped payload: it is what a premature
+    /// `ESC [ 201 ~` inside the clipboard would need to break out of the
+    /// brackets and have the rest of the text executed, and pasted text has
+    /// no business carrying control sequences either way.
+    ///
+    /// With the mode off the child cannot distinguish paste from typing at
+    /// all, so the honest thing is to send what the keyboard would: line
+    /// breaks become `\r`, the byte the Enter key produces.
+    pub fn send_terminal_paste(&mut self, text: &str) {
+        let bracketed = self
+            .get_active_terminal_state()
+            .is_some_and(|state| state.is_bracketed_paste());
+        let payload = if bracketed {
+            let mut out = String::with_capacity(text.len() + PASTE_START.len() + PASTE_END.len());
+            out.push_str(PASTE_START);
+            out.extend(text.chars().filter(|c| *c != '\x1b'));
+            out.push_str(PASTE_END);
+            out
+        } else {
+            text.replace("\r\n", "\r").replace('\n', "\r")
+        };
+        self.send_terminal_input(payload.as_bytes());
     }
 
     /// Send a key event to this window's active terminal. Picks

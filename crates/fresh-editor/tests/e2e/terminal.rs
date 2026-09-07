@@ -3783,6 +3783,143 @@ fn test_bracket_paste_in_terminal_mode() {
         .send_terminal_input(b"\x04");
 }
 
+/// Spawn a terminal whose child is `sh -c <script>` rather than an interactive
+/// shell, so the test drives one known program: no prompt, no readline, and
+/// nothing that re-announces its own terminal modes between our writes.
+///
+/// Returns `None` when there is no PTY (or no `/bin/sh`) to run it on, which
+/// the paste tests below treat as "skip", like the rest of this file.
+fn harness_running_or_skip(script: &str) -> Option<EditorTestHarness> {
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+        || !std::path::Path::new("/bin/sh").exists()
+    {
+        eprintln!("Skipping terminal test: no PTY or /bin/sh in this environment");
+        return None;
+    }
+
+    let mut config = Config::default();
+    config.terminal.shell = Some(TerminalShellConfig {
+        command: "/bin/sh".to_string(),
+        args: vec!["-c".to_string(), script.to_string()],
+    });
+    EditorTestHarness::with_config(80, 24, config).ok()
+}
+
+/// A paste into a live terminal whose child asked for bracketed paste
+/// (DECSET 2004) must arrive wrapped in `ESC[200~` … `ESC[201~`.
+///
+/// Regression: fresh used to hand the child the raw clipboard bytes. A line
+/// editor that turns 2004 on — readline in bash/zsh/fish, an agent CLI's input
+/// box — then reads every embedded newline as the Enter key, so a multi-line
+/// paste ran (or submitted) every line but the last and only the tail was left
+/// on the input line.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (stty/cat)
+fn test_paste_is_bracketed_when_child_requests_it() {
+    // `cat -v` renders the control bytes it reads: an ESC comes back as `^[`,
+    // so the markers are visible on screen. `-icanon` makes it echo what it
+    // reads without waiting for a line, `-echo` keeps the line discipline from
+    // re-injecting our paste into the emulator itself.
+    let Some(mut harness) = harness_running_or_skip(
+        "stty -echo -icanon; printf '\\033[?2004h'; printf 'CAT_READY\\n'; cat -v",
+    ) else {
+        return;
+    };
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    // Wait until the emulator has actually seen the DECSET — that is the state
+    // the paste path reads, and it lands only once the child's output arrives.
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().contains("CAT_READY")
+                && h.editor()
+                    .active_window()
+                    .get_active_terminal_state()
+                    .is_some_and(|s| s.is_bracketed_paste())
+        })
+        .unwrap();
+
+    harness
+        .editor_mut()
+        .paste_text("PASTE_L1\nPASTE_L2".to_string());
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("PASTE_L2^[[201~"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("^[[200~PASTE_L1"),
+        "paste should reach the child wrapped in the start marker. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("PASTE_L2^[[201~"),
+        "paste should reach the child wrapped in the end marker. Screen:\n{}",
+        screen
+    );
+
+    // Clean up: Ctrl+D to exit cat.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"\x04");
+}
+
+/// With bracketed paste *off*, the child cannot tell a paste from typing, so
+/// the paste is sent as the keystrokes it would be: line breaks become `\r`,
+/// the byte the Enter key produces (`\n` alone is not what a keyboard sends,
+/// and a raw-mode reader that only accepts CR would swallow the line break).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (stty/cat)
+fn test_paste_without_bracketed_paste_sends_carriage_returns() {
+    // `-icrnl` keeps the line discipline from rewriting our CR as NL, so what
+    // `cat -v` prints (`^M`) is exactly what the child received.
+    let Some(mut harness) =
+        harness_running_or_skip("stty -echo -icanon -icrnl; printf 'CAT_READY\\n'; cat -v")
+    else {
+        return;
+    };
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CAT_READY"))
+        .unwrap();
+
+    assert!(
+        !harness
+            .editor()
+            .active_window()
+            .get_active_terminal_state()
+            .is_some_and(|s| s.is_bracketed_paste()),
+        "plain `cat` never asks for bracketed paste"
+    );
+
+    harness.editor_mut().paste_text("P1\nP2".to_string());
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("P1^MP2"))
+        .unwrap();
+
+    harness.assert_screen_contains("P1^MP2");
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"\x04");
+}
+
 /// Regression test: when an alternate-screen program is *tracking the mouse*
 /// (mouse reporting enabled), wheel events must be forwarded to it as real
 /// mouse reports — never converted into arrow keys by alternate-scroll mode.
