@@ -1,8 +1,7 @@
 //! Click and scroll-position helpers on `Editor`.
 //!
-//! - `move_cursor_to_visible_area` and `calculate_max_scroll_position`:
-//!   small helpers that fix up cursor position after scroll-driven moves
-//!   so the user keeps a visible cursor.
+//! - `calculate_max_scroll_position`: the small helper that caps a
+//!   scroll-driven move so the last line lands at the bottom of the view.
 //! - `fold_toggle_line_at_screen_position`: maps a click in the gutter to
 //!   the byte to fold/unfold (uses the pure helper from
 //!   `super::click_geometry`).
@@ -22,9 +21,7 @@ use crate::services::plugins::hooks::HookArgs;
 use super::Editor;
 
 impl Editor {
-    // `move_cursor_to_visible_area` and `calculate_max_scroll_position`
-    // live on `impl Window` — call them via
-    // `self.active_window_mut().move_cursor_to_visible_area(...)` and
+    // `calculate_max_scroll_position` lives on `impl Window` — call it via
     // `Window::calculate_max_scroll_position(buffer, viewport_height)`.
 
     pub(super) fn fold_toggle_line_at_screen_position(

@@ -195,6 +195,12 @@ impl crate::app::window::Window {
     }
 
     /// Handle scrollbar drag with relative movement (when dragging from thumb)
+    ///
+    /// Moves the viewport only: the cursor stays where the user left it, as
+    /// it does for the wheel. `skip_ensure_visible` keeps the render pass
+    /// from yanking the viewport back to an off-screen cursor, and the next
+    /// key press clears the flag so cursor motion scrolls the view again
+    /// (sinelaw/fresh#3192).
     pub(super) fn handle_scrollbar_drag_relative(
         &mut self,
         row: u16,
@@ -408,13 +414,13 @@ impl crate::app::window::Window {
             view_state.viewport.set_skip_ensure_visible();
         }
 
-        // Move cursor to be visible in the new viewport (after releasing the state borrow)
-        self.move_cursor_to_visible_area(split_id, buffer_id);
-
         Ok(())
     }
 
     /// Handle scrollbar jump (clicking on track or absolute positioning)
+    ///
+    /// Like the thumb drag, this scrolls without touching the cursor
+    /// (sinelaw/fresh#3192).
     pub(super) fn handle_scrollbar_jump(
         &mut self,
         _col: u16,
@@ -591,9 +597,6 @@ impl crate::app::window::Window {
             // Skip ensure_visible so the scroll position isn't undone during render
             view_state.viewport.set_skip_ensure_visible();
         }
-
-        // Move cursor to be visible in the new viewport (after releasing the state borrow)
-        self.move_cursor_to_visible_area(split_id, buffer_id);
 
         Ok(())
     }
