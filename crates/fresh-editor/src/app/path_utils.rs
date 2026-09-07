@@ -233,13 +233,47 @@ mod tests {
     fn off_root_and_alias_paths_still_use_the_fallback() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let outside = temp.path().join("elsewhere").join("a.rs");
+
+        // The second temp dir is a sibling, so it is outside the root on
+        // every platform. A path spelled inside the first temp dir would
+        // not be: on Linux the temp dir is already its canonical spelling,
+        // so it stays on the lexical fast path and never reaches the
+        // fallback.
+        let elsewhere = TempDir::new().unwrap();
+        let off_root = elsewhere.path().join("a.rs");
+        fs::write(&off_root, "").unwrap();
 
         stats::take_canonical_fallbacks();
-        normalize_explorer_plugin_path(&outside, &root);
+        let admitted = normalize_explorer_plugin_path(&off_root, &root);
         assert!(
             stats::take_canonical_fallbacks() > 0,
             "a path outside the root must keep the canonical fallback available"
         );
+        assert!(
+            !admitted.starts_with(&root),
+            "an off-root path must stay off-root, not be grafted under the root"
+        );
+
+        // An alias spelling of an in-root path must resolve back under the
+        // root (the same symlink fixture the file_explorer e2e suite uses).
+        #[cfg(unix)]
+        {
+            let in_root = temp.path().join("b.rs");
+            fs::write(&in_root, "").unwrap();
+            let alias = elsewhere.path().join("into_root");
+            std::os::unix::fs::symlink(temp.path(), &alias).unwrap();
+
+            stats::take_canonical_fallbacks();
+            let normalized = normalize_explorer_plugin_path(&alias.join("b.rs"), &root);
+            assert!(
+                stats::take_canonical_fallbacks() > 0,
+                "an alias spelling must still reach the canonical fallback"
+            );
+            assert_eq!(
+                normalized,
+                root.join("b.rs"),
+                "an in-root alias must normalize back onto the canonical root"
+            );
+        }
     }
 }
