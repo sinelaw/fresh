@@ -3719,49 +3719,6 @@ impl Window {
         }
     }
 
-    /// Move the cursor to a visible position within the current viewport.
-    /// Called after scrollbar operations to ensure the cursor is in view.
-    pub fn move_cursor_to_visible_area(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        let (top_byte, viewport_height) =
-            if let Some(view_state) = self.buffers.splits().and_then(|(_, vs)| vs.get(&split_id)) {
-                (
-                    view_state.viewport.top_byte(),
-                    view_state.viewport.height as usize,
-                )
-            } else {
-                return;
-            };
-
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            let buffer_len = state.buffer.len();
-
-            let mut iter = state.buffer.line_iterator(top_byte, 80);
-            let mut bottom_byte = buffer_len;
-
-            for _ in 0..viewport_height {
-                if let Some((pos, line)) = iter.next_line() {
-                    bottom_byte = pos + line.len();
-                } else {
-                    bottom_byte = buffer_len;
-                    break;
-                }
-            }
-
-            if let Some(view_state) = self
-                .split_view_states_mut()
-                .and_then(|vs| vs.get_mut(&split_id))
-            {
-                let cursor_pos = view_state.cursors.primary().position;
-                if cursor_pos < top_byte || cursor_pos > bottom_byte {
-                    let cursor = view_state.cursors.primary_mut();
-                    cursor.position = top_byte;
-                    // Keep the existing sticky_column value so vertical
-                    // navigation preserves column.
-                }
-            }
-        }
-    }
-
     /// Calculate the maximum allowed scroll position so the last line
     /// is always at the bottom unless the buffer is smaller than the
     /// viewport. Pure function on `Buffer`; lives on `Window` so the

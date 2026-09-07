@@ -59,6 +59,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Search & Replace results scroll horizontally** to reveal a long match, accept a pasted query, and `Ctrl`+arrow no longer moves a hidden buffer cursor (#3154, #3184; #1960, reported by @mandolyte; #1580, #3186)
 * **More keys can be bound by name** - numpad, media and modifier keys now parse, fixing `asterisk`/`kp_multiply` bindings that silently failed before (#1128, reported by @michelpado)
 * **Shift+wheel scrolls sideways** everywhere, instead of scrolling vertically like a plain wheel notch (#1580)
+* **Dragging the scrollbar** leaves the text cursor where it is, like the wheel already did - it no longer silently relocates to the top of the scrolled view, so the next character you type still lands where you were (#3192, reported by @akarinotomoshibi)
 * **Daemon locale** now follows `config.json` instead of the environment (#3149, reported by @kirinriki7777-sys)
 * **`Ctrl+C`/`kill`** end the editor promptly instead of occasionally deadlocking or crashing
 * **Piped-in text** (`... | fresh -`) no longer leaves a temp file behind in `/tmp` (#3134, reported by @Korkman)
