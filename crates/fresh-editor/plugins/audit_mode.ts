@@ -210,6 +210,15 @@ interface ReviewState {
   // Files with changes (used for section grouping + headers in the
   // unified stream). Order matches the order they appear in the diff.
   files: FileEntry[];
+  /**
+   * Paths git reported as `Binary files ... differ` rather than as a patch —
+   * an actual binary, or a text file over `diffArgs`' size threshold. They
+   * have no hunks, so without this the stream could only say "(no diff
+   * available)", which reads as a bug rather than as the deliberate
+   * omission it is. Keyed by path alone: the message is the same whichever
+   * section the file sits in.
+   */
+  binaryPaths: Set<string>;
   emptyState: EmptyStateReason;
   viewportWidth: number;
   viewportHeight: number;
@@ -394,6 +403,7 @@ const state: ReviewState = {
   repo: null,
   reviewKey: 'worktree',
   files: [],
+  binaryPaths: new Set(),
   emptyState: null,
   viewportWidth: 80,
   viewportHeight: 24,
@@ -738,6 +748,69 @@ function diffStrings(oldStr: string, newStr: string): DiffPart[] {
 }
 
 /**
+ * The `diff --git` blocks in `stdout`, in git's own order, each flagged for
+ * whether git wrote `Binary files ... differ` in place of a patch.
+ *
+ * Git says that for a real binary *and* for anything over
+ * `core.bigFileThreshold` (pinned by `diffArgs`), and either way the file
+ * reaches `parseDiffOutput` with no hunks — indistinguishable, from the
+ * stream's side, from a file git had nothing to say about. Callers need the
+ * distinction to say so, and the range review needs the order to list files
+ * git never emitted a hunk for.
+ *
+ * Scanned separately rather than folded into `parseDiffOutput` so the hot
+ * parse stays a first-byte test per row: this walks only the `diff --git`
+ * headers, of which there is one per file.
+ */
+function diffFileBlocks(stdout: string): { path: string; binary: boolean }[] {
+    const blocks: { path: string; binary: boolean }[] = [];
+    let pos = 0;
+    while (pos < stdout.length) {
+        const at = stdout.indexOf('diff --git ', pos);
+        if (at < 0) break;
+        // Only at the start of a row — the same string inside a `+` row of a
+        // diff of a patch file is content, not a header.
+        if (at > 0 && stdout.charCodeAt(at - 1) !== 0x0a) {
+            pos = at + 1;
+            continue;
+        }
+        let nl = stdout.indexOf('\n', at);
+        if (nl < 0) nl = stdout.length;
+        const match = stdout.slice(at, nl).match(/diff --git a\/(.+) b\/(.+)/);
+        let next = stdout.indexOf('\ndiff --git ', nl);
+        if (next < 0) next = stdout.length;
+        if (match) blocks.push({ path: match[2], binary: isBinaryBlock(stdout, nl + 1, next) });
+        pos = next + 1;
+    }
+    return blocks;
+}
+
+/**
+ * Whether the block body at `[from, end)` is git's `Binary files ... differ`
+ * summary rather than a patch.
+ *
+ * Only the block's own header rows are read — `index`, `new file mode`,
+ * `rename from`, and the handful of others — because that is where the
+ * summary sits, and the first `@@` or `---` row proves a patch follows. The
+ * bound matters: the alternative, testing the whole body, is a second pass
+ * over every byte of a review that may already be hundreds of files long.
+ */
+function isBinaryBlock(stdout: string, from: number, end: number): boolean {
+    let pos = from;
+    // Generous for the longest header run (a rename with two long paths),
+    // and still a fixed cost per file.
+    for (let row = 0; row < 12 && pos < end; row++) {
+        if (stdout.startsWith('Binary files ', pos)) return true;
+        // A patch body has started; nothing after this is a header.
+        if (stdout.startsWith('@@ ', pos) || stdout.startsWith('--- ', pos)) return false;
+        let nl = stdout.indexOf('\n', pos);
+        if (nl < 0 || nl >= end) return false;
+        pos = nl + 1;
+    }
+    return false;
+}
+
+/**
  * Split `git diff` output into hunks without taking it apart: each hunk
  * records where it sits in its file's block, and the block is what the
  * stream shows. The pass is an `indexOf` per row and a first-byte test;
@@ -938,11 +1011,14 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
     const hasUnstaged = files.some(f => f.category === 'unstaged');
     const untrackedFiles = files.filter(f => f.category === 'untracked');
 
+    const binaryPaths = new Set<string>();
+
     // Staged diffs
     if (hasStaged) {
         const result = await editor.spawnProcess("git", diffArgs(["diff"], "--cached", "--unified=3"), cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'staged'));
+            for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
     }
 
@@ -951,6 +1027,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
         const result = await editor.spawnProcess("git", diffArgs(["diff"], "--unified=3"), cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'unstaged'));
+            for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
     }
 
@@ -970,8 +1047,14 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
                 h.type = 'add';
             }
             allHunks.push(...hunks);
+            // Read back off git's own output rather than assumed from
+            // `f.path`: only the files git actually declined to patch — the
+            // real binaries and the oversized ones — belong in the set.
+            for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
     }
+
+    state.binaryPaths = binaryPaths;
 
     // Sort: staged → unstaged → untracked, then by filename
     const statusOrder: Record<string, number> = { staged: 0, unstaged: 1, untracked: 2 };
@@ -1517,6 +1600,13 @@ function buildStreamContent(): TextPropertyEntry[] {
                 pushRow("(type change: file ↔ symlink)", { fg: STYLE_SECTION_HEADER });
             } else if (file.status === '?' && file.path.endsWith('/')) {
                 pushRow("(untracked directory)");
+            } else if (state.binaryPaths.has(file.path)) {
+                // git summarised the file instead of patching it: it is
+                // binary, or larger than `diffArgs` will expand. Either way
+                // the change is real and the omission is ours, so say that
+                // rather than "(no diff available)", which reads as a
+                // failure to find anything.
+                pushRow(editor.t("stream.binary_file") || "(binary or too large to diff)");
             } else {
                 pushRow("(no diff available)");
             }
@@ -7548,6 +7638,7 @@ async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; file
     const cwd = gitCwd();
     const result = await editor.spawnProcess("git", args, cwd);
     if (result.exit_code !== 0) {
+        state.binaryPaths = new Set();
         return { hunks: [], files: [] };
     }
     const hunks = parseDiffOutput(result.stdout, 'unstaged');
@@ -7556,15 +7647,21 @@ async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; file
     for (const h of hunks) {
         h.id = `${range.label}|${h.file}:${h.range.start}`;
     }
-    // Derive a FileEntry list from the hunks, preserving first-seen order.
+    // Derive a FileEntry list from git's own file blocks rather than from the
+    // hunks: a file git summarised as `Binary files ... differ` — a real
+    // binary, or one over `diffArgs`' size threshold — produces no hunk, and
+    // reading the list off the hunks dropped it from the review entirely
+    // instead of listing it with nothing to show.
+    const binaryPaths = new Set<string>();
     const seen = new Set<string>();
     const files: FileEntry[] = [];
-    for (const h of hunks) {
-        if (!seen.has(h.file)) {
-            seen.add(h.file);
-            files.push({ path: h.file, status: 'M', category: 'unstaged' });
-        }
+    for (const block of diffFileBlocks(result.stdout)) {
+        if (block.binary) binaryPaths.add(block.path);
+        if (seen.has(block.path)) continue;
+        seen.add(block.path);
+        files.push({ path: block.path, status: 'M', category: 'unstaged' });
     }
+    state.binaryPaths = binaryPaths;
     return { hunks, files };
 }
 
@@ -7649,7 +7746,10 @@ async function bootstrapRangeReview(range: ReviewRange): Promise<void> {
     // Resolve the repo before fetchRangeDiff, which reads gitCwd().
     state.repo = await resolveGitRepo(editor);
     const { hunks, files } = await fetchRangeDiff(range);
-    if (hunks.length === 0) {
+    // On `files`, not `hunks`: a commit that only touches a binary — or a
+    // file over `diffArgs`' size threshold — has no hunk to show and is
+    // still not "no changes".
+    if (files.length === 0) {
         editor.setStatus(
             editor.t("status.review_range_empty", { range: range.label }) ||
                 `No changes in ${range.label}`,
@@ -7946,7 +8046,15 @@ async function side_by_side_diff_current_file() {
     }
 
     if (fileHunks.length === 0) {
-        editor.setStatus(editor.t("status.no_changes"));
+        // No hunks because git summarised the file rather than patching it —
+        // a binary, or one over `diffArgs`' size threshold — is not the same
+        // as no change, and the side-by-side has nothing to align either way.
+        const summarised = diffFileBlocks(diffOutput).some(b => b.binary);
+        editor.setStatus(
+            summarised
+                ? (editor.t("status.binary_or_too_large") || "File is binary or too large to diff")
+                : editor.t("status.no_changes"),
+        );
         return;
     }
 

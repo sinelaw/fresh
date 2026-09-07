@@ -1454,6 +1454,107 @@ pub fn new_function() {
     );
 }
 
+/// A single oversized untracked file used to freeze the whole editor.
+///
+/// `git status -uall` lists every untracked file, and each one got its own
+/// `git diff --no-index`, uncapped: a 60 MiB file produced a 60 MiB patch that
+/// then had to cross the plugin boundary, be parsed into hunks, and be laid out
+/// as styled rows — tens of seconds on the editor's own thread, repeated by the
+/// review watch's timer. `diffArgs` now pins `core.bigFileThreshold`, so git
+/// summarises the file instead of expanding it.
+///
+/// The assertion that matters is the *absence* of the patch: the review has to
+/// finish having listed the file without carrying its contents.
+#[test]
+fn test_review_diff_caps_oversized_untracked_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Comfortably over the 4 MiB threshold, and plain text — so nothing but
+    // the cap keeps git from emitting a patch for it. The marker is what a
+    // patch would have put on screen.
+    let big_path = repo.path.join("generated_dump.txt");
+    let mut big = String::with_capacity(6 * 1024 * 1024);
+    while big.len() < 6 * 1024 * 1024 {
+        big.push_str("UNIQUEMARKERROW filler filler filler filler filler\n");
+    }
+    fs::write(&big_path, &big).expect("Failed to write oversized file");
+
+    // A small untracked file alongside it, to show the cap is per file and not
+    // a bail-out that drops the rest of the review.
+    let small_path = repo.path.join("src/small_new.rs");
+    fs::write(&small_path, "pub fn small_new_function() {}\n").expect("Failed to write small file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("main"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Generating Review"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Review Diff (oversized untracked) screen:\n{}", screen);
+
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show any TypeError. Screen:\n{}",
+        screen
+    );
+
+    // Listed, so the reader knows the file changed...
+    assert!(
+        screen.contains("generated_dump.txt"),
+        "The oversized file should still be listed in the review. Screen:\n{}",
+        screen
+    );
+    // ...and said to be omitted, rather than silently showing nothing.
+    assert!(
+        screen.contains("too large to diff"),
+        "The oversized file should say why it has no patch. Screen:\n{}",
+        screen
+    );
+    // The patch itself must not have been expanded.
+    assert!(
+        !screen.contains("UNIQUEMARKERROW"),
+        "The oversized file's contents must not reach the diff stream. Screen:\n{}",
+        screen
+    );
+    // The rest of the review is unaffected.
+    assert!(
+        screen.contains("small_new.rs"),
+        "Other untracked files should still be reviewed. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that drill-down (side-by-side diff) works for newly added (untracked) files
 /// Before the fix, review_drill_down() would fail because git show HEAD:<file> errors
 /// for files that don't exist in HEAD, causing a silent early return.
