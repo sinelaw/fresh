@@ -510,3 +510,92 @@ fn paging_to_the_end_leaves_a_full_screen() {
          clamping:\n{screen}"
     );
 }
+
+/// Issue #1806 at the far end of the walk: `Down` on the file's *last* visual
+/// row threw the cursor backwards to a `MAX_LINE_BYTES` boundary — byte
+/// 100,000, or 200,000 — and the view followed it there, so a walk down a
+/// single-line file looped back into itself instead of stopping at the end.
+///
+/// The wrap-aware intercept declines at a genuine buffer boundary, which is how
+/// it says "not mine" — and that hands the motion to `handle_vertical_down`.
+/// That handler asks the line iterator for "the next line", but `next_line`
+/// yields a long logical line in `MAX_LINE_BYTES` pieces, so on a file that is
+/// one line the next "line" is the next read *piece*: a byte behind the cursor.
+///
+/// Walks to the end and keeps pressing. A walk downwards never moves the cursor
+/// backwards, so one backwards step is the whole bug — and the press count is
+/// fixed, not a deadline (CONTRIBUTING §3).
+#[test]
+fn arrow_down_at_the_last_row_does_not_jump_back_to_a_read_boundary() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    const WIDE: u16 = 1000;
+    const SHORT: u16 = 12;
+    /// `LineIterator` splits an over-long line here.
+    const READ_PIECE_BYTES: usize = 100_000;
+    /// Comfortably more than the rows in the file, so the walk spends its tail
+    /// pressing `Down` while already on the last row — which is the case under
+    /// test.
+    const PRESSES: usize = 260;
+
+    // One line, a little over one read piece: the boundary the cursor used to
+    // be thrown back to is then behind it for the whole second half of the walk.
+    let mut content = String::from("[");
+    for i in 0..22_000u32 {
+        if i > 0 {
+            content.push(',');
+        }
+        content.push_str(&i.to_string());
+    }
+    content.push(']');
+    assert!(
+        content.len() > READ_PIECE_BYTES + 1000,
+        "the file must cross the read-piece boundary for the bug to have a \
+         landing site behind the cursor; it is {} bytes",
+        content.len()
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("one_line.json");
+    std::fs::File::create(&path)
+        .unwrap()
+        .write_all(content.as_bytes())
+        .unwrap();
+
+    let mut harness = EditorTestHarness::with_config(WIDE, SHORT, wrapping_config(1024)).unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    let mut previous = 0usize;
+    let mut high_water = 0usize;
+    for press in 1..=PRESSES {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        let at = status_bar_byte(&screen).expect("the status bar reports the cursor's byte");
+        assert!(
+            at >= previous,
+            "press {press} moved the cursor backwards, from byte {previous} to {at}. \
+             Walking down never goes back; the read-piece boundary is at \
+             {READ_PIECE_BYTES} and the file is {} bytes:\n{screen}",
+            content.len()
+        );
+        previous = at;
+        high_water = high_water.max(at);
+    }
+
+    // Without this the test would pass vacuously on a walk that never got near
+    // the end, where the bug does not bite (CONTRIBUTING §16).
+    assert!(
+        high_water > READ_PIECE_BYTES,
+        "{PRESSES} presses only reached byte {high_water}, short of the \
+         read-piece boundary at {READ_PIECE_BYTES} — the walk never tested the \
+         end of the file"
+    );
+    assert!(
+        high_water >= content.len() - 2000,
+        "{PRESSES} presses reached byte {high_water} of {}, so the walk never \
+         arrived at the last row and the case under test was never exercised",
+        content.len()
+    );
+}
