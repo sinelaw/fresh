@@ -8,60 +8,61 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Search results preview the real file** - Git Grep, Find References and the LSP-driven result lists used to show a `*Preview*` buffer holding eleven sliced lines: no syntax colours, no gutter, no folds or wrap, and nothing to scroll past the slice. The result's file is now opened as the editor's **preview tab** - the same ephemeral open the File Explorer does on a single click - so a preview is the file, with everything a buffer has. Browsing a list replaces that one tab instead of accumulating one per result (which the Diagnostics panel used to do on every arrow key), a file you already had open is switched to and never demoted, the tab becomes permanent as soon as you commit to it, and cancelling the search drops it and puts you back where you were. Plugins get the same thing as `editor.previewFileInSplit` / `editor.dismissPreview` (#3196; #836, requested by @66RED99).
-    * The Quickfix and Diagnostics **result lists** - rows drawn from many files, which no single grammar can parse - are syntax highlighted per row instead, through the `editor.setSyntaxRegions` mechanism the diff panels use.
-
-* **Sidebar sections** - the explorer sidebar can now split into stacked, collapsible sections (#3045, requested by @mruff-aeq).
-    * **Markdown Table of Contents** - a "Contents" sidebar section for Markdown files.
-* **An interactive Welcome screen** on startup, as a background tab that never displaces your work (#3147).
-* **Shaded pane edges** - text trails off at the top/bottom of a pane instead of cutting mid-line. Off with `editor.viewport_edge_fade`.
-* **Smooth wheel scrolling** - a wheel notch walks the view a line at a time instead of jumping. Off with `editor.smooth_scroll` (#3091).
-* **Git Blame readability** - the header band has real contrast in every theme, and blame now keeps your place on `b`/`q` (#3088).
-* **Markdown types brackets and quotes literally** by default instead of auto-pairing them, since prose needs the literal character far more often than the pair.
+* **Search previews now open the real file** as a preview tab - full syntax colours, gutter, folds and scrolling (#3196, #3200; #836, requested by @66RED99)
+* **Review Diff opens large diffs almost instantly** - a 500+ file review now opens in ~2s instead of ~16s (#3056)
+* **Sidebar sections** - the explorer sidebar can hold multiple collapsible sections, starting with a Markdown Table of Contents (#3045, requested by @mruff-aeq)
+* **Interactive Welcome screen** on startup, in a background tab (#3147)
+* **Shaded pane edges** - text fades out at the top/bottom instead of cutting mid-line (`editor.viewport_edge_fade`)
+* **Smooth wheel scrolling**, a line at a time instead of jumpy notches (`editor.smooth_scroll`, #3091)
+* **Git Blame readability** - better contrast, and blame keeps your place on `b`/`q` (#3088)
+* **Markdown types brackets and quotes literally** instead of auto-pairing them
 
 ### Bug Fixes
 
-* **The wave screensaver ends when you come back to the window.** It promised "press any key or move the mouse to stop", but a terminal reports pointer motion only over its own window - so coming back from another app moves the mouse *there*, and the promise never reached the editor: the wave outlived the return until a key was pressed. Focus returning to the window now ends the show (as does a paste), without swallowing the event the editor still needs. Two more: in the **GUI window** the wave could not be dismissed at all - neither key nor mouse - and ran to its ten-minute safety cap; and the instruction now leaves the status bar with the wave instead of sitting there afterwards.
-* **Review Diff and Git Log are syntax highlighted** - the diff bodies were painted in flat add/remove colours plus plain text, while the identical lines one tab over got the language's keyword, function and punctuation colours. A plugin-composed buffer can now tell the host where its rows carry code and in what language (a new plugin API, `editor.setSyntaxRegions`), and the host's own highlighter colours those rows like any buffer - incrementally, viewport-bounded, following the theme - with each side of a hunk read as the contiguous text it is, so a docstring or block comment spanning several rows is one construct. A `.diff` buffer, such as the Git Log detail, gets the same treatment from a diff grammar that hands each file's rows to that file's language (#3104, reported by @tinchoz49; #2871).
-* **A `deno.json` no longer takes TypeScript away from a project without Deno installed** (#2981, reported by @atk).
-* **A single-key binding on a keymap chord's prefix now fires**, and deleting a built-in keybinding actually frees the key (#3171).
-* **LSP requests that time out now say so** instead of silently reporting "no results" while the status bar claims the server is ready; a stuck server now shows `LSP (stuck)` (#2197).
-* **An inlay hint no longer jumps to the next line** when you type at its anchor (#722).
-* **`curl ... | install.sh` no longer fails behind a shared IP or silently on error** (#3070).
-* **Keystrokes that only move the cursor no longer vanish with multiple cursors live** (#3125, reported by @X-Ryl669).
-* **A multi-cursor skip-over now lands past its delimiter** even when an earlier cursor's own edit shifts it first (#3166).
-* **The status bar's line number follows an added or removed cursor** instead of lagging until the next arrow key (#3167).
-* **Dragging a divider keeps up with the pointer** instead of lagging behind (#3140).
-* **The space below the last line follows the theme background** (#779).
-* **LSP diagnostics no longer get stuck reporting errors you already fixed** (#3038, reported by @thedadams).
-* **Settings: `Delete` works in a text field again** in the Edit Item dialog (#2875, reported by @asukaminato0721).
-* **Dim text in the integrated terminal is dim again** (#3123, reported by @fiatcode-gh).
-* **A multi-line paste into a terminal arrives whole instead of only its last line.** Pasting several lines into a shell or an agent CLI ran every line but the tail, which was left sitting on the input line — the paste read as typing, because that is exactly what it was: fresh handed the child the raw clipboard bytes, and a line editor takes each newline in them for the Enter key. A program that asks for bracketed paste (which readline in bash/zsh/fish does, as does an agent's input box) now gets the paste wrapped in the markers that say "this is pasted text, not keystrokes", so it lands as one inert block. A program that has not asked for it still gets keystrokes, now with line breaks as the carriage return the Enter key actually produces.
-* **Quitting no longer panics** while a plugin's off-loop work is still in flight.
-* **A signal no longer leaves the terminal unusable** - an editor stopped from outside (a `pkill`, a container stop) exited straight out of raw mode and the alternate screen, so the shell that got the terminal back echoed nothing and printed an escape burst on every click. The modes are now undone before the process goes.
-* **Git and review commands are grouped under two palette prefixes**, `Review Diff:` and `Git Log:` (#3098).
-* **Review Diff works with an external difftool** instead of showing an empty diff (#3066, by @asukaminato0721).
-* **Review Diff's `D` on a fully staged file now actually discards it**, with an honest report if it can't (#2318).
-* **Review Diff follows the working tree**, picking up changes made outside the editor instead of only its own saves, and no longer stacks a duplicate panel when re-run (#3126, reported by @asukaminato0721).
-* **A sidebar section no longer forces the sidebar open** — opening a Markdown file, or the Welcome screen, used to yank the sidebar (and a file explorer) open on you. A section mounted quietly now waits in a hidden column and is there when you open it; asking for one still opens it.
-* **The Welcome screen binds no printable key**: `1`/`2`/`3`, `0`, `/` and Space are all characters you might mean to type into its file finder. The caret navigates, Enter activates, and the Contents section jumps.
-* **The Welcome screen gained a Contents outline in the sidebar** — the same place Markdown files get theirs — plus a first-screen row that opens the file explorer, a terminal, a split or Settings, and a section on **Review Diff** with the keys it actually binds.
-* **The Welcome screen's caret and its focus stay on the same thing**: Tab brings the caret to the control it focuses, moving the caret onto a paragraph clears focus so `Enter` does nothing, and landing on a control — the file finder's field included — focuses it. Its level banners also breathe: a blank row now separates each rule from the sentence under it.
-* **Rendering fixes**: tab whitespace markers, indentation guides, block-selection rectangles, and angle brackets misread as delimiters; the File Explorer also gained a scrollbar (#3077, #3079, #3148, #3090, reported by @Korkman; #2859, reported by @asukaminato0721).
-* **The integrated terminal no longer loses scrollback** that just scrolled off screen (#3151).
-* **A conceal spanning a line break no longer crashes the editor** (#3139).
-* **A new file/folder name with slashes now creates its missing parent directories** (#2640, requested by @akarinotomoshibi).
-* **Review Diff's files sidebar scrolls properly** on large reviews (#3063).
-* **Review Diff's files sidebar shows whole filenames** when it opens, instead of eliding them to a few characters until the panel divider was dragged. The geometry a pane is born with was never reported to plugins, and for a side panel that is the only announcement there is — so every plugin-drawn panel laid its rows out to a guess.
-* **Clicking a file in Review Diff's sidebar moves the sidebar's highlight to it**, not only the diff. A click on a tree row recorded the selection in a shape the tree ignored, so the highlight stayed put unless a repaint happened to follow — which is why side-by-side looked right and the unified stream did not.
-* **Clicking a file in Review Diff's sidebar hands it the keys too** — the arrows went dead and Enter folded a section in the diff, because a click that lands on a widget reports only to the widget and the plugin never heard focus move.
-* **Review Diff's unified stream lists files in the sidebar's order**, so scrolling the diff and reading the sidebar walk the same sequence; `,` / `.` step in that order as well.
-* **A hover highlight no longer lingers while you type.** A pointer left resting on a list row kept its band — beside the review sidebar's real selection, that read as two "you are here" markers. Pointer feedback now ends at the first keystroke and returns when the pointer moves.
-* **Search & Replace accepts a terminal paste**, a match row now windows onto the match instead of truncating it, and keybindings accept X11 keysym names like `asterisk` (#3154; #1128, reported by @michelpado; #1960, reported by @mandolyte; #1580).
-* **A daemon now speaks the locale configured in `config.json`** instead of falling back to the environment (#3149, reported by @kirinriki7777-sys).
-* **`Ctrl+C`/`kill` now end the editor promptly and reliably** instead of occasionally deadlocking or crashing on the way out.
-* **Piped-in text (`... | fresh -`) no longer leaves a temp file behind in `/tmp`** (#3134, reported by @Korkman).
-* **Enter on the blank last line of a plain-text file no longer indents to the block above**; a blank line keeps the cursor's own column (#3165).
+* **Review Diff & Git Log**
+    * Syntax-highlight the code inside diffs (#3104, reported by @tinchoz49; #2871)
+    * Commands grouped under `Review Diff:` / `Git Log:` palette prefixes (#3098)
+    * Review Diff works with an external difftool instead of showing an empty diff (#3066, by @asukaminato0721)
+    * Review Diff's `D` on a fully staged file now actually discards it (#2318)
+    * Review Diff follows the working tree and no longer stacks a duplicate panel on re-run (#3126, reported by @asukaminato0721)
+    * Review Diff's files sidebar scrolls properly on large reviews, shows full filenames, and a click moves the highlight and keyboard focus together (#3063, #3188)
+    * Review Diff, Git Log & Side-by-Side Diff parse `git`'s output correctly under more git configs - quoted paths, blank context lines, `diff.relative`, submodules, signed commits (#3199)
+* **Multi-cursor editing**
+    * A keystroke that only moves the cursor no longer vanishes, and a plain click collapses cursors back to one (#3125, reported by @X-Ryl669)
+    * A skip-over now lands past its delimiter even when another cursor's edit shifts it (#3166)
+* **Integrated terminal**
+    * Dim text is dim again (#3123, reported by @fiatcode-gh)
+    * A multi-line paste now arrives whole instead of only its last line (#3215)
+    * A killed editor leaves it usable instead of exiting straight out of raw mode and the alternate screen (#3197)
+    * No longer loses recent scrollback (#3151)
+* **Opening large files**
+    * Huge single-line files (tens of MB) no longer loop or stall for cursor movement, scrolling and paging (#1806)
+    * Very large binary/zip files open instantly instead of freezing or risking an out-of-memory crash (#3142, reported by @mommysgoodpuppy)
+* **Wave screensaver** now ends when you return to the window (or the GUI window), not just on the next keypress (#3204)
+* **`deno.json`** no longer disables TypeScript on a project without Deno (#2981, reported by @atk)
+* **Keymap chords** - a single-key binding on a chord prefix now fires, and deleting a keybinding frees the key (#3171)
+* **LSP timeouts** are reported instead of silently showing "no results"; a stuck server shows `LSP (stuck)` (#2197)
+* **Inlay hints** no longer jump to the next line while typing at their anchor (#722)
+* **`curl | install.sh`** no longer fails behind a shared IP or silently on error (#3070)
+* **Status bar line number** follows an added/removed cursor immediately (#3167)
+* **Divider dragging** keeps up with the pointer (#3140)
+* **The space below the last line** follows the theme background (#779)
+* **LSP diagnostics** no longer get stuck reporting errors you already fixed (#3038, reported by @thedadams)
+* **Settings dialog** - `Delete` works again in the Edit Item text field (#2875, reported by @asukaminato0721)
+* **Quitting** no longer panics while plugin work is still in flight
+* **Rendering fixes** - whitespace markers, indent guides, block-selection rectangles, misread angle brackets; File Explorer got a scrollbar (#3077, #3079, #3148, #3090, reported by @Korkman; #2859, reported by @asukaminato0721)
+* **Conceals spanning a line break** no longer crash the editor (#3139)
+* **New file/folder names with slashes** create their missing parent directories (#2640, requested by @akarinotomoshibi)
+* **`fresh --cmd update`** no longer fails on GitHub's shared API rate limit - resolves releases the way `install.sh` does, honours `GITHUB_TOKEN`, and adds `--skip-attestation` as a fallback (#3198)
+* **SSH remote sessions** no longer hang when the target machine is Windows (#3145, by @mommysgoodpuppy)
+* **Search & Replace results scroll horizontally** to reveal a long match, accept a pasted query, and `Ctrl`+arrow no longer moves a hidden buffer cursor (#3154, #3184; #1960, reported by @mandolyte; #1580, #3186)
+* **More keys can be bound by name** - numpad, media and modifier keys now parse, fixing `asterisk`/`kp_multiply` bindings that silently failed before (#1128, reported by @michelpado)
+* **Shift+wheel scrolls sideways** everywhere, instead of scrolling vertically like a plain wheel notch (#1580)
+* **Daemon locale** now follows `config.json` instead of the environment (#3149, reported by @kirinriki7777-sys)
+* **`Ctrl+C`/`kill`** end the editor promptly instead of occasionally deadlocking or crashing
+* **Piped-in text** (`... | fresh -`) no longer leaves a temp file behind in `/tmp` (#3134, reported by @Korkman)
+* **Enter on a blank last line** keeps the cursor's own column instead of indenting to the block above (#3165)
+* **Markdown Compose fixes** - a code block keeps its gutter in a Source-mode split instead of drawing compose's rails; dragging a composing tab into a new split keeps it composing; composing one split no longer forces line wrap on in a sibling; a hand-aligned table's padding and wrapped rows render correctly (#3206)
 
 ### Internals
 
@@ -99,10 +100,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * Bold, italic, and inline-code markup no longer stay visible as raw `**`/`` ` `` until you click elsewhere (#2968, reported by @mommysgoodpuppy).
   * Comments inside fenced code blocks are no longer misdetected as Markdown syntax, and scrolling a large file in Compose mode is smooth on the first pass instead of only after it's been scrolled through once.
 * **Rendering**: the 256-color contrast pass no longer stalls large terminal windows or the Settings dialog, and a dimmed dialog no longer paints a fixed dark gray instead of following the active theme (#2982).
-* **Opening a huge file no longer freezes the editor** - two separate freezes, one cause: work at open that was proportional to the file rather than to the screen.
-  * **A large binary or archive opens instantly instead of locking the editor up for tens of seconds** - clicking a big `.zip` in the File Explorer used to read the whole file into memory and index its line starts before the editor could redraw anything, so a 2.1 GB archive accepted no input at all for ~13 s and needed ~1.2x its own size in resident memory - which, on a machine whose RAM was close to the file's size, was the swap thrash or OOM kill users hit instead of a pause. A binary buffer is read-only, so it now loads the same lazy way a large text file always has: the file is mapped into the buffer as one unread piece and chunks are pulled in as the viewport reaches them. Opening that 2.1 GB archive is now immediate and costs ~118 MB rather than ~2.2 GB (#3142, reported by @mommysgoodpuppy).
-  * **A file that is one enormous line opens as fast as the same bytes split across lines** - a 53 MB single-line JSON took ~19 s before the first frame while its byte-identical multi-line twin took ~0.25 s, and every keystroke after that cost about a second. Deciding where the viewport can sit meant wrapping whole logical lines, so a 53 MB line was laid out in full - hundreds of thousands of rows - to answer a question bounded by the ~30 rows on screen. The viewport now stops counting a line's rows once it has enough of them to answer, reading a few KB of the line instead of all of it. That single-line file now opens in ~0.5 s, and cursor keys respond 2-5x faster (#1806).
-  * **Arrow keys and paging now move through a file that is one enormous line** - holding `Down` used to do nothing at all: the view stayed on the first screenful however long you held the key, so the rest of the file was unreachable by keyboard, and `PageDown` stopped ~100 KB in with the cursor stranded behind the view. Such a file has no wrap index, and the placement pass that owns it described the viewport as a row *count* into a line - a count nothing could take past the first 100 KB the reader returns. It now addresses those rows by byte, so each press walks the rows it moves over and no others, to the end of the line in either direction. `Down` on the file's *last* row also used to throw the cursor back to byte 100,000 and drag the view with it, looping the walk into the middle of the file instead of stopping at the end; it now stops (#1806).
 * **Terminals**: a focused terminal keeps `Ctrl+B`/`Ctrl+E` for the shell instead of them toggling/focusing the File Explorer, and File Explorer keys (like Enter) no longer leak into a terminal's PTY sitting behind it.
 * **File Explorer**: the sidebar caret no longer blinks through modal dialogs. With `file_explorer.follow_active_buffer` on, the tree now also follows the first file a session opens — previously a code tour's opening step (or any first open into the empty `[No Name]` buffer) left the explorer parked at the root — and a follow request no longer gets thrown away when it arrives while the tree is still expanding for the previous one (#2988).
 * **Review Diff**: `PageDown`/`PageUp` no longer stalls with the cursor off-screen while paging over a collapsed file (#3029); a panel like the git-log commit view now word-wraps correctly no matter which split shows it.
