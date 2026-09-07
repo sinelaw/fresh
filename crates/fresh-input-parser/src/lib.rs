@@ -43,6 +43,9 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
+pub mod keypad;
+pub mod media_modifier;
+
 /// A key press, as the terminal reported it, plus the character the key
 /// actually types on the user's keyboard layout when the chord's own spelling
 /// hides it.
@@ -544,17 +547,23 @@ impl InputParser {
             b'F' => Some(KeyCode::End),
             // Application-keypad forms (DECPAM). Without these the numeric
             // keypad went silent whenever application keypad mode was active.
-            b'M' => Some(KeyCode::Enter),       // keypad Enter
-            b'E' => Some(KeyCode::KeypadBegin), // keypad Begin (the "5" key)
-            b'X' => Some(KeyCode::Char('=')),   // keypad Equal
-            b'j' => Some(KeyCode::Char('*')),   // keypad Multiply
-            b'k' => Some(KeyCode::Char('+')),   // keypad Add
-            b'l' => Some(KeyCode::Char(',')),   // keypad Separator
-            b'm' => Some(KeyCode::Char('-')),   // keypad Subtract
-            b'n' => Some(KeyCode::Char('.')),   // keypad Decimal
-            b'o' => Some(KeyCode::Char('/')),   // keypad Divide
+            //
+            // Which keypad key each byte *is* is this encoding's own business;
+            // what that key normalises to is `keypad`'s, so the codes come from
+            // there rather than being spelled out a second time. A name that
+            // did not resolve would take the key silently out of service, which
+            // is what `ss3_application_keypad_forms` covers byte by byte.
+            b'M' => crate::keypad::code_for_keysym("kp_enter"),
+            b'E' => crate::keypad::code_for_keysym("kp_begin"),
+            b'X' => crate::keypad::code_for_keysym("kp_equal"),
+            b'j' => crate::keypad::code_for_keysym("kp_multiply"),
+            b'k' => crate::keypad::code_for_keysym("kp_add"),
+            b'l' => crate::keypad::code_for_keysym("kp_separator"),
+            b'm' => crate::keypad::code_for_keysym("kp_subtract"),
+            b'n' => crate::keypad::code_for_keysym("kp_decimal"),
+            b'o' => crate::keypad::code_for_keysym("kp_divide"),
             // Keypad digits 0–9 (`ESC O p` … `ESC O y`).
-            b'p'..=b'y' => Some(KeyCode::Char((b'0' + (byte - b'p')) as char)),
+            b'p'..=b'y' => crate::keypad::code_for_digit(byte - b'p'),
             _ => None,
         };
         if let Some(code) = keycode {
@@ -1076,8 +1085,12 @@ fn functional_or_char(codepoint: u32) -> Option<KeyCode> {
 /// Map a kitty keyboard-protocol functional key (encoded as a Private Use Area
 /// codepoint) to a crossterm [`KeyCode`]. Returns `None` for PUA codepoints the
 /// protocol does not assign, so they are dropped rather than inserted as text.
-fn kitty_functional_key(cp: u32) -> Option<KeyCode> {
-    use crossterm::event::{MediaKeyCode as M, ModifierKeyCode as Mod};
+///
+/// Public because it is the honest answer to "which keys can arrive here",
+/// and a test that wants to check every one of them against something else —
+/// that the keybinding config can *name* each, say — has no other way to
+/// enumerate them without restating the list and testing the restatement.
+pub fn kitty_functional_key(cp: u32) -> Option<KeyCode> {
     Some(match cp {
         57358 => KeyCode::CapsLock,
         57359 => KeyCode::ScrollLock,
@@ -1087,56 +1100,17 @@ fn kitty_functional_key(cp: u32) -> Option<KeyCode> {
         57363 => KeyCode::Menu,
         // F13–F35.
         57376..=57398 => KeyCode::F(13 + (cp - 57376) as u8),
-        // Keypad digits 0–9.
-        57399..=57408 => KeyCode::Char((b'0' + (cp - 57399) as u8) as char),
-        57409 => KeyCode::Char('.'), // KP_DECIMAL
-        57410 => KeyCode::Char('/'), // KP_DIVIDE
-        57411 => KeyCode::Char('*'), // KP_MULTIPLY
-        57412 => KeyCode::Char('-'), // KP_SUBTRACT
-        57413 => KeyCode::Char('+'), // KP_ADD
-        57414 => KeyCode::Enter,     // KP_ENTER
-        57415 => KeyCode::Char('='), // KP_EQUAL
-        57416 => KeyCode::Char(','), // KP_SEPARATOR
-        57417 => KeyCode::Left,      // KP_LEFT
-        57418 => KeyCode::Right,     // KP_RIGHT
-        57419 => KeyCode::Up,        // KP_UP
-        57420 => KeyCode::Down,      // KP_DOWN
-        57421 => KeyCode::PageUp,    // KP_PAGE_UP
-        57422 => KeyCode::PageDown,  // KP_PAGE_DOWN
-        57423 => KeyCode::Home,      // KP_HOME
-        57424 => KeyCode::End,       // KP_END
-        57425 => KeyCode::Insert,    // KP_INSERT
-        57426 => KeyCode::Delete,    // KP_DELETE
-        57427 => KeyCode::KeypadBegin,
-        // Media keys.
-        57428 => KeyCode::Media(M::Play),
-        57429 => KeyCode::Media(M::Pause),
-        57430 => KeyCode::Media(M::PlayPause),
-        57431 => KeyCode::Media(M::Reverse),
-        57432 => KeyCode::Media(M::Stop),
-        57433 => KeyCode::Media(M::FastForward),
-        57434 => KeyCode::Media(M::Rewind),
-        57435 => KeyCode::Media(M::TrackNext),
-        57436 => KeyCode::Media(M::TrackPrevious),
-        57437 => KeyCode::Media(M::Record),
-        57438 => KeyCode::Media(M::LowerVolume),
-        57439 => KeyCode::Media(M::RaiseVolume),
-        57440 => KeyCode::Media(M::MuteVolume),
-        // Standalone modifier keys.
-        57441 => KeyCode::Modifier(Mod::LeftShift),
-        57442 => KeyCode::Modifier(Mod::LeftControl),
-        57443 => KeyCode::Modifier(Mod::LeftAlt),
-        57444 => KeyCode::Modifier(Mod::LeftSuper),
-        57445 => KeyCode::Modifier(Mod::LeftHyper),
-        57446 => KeyCode::Modifier(Mod::LeftMeta),
-        57447 => KeyCode::Modifier(Mod::RightShift),
-        57448 => KeyCode::Modifier(Mod::RightControl),
-        57449 => KeyCode::Modifier(Mod::RightAlt),
-        57450 => KeyCode::Modifier(Mod::RightSuper),
-        57451 => KeyCode::Modifier(Mod::RightHyper),
-        57452 => KeyCode::Modifier(Mod::RightMeta),
-        57453 => KeyCode::Modifier(Mod::IsoLevel3Shift),
-        57454 => KeyCode::Modifier(Mod::IsoLevel5Shift),
+        // The whole keypad, from the table `keypad` shares with the config
+        // key-name parser — one definition, so a name that binds and a key
+        // that arrives cannot drift apart.
+        57399..=crate::keypad::KP_BEGIN => return crate::keypad::code_for_kitty_codepoint(cp),
+        // The media and standalone-modifier keys, from the table
+        // `media_modifier` shares with the config key-name parser — same
+        // reason as the keypad above: a key that arrives and a name that
+        // binds cannot drift apart if there is only one of them.
+        crate::media_modifier::FIRST..=crate::media_modifier::LAST => {
+            return crate::media_modifier::code_for_kitty_codepoint(cp)
+        }
         _ => return None,
     })
 }

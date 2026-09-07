@@ -1666,6 +1666,63 @@ fn ss3_application_keypad_forms() {
     ); // keypad .
 }
 
+/// Every application-keypad byte, not just the six above.
+///
+/// `feed_ss3` names its keys by keysym and takes the code from
+/// `keypad::KEYPAD_KEYS`; a name that stopped resolving would take that byte
+/// silently out of service rather than failing to compile. This is the check
+/// that turns such a typo into a test failure.
+#[test]
+fn ss3_keypad_bytes_all_resolve() {
+    let expected: &[(u8, KeyCode)] = &[
+        (b'M', KeyCode::Enter),
+        (b'E', KeyCode::KeypadBegin),
+        (b'X', KeyCode::Char('=')),
+        (b'j', KeyCode::Char('*')),
+        (b'k', KeyCode::Char('+')),
+        (b'l', KeyCode::Char(',')),
+        (b'm', KeyCode::Char('-')),
+        (b'n', KeyCode::Char('.')),
+        (b'o', KeyCode::Char('/')),
+    ];
+    let mut p = InputParser::new();
+    for (byte, code) in expected {
+        assert_eq!(
+            keys(&p.parse(&[0x1b, b'O', *byte])),
+            vec![(*code, KeyModifiers::empty())],
+            "ESC O {}",
+            *byte as char
+        );
+    }
+    for d in 0..=9u8 {
+        assert_eq!(
+            keys(&p.parse(&[0x1b, b'O', b'p' + d])),
+            vec![(KeyCode::Char((b'0' + d) as char), KeyModifiers::empty())],
+            "keypad digit {d}"
+        );
+    }
+}
+
+/// Every keypad key in the shared table decodes from its kitty codepoint.
+///
+/// `kitty_functional_key` resolves the whole keypad range through
+/// `keypad::KEYPAD_KEYS`; this is the end-to-end check that the delegation
+/// covers the range it claims, including `kp_begin` at its top edge.
+#[test]
+fn kitty_keypad_codepoints_all_decode() {
+    let mut p = InputParser::new();
+    for k in keypad::KEYPAD_KEYS {
+        let seq = format!("\x1b[{};1u", k.kitty_codepoint);
+        assert_eq!(
+            keys(&p.parse(seq.as_bytes())),
+            vec![(k.code, KeyModifiers::empty())],
+            "kitty codepoint {} ({})",
+            k.kitty_codepoint,
+            k.keysym
+        );
+    }
+}
+
 #[test]
 fn csi_e_is_keypad_begin() {
     let mut p = InputParser::new();
