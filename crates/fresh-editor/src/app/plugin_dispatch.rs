@@ -5278,6 +5278,8 @@ impl Editor {
         let prev_focus = String::new();
         let panel_width = self.widget_panel_width(buffer_id);
         let avail_height = self.widget_panel_height(buffer_id);
+        // A mount has nothing panned yet.
+        let h_pan = std::collections::HashMap::new();
         let out = self.render_panel_spec(
             &spec,
             &prev,
@@ -5286,6 +5288,7 @@ impl Editor {
             panel_width,
             avail_height,
             options.auto_focus_first(),
+            &h_pan,
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
         // KNOWN LIMITATION (deliberate; retired by `docs/internal/retained-mode-ui.md` §3.5):
@@ -5388,6 +5391,13 @@ impl Editor {
             .get(panel_key)
             .map(|p| p.auto_focus_first)
             .unwrap_or(true);
+        // The reader's sideways fold: a repaint that dropped it would slide
+        // every row back to its resting window under a reader who panned.
+        let h_pan = self
+            .widget_registry
+            .get(panel_key)
+            .map(|p| p.h_pan.clone())
+            .unwrap_or_default();
         let out = self.render_panel_spec(
             &spec,
             &prev,
@@ -5396,6 +5406,7 @@ impl Editor {
             panel_width,
             avail_height,
             auto_focus_first,
+            &h_pan,
         );
         self.record_widget_panel_render_height(panel_key, avail_height);
         let entries = out.entries;
@@ -5861,6 +5872,8 @@ impl Editor {
                 // Floating and dock slots keep the historical seeding;
                 // only a panel that declared otherwise at mount opts out.
                 true,
+                // A mount has nothing panned yet.
+                None,
             )
         };
         let entries = out.entries;
@@ -5970,6 +5983,8 @@ impl Editor {
                 }),
                 // As the dock: keep the historical focus seeding.
                 true,
+                // A mount has nothing panned yet.
+                None,
             )
         };
         let entries = out.entries;
@@ -6069,6 +6084,8 @@ impl Editor {
                 // Floating and dock slots keep the historical seeding;
                 // only a panel that declared otherwise at mount opts out.
                 true,
+                // A mount has nothing panned yet.
+                None,
             )
         };
         let entries = out.entries;

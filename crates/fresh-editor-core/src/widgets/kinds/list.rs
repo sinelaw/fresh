@@ -718,6 +718,7 @@ fn collect_list(
                     rows: visible_rows,
                     items: visible_items,
                     offset: scroll,
+                    cols: 0,
                 },
             );
         }

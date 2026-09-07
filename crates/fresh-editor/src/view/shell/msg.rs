@@ -825,6 +825,7 @@ pub enum UiFact {
         widget: String,
         delta: i32,
     },
+    /// **Focus moved onto a plugin widget, and the runtime is being told.**
     /// **The tree's ring landed on a plugin widget, and the runtime is being
     /// told.**
     ///

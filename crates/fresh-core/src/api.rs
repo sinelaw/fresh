@@ -2133,6 +2133,42 @@ pub struct TreeNode {
     /// Ignored when `item_height == 1`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_lines: Vec<crate::text_property::TextPropertyEntry>,
+    /// The span of `text` this row exists to show, in **chars**.
+    ///
+    /// A row wider than the panel is windowed by the host, and without this
+    /// the window can only start at the head of the line — which is exactly
+    /// where a search result's match usually is not (issue #1580). Naming the
+    /// span lets the host rest the window on it instead, and the reader pans
+    /// away from there.
+    ///
+    /// Chars rather than columns because that is the unit a plugin can count:
+    /// it has the string, not the terminal's width table. The host converts.
+    /// Out-of-range values are harmless — they resolve to the end of the text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_anchor: Option<TextWindowAnchor>,
+}
+
+/// How a row asks to be windowed when it is wider than the panel.
+/// See [`TreeNode::window_anchor`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TextWindowAnchor {
+    /// Chars at the head of the row that never move.
+    ///
+    /// A row's leading pieces are usually its *identity* rather than its
+    /// content — a search result's `path:line` — and a window that slid them
+    /// away left rows that could not be told apart. They stay put and the
+    /// rest of the row slides under them, the same relationship the indent
+    /// and checkbox glyphs already have with the body.
+    #[serde(default)]
+    pub pinned: u32,
+    /// Char index, in the whole row, where the span the row exists to show
+    /// starts. Must be at or after `pinned`; a span inside the pinned head is
+    /// always visible anyway.
+    pub start: u32,
+    /// Length of the span, in chars. Zero is allowed and means a point.
+    pub len: u32,
 }
 
 /// Visual role for a `Button`. Maps to theme keys at render time —
