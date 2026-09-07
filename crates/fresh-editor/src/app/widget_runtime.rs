@@ -2360,6 +2360,44 @@ impl Editor {
         true
     }
 
+    /// Pan the keyed widget sideways by `delta` display columns.
+    ///
+    /// The runtime's counterpart to [`Self::wheel_widget_by_key`], and it does
+    /// not go through a kind: a pan moves the panel's own fold rather than a
+    /// window a kind resolves, so there is nothing for a `Tree` or a `List` to
+    /// decide. What each kind decides is whether it *honours* the fold, which
+    /// it does at paint time by threading it into `render_tree_row` — and
+    /// [`pan_bounds`] answers that same question from the spec, so a notch over
+    /// a kind that cannot show a pan falls through instead of being swallowed.
+    ///
+    /// [`pan_bounds`]: crate::widgets::render::pan_bounds
+    pub(crate) fn pan_widget_by_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        delta: i32,
+    ) -> bool {
+        if widget_key.is_empty() {
+            return false;
+        }
+        let Some(spec) = self.widget_registry.get(panel_key).map(|p| p.spec.clone()) else {
+            return false;
+        };
+        let Some(widget) = crate::widgets::find_widget_by_key(&spec, widget_key) else {
+            return false;
+        };
+        let viewport = self.widget_viewport(panel_key, widget, widget_key);
+        let bounds = crate::widgets::render::pan_bounds(widget, viewport.cols, None);
+        let Some(panel) = self.widget_registry.get_mut(panel_key) else {
+            return false;
+        };
+        if !panel.pan_h(widget_key, Some(delta), bounds) {
+            return false;
+        }
+        self.rerender_widget_panel(panel_key);
+        true
+    }
+
     /// **Does the tree describe this panel's interior** — and it does for
     /// every mounted panel. The dock, the floating modal, a sidebar section
     /// and a pane all describe what is mounted in them; the pane-mounted class

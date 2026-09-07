@@ -1738,6 +1738,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // things that belong at the panel's edge, the row band and the
             // overlay scrollbar, stop with it.
             let node = node.w(Sizing::Pct(100));
+            let node = pan_to_widget(node, cx.slot, &tree_key);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(tree_rows(at, *r))),
                 None => node.flex(1),
@@ -1903,6 +1904,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // not the element's own — see the `List` arm above.
             let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
             let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
+            let node = pan_to_widget(node, slot, &tree_key);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(tree_rows(n as u32, *r))),
                 None => node.flex(1),
@@ -3041,6 +3043,36 @@ fn float_route(n: Node<UiMsg>, slot: Slot) -> Node<UiMsg> {
 /// completion list, whose window lives in `WidgetInstanceState::Text` — so the
 /// half the tree can do is say *which* widget was under the pointer, which is
 /// exactly what the arena was consulted for. See [`UiFact::WidgetWheel`].
+/// Claim the **sideways** notch on a rows widget and send it to the runtime.
+///
+/// The vertical notch is the library's — the description gives the element a
+/// viewport and it scrolls. Sideways has no such window to move: the rows
+/// arrive fitted to the panel's width, so the only thing that can honour a pan
+/// is the runtime that fits them. This names the widget and lets the vertical
+/// notch through untouched, so the two axes keep their separate owners.
+///
+/// Issue #1580.
+fn pan_to_widget(n: Node<UiMsg>, slot: Slot, widget_key: &str) -> Node<UiMsg> {
+    if widget_key.is_empty() {
+        return n;
+    }
+    let key = widget_key.to_string();
+    fresh_ui::gesture(n).on(
+        fresh_ui::GestureKind::Wheel,
+        std::rc::Rc::new(move |e: &fresh_ui::Event| {
+            // Vertical is not ours: let it reach the viewport beneath.
+            if e.axis != fresh_ui::Axis::Horizontal {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(super::msg::UiFact::WidgetPan {
+                slot,
+                widget: key.clone(),
+                delta: e.delta,
+            }))
+        }),
+    )
+}
 
 fn wheel_to_widget(n: Node<UiMsg>, slot: Slot, widget_key: &str) -> Node<UiMsg> {
     // An unkeyed widget has no instance state, so it has no window to move and

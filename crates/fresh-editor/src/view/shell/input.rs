@@ -183,6 +183,26 @@ pub fn mouse(
         MouseEventKind::Down(b) => Input::press_n(pos, button(b), mods, clicks),
         MouseEventKind::Up(b) => Input::release(pos, button(b), mods),
         MouseEventKind::Moved | MouseEventKind::Drag(_) => Input::Move { pos, mods },
+        // **Shift turns the wheel sideways.** Terminals overwhelmingly report
+        // Shift+wheel as a vertical notch with the modifier set, not as the
+        // `ScrollLeft`/`ScrollRight` buttons below — so a reader doing the
+        // gesture every other application answers got a vertical scroll
+        // instead (issue #1580). The axis is decided once, here, where the
+        // terminal's report becomes an `Input`, so every surface downstream
+        // sees one kind of sideways notch whatever produced it. `arm_wheel_walk`
+        // already assumed this reading.
+        MouseEventKind::ScrollDown if mods.shift => Input::Wheel {
+            pos,
+            delta: columns,
+            axis: Axis::Horizontal,
+            mods,
+        },
+        MouseEventKind::ScrollUp if mods.shift => Input::Wheel {
+            pos,
+            delta: -columns,
+            axis: Axis::Horizontal,
+            mods,
+        },
         MouseEventKind::ScrollDown => Input::Wheel {
             pos,
             delta: lines,
