@@ -1292,10 +1292,12 @@ impl Editor {
             return;
         }
 
-        // If the focused split is a live terminal, send paste to its PTY
+        // If the focused split is a live terminal, send paste to its PTY —
+        // as a paste, bracketed when the child asked for DECSET 2004, so a
+        // multi-line paste arrives as one block instead of as a run of Enter
+        // keys that submits every line but the tail.
         if self.active_window().focused_terminal_live() {
-            self.active_window_mut()
-                .send_terminal_input(normalized.as_bytes());
+            self.active_window_mut().send_terminal_paste(&normalized);
             return;
         }
 
