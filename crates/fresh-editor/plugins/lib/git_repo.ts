@@ -127,6 +127,30 @@ const DIFF_FORMAT_CONFIG = [
 ];
 
 /**
+ * Per-file ceiling on what a patch-producing `git` call is allowed to expand.
+ *
+ * `core.bigFileThreshold` is git's own "this blob is not worth treating as
+ * text" switch: above it `git diff` emits the one-line `Binary files ...
+ * differ` in place of a patch. Git's default is 512 MiB, which is a sane
+ * ceiling for a batch tool writing to a pipe and a ruinous one for a panel
+ * that has to carry every byte across the plugin boundary, parse it into
+ * hunks, and lay it out as styled rows — a cost linear in the patch, paid on
+ * the editor's own thread.
+ *
+ * So the threshold *is* the worst-case stall, and it has to be set from what
+ * a reader can use rather than from what git can produce. A single untracked
+ * 60 MiB file is a 60 MiB patch; on the review watch's timer that is a
+ * multi-second freeze every tick with nothing on screen saying why.
+ * 4 MiB is around 100k lines: already far past what anyone reads hunk by
+ * hunk, and still ~100x the largest file written by hand.
+ *
+ * This caps the *rendering*, not the review: the file keeps its row in the
+ * file list and its header in the stream, carrying the binary-shaped block
+ * git hands back instead of a patch nobody would have read.
+ */
+const BIG_FILE_THRESHOLD = "4m";
+
+/**
  * Build the `git` argv for a patch-producing sub-command whose stdout a plugin
  * parses (`diff --git` / `+++ b/` / `@@` headers, `+`/`-`/` ` rows). Every
  * knob neutralised here is one a user may legitimately have set, and any one
@@ -145,6 +169,7 @@ export function diffArgs(subcommand: string[], ...rest: string[]): string[] {
     // the tick reaches for.
     "--no-optional-locks",
     ...DIFF_FORMAT_CONFIG,
+    "-c", `core.bigFileThreshold=${BIG_FILE_THRESHOLD}`,
     ...subcommand,
     "--no-ext-diff",
     "--no-textconv",
