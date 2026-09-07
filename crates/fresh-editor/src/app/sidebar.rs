@@ -69,6 +69,17 @@ impl SidebarSection {
         }
     }
 
+    /// Whether this is the section that holds the file tree.
+    ///
+    /// The explorer is section 0 and `restore_sidebar_sections` keeps it
+    /// there, but *asking by position* spreads that invariant over every
+    /// caller. Ask what the section holds instead: the kind is the
+    /// unambiguous name for it, and it stays right if the column ever grows
+    /// a section above the tree.
+    pub(crate) fn is_explorer(&self) -> bool {
+        self.kind == SidebarSectionKind::Explorer
+    }
+
     pub(crate) fn panel_key(&self) -> Option<&PanelKey> {
         match &self.kind {
             SidebarSectionKind::Panel { key, .. } => Some(key),
@@ -277,6 +288,52 @@ impl super::Editor {
         sec.squeezed = false;
     }
 
+    /// Where the file tree's section is, by what it holds.
+    pub(crate) fn explorer_section_index(&self) -> Option<usize> {
+        self.sidebar_sections.iter().position(|s| s.is_explorer())
+    }
+
+    /// Open section `index` if it is collapsed, so what is about to be
+    /// focused, or asked for by name, is on screen.
+    ///
+    /// A visible column is not a visible section: collapsing is how a reader
+    /// gives one section's rows to another, and the collapse is section state
+    /// that outlives hiding the column. Anything that means "show me *this*"
+    /// has to say the second half out loud, or it leaves the keyboard in a
+    /// section with no rows under its header — which is what
+    /// `focus_sidebar_section` already refuses to do about the column
+    /// (`reveal_sidebar`), and had no answer for about the section.
+    ///
+    /// Routed through [`toggle_sidebar_section`](Self::toggle_sidebar_section)
+    /// so this does exactly what a press on the header does: the exclusive
+    /// accordion still ends with one open section, and the section stops
+    /// being `squeezed` because it was opened on purpose. A section collapsed
+    /// by pressure is opened too and stays open — `squeeze` collapses from
+    /// the bottom up, so a column too short for every section takes the rows
+    /// back from the last one rather than from the one just asked for.
+    pub(crate) fn reveal_sidebar_section(&mut self, index: usize) {
+        if self
+            .sidebar_sections
+            .get(index)
+            .is_some_and(|s| s.collapsed)
+        {
+            self.toggle_sidebar_section(index);
+        }
+    }
+
+    /// Open the explorer's section if the reader has collapsed it.
+    ///
+    /// The commands that show or focus the file explorer mean the tree, not
+    /// the column it lives in: a reader who collapsed the tree to give a
+    /// plugin section the column (the Markdown contents panel, say) was left
+    /// with a header row and nothing under it, and toggling the column off
+    /// and on again could not recover it.
+    pub(crate) fn reveal_explorer_section(&mut self) {
+        if let Some(i) = self.explorer_section_index() {
+            self.reveal_sidebar_section(i);
+        }
+    }
+
     /// The press that may become a divider drag: snapshot the neighbours.
     pub(crate) fn begin_sidebar_section_drag(&mut self, index: usize, y: u16) {
         let inert = self.sidebar_accordion() == Accordion::Exclusive;
@@ -334,14 +391,15 @@ impl super::Editor {
         }
     }
 
-    /// Drop section `index`. Section 0 is the explorer and is not a section
-    /// the user can close this way — its `×` hides the whole sidebar.
+    /// Drop section `index`. The explorer's section is not one the user can
+    /// close this way — its `×` hides the whole sidebar.
     ///
     /// A mounted panel is unmounted and told, with the `cancel` a closed
     /// modal fires, so the plugin can drop its own state.
     pub(crate) fn close_sidebar_section(&mut self, index: usize) {
-        if index == 0 || index >= self.sidebar_sections.len() {
-            return;
+        match self.sidebar_sections.get(index) {
+            Some(s) if !s.is_explorer() => {}
+            _ => return,
         }
         if let Some(panel) = self.sidebar_sections[index].panel.take() {
             let widget_key = self
@@ -399,8 +457,10 @@ impl super::Editor {
         }
         // Putting the keyboard in a section you cannot see is not a
         // state; this is the ask that `place_panel_in_sidebar` no longer
-        // assumes (see `reveal_sidebar`).
+        // assumes (see `reveal_sidebar`). The column and the section are two
+        // separate ways to be off screen, so focusing says both.
         self.reveal_sidebar();
+        self.reveal_sidebar_section(index);
         if self.dock.as_ref().is_some_and(|d| d.focused) {
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
@@ -438,13 +498,16 @@ impl super::Editor {
         }
         let current = match self.focused_sidebar_panel() {
             Some(i) => Some(i),
-            None if self.active_window().key_context == KeyContext::FileExplorer => Some(0),
+            None if self.active_window().key_context == KeyContext::FileExplorer => {
+                self.explorer_section_index()
+            }
             None => None,
         };
-        let next = (current.map(|i| i + 1).unwrap_or(0)..self.sidebar_sections.len())
-            .find(|&i| i == 0 || self.sidebar_sections[i].panel.is_some());
+        let next = (current.map(|i| i + 1).unwrap_or(0)..self.sidebar_sections.len()).find(|&i| {
+            self.sidebar_sections[i].is_explorer() || self.sidebar_sections[i].panel.is_some()
+        });
         match (current, next) {
-            (_, Some(0)) => self.focus_file_explorer(),
+            (_, Some(i)) if self.sidebar_sections[i].is_explorer() => self.focus_file_explorer(),
             (_, Some(i)) => self.focus_sidebar_section(i),
             // Past the last section: the editor.
             (Some(_), None) => {
@@ -570,7 +633,7 @@ impl super::Editor {
         &mut self,
         index: usize,
     ) -> Option<super::FloatingWidgetState> {
-        if index == 0 || index >= self.sidebar_sections.len() {
+        if self.sidebar_sections.get(index)?.is_explorer() {
             return None;
         }
         let panel = self.sidebar_sections[index].panel.take()?;
