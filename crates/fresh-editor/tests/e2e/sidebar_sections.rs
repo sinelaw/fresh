@@ -211,3 +211,104 @@ fn a_plugin_section_mounts_drags_collapses_and_survives_a_restore() {
         );
     }
 }
+
+/// **A collapsed explorer section is not a hidden sidebar**, and the commands
+/// that show the explorer have to say so.
+///
+/// The reader here is the one the Markdown contents panel produces: a column
+/// with two sections, the tree collapsed to its header row so the panel below
+/// has the rows. Section state is the editor's, not the column's, so it
+/// outlives hiding the sidebar — before the fix, `Ctrl+B` off and on again
+/// brought the column back with the tree still collapsed, and there was no
+/// way to reach the tree from the command at all.
+#[test]
+fn showing_the_explorer_opens_a_section_the_reader_collapsed() {
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project = temp_dir.path().join("project");
+    fs::create_dir(&project).unwrap();
+    fs::write(project.join("a.txt"), "hello\n").unwrap();
+    install_plugin(&project);
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // An inside cell of a header row, clear of the chevron and the `×`.
+    let x = 6u16;
+
+    let mut h = launch(&project, &dir_context);
+    h.editor_mut()
+        .restore_active_window_on_launch(false)
+        .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+    run_palette_command(&mut h, "SidebarTest: Mount");
+    h.wait_until(|h| h.screen_to_string().contains("alpha"))
+        .unwrap();
+
+    // **Collapse the explorer**, the way the reader does: a click on its
+    // header. The tree goes with its body; the plugin section keeps the rows.
+    let explorer = row_of(&h, "▼ File Explorer").expect("the explorer's header");
+    h.mouse_click(x, explorer).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("▶ File Explorer"))
+        .unwrap();
+    assert!(
+        row_of(&h, "a.txt").is_none(),
+        "the tree went with the section's body\n{}",
+        h.screen_to_string()
+    );
+    assert!(
+        row_of(&h, "alpha").is_some(),
+        "the panel still has its rows"
+    );
+
+    // **Hide the column** (`Ctrl+B`): every section goes with it.
+    h.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    assert!(
+        row_of(&h, "File Explorer").is_none() && row_of(&h, "Outline").is_none(),
+        "the whole column is hidden\n{}",
+        h.screen_to_string()
+    );
+
+    // **Show it again**: the command means the tree, so the section it was
+    // collapsed into opens with it.
+    h.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    assert!(
+        row_of(&h, "▼ File Explorer").is_some(),
+        "the explorer's section is open again\n{}",
+        h.screen_to_string()
+    );
+    assert!(
+        row_of(&h, "a.txt").is_some(),
+        "and the tree is on screen\n{}",
+        h.screen_to_string()
+    );
+
+    // **Collapsing it again still works**: the reveal is the command's, not
+    // a rule that the section can never be closed.
+    let explorer = row_of(&h, "▼ File Explorer").expect("the explorer's header");
+    h.mouse_click(x, explorer).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("▶ File Explorer"))
+        .unwrap();
+    assert!(
+        row_of(&h, "a.txt").is_none(),
+        "collapsed by the reader again"
+    );
+
+    // **Focusing the explorer opens it too** (`Ctrl+E`): the keyboard does
+    // not go to a section with no rows on screen. The explorer holds the
+    // focus after the collapsing click, so the first press returns it to the
+    // editor and the second asks for the tree.
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    assert!(
+        row_of(&h, "a.txt").is_some(),
+        "focus put the tree back on screen\n{}",
+        h.screen_to_string()
+    );
+}

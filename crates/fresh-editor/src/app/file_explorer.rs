@@ -99,6 +99,10 @@ impl Editor {
         // Exactly one chrome region wears the accent: a focused plugin
         // section gives the keyboard up to the tree.
         self.blur_sidebar_panels();
+        // A visible column is not a visible tree: open the explorer's own
+        // section if the reader had collapsed it, so the keyboard does not
+        // land in a section with no rows on screen.
+        self.reveal_file_explorer_section();
         let win = self.active_window_mut();
         // Stop routing keys to the PTY while the explorer holds focus:
         // `focused_terminal_live()` is false in any non-editor key context.
@@ -132,6 +136,35 @@ impl Editor {
     pub fn show_file_explorer(&mut self) {
         if !self.file_explorer_visible() {
             self.toggle_file_explorer();
+        } else {
+            // Already showing the column — but the tree is only on screen if
+            // its section is open, so say the second half out loud too.
+            self.reveal_file_explorer_section();
+        }
+    }
+
+    /// Open the explorer's sidebar section if the reader has collapsed it.
+    ///
+    /// The sidebar column being visible does not mean the file tree is: the
+    /// explorer is section 0 of the accordion, and a reader who collapsed it
+    /// to give a plugin section the whole column (the Markdown contents
+    /// panel, say) is left with the explorer's header row and nothing under
+    /// it. Without this, "show the file explorer" showed a column whose tree
+    /// never appeared, and toggling it off and on again could not recover:
+    /// the collapse is section state, so it outlived hiding the column.
+    ///
+    /// Routed through [`toggle_sidebar_section`](Self::toggle_sidebar_section)
+    /// so this does exactly what a press on the header does — the exclusive
+    /// accordion still gets its one open section, and the section stops being
+    /// `squeezed` because it was opened on purpose.
+    ///
+    /// A section collapsed by pressure rather than by the reader is opened
+    /// too, and it stays open: `squeeze` collapses from the bottom up, so a
+    /// column too short for every section takes the rows back from the last
+    /// one instead of from the tree the reader just asked for.
+    pub(crate) fn reveal_file_explorer_section(&mut self) {
+        if self.sidebar_sections.first().is_some_and(|s| s.collapsed) {
+            self.toggle_sidebar_section(0);
         }
     }
 
