@@ -42,6 +42,7 @@ import {
   windowEmbed,
   type WidgetSpec,
 } from "./lib/widgets.ts";
+import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
 
 const editor = getEditor();
 
@@ -3912,8 +3913,15 @@ async function probeGit(s: AgentSession): Promise<void> {
     }
     const info = parsePorcelainV2(st.stdout || "");
     if (info.branch && !s.branch) s.branch = info.branch;
-    // Uncommitted line churn vs HEAD (staged + unstaged).
-    const diff = await spawnCollect("git", ["diff", "--shortstat", "HEAD"], s.root);
+    // Uncommitted line churn vs HEAD (staged + unstaged). `BIG_FILE_ARGS`
+    // because this runs on the session poll: `--shortstat` prints one line
+    // either way, but without the cap git still diffs a multi-megabyte blob
+    // in full to count it, once per session per tick.
+    const diff = await spawnCollect(
+      "git",
+      [...BIG_FILE_ARGS, "diff", "--shortstat", "HEAD"],
+      s.root,
+    );
     if (diff.exit_code === 0) {
       const ins = (diff.stdout || "").match(/(\d+) insertion/);
       const del = (diff.stdout || "").match(/(\d+) deletion/);
