@@ -16,6 +16,12 @@
 //!   `gutter_num` advances; each cell tests its own byte column in the
 //!   line against the rect's column span.
 //!
+//!   The line span is closed (`start_line..=end_line`: both the anchor's
+//!   row and the cursor's row are in the block), the column span is
+//!   half-open (`start_col..end_col`). That asymmetry is not an
+//!   oversight — it is what the rest of the block machinery means by a
+//!   rectangle, see [`SelectionActiveSet::contains`].
+//!
 //! Net: the cell loop just calls `contains(byte_pos, line_column)`.
 
 use std::ops::Range;
@@ -128,6 +134,22 @@ impl<'a> SelectionActiveSet<'a> {
     /// 3, i.e. `tab_size - 1` cells to its left (issue #3148). The cursor
     /// is the one telling the truth about what a block copy takes, and a
     /// column in the line is what both of them now count.
+    ///
+    /// The column span is **half-open** — `start_col..end_col`, the
+    /// cursor's own column excluded. Every other consumer of a block
+    /// rectangle already reads it that way: `copy_block_selection_text`
+    /// takes `max_col - min_col` characters per line, and
+    /// `convert_block_selection_to_cursors` gives each line the selection
+    /// `min_col..max_col`. Testing `col <= end_col` here painted one
+    /// column more than either of them touched, so a block copy silently
+    /// transferred something narrower than the highlight (issue #3150).
+    ///
+    /// Two things follow, both of them wanted. Extending the block to the
+    /// right leaves the cursor just past the rectangle's right edge, which
+    /// is how a one-column block reads as one column rather than two. And
+    /// a zero-width block (`start_col == end_col`, e.g. Alt+Shift+Down with
+    /// no horizontal movement) paints nothing at all: it is a column of
+    /// cursors, not a selection, and a copy of it takes no text.
     pub(super) fn contains(
         &mut self,
         buffer_byte: Option<usize>,
@@ -140,7 +162,7 @@ impl<'a> SelectionActiveSet<'a> {
         let block = line_column.is_some_and(|col| {
             self.active_block.iter().any(|&i| {
                 let (_, start_col, _, end_col) = self.blocks[i];
-                col >= start_col && col <= end_col
+                col >= start_col && col < end_col
             })
         });
         linear || block

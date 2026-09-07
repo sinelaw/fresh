@@ -5,6 +5,11 @@
 //! tab as its whole expansion. With one leading tab and `tab_size: 4` the
 //! highlight stopped `tab_size - 1` cells to the left of the cursor — and the
 //! cursor is the one telling the truth about what a block copy takes.
+//!
+//! The column span is half-open (issue #3150), so "where the cursor is" means
+//! the rectangle's right edge is the cell *before* the cursor's: a block copy
+//! takes `min_col..max_col`, the cursor's own column excluded. The tab is
+//! still wholly in or wholly out, which is the claim this file exists for.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -67,23 +72,23 @@ fn block_selection_ends_at_the_cursor_with_a_leading_tab() {
     );
     assert_eq!(
         selected.last().copied(),
-        Some(cursor_x),
-        "the rectangle's right edge is the cursor's cell, not {} cells left of it\n{}",
+        Some(cursor_x - 1),
+        "the rectangle's right edge is the cell before the cursor's, not {} cells left of it\n{}",
         cursor_x.saturating_sub(selected.last().copied().unwrap_or(0)),
         harness.screen_to_string()
     );
-    // Tab expansion (4 cells) + `abc`: the tab is wholly in or wholly out,
-    // which is what a block copy of column range 0..=3 takes.
+    // Tab expansion (4 cells) + `ab`: the tab is wholly in or wholly out,
+    // which is what a block copy of column range 0..3 takes.
     assert_eq!(
         selected.len(),
-        7,
-        "expected the tab's four cells plus `abc`\n{}",
+        6,
+        "expected the tab's four cells plus `ab`\n{}",
         harness.screen_to_string()
     );
     assert_eq!(
         harness.get_cell(cursor_x, cursor_y).as_deref(),
         Some("c"),
-        "the cursor sits on the last character the block covers\n{}",
+        "the cursor sits just past the last character the block covers\n{}",
         harness.screen_to_string()
     );
 }
@@ -96,11 +101,11 @@ fn block_selection_without_a_tab_is_unchanged() {
     let (cursor_x, cursor_y) = harness.screen_cursor_position();
     let selected = selected_columns(&harness, cursor_y);
 
-    assert_eq!(selected.last().copied(), Some(cursor_x));
+    assert_eq!(selected.last().copied(), Some(cursor_x - 1));
     assert_eq!(
         selected.len(),
-        4,
-        "`Zabc` — one cell per character\n{}",
+        3,
+        "`Zab` — one cell per character\n{}",
         harness.screen_to_string()
     );
 }

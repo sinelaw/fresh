@@ -325,8 +325,10 @@ fn test_block_copy_stays_ragged_when_off() {
     let clipboard = harness.editor_mut().clipboard_content_for_test();
     // Without virtual space, the block column collapses to the short middle
     // line's width as the selection passes through it (pre-existing
-    // behavior), so the copy comes out empty rather than rectangular.
-    assert_eq!(clipboard, "\n\n", "columns collapse without virtual space");
+    // behavior), leaving a zero-width rectangle. A zero-width rectangle
+    // paints nothing and selects nothing, so the copy takes nothing — it used
+    // to yield a bare `"\n\n"` that a paste turned into blank lines (#3150).
+    assert_eq!(clipboard, "", "columns collapse without virtual space");
 }
 
 /// Typing with a block selection whose left edge is past a short line pads

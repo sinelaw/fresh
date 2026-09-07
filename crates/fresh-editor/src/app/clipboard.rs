@@ -258,9 +258,22 @@ impl Editor {
                 }
             }
 
-            // Calculate column bounds (min and max columns for the rectangle)
+            // Calculate column bounds (min and max columns for the rectangle).
+            // The span is half-open — `min_col..max_col` — the same unit the
+            // painter and `convert_block_selection_to_cursors` use.
             let min_col = block_anchor.column.min(cursor_2d.column);
             let max_col = block_anchor.column.max(cursor_2d.column);
+
+            // A zero-width rectangle selects no text. It is a legitimate
+            // gesture — Alt+Shift+Down with no horizontal movement is how you
+            // ask for a vertical column of cursors — and it paints nothing on
+            // screen, so it must copy nothing too. Extracting from it used to
+            // yield one empty string per line, which the join below turned
+            // into a column of bare newlines that a later paste inserted as
+            // blank lines (issue #3150).
+            if min_col == max_col {
+                continue;
+            }
 
             // Calculate line bounds using byte positions
             let start_byte = anchor_byte.min(cursor_byte);

@@ -883,7 +883,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 .block_rects
                 .iter()
                 .filter(|(start_line, _, end_line, end_col)| {
-                    *start_line <= gutter_num && gutter_num <= *end_line && *end_col >= row_len
+                    *start_line <= gutter_num && gutter_num <= *end_line && *end_col > row_len
                 })
                 .map(|(_, start_col, _, end_col)| ((*start_col).max(row_len), *end_col))
                 .fold(None::<(usize, usize)>, |acc, (s, e)| match acc {
@@ -903,9 +903,10 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     );
                     rendered_cols += gap;
                 }
-                // Match the per-cell sweep: block columns are inclusive.
-                let sel_len =
-                    (sel_end + 1 - sel_start).min(content_cols.saturating_sub(rendered_cols));
+                // Match the per-cell sweep: block columns are half-open,
+                // so the rectangle is `sel_end - sel_start` wide — exactly
+                // what `copy_block_selection_text` pads a short line to.
+                let sel_len = (sel_end - sel_start).min(content_cols.saturating_sub(rendered_cols));
                 if sel_len > 0 {
                     push_span_with_map(
                         &mut line_spans,
