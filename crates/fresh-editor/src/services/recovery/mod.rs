@@ -359,11 +359,7 @@ impl RecoveryService {
         original_file_size: usize,
         final_size: usize,
     ) -> io::Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-
-        self.storage.save_recovery(
+        self.save_buffer_owned(
             buffer_id,
             chunks,
             original_path,
@@ -371,6 +367,38 @@ impl RecoveryService {
             line_count,
             original_file_size,
             final_size,
+            None,
+        )
+    }
+
+    /// [`Self::save_buffer`], stamping the entry with the `stable_id` of the
+    /// workspace that owns the buffer so crash recovery can put it back where
+    /// it came from (issue #3189).
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_buffer_owned(
+        &mut self,
+        buffer_id: &str,
+        chunks: Vec<RecoveryChunk>,
+        original_path: Option<&Path>,
+        buffer_name: Option<&str>,
+        line_count: Option<usize>,
+        original_file_size: usize,
+        final_size: usize,
+        workspace_id: Option<&str>,
+    ) -> io::Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        self.storage.save_recovery_owned(
+            buffer_id,
+            chunks,
+            original_path,
+            buffer_name,
+            line_count,
+            original_file_size,
+            final_size,
+            workspace_id,
         )?;
         self.last_save_times
             .insert(buffer_id.to_string(), Instant::now());

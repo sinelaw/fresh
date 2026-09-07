@@ -144,6 +144,23 @@ pub struct RecoveryMetadata {
     /// Original file size (0 for new buffers, needed for reconstruction)
     #[serde(default)]
     pub original_file_size: usize,
+
+    /// Durable id (`Window::stable_id`) of the workspace whose buffer this
+    /// is, when the writer knew it.
+    ///
+    /// The recovery store is shared by every workspace in a session, so
+    /// without this an entry says *what* was unsaved but not *whose* it was —
+    /// and crash recovery could only pile every entry into whichever
+    /// workspace happened to be in front (issue #3189). Keyed on `stable_id`
+    /// rather than the project root because two Orchestrator workspaces are
+    /// allowed to share one worktree, which makes the root ambiguous and the
+    /// stable id not.
+    ///
+    /// `None` for entries written before this field existed, and for writers
+    /// with no workspace context; readers fall back to matching the original
+    /// path against the open workspace roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 impl RecoveryMetadata {
@@ -176,6 +193,7 @@ impl RecoveryMetadata {
             format_version: Self::FORMAT_VERSION,
             chunk_count,
             original_file_size,
+            workspace_id: None,
         }
     }
 

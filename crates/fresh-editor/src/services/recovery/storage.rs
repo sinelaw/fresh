@@ -292,6 +292,37 @@ impl RecoveryStorage {
         original_file_size: usize,
         final_size: usize,
     ) -> io::Result<RecoveryMetadata> {
+        self.save_recovery_owned(
+            id,
+            chunks,
+            original_path,
+            buffer_name,
+            line_count,
+            original_file_size,
+            final_size,
+            None,
+        )
+    }
+
+    /// [`Self::save_recovery`], additionally stamping the entry with the
+    /// `stable_id` of the workspace it belongs to.
+    ///
+    /// Every workspace in a session shares one recovery store, so an entry
+    /// that does not say whose it is can only be restored into whichever
+    /// workspace happens to be in front. Stamping the owner is what lets each
+    /// workspace pick up its own on activation (issue #3189).
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_recovery_owned(
+        &self,
+        id: &str,
+        chunks: Vec<RecoveryChunk>,
+        original_path: Option<&Path>,
+        buffer_name: Option<&str>,
+        line_count: Option<usize>,
+        original_file_size: usize,
+        final_size: usize,
+        workspace_id: Option<&str>,
+    ) -> io::Result<RecoveryMetadata> {
         self.ensure_dir()?;
 
         let (meta_path, _content_path) = self.recovery_paths(id);
@@ -349,6 +380,14 @@ impl RecoveryStorage {
 
         // Update metadata fields
         metadata.original_file_size = original_file_size;
+        // Re-stamp the owning workspace on every save. A buffer can move
+        // between workspaces (Extract Tab to New Workspace), and the entry
+        // must follow it rather than keep pointing at where it started. A
+        // caller with no workspace context leaves whatever was recorded
+        // before rather than erasing it.
+        if let Some(workspace_id) = workspace_id {
+            metadata.workspace_id = Some(workspace_id.to_string());
+        }
         metadata.update(total_chunk_bytes, line_count, chunked_data.chunks.len());
 
         // Create combined metadata with embedded chunk index

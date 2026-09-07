@@ -737,6 +737,22 @@ impl crate::app::Editor {
         // skipped.
         self.adopt_active_window_authority(&previous_authority_label);
 
+        // Now that this workspace is the active one, let it claim any of its
+        // own unsaved work still sitting in the recovery store — content a
+        // crash left behind that the workspace snapshot doesn't cover. Done
+        // per workspace, on activation, so each buffer returns to where it
+        // was being edited instead of every entry landing in whichever
+        // workspace was in front at startup (issue #3189). A workspace the
+        // user never visits is never touched, which is exactly what keeps its
+        // entries intact.
+        match self.adopt_recovery_for_active_window(false) {
+            Ok(n) if n > 0 => {
+                tracing::info!("Adopted {n} recovery entry/entries into window {id}")
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Recovery adopt for window {id} failed: {e}"),
+        }
+
         // If we just switched to a remote session that came back from disk
         // dormant (backend spec known, live authority still the local
         // placeholder), start reconnecting its backend now — the per-window

@@ -199,9 +199,60 @@ impl Editor {
             let save_key = t!("prompt.key.save").to_string();
             let cancel_key = t!("prompt.key.cancel").to_string();
             let hot_exit = self.config.editor.hot_exit;
+            // When some of the unsaved work is in a workspace the user is not
+            // looking at, a bare count is the wrong thing to show: it says
+            // there is something to lose without saying where, and the whole
+            // failure this prompt exists to prevent is work going unnoticed in
+            // a background workspace (issue #3189). Name the workspaces then.
+            let where_clause = self.unsaved_workspace_summary();
 
             let discard_key = t!("prompt.key.discard").to_string();
-            let msg = if hot_exit {
+            let msg = if let Some(ref where_clause) = where_clause {
+                if hot_exit {
+                    let quit_key = t!("prompt.key.quit").to_string();
+                    if modified_count == 1 {
+                        t!(
+                            "prompt.quit_modified_hot_one_where",
+                            where = where_clause,
+                            save_key = save_key,
+                            discard_key = discard_key,
+                            quit_key = quit_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string()
+                    } else {
+                        t!(
+                            "prompt.quit_modified_hot_many_where",
+                            count = modified_count,
+                            where = where_clause,
+                            save_key = save_key,
+                            discard_key = discard_key,
+                            quit_key = quit_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string()
+                    }
+                } else if modified_count == 1 {
+                    t!(
+                        "prompt.quit_modified_one_where",
+                        where = where_clause,
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                } else {
+                    t!(
+                        "prompt.quit_modified_many_where",
+                        count = modified_count,
+                        where = where_clause,
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                }
+            } else if hot_exit {
                 // With hot exit: offer save, discard, quit-without-saving (recoverable), or cancel
                 let quit_key = t!("prompt.key.quit").to_string();
                 if modified_count == 1 {
@@ -260,6 +311,56 @@ impl Editor {
     /// (they will be saved to disk on exit).
     fn count_modified_buffers_needing_prompt(&self) -> usize {
         self.modified_buffers_needing_prompt().len()
+    }
+
+    /// Human-readable "which workspaces hold the unsaved work" clause for the
+    /// quit prompt, or `None` when the prompt should stay in its plain form.
+    ///
+    /// `None` means every unsaved buffer is in the workspace the user is
+    /// already looking at — the tabs are right there wearing their modified
+    /// markers, and naming the workspace would be noise. As soon as *any* of
+    /// it is somewhere else, the count alone is actively misleading (that is
+    /// the whole of issue #3189), so the clause names each workspace and, when
+    /// it holds more than one, how many buffers are in it:
+    ///
+    /// ```text
+    /// 3 buffers have unsaved changes (wsA: 2, wsB-1). (s)ave and quit, …
+    /// ```
+    ///
+    /// Ordered by window id, matching `modified_buffers_needing_prompt`, so
+    /// the same state always reads the same way.
+    fn unsaved_workspace_summary(&self) -> Option<String> {
+        let dirty = self.modified_buffers_needing_prompt();
+        if dirty.is_empty() {
+            return None;
+        }
+        let mut per_window: Vec<(WindowId, usize)> = Vec::new();
+        for (window_id, _) in &dirty {
+            match per_window.last_mut() {
+                Some((id, n)) if id == window_id => *n += 1,
+                _ => per_window.push((*window_id, 1)),
+            }
+        }
+        // All of it in the workspace on screen: the plain prompt is enough.
+        if per_window.len() == 1 && per_window[0].0 == self.active_window {
+            return None;
+        }
+        let parts: Vec<String> = per_window
+            .iter()
+            .map(|(window_id, count)| {
+                let label = self
+                    .windows
+                    .get(window_id)
+                    .map(|w| w.label.clone())
+                    .unwrap_or_else(|| window_id.to_string());
+                if *count > 1 {
+                    format!("{label}: {count}")
+                } else {
+                    label
+                }
+            })
+            .collect();
+        Some(parts.join(", "))
     }
 
     /// Every `(window, buffer)` pair, across **all** open Orchestrator

@@ -17,7 +17,7 @@
 //! though a clean exit no longer does), and `close_window`, which drops a
 //! workspace's buffers without asking about or preserving what they hold.
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{layout, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use fresh_core::WindowId;
@@ -336,5 +336,165 @@ fn closing_a_workspace_preserves_its_unsaved_content() {
         recovery_entry_ids(&recovery_dir),
         ids,
         "a closed workspace's flushed content must survive the exit too"
+    );
+}
+
+/// The quit prompt names the workspaces when some of the unsaved work is
+/// somewhere the user cannot see. A bare count is what made the original bug
+/// survivable-looking: it says there is something to lose without saying
+/// where, in exactly the situation where "where" is the whole problem.
+#[test]
+fn quit_prompt_names_the_workspaces_holding_unsaved_work() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    let (mut harness, _file, _recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
+
+    // Second dirty buffer, this one in the active workspace, so the prompt
+    // has to distinguish two workspaces with different counts.
+    let project_dir = harness.project_dir().unwrap();
+    let other_file = project_dir.join("b.txt");
+    std::fs::write(&other_file, "beta original\n").unwrap();
+    harness.open_file(&other_file).unwrap();
+    harness.type_text("ALSO-DIRTY").unwrap();
+    let third = project_dir.join("c.txt");
+    std::fs::write(&third, "gamma original\n").unwrap();
+    harness.open_file(&third).unwrap();
+    harness.type_text("AND-ANOTHER").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("3 buffers have unsaved changes");
+    // The workspace holding more than one is qualified with its count; the
+    // one holding a single buffer is named bare.
+    harness.assert_screen_contains("workspace_b: 2");
+}
+
+/// The converse: when everything unsaved is in the workspace on screen, the
+/// prompt stays in its plain form. The modified markers are right there in
+/// the tab bar — naming the workspace would be noise, and this is the shape
+/// every single-workspace user sees.
+#[test]
+fn quit_prompt_stays_plain_when_all_unsaved_work_is_in_view() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let file_path = project_dir.join("only.txt");
+    std::fs::write(&file_path, "initial\n").unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.type_text("edit").unwrap();
+
+    // A second workspace exists but holds nothing unsaved.
+    let other_root = project_dir.parent().unwrap().join("workspace_b");
+    std::fs::create_dir_all(&other_root).unwrap();
+    harness
+        .editor_mut()
+        .create_window_at(other_root, "workspace_b".to_string());
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("1 buffer has unsaved changes.");
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("workspace_b"),
+        "the prompt should not name workspaces when the unsaved work is all \
+         in the active one.\nScreen: {screen}"
+    );
+}
+
+/// Crash recovery puts each buffer back in the workspace it was edited in,
+/// and only when that workspace is activated. Restoring everything into
+/// whichever workspace happened to be in front reshuffled unsaved work
+/// between projects; worse, entries for a workspace the user never visited
+/// used to be consumed by the foreground one.
+#[test]
+fn crash_recovery_restores_each_buffer_into_its_own_workspace() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    config.editor.auto_recovery_save_interval_secs = 0;
+    let (mut harness, _file, recovery_dir, dirty_window) =
+        two_workspaces_with_dirty_background(config);
+
+    // A dirty buffer in the second (active) workspace too, so there is
+    // something for each workspace to claim.
+    let project_dir = harness.project_dir().unwrap();
+    let other_file = project_dir.join("b.txt");
+    std::fs::write(&other_file, "beta original\n").unwrap();
+    harness.open_file(&other_file).unwrap();
+    harness.type_text("BETA-EDIT").unwrap();
+
+    // Simulate the crash: recovery data on disk, no clean shutdown.
+    harness
+        .editor_mut()
+        .auto_recovery_save_dirty_buffers()
+        .unwrap();
+    assert_eq!(
+        recovery_entry_ids(&recovery_dir).len(),
+        2,
+        "both workspaces' buffers must be on disk before the crash"
+    );
+
+    // The foreground workspace claims only what it owns.
+    harness.editor_mut().recover_all_buffers().unwrap();
+    harness.render().unwrap();
+    let tabs = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+    assert!(
+        !tabs.contains("a.txt"),
+        "the background workspace's file must NOT be pulled into the active \
+         workspace by crash recovery.\nTabs: {tabs}"
+    );
+
+    // Entries survive until their own workspace asks for them.
+    assert_eq!(
+        recovery_entry_ids(&recovery_dir).len(),
+        2,
+        "recovery entries are read, not consumed — the unvisited workspace's \
+         entry must still be on disk"
+    );
+
+    // Activating the owning workspace is what brings it back, there.
+    harness.editor_mut().set_active_window(dirty_window);
+    harness.render().unwrap();
+    let tabs = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+    assert!(
+        tabs.contains("a.txt"),
+        "activating the owning workspace must restore its buffer there.\n\
+         Tabs: {tabs}"
+    );
+}
+
+/// Quitting after visiting only some workspaces must leave the unvisited
+/// ones' recovery data alone — they were never offered to the user, so
+/// nothing here can decide they are finished with.
+#[test]
+fn quitting_without_visiting_a_workspace_keeps_its_recovery_data() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    config.editor.auto_recovery_save_interval_secs = 0;
+    let (mut harness, _file, recovery_dir, _dirty) = two_workspaces_with_dirty_background(config);
+
+    harness
+        .editor_mut()
+        .auto_recovery_save_dirty_buffers()
+        .unwrap();
+    let before = recovery_entry_ids(&recovery_dir);
+    assert_eq!(before.len(), 1);
+
+    // Never dive into the workspace that owns it; just shut down.
+    harness.shutdown(true).unwrap();
+
+    assert_eq!(
+        recovery_entry_ids(&recovery_dir),
+        before,
+        "an unvisited workspace's unsaved work must survive the exit"
     );
 }
