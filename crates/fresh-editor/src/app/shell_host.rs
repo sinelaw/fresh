@@ -322,14 +322,29 @@ impl<'a> BodyPainter<'a> {
 /// meets the edge of its pane by fading out rather than being cut off
 /// mid-line.
 ///
-/// An edge only shades when there is something beyond it to trail off into:
-/// at the top or bottom of a document the text simply ends, and dimming it
-/// there would say the opposite. A file that fits its pane gets no shading
-/// at all. Above is read off the viewport, which knows exactly. Below is the
-/// bar's fact: a thumb short of the end of its track is content past the
-/// bottom row, and a pane with no bar has no extent to read, so its bottom
-/// edge shades — the affordance is the better guess when the answer is
-/// unavailable.
+/// An edge shades only when there is something beyond it to trail off into.
+/// At the top or bottom of a document the text simply ends, and dimming it
+/// there says the opposite; a file that fits its pane gets no shading at all.
+/// The same goes for an answer nobody has: an edge whose facts are missing is
+/// left alone rather than shaded on a guess, because the guess is visible and
+/// the restraint is not.
+///
+/// It also leaves alone the edge the caret is sitting in. The shading is an
+/// affordance for reading, and dimming the line being edited trades that for
+/// the one line the reader is certainly looking at. The band is suppressed
+/// whole rather than the caret's own row: the ramp is two rows deep, and a
+/// bright row in the middle of it reads as a fault rather than as an
+/// exception.
+///
+/// Every fact here was settled for this frame before the paint — the
+/// viewport's anchor, the pane's bar, and the rows and caret the text pass
+/// left on the pane's handle — so deciding this costs no read of the buffer.
+/// Above is the anchor's, which knows exactly. Below takes the bar's thumb,
+/// but only when the bar is addressed in lines: on a file too large to count
+/// lines on, the thumb is placed by a byte fraction and says nothing about
+/// whether the last row is the last line. And a pass that drew fewer rows
+/// than the pane holds has run out of document inside it, whatever the bar
+/// rounds to.
 fn shade_pane_edges(
     editor: &Editor,
     leaf: LeafId,
@@ -353,19 +368,53 @@ fn shade_pane_edges(
     let Some(view_state) = view_states.get(&leaf) else {
         return;
     };
-    let content_below = window
-        .panes
-        .get(&leaf)
-        .and_then(|h| h.bar(fresh_ui::Axis::Vertical))
-        .is_none_or(|f| f.thumb(rect.height).1 < rect.height);
+    let pane = window.panes.get(&leaf);
+    // What the text pass left on the pane: the rows it drew and the caret's
+    // own cell, local to `rect` — so `caret.1` is this loop's `row`.
+    let view = pane.map(|h| h.view());
+    let rows_drawn = view.as_ref().map_or(0, |v| v.rows.len());
+    let caret_row = view.as_ref().and_then(|v| v.caret).map(|(_, y)| y);
+    drop(view);
+
+    let below_the_bottom_row = match pane.and_then(|h| h.bar(fresh_ui::Axis::Vertical)) {
+        // No bar: no extent to read, so nothing is known about what lies
+        // below.
+        None => false,
+        // A file too large to count lines on. The thumb is one cell placed by
+        // the offset's fraction of the bytes, which is not an answer to "is
+        // the last row the last line".
+        Some(f)
+            if matches!(
+                f.window,
+                crate::view::shell::buffer_host::BarWindow::OneCell
+            ) =>
+        {
+            false
+        }
+        Some(f) => f.thumb(rect.height).1 < rect.height,
+    };
+    // A pass that drew fewer rows than the pane holds ran out of document
+    // inside it — the rest is `~` filler, which is painted separately and
+    // leaves no row here. Exact where the thumb only rounds, and it can only
+    // ever withdraw the shading.
+    let content_below = below_the_bottom_row && rows_drawn >= rect.height as usize;
     let anchor = view_state.viewport.anchor;
     let content_above = anchor.byte > 0 || anchor.row_offset != 0;
+
+    // The band the caret is in is left alone, both of them if the pane is
+    // shallow enough for its two bands to overlap.
+    let caret_in_top = caret_row.is_some_and(|y| y < EDGE_FADE_ROWS);
+    let caret_in_bottom =
+        caret_row.is_some_and(|y| rect.height.saturating_sub(1).saturating_sub(y) < EDGE_FADE_ROWS);
+    let shade_top = content_above && !caret_in_top;
+    let shade_bottom = content_below && !caret_in_bottom;
+
     let editor_bg = editor.theme.read().unwrap().editor_bg;
     for row in 0..rect.height {
         let from_top = row;
         let from_bottom = rect.height - 1 - row;
-        let in_top = content_above && from_top < EDGE_FADE_ROWS;
-        let in_bottom = content_below && from_bottom < EDGE_FADE_ROWS;
+        let in_top = shade_top && from_top < EDGE_FADE_ROWS;
+        let in_bottom = shade_bottom && from_bottom < EDGE_FADE_ROWS;
         let distance = match (in_top, in_bottom) {
             (true, true) => from_top.min(from_bottom),
             (true, false) => from_top,
