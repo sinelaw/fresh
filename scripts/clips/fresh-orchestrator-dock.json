@@ -37,10 +37,17 @@
       },
       {
         "record": "a",
-        "seconds": 2.5
+        "seconds": 2.2
       },
       {
-        "sleep": 2.6
+        "sleep": 2.3
+      },
+      {
+        "record": "p",
+        "seconds": 2.2
+      },
+      {
+        "sleep": 2.3
       },
       {
         "record": "b",
@@ -58,10 +65,10 @@
       },
       {
         "record": "c",
-        "seconds": 2.5
+        "seconds": 2.2
       },
       {
-        "sleep": 2.6
+        "sleep": 2.3
       },
       {
         "record": "d",
@@ -160,7 +167,7 @@
     "annotations": [
       {
         "shots": "a",
-        "hold": 2.2,
+        "hold": 1.9,
         "rows": [
           4,
           16
@@ -170,6 +177,20 @@
           110
         ],
         "note": "agent is running",
+        "note_at": "below-right"
+      },
+      {
+        "shots": "p",
+        "hold": 1.9,
+        "rows": [
+          3,
+          11
+        ],
+        "cols": [
+          0,
+          25
+        ],
+        "note": "switch between sessions",
         "note_at": "below-right"
       },
       {
@@ -183,17 +204,12 @@
       },
       {
         "shots": "c",
-        "hold": 1.8,
+        "hold": 1.4,
         "rows": [
-          4,
-          10
-        ],
-        "cols": [
           0,
-          25
+          29
         ],
-        "note": "switch between sessions",
-        "note_at": "below-right"
+        "band": false
       },
       {
         "shots": "d",

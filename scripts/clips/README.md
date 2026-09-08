@@ -223,6 +223,14 @@ Notes need the band, though: they are drawn with it, so `band: false` hides
 them. A beat whose point is *motion* — the wipe across a workspace switch —
 therefore carries no note, and the note goes on the beat either side of it.
 
+And a note that names a thing has to arrive *before* the thing happens. "Switch
+between sessions" pointing at the dock read as a caption on a switch that had
+already been and gone, so the clip now holds a beat on the untouched dock and
+says it there, and the wipe that follows is the sentence being carried out. Its
+own beat is the cheapest way to get one: a second `record` run of the same
+screen, before the keystroke, rather than a second annotation on the run before
+it — replaying one run's frames twice rewinds whatever was moving in them.
+
 **The dock's width is a drag, not a setting.** It defaults to 28% of the
 terminal, clamped to 24-40 columns, and a user drag overrides it
 (`Editor::handle_dock_resize_drag` sets `dock_width`, which the plugin's
