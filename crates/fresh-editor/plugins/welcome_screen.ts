@@ -290,6 +290,30 @@ function bullet(t: string): WidgetSpec {
   );
 }
 
+/** A numbered list: the same wrapping and hanging indent as `bullet`,
+ *  with the index in the gutter.
+ *
+ *  For a set the reader is meant to take one at a time — steps, or
+ *  alternatives to choose between — where a bullet says only "and also". */
+function numbered(items: string[]): WidgetSpec[] {
+  return items.map((t, i) => {
+    const mark = `  ${i + 1}. `;
+    const lines = wrap(t, Math.max(20, measure() - mark.length - 2));
+    return col(
+      ...lines.map((l, k) =>
+        line(
+          k === 0
+            ? [
+              { text: mark, style: { fg: C.gutter } },
+              { text: l, style: { fg: C.body } },
+            ]
+            : [{ text: " ".repeat(mark.length) + l, style: { fg: C.body } }]
+        )
+      ),
+    );
+  });
+}
+
 function blank(): WidgetSpec {
   return raw([styledRow([{ text: "" }])]);
 }
@@ -342,17 +366,40 @@ function accel(action: string): string {
     editor.getKeybindingLabel(action, "global") ?? "";
 }
 
-/** A chord for a key table: the reader's own binding where the host
- *  knows one, the stock binding where it does not.
+/** The reader's own binding for an action, or `null` when this build has
+ *  none.
  *
- *  `accel` alone is not enough for these tables — it answers `""` for an
- *  action this build has not bound, and a key column with a hole in it
- *  reads as a broken page rather than as an unbound command. The
- *  fallback is the documented default, so the worst case is teaching the
- *  stock key to someone who has rebound it, and the normal case is
- *  teaching them theirs. */
-function chord(action: string, fallback: string): string {
-  return accel(action) || fallback;
+ *  Every key printed on this page comes through here. There is no
+ *  fallback to a documented default on purpose: a default is a guess
+ *  about someone else's keymap, and a page that teaches a chord the
+ *  reader does not have is worse than one that teaches nothing. A row
+ *  whose key does not resolve is dropped and its command named instead —
+ *  the command is findable in the palette whatever it is bound to.
+ *
+ *  `mode` is a plugin buffer mode (`review-mode`); the host populates
+ *  those labels when the mode is registered, the same map the built-in
+ *  contexts use. */
+function keyFor(action: string, mode?: string): string | null {
+  if (mode) return editor.getKeybindingLabel(action, mode);
+  return editor.getKeybindingLabel(action, "normal") ??
+    editor.getKeybindingLabel(action, "global");
+}
+
+/** A key table, built from actions rather than from key strings.
+ *
+ *  Rows are `[action, what it does]`, or `[action, what, mode]` for a
+ *  mode's own binding. A row the keymap cannot answer for is left out,
+ *  so the column never has a hole in it and never carries a key the
+ *  reader does not have. */
+type KeyRow = [string, string] | [string, string, string];
+
+function actionRows(rows: KeyRow[]): WidgetSpec[] {
+  const pairs: [string, string][] = [];
+  for (const r of rows) {
+    const k = keyFor(r[0], r[2]);
+    if (k) pairs.push([k, r[1]]);
+  }
+  return pairs.length ? keyRows(pairs) : [];
 }
 
 const VERBS: [string, string, string][] = [
@@ -990,7 +1037,7 @@ function finderCard(): WidgetSpec {
     // frame clipped the first one mid-word.
     for (
       const l of wrap(
-        `The same finder is on ${chord("quick_open", "Ctrl+P")} for every file in the project, and src/main.rs:42 lands on the line. Fresh remembers your cursor in every file it has opened; Hot Exit brings back unsaved buffers after a crash, unnamed scratch ones included.`,
+        "Type to filter. Enter opens. The same finder covers every file in the project, and src/main.rs:42 opens at the line. Your cursor position in each file is remembered, and unsaved buffers come back after a crash.",
         Math.max(20, cardMeasure() - 6),
       )
     ) {
@@ -1006,61 +1053,70 @@ function level1(): WidgetSpec[] {
     banner("1", "Open a file. Type. Save. Fresh stays out of the way."),
     finderCard(),
     blank(),
-    card("find", "Find it — in this file, or anywhere in the repo", "one prompt, four modes", () => [
+    card("find", "Find things", "files, text, and where you were", () => [
       blank(),
-      ...keyRows([
-        [chord("quick_open", "Ctrl+P"), "files by name — then > commands · # buffers · : lines"],
-        [chord("search", "Ctrl+F"), "find here; F3 and Shift+F3 step, the bar stays open"],
-        [chord("replace", "Ctrl+R"), "replace, with regex and $1 capture groups"],
-        [chord("navigate_back", "Alt+Left"), "back to where you were — Alt+Right returns"],
+      ...actionRows([
+        ["quick_open", "find a file by name; add :42 to open at a line"],
+        ["search", "find in this file"],
+        ["find_next", "next match, without closing the search bar"],
+        ["replace", "replace in this file, with regex and $1 groups"],
+        ["navigate_back", "back to the last place you were"],
+        ["navigate_forward", "forward again"],
       ]),
       blank(),
-      bullet(
-        "Live Grep searches the project as you type and previews each hit where it lives. Git Grep does the same over tracked files.",
-      ),
-      bullet(
-        "Search and Replace in Project rewrites across the repo — unsaved buffers included, narrowed to a glob when you want.",
-      ),
-      bullet(
-        "Terms match independently, so typing etc hosts finds /etc/hosts — and anywhere a path is asked for, src/main.rs:42:10 opens at the line.",
-      ),
+      ...bodyText("Across the whole project:", C.muted),
+      ...numbered([
+        "Live Grep — search as you type, with a preview of each hit.",
+        "Search and Replace in Project — replace across the repo, unsaved buffers included. Limit it to a glob if you want.",
+        "Git Grep — the same over tracked files only.",
+      ]),
+      blank(),
+      ...bodyText("In the palette, a prefix picks what you are searching:", C.muted),
+      ...keyRows([
+        ["(none)", "files"],
+        [">", "commands"],
+        ["#", "open buffers"],
+        [":", "a line number"],
+      ]),
       blank(),
       row(
         spacer(2),
         button("Live Grep", { key: "act_live_grep", hoverStyle: GLOW }),
         spacer(2),
-        button("Search & replace in project", { key: "act_project_replace", hoverStyle: GLOW }),
+        button("Search & replace", { key: "act_project_replace", hoverStyle: GLOW }),
+        spacer(2),
+        button("Git Grep", { key: "act_git_grep", hoverStyle: GLOW }),
       ),
       blank(),
     ]),
     blank(),
-    card("ugly", "Built for the ugly files too", "big files, odd encodings", () => [
+    card("ugly", "Large files and odd encodings", "nothing to configure", () => [
       blank(),
-      bullet(
-        "Multi-GB files open without blocking the UI — logs, dumps, CSVs. The gutter counts bytes until you ask for a line number, and a scan indexes the lines without holding the file.",
+      bullet("Multi-GB files open without freezing the editor. Logs, dumps, CSVs."),
+      bullet("In a large file the gutter shows byte offsets. Go to Line offers to index the lines; only the index is held in memory, not the file."),
+      bullet("Over SSH that indexing runs on the far machine, so only the index crosses the network."),
+      bullet("UTF-16, GBK, Shift-JIS, EUC-KR, Latin-1 and Windows-125x are detected when a file opens. Click the encoding in the status bar to change what is written back."),
+      blank(),
+      row(
+        spacer(2),
+        button("Go to line", { key: "act_goto_line", hoverStyle: GLOW }),
       ),
-      bullet("Instant startup, small footprint: the text is there as fast as you can type into it."),
-      bullet(
-        "Encodings beyond UTF-8 — UTF-16, GBK, Shift-JIS, EUC-KR, Latin-1, Windows-125x — detected on open. Click the encoding in the status bar to change what gets written back.",
-      ),
-      bullet("Over SSH the scan runs on the far end, so only the index crosses the wire."),
       blank(),
     ]),
     blank(),
-    card("editorvar", "Make it your $EDITOR", "shell setup", () => [
+    card("editorvar", "Use Fresh from the shell", "$EDITOR, daemons, remote files", () => [
       blank(),
-      plain("  # Commit messages and rebases, in Fresh", C.muted),
+      plain("  # Commit messages and rebases", C.muted),
       plain("  git config --global core.editor \"fresh --wait\"", C.value),
       blank(),
-      plain("  # A named daemon: close the terminal, the state survives", C.muted),
-      plain("  fresh -a myproject", C.value),
-      blank(),
-      plain("  # Straight to the line a compiler complained about", C.muted),
+      plain("  # Open at a line and column", C.muted),
       plain("  fresh src/main.rs:42:10", C.value),
       blank(),
-      bullet(
-        "Hot Exit holds unsaved buffers, tabs and splits across a quit or a crash. Detach, in the palette, hands the terminal back and leaves the editor running behind it, tmux-style.",
-      ),
+      plain("  # A named daemon: close the terminal, the editor keeps running", C.muted),
+      plain("  fresh -a myproject", C.value),
+      blank(),
+      bullet("Unsaved buffers, tabs and splits survive a quit or a crash."),
+      bullet("Detach, in the palette, gives the terminal back and leaves the editor running."),
       blank(),
     ]),
   ];
@@ -1122,26 +1178,13 @@ function sample(): string {
 
 function level2(): WidgetSpec[] {
   return [
-    banner("2", "Language servers, git review, a terminal, themes — here the whole time."),
-    card("lsp", "Language smarts, zero setup", "real syntax highlighting", () => [
+    banner("2", "Language servers, git review, a terminal, themes."),
+    card("lsp", "Language servers", "completion, goto, diagnostics", () => [
       blank(),
-      // The sample sits in its own rounded box, labelled with the file
-      // it is pretending to be, and inset from the prose around it — a
-      // listing, not a paragraph.
-      //
-      // Centred on the page's axis like every other box, rather than
-      // packed to the left edge with the spare columns pooling on the
-      // right — the inset that did that was two columns wide and the
-      // slack was two columns wide, so the box looked centred until the
-      // measure changed under it.
-      //
-      // The margin goes AROUND the widget, never inside its text: the
-      // markdown renderer turns leading spaces in a code fence into
-      // NBSP and paints the code background across them, so an indent
-      // written into the sample became a grey slab the width of the
-      // whole left margin. (The background inside the box is the
-      // host's `ui.inline_code_bg`, shared with every hover popup and
-      // the markdown preview, so it is not this page's to switch off.)
+      // The sample sits in its own labelled box: a listing, not a
+      // paragraph. The margin goes around the widget, never inside its
+      // text — the markdown renderer turns leading spaces in a code
+      // fence into NBSP and paints the code background across them.
       centredRow(
         labeledSection({
           label: "src/store.rs",
@@ -1153,23 +1196,39 @@ function level2(): WidgetSpec[] {
             readOnly: true,
             fieldWidth: sampleWidth(),
             // Deliberately keyless: a keyed widget joins the Tab cycle,
-            // and a read-only sample is something to look at, not a
-            // stop on the way to the next control.
+            // and a read-only sample is something to look at, not a stop
+            // on the way to the next control.
           }),
         }),
       ),
       blank(),
-      bullet(
-        "Turn a server on for the language you are in — Start/Restart LSP Server, or the LSP section of Settings — and you have hover, goto, references, rename, code actions and diagnostics, with no config file to write.",
-      ),
-      bullet(
-        "Shipped for Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP, Bash, Vue, Svelte, Terraform, Haskell, OCaml and Elixir — and a language pack adds the next one.",
-      ),
-      bullet(
-        "Run two servers on one language — pylsp and pyright together — with merged completions, and per-project roots found by walking up to Cargo.toml or package.json.",
-      ),
-      bullet(
-        "Format on save, code folding, inline diagnostics, and library and toolchain paths opened read-only, so a goto into a dependency can be read but not edited.",
+      ...bodyText("Syntax highlighting is on by default. A language server adds the rest, and you turn one on per language:", C.muted),
+      ...numbered([
+        "Start/Restart LSP Server, from the palette or the button below.",
+        "Or Settings → LSP, to have it start on its own from then on.",
+      ]),
+      blank(),
+      ...bodyText("With one running:", C.muted),
+      ...actionRows([
+        ["lsp_goto_definition", "go to definition"],
+        ["lsp_references", "find references"],
+        ["lsp_implementation", "go to implementation"],
+        ["lsp_rename", "rename a symbol everywhere"],
+        ["lsp_code_actions", "code actions and quick fixes"],
+        ["lsp_hover", "hover: types and documentation"],
+      ]),
+      blank(),
+      bullet("Servers ship configured for Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP, Bash, Vue, Svelte, Terraform, Haskell, OCaml and Elixir. Language packs add more."),
+      bullet("Two servers can run on one language — pylsp and pyright together — and their completions are merged."),
+      bullet("Library and toolchain files open read-only, so a goto into a dependency cannot edit it."),
+      blank(),
+      row(
+        spacer(2),
+        button("Start LSP server", { key: "act_lsp", hoverStyle: GLOW }),
+        spacer(2),
+        button("Diagnostics panel", { key: "act_diagnostics", hoverStyle: GLOW }),
+        spacer(2),
+        button("Settings", { key: "act_settings", hoverStyle: GLOW }),
       ),
       blank(),
     ]),
@@ -1182,19 +1241,28 @@ function level2(): WidgetSpec[] {
     blank(),
     themeCard(),
     blank(),
-    card("power", "Power tools when your hands get fast", "optional, all of it", () => [
+    card("power", "Editing", "the keyboard end of it", () => [
       blank(),
-      bullet(
-        "Multi-cursor and block selection, keyboard macros, sort lines, change case, and a selection you surround by typing the bracket.",
-      ),
-      bullet(
-        "Smart home, smart backspace, tree-sitter auto-indent and auto-closing pairs — per language, and off where they would be wrong: prose types a backtick as a backtick.",
-      ),
-      bullet(
-        "Rulers, indentation guides with rainbow levels, rainbow brackets, code folding, whitespace marks, markdown compose preview.",
-      ),
-      bullet(
-        "Vi mode with operators, motions, text objects and colon commands — or the Emacs keymap, if that is the muscle memory you arrived with.",
+      ...actionRows([
+        ["add_cursor_below", "add a cursor on the next line"],
+        ["add_cursor_next_match", "add a cursor at the next match"],
+        ["add_cursors_to_line_ends", "a cursor at the end of every selected line"],
+        ["block_select_down", "block (column) selection"],
+        ["prompt_record_macro", "record a keyboard macro"],
+        ["play_last_macro", "play the last one back"],
+        ["toggle_fold", "fold the block under the cursor"],
+        ["toggle_comment", "comment or uncomment the selection"],
+      ]),
+      blank(),
+      bullet("Typing a bracket or quote around a selection wraps it. Auto-indent and auto-close are per language, and off where they get in the way — markdown types a backtick as a backtick."),
+      bullet("Rulers, indentation guides, rainbow brackets and whitespace marks are all in Settings."),
+      bullet("Vi mode has operators, motions, text objects and colon commands. There is an Emacs keymap too. Both are in Settings → Keybindings."),
+      blank(),
+      row(
+        spacer(2),
+        button("Keybindings", { key: "act_keybindings", hoverStyle: GLOW }),
+        spacer(2),
+        button("Settings", { key: "act_settings", hoverStyle: GLOW }),
       ),
       blank(),
     ]),
@@ -1208,18 +1276,19 @@ function level2(): WidgetSpec[] {
  *  because everything on it is true of a buffer — which is the point
  *  being made: the terminal is not a mode you enter. */
 function terminalCard(): WidgetSpec {
-  return card("terminal", "The terminal is just another buffer", "and it outlives its process", () => [
+  return card("terminal", "Terminal", "a shell in a buffer", () => [
     blank(),
-    bullet(
-      "Open one in this pane, beside it, below it, or in the dock along the bottom — then split it, search its scrollback, and leave it running while you work elsewhere.",
-    ),
-    bullet(
-      "Ctrl+Click a path in the output, scrollback included, and it opens. The shell's directory is tracked, so relative paths resolve — over SSH too.",
-    ),
-    bullet("Send Selection to Terminal runs the selection, or the current line, in the terminal you used last."),
-    bullet(
-      "When the process exits the transcript stays exactly where it was, and one click restarts it in the same buffer — ⟳ Resume claude, appended below what it already printed.",
-    ),
+    ...actionRows([
+      ["open_terminal", "a terminal in this pane"],
+      ["open_terminal_right", "one beside it"],
+      ["open_terminal_below", "one below it"],
+      ["open_terminal_in_dock", "one in the dock along the bottom"],
+    ]),
+    blank(),
+    bullet("A terminal is a buffer: it has a tab, it splits, and you can search its scrollback."),
+    bullet("Ctrl+Click a file path in the output to open it. The shell's directory is tracked, so relative paths work — over SSH too."),
+    bullet("Send Selection to Terminal runs the selected text, or the current line, in the terminal you used last."),
+    bullet("When a process exits its output stays. One click restarts it in the same buffer, below what it printed."),
     blank(),
     row(
       spacer(2),
@@ -1233,18 +1302,12 @@ function terminalCard(): WidgetSpec {
  *  level does not list. Worth saying plainly that this page is one:
  *  nothing here is a special case the editor keeps for itself. */
 function pluginsCard(): WidgetSpec {
-  return card("plugins", "Extend it in TypeScript", "sandboxed, no node_modules", () => [
+  return card("plugins", "Plugins", "TypeScript, in the binary", () => [
     blank(),
-    bullet(
-      "Plugins are compiled with OXC and run in an embedded QuickJS VM inside the same binary. No runtime to install, nothing left on disk.",
-    ),
-    bullet(
-      "A package manager for plugins, themes, language packs and bundles — from the registry, or straight from any git URL.",
-    ),
-    bullet("An init.ts runs at startup: your own commands, keybindings, status bar and dashboard rows."),
-    bullet(
-      "Load Plugin from Buffer hot-reloads the file you are editing, with LSP over the plugin API while you write it. This page is a plugin.",
-    ),
+    bullet("Plugins are TypeScript. They are compiled with OXC and run in a QuickJS VM inside the editor — no Node, nothing installed on disk."),
+    bullet("The package manager installs plugins, themes, language packs and bundles, from the registry or from a git URL."),
+    bullet("An init.ts file runs at startup: your own commands, keybindings and status bar."),
+    bullet("Load Plugin from Buffer runs the file you are editing, straight away. This page is a plugin."),
     blank(),
     row(
       spacer(2),
@@ -1298,7 +1361,7 @@ function gitCard(): WidgetSpec {
     rows.push(blank());
     rows.push(
       ...bodyText(
-        "Stage, unstage and discard a hunk at a time. Git Log with the diff previewed beside it, magit-style blame, a gutter marking every line you change as you change it, and a resolver for when a merge goes sideways.",
+        "Stage, unstage or discard one hunk at a time. There is also a git log with the diff beside it, blame, a gutter marking the lines you changed, and a resolver for merge conflicts.",
       ),
     );
     rows.push(blank());
@@ -1327,45 +1390,58 @@ function keyRows(pairs: [string, string][]): WidgetSpec[] {
  *  every command named is one it registers. A welcome screen that
  *  teaches a chord the editor does not have is worse than one that
  *  teaches nothing. */
+/** Review Diff — the code-review tool, which is a different thing from
+ *  the git card above it and is why that card stops where it does.
+ *
+ *  Every key here is resolved from `review-mode` itself rather than
+ *  written down: the host publishes a plugin mode's labels when the mode
+ *  registers, so these rows are the bindings this build actually has. A
+ *  key the mode does not bind drops its row instead of printing a chord
+ *  the reader cannot use. */
 function reviewCard(): WidgetSpec {
-  return card("review", "Review Diff — read a change like a reviewer", "a tool, not a view", () => [
+  return card("review", "Review Diff", "read a change like a reviewer", () => [
     blank(),
-    ...bodyText(
-      "Your whole working tree as one diff you move through, stage from, and leave notes on. "
-        + "The palette opens it three ways: on the working tree, on a range or a branch — main..feature, a whole PR flattened into one diff — or on a stash.",
-    ),
-    blank(),
-    ...keyRows([
-      ["n / p", "next / previous hunk"],
-      [", / .", "previous / next file"],
-      ["1 2 0", "one column · side by side · auto"],
-      ["F / C", "the files and comments panels (both start hidden)"],
-      ["Tab", "move between panels; arrows act on the focused one"],
+    ...bodyText("Your changes as one diff you move through, stage from, and leave notes on. The palette opens it three ways:"),
+    ...numbered([
+      "Review Diff — the working tree.",
+      "Review Diff: Range — a branch or commit range, such as main..feature.",
+      "Review Diff: Stash — a stash entry.",
     ]),
     blank(),
-    ...bodyText("Stage what you have read, hunk by hunk, without leaving the diff:", C.muted),
-    ...keyRows([
-      ["s u d", "stage · unstage · discard the hunk under the cursor"],
-      ["S U D", "the same, for the whole file"],
-      ["v", "select a line range first, and act on just those lines"],
+    ...bodyText("Inside a review:", C.muted),
+    ...actionRows([
+      ["review_next_hunk", "next hunk", "review-mode"],
+      ["review_prev_hunk", "previous hunk", "review-mode"],
+      ["review_goto_next_file", "next file", "review-mode"],
+      ["review_layout_stack", "one column", "review-mode"],
+      ["review_layout_split", "side by side", "review-mode"],
+      ["review_toggle_files_panel", "the files panel", "review-mode"],
+      ["review_toggle_comments_panel", "the comments panel", "review-mode"],
+      ["review_focus_next", "move between panels", "review-mode"],
     ]),
     blank(),
-    ...bodyText("And leave the review behind you:", C.muted),
-    ...keyRows([
-      ["c", "comment on the line under the cursor"],
-      ["] / [", "walk the comments you have left"],
-      ["e", "export the session as Markdown"],
+    ...bodyText("Staging, without leaving the diff:", C.muted),
+    ...actionRows([
+      ["review_stage_scope", "stage the hunk under the cursor", "review-mode"],
+      ["review_unstage_scope", "unstage it", "review-mode"],
+      ["review_discard_file", "discard it", "review-mode"],
+      ["review_stage_file", "stage the whole file", "review-mode"],
+      ["review_visual_start", "select lines first, then act on those", "review-mode"],
     ]),
     blank(),
-    ...bodyText(
-      "Comments are kept per repository, so a review you break off today is still open where you left it tomorrow.",
-    ),
+    ...bodyText("Notes:", C.muted),
+    ...actionRows([
+      ["review_add_comment", "comment on this line", "review-mode"],
+      ["review_next_comment", "next comment", "review-mode"],
+      ["review_export_session", "export the review as Markdown", "review-mode"],
+    ]),
+    blank(),
+    ...bodyText("Comments are kept per repository, so a review you stop halfway through is still there tomorrow.", C.muted),
     blank(),
     // One button, and only one that means anything from here: the
     // working tree is a thing this page can point at, and "this file" is
     // not — the current file, pressed from the welcome screen, is the
-    // welcome screen. The other two openings are palette commands, and
-    // the prose above names them.
+    // welcome screen.
     row(
       spacer(2),
       button("Review the working tree", { key: "act_review_diff", hoverStyle: GLOW }),
@@ -1396,17 +1472,21 @@ function themeCard(): WidgetSpec {
       blank(),
       row(...buttons),
       blank(),
-      ...bodyText(
-        "Click one and the whole editor restyles, now. The theme editor edits colours live, and \"Inspect Theme at Cursor\" "
-          + "names the key that painted the cell you are on. Assemble the status bar from a picker, rebind any key with the "
-          + "conflicts shown to you, and read the UI in 日本語, 한국어, 中文, Tiếng Việt and more.",
-      ),
+      ...bodyText("Click one and the editor restyles now. More themes come from the package manager."),
+      blank(),
+      ...bodyText("Also here:", C.muted),
+      ...bodyText("  · Theme editor — edit colours live; Inspect Theme at Cursor names the colour under the cursor."),
+      ...bodyText("  · Status bar — choose which parts show, and their order."),
+      ...bodyText("  · Keybindings — rebind anything; conflicts are shown."),
+      ...bodyText("  · Language — the interface reads in 日本語, 한국어, 中文, Tiếng Việt and more."),
       blank(),
       row(
         spacer(2),
-        button("Edit Theme", { key: "act_theme_editor", hoverStyle: GLOW }),
+        button("Theme editor", { key: "act_theme_editor", hoverStyle: GLOW }),
         spacer(2),
         button("Keybindings", { key: "act_keybindings", hoverStyle: GLOW }),
+        spacer(2),
+        button("Settings", { key: "act_settings", hoverStyle: GLOW }),
       ),
       blank(),
     ];
@@ -1477,11 +1557,13 @@ function orchestratorCard(): WidgetSpec {
     rows.push(row(...actions));
     rows.push(blank());
     rows.push(
-      ...bodyText(
-        "One workspace per git worktree, each with its own tabs, splits, terminals and agent. "
-          + "Run Agent… starts claude, codex, opencode, aider or any command you like; New Workspace can cut the worktree and the branch for you, in the foreground or behind you. "
-          + "The dock carries each one's branch, git summary and PR badge; arrows switch between them and nothing is torn down. Agents that can resume rejoin their conversation after a restart.",
-      ),
+      ...bodyText("One workspace per git worktree, each with its own tabs, terminals and agent. Arrow keys switch between them; nothing is shut down when you leave."),
+      blank(),
+      ...bodyText("  1. Run Agent… starts claude, codex, opencode, aider, or any command."),
+      ...bodyText("  2. New Workspace can make the worktree and branch for you."),
+      ...bodyText("  3. The dock shows each one's branch, git status and PR."),
+      blank(),
+      ...bodyText("Agents that support it rejoin their conversation after a restart.", C.muted),
     );
     rows.push(blank());
     return rows;
@@ -1490,20 +1572,14 @@ function orchestratorCard(): WidgetSpec {
 
 function level3(): WidgetSpec[] {
   return [
-    banner("3", "One workspace per git worktree. An agent in each. Hop with an arrow key."),
+    banner("3", "A worktree per task, an agent in each, and the editor driven from outside."),
     orchestratorCard(),
     blank(),
-    card("tours", "Have the codebase explained to you", "steps beside the source", () => [
+    card("tours", "Code tours", "a walkthrough, in a panel", () => [
       blank(),
-      bullet(
-        "A tour plays in a dock panel: the steps on the left, the current step's prose on the right, and the file it points at open above, scrolled to the lines being discussed and highlighting them.",
-      ),
-      bullet(
-        "A tour is a small JSON file, so the good way to get one is to ask — walk me through what this branch changed — and let the agent write it and open it in your panel. Point it at fresh --cmd help tour and it gets the format right first time.",
-      ),
-      bullet(
-        "Worth having for a pull request, for the corner of the repo you have never read, and for explaining your own work to yourself in three months.",
-      ),
+      bullet("A tour plays in a panel: the steps on the left, the current step's text on the right, and the file it points at open above, scrolled to the lines it is about."),
+      bullet("A tour is a small JSON file, so ask an agent for one — \"walk me through what this branch changed\" — and it can write the tour and open it. Tell it to read fresh --cmd help tour for the format."),
+      bullet("Useful for reviewing a pull request, for code you have not read before, and for explaining your own work later."),
       blank(),
       row(
         spacer(2),
@@ -1512,39 +1588,32 @@ function level3(): WidgetSpec[] {
       blank(),
     ]),
     blank(),
-    card("script", "Drive a running editor from outside it", "fresh --cmd script", () => [
+    card("script", "Scripting", "drive a running editor from outside", () => [
       blank(),
       plain("  # What is the editor showing?", C.muted),
       plain("  echo 'return editor.describeWorkspace()' \\", C.value),
       plain("    | fresh --cmd script run", C.value),
       blank(),
-      plain("  # Open the file beside what you are reading", C.muted),
+      plain("  # Open a file beside what you are reading", C.muted),
       plain("  echo 'return editor.splitWindow({ file: \"src/main.rs\" })' \\", C.value),
       plain("    | fresh --cmd script run", C.value),
       blank(),
-      bullet(
-        "A few lines of TypeScript can do anything a plugin can: open files, arrange and resize panes, cut a workspace, start an agent, open a tour. The program runs, prints its answer as JSON, and is forgotten — whatever it made stays.",
-      ),
-      bullet(
-        "A test wrapper can put the failing line in front of you; an agent working in your repo can show you its work instead of describing it.",
-      ),
+      bullet("A few lines of TypeScript can do anything a plugin can: open files, arrange panes, make a workspace, start an agent, open a tour."),
+      bullet("The script prints its answer as JSON and exits. Whatever it opened stays open."),
+      bullet("So a build script can put a failing line on screen, and an agent can show you its work instead of describing it."),
       blank(),
     ]),
     blank(),
-    card("remote", "Your other machines are workspaces too", "SSH, containers, daemons", () => [
+    card("remote", "Remote files and containers", "SSH, devcontainers, daemons", () => [
       blank(),
-      plain("  # Edit on prod — a save sends the patch, not the file", C.muted),
+      plain("  # Edit on another machine; a save sends the patch, not the file", C.muted),
       plain("  fresh deploy@prod:/etc/nginx/nginx.conf", C.value),
       blank(),
-      plain("  # Open a file in an already-running daemon", C.muted),
+      plain("  # Open a file in an editor that is already running", C.muted),
       plain("  fresh --cmd daemon open-file myproject src/main.rs:42", C.value),
       blank(),
-      bullet(
-        "A dropped connection comes back on its own, and the file finder, the grep and even a sudo save work down the same wire.",
-      ),
-      bullet(
-        "Dev Container: Attach points the same machinery at a project's devcontainer: the terminal, the files and the language servers all run inside it, with no toolchain on your host.",
-      ),
+      bullet("A dropped connection reconnects on its own. The file finder, grep and even a sudo save work over it."),
+      bullet("Dev Container: Attach does the same for a project's devcontainer: terminal, files and language servers all run inside the container."),
       blank(),
     ]),
   ];
@@ -1560,18 +1629,99 @@ function footer(): WidgetSpec[] {
     // Ruled to the cards' own edges, not inset from them.
     line([{ text: "─".repeat(Math.max(4, measure() - 2)), style: { fg: C.frame } }]),
     blank(),
-    plain("  That's the whole ladder. Most days you'll live on rung one — the rest", C.value),
-    plain("  keeps up when you climb.", C.value),
+    plain("  Most people use the first level and nothing else. That is fine —", C.value),
+    plain("  the rest is here when you want it.", C.value),
     blank(),
-    line([
-      { text: "  It is all in the palette: ", style: { fg: C.muted } },
-      { text: chord("quick_open", "Ctrl+P"), style: { fg: C.key, bold: true } },
-      { text: ", then ", style: { fg: C.muted } },
-      { text: ">", style: { fg: C.key, bold: true } },
-      { text: " searches it by name.", style: { fg: C.muted } },
-    ]),
+    ...paletteLine(),
     plain("  fresh --help lists the command line. Docs and blog: getfresh.dev", C.muted),
     blank(),
+  ];
+}
+
+/** How to close the page, and how to get it back.
+ *
+ *  The key comes from the page's own mode — the same lookup every other
+ *  key here uses, and the mode's labels are published by the host when
+ *  `defineMode` runs, so this is the binding that will actually close
+ *  it. Without a resolved key the line still has its second half to
+ *  deliver: the command that brings the page back.
+ *
+ *  Closing was the only thing the page did that it never said it did.
+ *  `Escape` on a document closes nothing anywhere else in the editor, so
+ *  a reader had no way to learn it but to lose the page by accident —
+ *  and no way to know that losing it is undoable. */
+function closeHint(): WidgetSpec[] {
+  const k = keyFor("welcome_close", "welcome");
+  const segs: StyledSegment[] = [];
+  if (k) {
+    segs.push({ text: k, style: { fg: C.key, bold: true } });
+    segs.push({ text: " closes this page · ", style: { fg: C.muted } });
+  }
+  segs.push({ text: "Welcome", style: { fg: C.key, bold: true } });
+  segs.push({ text: " in the palette brings it back", style: { fg: C.muted } });
+  return [centred(segs)];
+}
+
+/** The one message on the page whose job is to lower a pulse: the keys
+ *  are the ones you already know.
+ *
+ *  Built from the keymap rather than written down, like every other key
+ *  here — and it is the line that most needs it, because it is the line
+ *  claiming the editor works the way the reader expects. Naming a chord
+ *  this build does not have would be the exact opposite of reassuring.
+ *  A verb whose action is unbound drops out of the sentence, and the
+ *  sentence closes correctly whatever survives. */
+function reassurance(): WidgetSpec[] {
+  const verbs: [string, string][] = [
+    ["save", "saves"],
+    ["undo", "undoes"],
+    ["search", "finds"],
+    ["copy", "copies"],
+    ["paste", "pastes"],
+  ];
+  const have = verbs
+    .map(([action, verb]) => [keyFor(action), verb] as const)
+    .filter((p): p is readonly [string, string] => p[0] !== null);
+  const out: WidgetSpec[] = [];
+  if (have.length) {
+    const segs: StyledSegment[] = [
+      { text: "It works the way you expect: ", style: { fg: C.body } },
+    ];
+    have.forEach(([k, verb], i) => {
+      if (i > 0) {
+        segs.push({
+          text: i === have.length - 1 ? " and " : ", ",
+          style: { fg: C.body },
+        });
+      }
+      segs.push({ text: k, style: { fg: C.key, bold: true } });
+      segs.push({ text: " " + verb, style: { fg: C.body } });
+    });
+    segs.push({ text: ".", style: { fg: C.body } });
+    out.push(centred(segs));
+  }
+  out.push(centred([
+    { text: "The mouse works too: click, drag, scroll, select.", style: { fg: C.body } },
+  ]));
+  return out;
+}
+
+/** "It is all in the palette", with the palette's own key.
+ *
+ *  Dropped entirely when `quick_open` is unbound: the sentence exists to
+ *  hand over a key, so without one there is nothing for it to say that
+ *  the command list above has not already said. */
+function paletteLine(): WidgetSpec[] {
+  const k = keyFor("quick_open");
+  if (!k) return [];
+  return [
+    line([
+      { text: "  Everything here is in the palette: ", style: { fg: C.muted } },
+      { text: k, style: { fg: C.key, bold: true } },
+      { text: ", then ", style: { fg: C.muted } },
+      { text: ">", style: { fg: C.key, bold: true } },
+      { text: " to search by name.", style: { fg: C.muted } },
+    ]),
   ];
 }
 
@@ -1660,20 +1810,7 @@ function buildSpec(): WidgetSpec {
     // verbs two lines above already paint theirs in `ui.help_key_fg`.
     // And no box: a frame is an alert shape, which is the wrong shape
     // for the one message on the page whose job is to lower a pulse.
-    centred([
-      { text: "Nothing to learn first. It works like you'd expect: ", style: { fg: C.body } },
-      { text: "Ctrl+S", style: { fg: C.key, bold: true } },
-      { text: " saves,", style: { fg: C.body } },
-    ]),
-    centred([
-      { text: "Ctrl+Z", style: { fg: C.key, bold: true } },
-      { text: " undoes, ", style: { fg: C.body } },
-      { text: "Ctrl+F", style: { fg: C.key, bold: true } },
-      { text: " finds, ", style: { fg: C.body } },
-      { text: "Ctrl+C/V", style: { fg: C.key, bold: true } },
-      { text: " copy-paste — and the mouse just works.", style: { fg: C.body } },
-    ]),
-    centred([{ text: "Click, drag, scroll, select.", style: { fg: C.body } }]),
+    ...reassurance(),
     ...air(2),
     // The scroll hint carries `Esc` because this is the page's one line
     // about what else you can do with it, and closing was the only thing
@@ -1685,12 +1822,7 @@ function buildSpec(): WidgetSpec {
       { text: "▼ ", style: { fg: C.mark } },
       { text: "scroll — the rest is here when you need it", style: { fg: C.muted } },
     ]),
-    centred([
-      { text: "Esc", style: { fg: C.key, bold: true } },
-      { text: " closes this page · ", style: { fg: C.muted } },
-      { text: "Welcome", style: { fg: C.key, bold: true } },
-      { text: " in the palette brings it back", style: { fg: C.muted } },
-    ]),
+    ...closeHint(),
     ...level1(),
     ...level2(),
     ...level3(),
@@ -2492,6 +2624,27 @@ function activateKey(k: string): void {
       // `Package: Install …` palette entries the card would have to pick
       // between.
       editor.executeAction("pkg_list");
+      return;
+    case "act_git_grep":
+      editor.executeAction("start_git_grep");
+      return;
+    case "act_goto_line":
+      editor.executeAction("goto_line");
+      return;
+    case "act_lsp":
+      editor.executeAction("lsp_restart");
+      return;
+    case "act_diagnostics":
+      editor.executeAction("show_diagnostics_panel");
+      return;
+    case "act_settings":
+      editor.executeAction("open_settings");
+      return;
+    case "act_explorer":
+      editor.executeAction("toggle_file_explorer");
+      return;
+    case "act_split":
+      editor.executeAction("split_vertical");
       return;
     case "act_tour":
       // `Tour: Open Workspace Tour...` — a browser at the project root
