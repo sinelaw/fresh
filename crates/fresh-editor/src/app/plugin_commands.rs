@@ -1441,23 +1441,29 @@ impl Editor {
         text: String,
     ) {
         let text_len = text.len();
-        if let Some(state) = self
+        let event = Event::Insert {
+            position,
+            text,
+            cursor_id: CursorId(0),
+        };
+        let lsp_changes = self
+            .active_window()
+            .collect_lsp_changes_for_buffer(buffer_id, &event);
+        let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let event = Event::Insert {
-                position,
-                text,
-                cursor_id: CursorId(0),
-            };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
-        }
+            true
+        } else {
+            false
+        };
         // Adjust cursors in all splits that display this buffer
         for leaf_id in self
             .windows
@@ -1484,6 +1490,10 @@ impl Editor {
         // decorations (e.g. markdown table borders) keep stale coordinates.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(buffer_id, position, 0, text_len);
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
+        }
     }
 
     /// Handle DeleteRange command
@@ -1494,24 +1504,36 @@ impl Editor {
     ) {
         let delete_start = range.start;
         let delete_len = range.end.saturating_sub(range.start);
-        if let Some(state) = self
+        let deleted_text = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+            .map(|state| state.get_text_range(range.start, range.end))
+            .unwrap_or_default();
+        let event = Event::Delete {
+            range,
+            deleted_text,
+            cursor_id: CursorId(0),
+        };
+        let lsp_changes = self
+            .active_window()
+            .collect_lsp_changes_for_buffer(buffer_id, &event);
+        let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let deleted_text = state.get_text_range(range.start, range.end);
-            let event = Event::Delete {
-                range,
-                deleted_text,
-                cursor_id: CursorId(0),
-            };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
-        }
+            true
+        } else {
+            false
+        };
         // Adjust cursors in all splits that display this buffer
         for leaf_id in self
             .windows
@@ -1539,6 +1561,10 @@ impl Editor {
         // markers here too so plugin-tracked decorations ride the deletion.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(buffer_id, delete_start, delete_len, 0);
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
+        }
     }
 
     /// Re-evaluate the active window's search-match overlays around a region a
@@ -1593,6 +1619,9 @@ impl Editor {
         };
         let split_id = self.split_manager().active_split();
         let active_buf = self.active_buffer();
+        let lsp_changes = self
+            .active_window()
+            .collect_lsp_changes_for_buffer(active_buf, &event);
         self.active_window_mut()
             .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
@@ -1602,6 +1631,8 @@ impl Editor {
         // keep stale coordinates and corrupt.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(active_buf, cursor_pos, 0, text_len);
+        self.active_window_mut()
+            .send_lsp_changes_for_buffer(active_buf, lsp_changes);
     }
 
     /// Handle DeleteSelection command
