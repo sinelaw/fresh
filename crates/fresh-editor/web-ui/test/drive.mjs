@@ -659,6 +659,62 @@ check('typing frame did NOT rebuild the file explorer region', !rr.includes('fil
 check('explorer DOM node survived the typing frame (same element, stamp intact)',
   stamped && await page.evaluate(() => document.querySelector('[data-region="fileExplorer"] .fileexplorer')?.dataset.stamp === 'untouched'));
 
+// The same claim with the roles reversed, and the one that actually drifted.
+// A hover moving between two dock rows produces a frame carrying exactly one
+// path, `regions.tree`. `applyFrame` routes a changed path to its container
+// through `PATH_REGION`, and a path the map does not know falls through to a
+// FULL rebuild — the safe default, and a silent one. `tree` was added to
+// `REGION_ORDER` and never to that map, so recolouring one dock row cleared and
+// re-filled all fourteen containers, re-emitting every pane's cell SVG among
+// them. Nothing failed; the UI just got slower. So the test names the region
+// rather than the pixels: the two lists must not drift again.
+console.log('\n[a dock hover repaints the dock, not the buffer]');
+let hoverProbeOpened = false;
+if (!(await treeSurface('dock'))) {
+  await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+  hoverProbeOpened = true;
+  await waitTree((t) => t.surfaces.some(s => s.kind === 'dock'));
+  await page.waitForTimeout(300);
+}
+// **Drive a tree-only frame rather than assume one.** Which dock rows exist
+// depends on what the editor is showing, and a hint-bar row answers no hover —
+// so the pointer is walked over candidate rows until the server actually sends
+// a frame that touches the tree and no pane. That frame is the premise; the
+// repaint is what is asserted. If none arrives (an empty dock), the section
+// skips rather than passing vacuously.
+const hoverRows = treeLines(await treeOf(), 'dock')
+  .filter(i => i.h === 1 && i.text.trim().length > 1)
+  .filter((i, n, all) => all.findIndex(j => j.y === i.y) === n);
+let hoverKeys = null, hoverRegions = null, hoverStampKept = null;
+for (const row of hoverRows) {
+  // Park the pointer off the dock, so the next move is an ENTER on this row.
+  await page.mouse.move(4, 4); await page.waitForTimeout(200);
+  await page.evaluate(() => { const e = document.querySelector('.pane-content'); if (e) e.dataset.stamp = 'untouched'; });
+  const seqH = await page.evaluate(() => window.fresh.seq);
+  const pt = await cellPx(row.x + 1, row.y);
+  await page.mouse.move(pt.x, pt.y);
+  await page.waitForFunction(s0 => window.fresh.seq > s0, seqH, { timeout: 2500 }).catch(() => {});
+  const hk = await page.evaluate(() => window.fresh.lastFrameKeys);
+  if (!hk.includes('regions.tree') || hk.some(k => k.startsWith('regions.panes'))) continue;
+  hoverKeys = hk;
+  hoverRegions = await page.evaluate(() => window.fresh.renderedRegions);
+  hoverStampKept = await page.evaluate(() => document.querySelector('.pane-content')?.dataset.stamp === 'untouched');
+  break;
+}
+if (!hoverKeys) {
+  skip('a dock hover repaints only the tree region (no hoverable dock row)');
+} else {
+  check('a tree frame rebuilds the tree region', hoverRegions.includes('tree'), JSON.stringify(hoverRegions));
+  check('a tree frame did NOT rebuild every region',
+    hoverRegions.length < 14 && !hoverRegions.some(r => /^panes(\.|$)/.test(r)), JSON.stringify(hoverRegions));
+  check('the buffer DOM survived the hover (same element, stamp intact)',
+    hoverStampKept, JSON.stringify(hoverKeys));
+}
+if (hoverProbeOpened) {
+  await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+  await page.waitForTimeout(250);
+}
+
 console.log('\n[measured metrics + app zoom (frontend-owned Ctrl+= / Ctrl+0)]');
 const m0 = await page.evaluate(() => window.fresh.metrics);
 const w0 = (await scene(page)).w;

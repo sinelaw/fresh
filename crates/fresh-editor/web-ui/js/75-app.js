@@ -233,10 +233,20 @@ function wsSend(o){ if(wsIsOpen()){ ws.send(JSON.stringify(o)); } else showErr("
 // native surface (the menu bar + its dropdown) collapse into one region; null
 // means no DOM depends on it (the poll pacing hint); an UNKNOWN key falls back
 // to a full render rather than guessing.
+// **Every name in `REGION_ORDER` needs an entry here, or its frames fall
+// through to a full rebuild.** A path this map does not know is treated as
+// unknown rather than as region-scoped (`full=true` below), which is the safe
+// default — and a silent one: nothing fails when the two lists drift, the UI
+// just quietly gets slower. `tree` drifted exactly that way. It was added to
+// `REGION_ORDER` and not here, so every hover over a dock row — one changed
+// path, `regions.tree` — cleared and re-filled all fourteen containers,
+// re-emitting the buffer's cell SVG among them: 755 of 770 nodes replaced, and
+// ~22ms of synchronous work, to recolour one row.
 const PATH_REGION={ fileExplorer:"fileExplorer", separators:"separators",
   menubar:"menu", menus:"menu", menuOpen:"menu", menuHighlight:"menu",
   submenuPath:"menu", dropdown:"menu",
   statusbar:"statusbar", popups:"popups", palette:"palette", widgets:"widgets",
+  tree:"tree",
   contextMenu:"contextMenu", auxModal:"auxModal",
   keybindingEditor:"keybindingEditor", settings:"settings",
   trustDialog:"trustDialog", cursor:"caret", poll:null };
