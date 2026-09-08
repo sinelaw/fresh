@@ -327,12 +327,29 @@ pub(crate) fn compute_buffer_layout(
     // value here — the frame is drawn with it, and the pane's paint stores
     // it afterwards (`reconcile::settle_pane`).
     let primary = *cursors.primary();
-    let left_column = viewport.layout_column_scroll(
-        &view_data.lines,
-        &primary,
-        render_area.width as usize,
-        gutter_width,
-    );
+    // Rows built as a window already begin where the view is scrolled to, so
+    // there is no column to place: re-deriving one from rows that are only a
+    // screenful wide would answer nearly zero and, stored back by the pane's
+    // paint, would scroll the view home on the next frame. The horizontal
+    // position is `ensure_visible`'s to keep in that mode.
+    let windowed = view_data.line_window_byte > 0;
+    let left_column = if windowed {
+        viewport.left_column
+    } else {
+        viewport.layout_column_scroll(
+            &view_data.lines,
+            &primary,
+            render_area.width as usize,
+            gutter_width,
+        )
+    };
+    // What the row rendering skips. A windowed row is already the window, so
+    // skipping into it again would drop the columns it was built to show —
+    // which is the same empty pane, arrived at from the other side. The
+    // unwindowed row still starts at its line's start and is skipped as
+    // before. Everything else below keeps the real column: a ruler names an
+    // absolute one, and the pane stores it as its scroll position.
+    let row_left_column = if windowed { 0 } else { left_column };
 
     let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte());
 
@@ -401,7 +418,7 @@ pub(crate) fn compute_buffer_layout(
                 viewport_start,
                 estimated_line_length,
                 adjusted_visible_count,
-                left_column,
+                row_left_column,
                 render_area.width as usize,
             );
             (viewport_start, viewport_end)
@@ -464,7 +481,7 @@ pub(crate) fn compute_buffer_layout(
         is_active,
         line_wrap,
         estimated_lines,
-        left_column,
+        left_column: row_left_column,
         relative_line_numbers,
         session_mode,
         software_cursor_only,

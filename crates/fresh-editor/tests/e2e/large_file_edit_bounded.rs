@@ -476,6 +476,12 @@ fn a_pane_of_long_lines_scrolls() {
 ///   looked, not where the line starts — so it takes two presses to get back,
 ///   and the first one lands in the middle of the line.
 ///
+/// The file has to be this big. The row a pane draws with wrap off is a
+/// *window* into its line, and a file whose far end sits within a screenful of
+/// its start exercises none of that — it draws either way. Past the large-file
+/// threshold, with an end megabytes from the start, it is the window or
+/// nothing.
+///
 /// Asserts on rendered output (CONTRIBUTING §2). The cursor's byte is read
 /// from the editor rather than the status bar, because reaching the end of the
 /// line necessarily walks the rest of it — and the piece tree records what that
@@ -485,17 +491,25 @@ fn a_pane_of_long_lines_scrolls() {
 #[test]
 fn end_reaches_the_end_of_a_long_line_and_home_comes_back() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("one_line.json");
-
-    // Comfortably past the reader's 100,000-byte piece cap and the 64 KB
-    // line-start search, and past the large-file threshold this config sets.
-    let (single, _) = single_line_and_control(400_000);
-    let bytes = single.len();
-    assert!(bytes > 2 * 1024 * 1024, "{bytes} is too small to show this");
-    std::fs::File::create(&path)
-        .unwrap()
-        .write_all(single.as_bytes())
-        .unwrap();
+    // The module's own ~19 MB fixture, and it has to be that big.
+    //
+    // The row a pane draws is built as a *prefix* of the line — every column
+    // from its start to the right-hand edge of the view — so how far right the
+    // view can be scrolled and still have something to draw is bounded by how
+    // much of one line the build will read. A file whose far end sits inside
+    // that reach exercises none of this: it draws, and the test passes without
+    // touching the case that fails. Past the reach the row is built short, the
+    // view is scrolled beyond what it contains, and the pane goes blank.
+    //
+    // It also has to be past the large-file threshold, which is 10 MB by
+    // default — below it a wrap-off row is chopped at `MAX_SAFE_LINE_WIDTH`
+    // and the same blank appears from a different direction.
+    let (path, _, bytes) = write_pair(dir.path());
+    assert!(
+        bytes > 10 * 1024 * 1024,
+        "{bytes} is inside the build's reach, so this would pass without \
+         testing anything"
+    );
 
     let mut harness = opened(&path, false);
     assert_eq!(harness.cursor_position(), 0, "the file opens at its start");
