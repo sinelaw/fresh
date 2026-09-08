@@ -457,6 +457,9 @@ impl Editor {
     /// logs, semantic-token bookkeeping, the panel-id mapping, and each
     /// split's open-buffers / focus-history lists.
     fn purge_buffer_state(&mut self, id: BufferId) {
+        // Widget panels painting into this buffer go with it — they are
+        // editor-level state, so nothing below would have touched them.
+        self.drop_widget_panels_for_buffer(id);
         self.windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)

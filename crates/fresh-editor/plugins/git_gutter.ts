@@ -76,6 +76,27 @@ interface BufferGitState {
 /** Git state per buffer */
 const bufferStates: Map<number, BufferGitState> = new Map();
 
+/** A buffer's starting state, in one place because six handlers need one.
+ *
+ *  It was six hand-written object literals, and the one in
+ *  `after_file_revert` left both baseline fields out. That is `undefined`,
+ *  not `null`, so `ensureBaselines` read them as *already registered*,
+ *  skipped registration, and `refreshDiffBaseline(undefined)` rejected with
+ *  `Error converting from js 'undefined' into type 'f64'` — a reverted
+ *  buffer (an external `git checkout` of the open file, say) lost its gutter
+ *  until it was reopened. A literal that omits a required field is a type
+ *  error `check-types.sh` reports; a constructor is one that cannot be
+ *  written. */
+function newBufferState(filePath: string): BufferGitState {
+  return {
+    filePath,
+    hunks: [],
+    updating: false,
+    diskBaselineId: null,
+    headBaselineId: null,
+  };
+}
+
 
 // =============================================================================
 // Hunk mapping (host-side diff)
@@ -333,13 +354,7 @@ function git_gutter_refresh() : void {
 
   // Ensure state exists
   if (!bufferStates.has(bufferId)) {
-    bufferStates.set(bufferId, {
-      filePath,
-      hunks: [],
-      updating: false,
-      diskBaselineId: null,
-      headBaselineId: null,
-    });
+    bufferStates.set(bufferId, newBufferState(filePath));
   }
 
   // Force immediate update
@@ -367,13 +382,7 @@ editor.on("after_file_open", (args) => {
   }
 
   // Initialize state for this buffer
-  bufferStates.set(bufferId, {
-    filePath,
-    hunks: [],
-    updating: false,
-    diskBaselineId: null,
-    headBaselineId: null,
-  });
+  bufferStates.set(bufferId, newBufferState(filePath));
 
   // Update immediately (no debounce for file open)
   updateGitGutter(bufferId);
@@ -387,13 +396,7 @@ editor.on("buffer_activated", (args) => {
   if (!bufferStates.has(bufferId)) {
     const filePath = editor.getBufferPath(bufferId);
     if (filePath && filePath !== "") {
-      bufferStates.set(bufferId, {
-        filePath,
-        hunks: [],
-        updating: false,
-        diskBaselineId: null,
-        headBaselineId: null,
-      });
+      bufferStates.set(bufferId, newBufferState(filePath));
       updateGitGutter(bufferId);
     }
   }
@@ -414,13 +417,7 @@ editor.on("after_file_save", (args) => {
       releaseBaselines(state);
     }
   } else {
-    bufferStates.set(bufferId, {
-      filePath: args.path,
-      hunks: [],
-      updating: false,
-      diskBaselineId: null,
-      headBaselineId: null,
-    });
+    bufferStates.set(bufferId, newBufferState(args.path));
   }
 
   // Update immediately after save (no debounce)
@@ -440,11 +437,7 @@ editor.on("after_file_revert", (args) => {
   if (state) {
     state.filePath = args.path;
   } else {
-    bufferStates.set(bufferId, {
-      filePath: args.path,
-      hunks: [],
-      updating: false,
-    });
+    bufferStates.set(bufferId, newBufferState(args.path));
   }
 
   updateGitGutter(bufferId);
@@ -468,13 +461,7 @@ editor.registerCommand(
 const initBufferId = editor.getActiveBufferId();
 const initPath = editor.getBufferPath(initBufferId);
 if (initPath && initPath !== "") {
-  bufferStates.set(initBufferId, {
-    filePath: initPath,
-    hunks: [],
-    updating: false,
-    diskBaselineId: null,
-    headBaselineId: null,
-  });
+  bufferStates.set(initBufferId, newBufferState(initPath));
   updateGitGutter(initBufferId);
 }
 
