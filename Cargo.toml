@@ -31,7 +31,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.4.10"
+version = "0.5.0"
 authors = ["Noam Lewis"]
 edition = "2021"
 license = "GPL-2.0"
@@ -41,23 +41,23 @@ documentation = "https://docs.rs/fresh-editor"
 
 [workspace.dependencies]
 # Local crates
-fresh-core = { version = "0.4.10", path = "crates/fresh-core" }
+fresh-core = { version = "0.5.0", path = "crates/fresh-core" }
 # `default-features = false` has to be stated here, not just at the use site:
 # cargo ignores a member's `default-features = false` unless the workspace
 # entry sets it too (it warns, and calls it a future hard error). Without this,
 # `fresh-editor --no-default-features` still pulled in this crate's defaults,
 # and with them the whole bundled tree-sitter grammar set.
-fresh-editor-core = { version = "0.4.10", path = "crates/fresh-editor-core", default-features = false }
-fresh-gui = { version = "0.4.10", path = "crates/fresh-gui" }
-fresh-parser-js = { version = "0.4.10", path = "crates/fresh-parser-js" }
-fresh-languages = { version = "0.4.10", path = "crates/fresh-languages" }
-fresh-plugin-runtime = { version = "0.4.10", path = "crates/fresh-plugin-runtime" }
-fresh-plugin-api-macros = { version = "0.4.10", path = "crates/fresh-plugin-api-macros" }
-fresh-winterm = { version = "0.4.10", path = "crates/fresh-winterm" }
-fresh-input-parser = { version = "0.4.10", path = "crates/fresh-input-parser" }
-fresh-update = { version = "0.4.10", path = "crates/fresh-update" }
-fresh-ui = { version = "0.4.10", path = "crates/fresh-ui" }
-fresh-i18n = { version = "0.4.10", path = "crates/fresh-i18n" }
+fresh-editor-core = { version = "0.5.0", path = "crates/fresh-editor-core", default-features = false }
+fresh-gui = { version = "0.5.0", path = "crates/fresh-gui" }
+fresh-parser-js = { version = "0.5.0", path = "crates/fresh-parser-js" }
+fresh-languages = { version = "0.5.0", path = "crates/fresh-languages" }
+fresh-plugin-runtime = { version = "0.5.0", path = "crates/fresh-plugin-runtime" }
+fresh-plugin-api-macros = { version = "0.5.0", path = "crates/fresh-plugin-api-macros" }
+fresh-winterm = { version = "0.5.0", path = "crates/fresh-winterm" }
+fresh-input-parser = { version = "0.5.0", path = "crates/fresh-input-parser" }
+fresh-update = { version = "0.5.0", path = "crates/fresh-update" }
+fresh-ui = { version = "0.5.0", path = "crates/fresh-ui" }
+fresh-i18n = { version = "0.5.0", path = "crates/fresh-i18n" }
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }
