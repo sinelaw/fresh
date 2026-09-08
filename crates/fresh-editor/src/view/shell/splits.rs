@@ -1447,6 +1447,84 @@ fn compose_margin(width: u16, height: u16, desk_first: bool) -> Node<UiMsg> {
     }
 }
 
+/// A page's content with the two things the host draws over it: the band
+/// under the reader's selection, and the reader's caret.
+///
+/// **Both are the description's because there is nothing else on screen that
+/// could draw them.** The pane shows this tree rather than the mirror buffer,
+/// so the buffer painter — which draws a caret and washes a selection over
+/// every other text surface in the editor — never runs over this text. The
+/// caret is a zero-width marker at the reader's cell; the selection is one
+/// wash per row, in the editor's own selection ground, over the content and
+/// scrolled with it.
+///
+/// **Nothing in either layer is hittable.** A stack's children all get the
+/// whole rect and the later one is hit first, so a layer that took hits would
+/// swallow every press on the page — which is how the reader gets to a
+/// control in the first place.
+fn page_layers(
+    id: LeafId,
+    widgets: Node<UiMsg>,
+    reading: Option<(u32, u16)>,
+    selection: &[(u32, u16, u16)],
+) -> Node<UiMsg> {
+    if reading.is_none() && selection.is_empty() {
+        return widgets;
+    }
+    let mut layers = vec![widgets];
+    if !selection.is_empty() {
+        // The bands are in content rows, so the layer is a column of spacers
+        // and washes: each band skips to its own row and paints the cells
+        // between its two columns. A wash recolours what is under it and
+        // keeps the text, which is what a selection is.
+        let mut band_layer = col().pointer_mode(PointerMode::Ignore);
+        let mut at: u32 = 0;
+        for (band_row, from, to) in selection.iter().copied() {
+            if to <= from || band_row < at {
+                continue;
+            }
+            if band_row > at {
+                band_layer = band_layer
+                    .child(row().h(Sizing::Cells((band_row - at).min(u16::MAX as u32) as u16)));
+            }
+            band_layer = band_layer.child(
+                row()
+                    .h(Sizing::Cells(1))
+                    .child(row().w(Sizing::Cells(from)))
+                    .child(
+                        row()
+                            .w(Sizing::Cells(to - from))
+                            .h(Sizing::Cells(1))
+                            .theme(pair("editor.fg", "editor.selection_bg"))
+                            .wash(),
+                    ),
+            );
+            at = band_row + 1;
+        }
+        layers.push(band_layer);
+    }
+    if let Some((at_row, at_col)) = reading {
+        layers.push(
+            col()
+                .pointer_mode(PointerMode::Ignore)
+                .child(row().h(Sizing::Cells(at_row.min(u16::MAX as u32) as u16)))
+                .child(
+                    row()
+                        .h(Sizing::Cells(1))
+                        .child(row().w(Sizing::Cells(at_col)))
+                        .child(
+                            text("")
+                                .key(super::widgets::caret_key(super::widgets::Slot::Pane(id)))
+                                .w(Sizing::Cells(0))
+                                .h(Sizing::Cells(1))
+                                .cursor_byte(0),
+                        ),
+                ),
+        );
+    }
+    stack().children(layers)
+}
+
 /// A mounted plugin panel, as the pane's content.
 ///
 /// Laid out inside a `layout_reader` for both extents, and that is the point
@@ -1461,8 +1539,14 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     // surface does. A widget the registry names is marked by `widgets::node`
     // (through `Ctx::keyboard`), and the innermost mark wins.
     let rests_here = active && !super::widgets::marks(&i.spec, &i.focus_key);
+    // Whether this panel is a page, read before the interior is moved into
+    // the layout reader: the press below captures the pointer only for one,
+    // because a page is the only pane-mounted panel whose content is text to
+    // sweep rather than a set of controls to click.
+    let is_page = i.page.is_some();
     let page = i.page.clone();
     let reading = i.reading;
+    let selection = i.selection.clone();
     let compose = i.compose;
     let body = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
         // **The whole pane, not `widget_panel_width`'s.** The runtime lays a
@@ -1540,43 +1624,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
             // windows itself.
             Some(anchor) => fresh_ui::viewport(
                 fresh_ui::row().children([
-                    match reading {
-                        // **A page's reader is drawn by the description**, because
-                        // there is nothing else on screen that could: the pane
-                        // shows this tree rather than the mirror buffer, so the
-                        // mirror's cursor is a report and not a caret. A
-                        // zero-width marker at the reader's cell, laid over the
-                        // content and scrolled with it, is that caret — the same
-                        // marker a focused field places, at coordinates the host
-                        // owns instead of a byte the field owns.
-                        Some((at_row, at_col)) => stack().children([
-                            widgets,
-                            // **Nothing here is hittable.** A stack's children all
-                            // get the whole rect and the later one is hit first, so
-                            // a caret layer that took hits would swallow every
-                            // press on the page — which is how the reader gets to
-                            // a control in the first place.
-                            col()
-                                .pointer_mode(PointerMode::Ignore)
-                                .child(row().h(Sizing::Cells(at_row.min(u16::MAX as u32) as u16)))
-                                .child(
-                                    row()
-                                        .h(Sizing::Cells(1))
-                                        .child(row().w(Sizing::Cells(at_col)))
-                                        .child(
-                                            text("")
-                                                .key(super::widgets::caret_key(
-                                                    super::widgets::Slot::Pane(id),
-                                                ))
-                                                .w(Sizing::Cells(0))
-                                                .h(Sizing::Cells(1))
-                                                .cursor_byte(0),
-                                        ),
-                                ),
-                        ]),
-                        None => widgets,
-                    }
-                    .w(Sizing::Cells(inner_w)),
+                    page_layers(id, widgets, reading, &selection).w(Sizing::Cells(inner_w)),
                     // **The window is wider than the page.** A viewport stretches
                     // its child to its own width, and the window reaches the
                     // pane's edge so its bar can hang there — so the page is
@@ -1671,24 +1719,61 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
     //
     // A **right** press is left alone for the reason it was before: it belongs
     // to the base surface's dismissal of the tab context menu.
-    let pressed = gesture(body).on(
-        GestureKind::Press,
-        Rc::new(move |e: &Event| {
-            if e.button != MouseButton::Left {
-                return None;
-            }
-            e.stop();
-            Some(UiMsg::Ui(UiFact::PaneContentPress {
-                pane: id,
-                // A panel has no byte to place a caret at.
-                byte: None,
-                x: e.pos.x.max(0) as u16,
-                y: e.pos.y.max(0) as u16,
-                clicks: e.clicks,
-                mods: e.mods,
-            }))
-        }),
-    );
+    //
+    // **And a page's press captures the pointer, as the buffer's does.** A
+    // page is text to read and quote, so a press that no widget claimed is
+    // the beginning of a possible sweep across it: the moves come back here
+    // as `PaneContentDrag` and the release as `PaneContentRelease`, and
+    // `Editor::drag_moved_the_page_selection` grows the mirror's selection
+    // with them. A press a control took never reaches this handler, so
+    // dragging off a button still does nothing — and a panel that is not a
+    // page never captures at all, because its content is controls rather
+    // than prose.
+    let at = |e: &Event| (e.pos.x.max(0) as u16, e.pos.y.max(0) as u16);
+    let pressed = gesture(body)
+        .on(
+            GestureKind::Press,
+            Rc::new(move |e: &Event| {
+                if e.button != MouseButton::Left {
+                    return None;
+                }
+                let (x, y) = at(e);
+                if is_page {
+                    e.capture_pointer();
+                }
+                e.stop();
+                Some(UiMsg::Ui(UiFact::PaneContentPress {
+                    pane: id,
+                    // A panel has no byte to place a caret at.
+                    byte: None,
+                    x,
+                    y,
+                    clicks: e.clicks,
+                    mods: e.mods,
+                }))
+            }),
+        )
+        .on(
+            GestureKind::Move,
+            Rc::new(move |e: &Event| {
+                // Only while this node holds the pointer its press took:
+                // bare motion over the page is the hover's business.
+                if !e.captured {
+                    return None;
+                }
+                let (x, y) = at(e);
+                Some(UiMsg::Ui(UiFact::PaneContentDrag { pane: id, x, y }))
+            }),
+        )
+        .on(
+            GestureKind::Release,
+            Rc::new(move |e: &Event| {
+                if e.button != MouseButton::Left {
+                    return None;
+                }
+                Some(UiMsg::Ui(UiFact::PaneContentRelease { pane: id }))
+            }),
+        );
     // **The panel's interior: its ring's root, its keymap, and the seam its
     // keys cross.** The same [`super::panel::interior`] the dock's is: the
     // content slot's key (`content_key`, which `interior_key(Slot::Pane)`

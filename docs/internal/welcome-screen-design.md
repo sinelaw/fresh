@@ -470,7 +470,8 @@ the welcome screen, is the welcome screen.
 |---|---|
 | scroll / `PgUp` / `PgDn` / mouse wheel | ordinary buffer scrolling; the depth meter follows |
 | `Tab` / `Shift+Tab` | move focus between interactive widgets — the caret comes with it |
-| arrow / page keys / a click on the text | move the caret; the control on the row it lands on takes focus, and a row with none clears it |
+| arrow / page keys / a click on the text | move the caret; the control it lands **on** takes focus, and a cell carrying none clears it |
+| `Shift`+movement, or a drag with the mouse | select the page's text; `Ctrl+C` copies it, `Ctrl+A` takes the page |
 | `Enter` | activate the focused widget — nothing, on a paragraph |
 | click on a fold arrow, or `za` on its row | fold / unfold that card |
 | typing, while the caret is in the finder | it is a real text input; it really searches |
@@ -1116,6 +1117,52 @@ Eleven things the wireframes did not know:
     index is rebuilt on the version bump regardless. The e2e test written
     for it passed with the change reverted, which is how the theory was
     caught; it is not in this PR.
+
+35. **A control took focus across the whole width of its row.** Focus
+    resolved by row and then by *nearest* column with no distance cap, so on
+    a row carrying one control that control was the answer for every column
+    of it — and the page's first row carries one right-aligned switch. A
+    reader walking down the left margin lit it up and armed Enter on it from
+    forty columns away. A focus region is the control's own rectangle now
+    (`page_focus_target_at`), which needed the reader's column to be a
+    *display* column rather than a byte one: the rows carrying controls are
+    exactly the rows drawn in box glyphs, where one column is three bytes.
+    `page_follows_caret` converts on the way out and
+    `mirror_page_reader_into_buffer` on the way back, so the mirror is still
+    where the two coordinate systems meet.
+
+36. **The mode inherited no bindings, so it masked half the keyboard.**
+    `defineMode`'s `inheritNormalBindings` defaults to false, and what it was
+    hiding here is what a *document* needs: `Left` / `Right`, `Home` / `End`,
+    every `Shift+` movement — which is selection — and `Ctrl+A` / `Ctrl+C`.
+    The page could be read and not quoted. Nothing was re-bound to fix it:
+    the mode inherits now, exactly as the built-in help viewer's `special`
+    mode does, and its own bindings still win where it has one.
+
+    The host half is that a described pane draws the tree and not the buffer
+    under it, so the painter that washes a selection everywhere else in the
+    editor never ran here — the selection existed and was invisible. The
+    description carries it now (`panel::Interior::selection`, one band per
+    row, washed by `splits::page_layers`), the way it already carried the
+    caret, and the pointer sweep is the pane's own press capture mapped
+    through the page's window (`drag_moved_the_page_selection`). Both read
+    the buffer's own cursors: there is no second selection model.
+
+37. **A box is a block, and the page is a column.** Framed cards were
+    narrowed to `cardMeasure()` and left at the page's left edge, so every
+    one of them left a band of white down the right — the boxes and the
+    prose disagreeing about where the page was. `toCardWidth` centres them
+    and `card` centres the heading with them, because a heading that rules
+    to its own box's width and starts somewhere else is two objects.
+
+38. **A markdown box was padded taller than its own document.** The
+    collector is told how many rows to emit, and for an unkeyed `Text` that
+    number came from `value.split('\n')` — which counts a fenced block's
+    ``` delimiters, two rows nothing draws. The sample's nine-line listing
+    came back eleven rows tall in a nine-row box and grew a scrollbar over a
+    document that fits. Padding past the box is never content, so the
+    description trims it (`view/shell/widgets.rs`), never below the box's own
+    height: a document that really is taller still scrolls.
 
 ### Still aspirational
 

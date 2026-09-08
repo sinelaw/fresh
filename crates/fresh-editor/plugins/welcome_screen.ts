@@ -484,20 +484,30 @@ function card(
   // page was a stack of headings and boxes at single-row spacing, which
   // reads as one dense column however well each part is set — the first
   // viewport got its rhythm and the rest of the document did not.
-  if (folded.has(id)) return col(...air(2), head);
-  if (framed) return col(...air(2), head, toCardWidth(col(...body())));
+  if (folded.has(id)) return col(...air(2), framed ? centredRow(head) : head);
+  if (framed) {
+    return col(...air(2), centredRow(head), toCardWidth(col(...body())));
+  }
   return col(...air(2), head, ...body());
 }
 
-/** Constrain a framed card to the card measure rather than the page's.
+/** Constrain a framed card to the card measure rather than the page's,
+ *  and sit it on the page's axis.
  *
  *  A box drawn to the full measure is mostly empty: the finder's paths,
  *  the git card's file names and the workspace rows are all short, so
  *  the frame ran forty columns past its own content and the card read
  *  as a room rather than a card. Prose still sets to the full measure —
- *  it is the *frames* that were too wide, not the page. */
+ *  it is the *frames* that were too wide, not the page.
+ *
+ *  **Centred, because a box is a block and the page is a column.** A
+ *  narrowed card packed to the left edge left a growing band of white
+ *  down the right of every framed section, so the boxes and the prose
+ *  they sit among disagreed about where the page was. The heading above
+ *  each one is centred with it (`card`), because a heading ruling to
+ *  its own box's width and starting somewhere else is two objects. */
 function toCardWidth(child: WidgetSpec): WidgetSpec {
-  return row(labeledSection({ child, widthCols: cardMeasure() }));
+  return centredRow(labeledSection({ child, widthCols: cardMeasure() }));
 }
 
 /** Framed cards sit inside the page's measure by a margin on each side,
@@ -1067,6 +1077,12 @@ function level2(): WidgetSpec[] {
       // it is pretending to be, and inset from the prose around it — a
       // listing, not a paragraph.
       //
+      // Centred on the page's axis like every other box, rather than
+      // packed to the left edge with the spare columns pooling on the
+      // right — the inset that did that was two columns wide and the
+      // slack was two columns wide, so the box looked centred until the
+      // measure changed under it.
+      //
       // The margin goes AROUND the widget, never inside its text: the
       // markdown renderer turns leading spaces in a code fence into
       // NBSP and paints the code background across them, so an indent
@@ -1074,8 +1090,7 @@ function level2(): WidgetSpec[] {
       // whole left margin. (The background inside the box is the
       // host's `ui.inline_code_bg`, shared with every hover popup and
       // the markdown preview, so it is not this page's to switch off.)
-      row(
-        spacer(2),
+      centredRow(
         labeledSection({
           label: "src/store.rs",
           widthCols: measure() - 4,
@@ -2175,6 +2190,22 @@ editor.defineMode(
     ...FORWARDED.map(([k, action]) => [k, `welcome_do_${action}`] as [string, string]),
   ],
   true,
+  true,
+  // **Everything this mode does not bind is still the editor's.** A mode
+  // that inherits nothing is a mode that *masks* everything, and what it
+  // was masking here is the half of the keyboard a document needs: `Left`
+  // and `Right`, `Home` and `End`, every `Shift+` movement — which is
+  // selection — and `Ctrl+A` / `Ctrl+C`. The page is a read-only buffer
+  // you read and quote, so a reader could see text they could not select
+  // and could not copy, and the fix is not to re-bind any of it here: it
+  // is to stop hiding the bindings that already exist. The built-in help
+  // viewer's `special` mode says the same thing the same way
+  // (`ensure_help_panel_mode_registered`: "keeps cursor motion / copy /
+  // search usable even though `editing_disabled` blocks edits").
+  //
+  // The bindings above still win, because a mode's own bindings are
+  // resolved first: `Up` and `Down` walk the finder's results before they
+  // move the caret, `Enter` activates, `Escape` leaves the field.
   true,
 );
 

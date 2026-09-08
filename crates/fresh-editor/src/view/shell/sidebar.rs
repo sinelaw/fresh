@@ -922,6 +922,7 @@ mod tests {
 
             page: None,
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
