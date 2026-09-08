@@ -541,6 +541,89 @@ impl PieceTreeNode {
         }
     }
 
+    /// Path-copy update of a single leaf's line_feed_cnt, addressed by the
+    /// leaf's own start offset in the document.
+    ///
+    /// The by-index twin is [`update_leaf_lf_by_index`](Self::update_leaf_lf_by_index),
+    /// which costs a `count_leaves` walk per level; a caller that has just
+    /// walked the document knows *where* it was, not which leaf that was, and
+    /// this descends on `left_bytes` in O(depth) instead.
+    ///
+    /// `bytes` is checked against the leaf found there: a count learned by
+    /// reading a piece is only about that exact piece, and if the tree has
+    /// been split or rewritten since, the answer is dropped rather than
+    /// written onto a leaf it was not measured from.
+    fn set_leaf_lf_at(
+        self: &Arc<Self>,
+        doc_offset: usize,
+        bytes: usize,
+        lf_count: usize,
+    ) -> (Arc<Self>, bool) {
+        match self.as_ref() {
+            Self::Leaf {
+                location,
+                offset,
+                bytes: leaf_bytes,
+                line_feed_cnt,
+            } => {
+                if doc_offset != 0 || *leaf_bytes != bytes {
+                    return (Arc::clone(self), false);
+                }
+                if *line_feed_cnt == Some(lf_count) {
+                    // Already known; leave the node alone so structural
+                    // sharing survives.
+                    return (Arc::clone(self), false);
+                }
+                (
+                    Arc::new(Self::Leaf {
+                        location: *location,
+                        offset: *offset,
+                        bytes: *leaf_bytes,
+                        line_feed_cnt: Some(lf_count),
+                    }),
+                    true,
+                )
+            }
+            Self::Internal {
+                left_bytes,
+                lf_left,
+                left,
+                right,
+            } => {
+                if doc_offset < *left_bytes {
+                    let (new_left, found) = left.set_leaf_lf_at(doc_offset, bytes, lf_count);
+                    if !found {
+                        return (Arc::clone(self), false);
+                    }
+                    (
+                        Arc::new(Self::Internal {
+                            left_bytes: *left_bytes,
+                            lf_left: new_left.total_line_feeds(),
+                            left: new_left,
+                            right: Arc::clone(right),
+                        }),
+                        true,
+                    )
+                } else {
+                    let (new_right, found) =
+                        right.set_leaf_lf_at(doc_offset - left_bytes, bytes, lf_count);
+                    if !found {
+                        return (Arc::clone(self), false);
+                    }
+                    (
+                        Arc::new(Self::Internal {
+                            left_bytes: *left_bytes,
+                            lf_left: *lf_left,
+                            left: Arc::clone(left),
+                            right: new_right,
+                        }),
+                        true,
+                    )
+                }
+            }
+        }
+    }
+
     /// Collect all leaves in order
     pub(crate) fn collect_leaves(&self, leaves: &mut Vec<LeafData>) {
         match self {
@@ -1558,6 +1641,53 @@ impl PieceTree {
             let (new_root, _) = self.root.update_leaf_lf_by_index(idx, lf_count);
             self.root = new_root;
         }
+    }
+
+    /// Record that the leaf starting at `doc_offset` and spanning `bytes`
+    /// contains `lf_count` line feeds.
+    ///
+    /// This is how a caller that reads the document as it goes — a viewport
+    /// walking down one enormous line looking for its end — hands back what it
+    /// learned on the way. The tree already carries a line-feed count per
+    /// piece and already maintains it across edits; filling in the pieces the
+    /// reader crossed turns a repeated scan into a question the tree can
+    /// answer from metadata the next time round.
+    ///
+    /// Path-copies only the root-to-leaf path, so `Arc::ptr_eq` still holds
+    /// for every subtree it did not touch, and does nothing at all when the
+    /// count is already known — an unchanged tree is left literally unchanged.
+    /// Returns whether a leaf was updated.
+    pub fn set_leaf_line_feeds_at(
+        &mut self,
+        doc_offset: usize,
+        bytes: usize,
+        lf_count: usize,
+    ) -> bool {
+        if bytes == 0 || doc_offset >= self.total_bytes {
+            return false;
+        }
+        let (new_root, found) = self.root.set_leaf_lf_at(doc_offset, bytes, lf_count);
+        if found {
+            self.root = new_root;
+        }
+        found
+    }
+
+    /// Whether every piece overlapping `[start, end)` is known to hold no
+    /// line feed.
+    ///
+    /// Answered purely from the tree's per-piece counts: no buffer data is
+    /// read, no lazily-loaded chunk is faulted in, and an unknown count
+    /// (`None`) is never mistaken for zero. A piece that overlaps the range
+    /// only partly still settles it — a piece with no line feed anywhere in it
+    /// has none in the part that overlaps.
+    pub fn range_line_feed_free(&self, start: usize, end: usize) -> bool {
+        let end = end.min(self.total_bytes);
+        if start >= end {
+            return true;
+        }
+        self.iter_pieces_in_range(start, end)
+            .all(|p| p.line_feed_cnt == Some(0))
     }
 
     /// Get tree statistics for debugging

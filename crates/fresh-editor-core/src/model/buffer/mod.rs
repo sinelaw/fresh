@@ -1031,11 +1031,11 @@ impl TextBuffer {
             return self.piece_tree.cursor_at_offset(offset);
         }
 
-        // Mark as modified (updates version)
-        self.mark_content_modified();
-
         // Count line feeds in the text to insert
         let line_feed_cnt = Some(text.iter().filter(|&&b| b == b'\n').count());
+
+        // Mark as modified (updates version)
+        self.mark_content_modified();
 
         // Optimization: try to append to existing buffer if insertion is at piece boundary
         let (buffer_location, buffer_offset, text_len) =
@@ -1336,6 +1336,7 @@ impl TextBuffer {
             }
         }
 
+        crate::counters::work::add_buffer_bytes_read(result.len() as u64);
         Some(result)
     }
 
@@ -1452,6 +1453,7 @@ impl TextBuffer {
             );
         }
 
+        crate::counters::work::add_buffer_bytes_read(result.len() as u64);
         Ok(result)
     }
 
@@ -3292,6 +3294,281 @@ impl TextBuffer {
         }
 
         len
+    }
+
+    /// Fill in the piece tree's line-feed count for `view`, if it is unknown
+    /// and the piece's bytes are already in hand, and report what is known.
+    ///
+    /// The tree carries a count of `\n` per piece — that is what makes
+    /// `line_count` and line-number lookup possible — and leaves it `None`
+    /// for a piece nobody has read. The scans below read pieces as they walk,
+    /// so they are exactly the place to answer the question the tree is
+    /// missing: counting a resident piece costs one pass over bytes that were
+    /// loaded anyway, and every later frame that reaches this piece gets its
+    /// answer from metadata instead of walking it again. Knowledge recorded
+    /// this way also survives editing, because the tree already maintains
+    /// these counts across inserts and deletes.
+    ///
+    /// `None` means still unknown, and unknown is never treated as zero: a
+    /// piece that is not loaded, that reaches past its buffer, or that is too
+    /// large to sweep in one go is left alone for the bounded scan to handle.
+    fn index_piece_line_feeds(&mut self, view: &PieceView) -> Option<usize> {
+        if let Some(known) = view.line_feed_cnt {
+            return Some(known);
+        }
+        // A piece larger than a load chunk is a region nobody has faulted in
+        // yet; sweeping it would be the unbounded read this whole path exists
+        // to avoid.
+        if view.bytes == 0 || view.bytes > LOAD_CHUNK_SIZE {
+            return None;
+        }
+        let lo = view.buffer_offset;
+        let hi = lo.checked_add(view.bytes)?;
+        let count = {
+            let data = self
+                .buffers
+                .get(view.location.buffer_id())
+                .and_then(|b| b.get_data())?;
+            if hi > data.len() {
+                return None;
+            }
+            crate::counters::work::add_buffer_bytes_read(view.bytes as u64);
+            data[lo..hi].iter().filter(|&&b| b == b'\n').count()
+        };
+        self.piece_tree
+            .set_leaf_line_feeds_at(view.doc_offset, view.bytes, count);
+        Some(count)
+    }
+
+    /// Byte just past the next `\n` at or after `from`, searching at most `cap`
+    /// bytes — the start of the next line, without reading the line.
+    ///
+    /// `None` means no line break within `cap` bytes (or the buffer ends
+    /// first). The cap is not optional: on a file that is one enormous line an
+    /// unbounded search is a scan of the whole file, and the callers here —
+    /// scroll clamping, row counting, cursor visibility — run several times per
+    /// keystroke.
+    ///
+    /// Scans the piece tree's own storage rather than copying a range out of
+    /// it, so answering "where does this line end" costs the bytes it walks and
+    /// nothing else. A lazily-loaded chunk is loaded as the scan reaches it,
+    /// exactly as a read would, and no further. Pieces the tree already knows
+    /// to hold no line feed are stepped over without reading them at all, and
+    /// pieces it does not know about are counted on the way past — so on a file
+    /// that is one enormous line this search stops repeating itself.
+    pub fn next_line_start_within(&mut self, from: usize, cap: usize) -> Option<usize> {
+        let total = self.total_bytes();
+        if from >= total || cap == 0 {
+            return None;
+        }
+        let end = from.saturating_add(cap).min(total);
+        let mut pos = from;
+
+        while pos < end {
+            let mut advanced = false;
+            for view in self.piece_tree.iter_pieces_in_range(pos, end) {
+                let piece_start = view.doc_offset;
+                let piece_end = piece_start + view.bytes;
+
+                // Already answered by the tree: step over the piece without
+                // reading a byte of it, and without faulting it in.
+                if view.line_feed_cnt == Some(0) {
+                    if piece_end > pos {
+                        pos = piece_end;
+                        advanced = true;
+                    }
+                    continue;
+                }
+
+                let buffer_id = view.location.buffer_id();
+                let needs_loading = self
+                    .buffers
+                    .get(buffer_id)
+                    .map(|b| !b.is_loaded())
+                    .unwrap_or(false);
+                if needs_loading {
+                    // Splitting invalidates the piece list; restart the walk
+                    // from where it got to, as `get_text_range_mut` does.
+                    match self.chunk_split_and_load(&view, pos) {
+                        Ok(true) => {
+                            advanced = true;
+                            break;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!("next_line_start_within: load failed: {e}");
+                            return None;
+                        }
+                    }
+                }
+
+                if self.index_piece_line_feeds(&view) == Some(0) {
+                    if piece_end > pos {
+                        pos = piece_end;
+                        advanced = true;
+                    }
+                    continue;
+                }
+
+                let scan_start = pos.max(piece_start);
+                let scan_end = end.min(piece_end);
+                if scan_end <= scan_start {
+                    continue;
+                }
+                let Some(data) = self.buffers.get(buffer_id).and_then(|b| b.get_data()) else {
+                    continue;
+                };
+                let lo = view.buffer_offset + (scan_start - piece_start);
+                let hi = view.buffer_offset + (scan_end - piece_start);
+                if hi > data.len() {
+                    continue;
+                }
+                crate::counters::work::add_buffer_bytes_read((hi - lo) as u64);
+                if let Some(i) = data[lo..hi].iter().position(|&b| b == b'\n') {
+                    return Some(scan_start + i + 1);
+                }
+                pos = scan_end;
+                advanced = true;
+            }
+            if !advanced {
+                break;
+            }
+        }
+
+        None
+    }
+
+    /// Start of the line containing `from`, searching back at most `cap` bytes.
+    ///
+    /// `None` means the line began more than `cap` bytes above — on the files
+    /// this exists for, that means "further up than anything you are about to
+    /// draw or measure". The forward twin is
+    /// [`next_line_start_within`](Self::next_line_start_within); like it, this
+    /// scans the piece tree's storage rather than copying a range out of it,
+    /// steps over pieces already known to hold no line feed, and records what
+    /// it learns about the ones it does read.
+    pub fn prev_line_start_within(&mut self, from: usize, cap: usize) -> Option<usize> {
+        let from = from.min(self.total_bytes());
+        if from == 0 {
+            return Some(0);
+        }
+        let floor = from.saturating_sub(cap);
+        let mut pos = from;
+
+        while pos > floor {
+            let mut advanced = false;
+            // Collected front-to-back, walked back-to-front: the line start is
+            // the *last* newline before `pos`.
+            let views: Vec<_> = self.piece_tree.iter_pieces_in_range(floor, pos).collect();
+            for view in views.into_iter().rev() {
+                let piece_start = view.doc_offset;
+
+                if view.line_feed_cnt == Some(0) {
+                    if piece_start < pos {
+                        pos = piece_start.max(floor);
+                        advanced = true;
+                    }
+                    continue;
+                }
+
+                let buffer_id = view.location.buffer_id();
+                let needs_loading = self
+                    .buffers
+                    .get(buffer_id)
+                    .map(|b| !b.is_loaded())
+                    .unwrap_or(false);
+                if needs_loading {
+                    match self.chunk_split_and_load(&view, view.doc_offset.max(floor)) {
+                        Ok(true) => {
+                            advanced = true;
+                            break;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!("prev_line_start_within: load failed: {e}");
+                            return None;
+                        }
+                    }
+                }
+
+                if self.index_piece_line_feeds(&view) == Some(0) {
+                    if piece_start < pos {
+                        pos = piece_start.max(floor);
+                        advanced = true;
+                    }
+                    continue;
+                }
+
+                let scan_start = floor.max(piece_start);
+                let scan_end = pos.min(piece_start + view.bytes);
+                if scan_end <= scan_start {
+                    continue;
+                }
+                let Some(data) = self.buffers.get(buffer_id).and_then(|b| b.get_data()) else {
+                    continue;
+                };
+                let lo = view.buffer_offset + (scan_start - piece_start);
+                let hi = view.buffer_offset + (scan_end - piece_start);
+                if hi > data.len() {
+                    continue;
+                }
+                crate::counters::work::add_buffer_bytes_read((hi - lo) as u64);
+                if let Some(i) = data[lo..hi].iter().rposition(|&b| b == b'\n') {
+                    return Some(scan_start + i + 1);
+                }
+                pos = scan_start;
+                advanced = true;
+            }
+            if !advanced {
+                break;
+            }
+        }
+
+        (floor == 0).then_some(0)
+    }
+
+    /// Whether the piece tree already knows `range` holds no `\n`.
+    ///
+    /// Answered from the per-piece line-feed counts the tree maintains, so it
+    /// reads no buffer data and faults in no lazily-loaded chunk; a piece
+    /// whose count is unknown makes the answer `false` rather than a guess.
+    /// The counts are filled in by whatever walked the region first — see
+    /// [`next_line_start_within`](Self::next_line_start_within) — which is why
+    /// this is worth asking at all on a file that is one enormous line.
+    ///
+    /// Public so the probes that only have `&Buffer` — the fold and
+    /// indentation-guide line scans — can skip a region the render path has
+    /// already been through.
+    pub fn known_newline_free(&self, range: Range<usize>) -> bool {
+        range.start < range.end && self.piece_tree.range_line_feed_free(range.start, range.end)
+    }
+
+    /// Walk `lines` line starts forward from `from`, spending at most
+    /// `total_cap` bytes of scanning, and report the byte reached.
+    ///
+    /// The question "where does the window starting here end" — asked by
+    /// cursor-visibility clamping and by anything that highlights the visible
+    /// region — answered without materialising a single line. A walk that runs
+    /// out of budget or line breaks returns as far as it looked, which is the
+    /// honest answer for a file whose next line break is megabytes away: the
+    /// window extends at least that far.
+    pub fn advance_lines_within(&mut self, from: usize, lines: usize, total_cap: usize) -> usize {
+        let total = self.total_bytes();
+        let mut pos = from.min(total);
+        let mut budget = total_cap;
+        for _ in 0..lines {
+            if budget == 0 {
+                break;
+            }
+            match self.next_line_start_within(pos, budget) {
+                Some(next) => {
+                    budget = budget.saturating_sub(next - pos);
+                    pos = next;
+                }
+                None => return pos.saturating_add(budget).min(total),
+            }
+        }
+        pos
     }
 
     /// Create a line iterator starting at the given byte position

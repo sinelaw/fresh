@@ -330,15 +330,22 @@ impl WrapMachine {
     }
 
     fn feed_word_text(&mut self, token: ViewTokenWire, eff: usize) {
-        let text = match &token.kind {
-            ViewTokenWireKind::Text(s) => s.clone(),
-            _ => return,
+        // Borrowed, not cloned: the token is only moved into the row on the
+        // path that doesn't split it, by which point the borrow is dead. A
+        // clone here copied every token of every row, once per frame.
+        let ViewTokenWireKind::Text(text) = &token.kind else {
+            return;
         };
         if self.measuring_indent {
-            self.measure_indent(&text, eff);
+            self.measure_indent(text, eff);
         }
 
-        let text_w = visual_layout::visual_width(&text, self.col);
+        // `visual_width` walks the token's graphemes, so on a long token this
+        // is the frame's second-most expensive step after the split itself.
+        // It is measured from `self.col` because a tab's width depends on
+        // where the run starts, so it is re-measured below only when the
+        // break actually moves the column — not unconditionally.
+        let mut text_w = visual_layout::visual_width(text, self.col);
 
         // Break before a token that overflows, when either it fits on a fresh
         // row (classic word wrap) or the row already carries enough content that
@@ -354,14 +361,15 @@ impl WrapMachine {
             && (text_w <= fresh_capacity || self.col >= row_floor)
         {
             self.emit_break(true);
+            text_w = visual_layout::visual_width(text, self.col);
         }
 
-        let text_w = visual_layout::visual_width(&text, self.col);
-        if self.col + text_w > eff && !ansi::contains_ansi_codes(&text) {
-            self.split_text(&token, &text, eff);
+        if self.col + text_w > eff && !ansi::contains_ansi_codes(text) {
+            self.split_text(&token, text, eff);
         } else {
+            let width = text_w;
             self.row.push(token);
-            self.col += text_w;
+            self.col += width;
         }
     }
 
@@ -1013,5 +1021,58 @@ mod tests {
         let mut sorted = seen.clone();
         sorted.sort_unstable();
         assert_eq!(seen, sorted);
+    }
+
+    /// A token's display width is measured once, not twice.
+    ///
+    /// The break decision and the split decision both need the width, and the
+    /// second measurement existed because `emit_break` moves the column, which
+    /// changes where a tab lands. It only has to be redone when the break
+    /// actually fires — measuring every token twice doubled the cost of the
+    /// wrap machine's second-hottest step on rows that never break at all.
+    #[test]
+    fn a_token_that_fits_is_measured_once() {
+        let token = "hello";
+
+        crate::counters::work::reset();
+        let out = WrapMachine::run(
+            vec![text(token, 0)],
+            WrapRule::Word {
+                content_width: 40,
+                gutter_width: 0,
+                hanging_indent: false,
+            },
+        );
+        let measured = crate::counters::work::text_bytes_measured();
+
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(
+            measured,
+            token.len() as u64,
+            "a token that fits its row was measured {measured} bytes' worth, \
+             for a {} byte token",
+            token.len()
+        );
+    }
+
+    /// When the break does fire, the width is re-measured against the new
+    /// column — a tab is as wide as the distance to the next tab stop, so
+    /// carrying the pre-break measurement across would mis-wrap the row.
+    #[test]
+    fn a_tab_is_remeasured_after_a_break() {
+        // `content_width` 10, a row already holding 8 columns, then a token
+        // whose width depends on the column it starts at.
+        let out = WrapMachine::run(
+            vec![text("12345678", 0), text("\tx", 8)],
+            WrapRule::Word {
+                content_width: 10,
+                gutter_width: 0,
+                hanging_indent: false,
+            },
+        );
+
+        // The tab token moved to a fresh row, where it is measured from
+        // column 0 rather than column 8.
+        assert_eq!(out.rows.len(), 2, "the tab token should start a new row");
     }
 }

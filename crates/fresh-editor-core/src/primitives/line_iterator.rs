@@ -27,6 +27,30 @@ use crate::model::buffer::TextBuffer;
 /// This is generous enough for any practical line while preventing OOM from 10MB+ lines.
 pub const MAX_LINE_BYTES: usize = 100_000;
 
+/// How far back a line start is searched for before the position is treated as
+/// a continuation of a line that began further up.
+///
+/// The search exists to answer "which line is this byte on", and it answered it
+/// exactly, by scanning back to the previous newline however far away it was.
+/// On a file that is one enormous line that is a scan of everything above the
+/// cursor — per call, and the call sites are the status bar, the arrow keys and
+/// the scroll math, i.e. several times per keystroke. Past this bound the
+/// answer stops being worth its cost: a line this long has no useful column
+/// number, its hanging indent is clamped away by the renderer as unusably deep,
+/// and the position is reported in bytes rather than line and column anyway.
+///
+/// Matches `view::row_walk::LINE_START_SEARCH_BYTES`, which bounds the same
+/// search for the same reason on the row-walking path.
+pub const LINE_START_SEARCH_BYTES: usize = 64 * 1024;
+
+/// Bytes read per step of the backward search.
+///
+/// The search used to step by the caller's `estimated_line_length` — 80 bytes
+/// at every call site — so reaching a line start 64 KB up took 800 piece-tree
+/// range queries and 800 allocations. Reading a page at a time costs the same
+/// bytes in 16 queries.
+const LINE_START_SEARCH_CHUNK: usize = 4096;
+
 pub struct LineIterator<'a> {
     buffer: &'a mut TextBuffer,
     /// Current byte position in the document (points to start of current line)
@@ -44,45 +68,72 @@ pub struct LineIterator<'a> {
 }
 
 impl<'a> LineIterator<'a> {
-    /// Scan backward from byte_pos to find the start of the line
-    /// chunk_size: suggested chunk size for loading (used as performance hint only)
-    fn find_line_start_backward(
-        buffer: &mut TextBuffer,
-        byte_pos: usize,
-        chunk_size: usize,
-    ) -> usize {
+    /// Start of the line containing `byte_pos`, searched for over at most
+    /// [`LINE_START_SEARCH_BYTES`].
+    ///
+    /// Returns the search floor when no newline is found within the bound: the
+    /// position is then read as a continuation of a line that started further
+    /// up, which is the same answer `row_walk` gives for the same question.
+    /// Everything downstream stays correct because source offsets are absolute
+    /// — only "this byte begins a line" degrades, and it degrades exactly where
+    /// a line is longer than 64 KB.
+    ///
+    /// The floor is nudged forward to a character boundary first. Where the
+    /// search succeeds the answer follows a `\n` and is a boundary by
+    /// construction; where it runs out of budget the answer is an arbitrary
+    /// byte, and callers read text from it and anchor edits at it. Approximate
+    /// about *which line* is the documented trade; approximate about *which
+    /// character* would put a replacement glyph on screen and let an edit cut a
+    /// character in half.
+    fn find_line_start_backward(buffer: &mut TextBuffer, byte_pos: usize) -> usize {
         if byte_pos == 0 {
             return 0;
         }
 
-        // Scan backward in chunks until we find a newline or reach position 0
-        // The chunk_size is just a hint for performance - we MUST find the actual line start
+        let floor = byte_pos.saturating_sub(LINE_START_SEARCH_BYTES);
         let mut search_end = byte_pos;
 
-        loop {
-            let scan_start = search_end.saturating_sub(chunk_size);
+        while search_end > floor {
+            let scan_start = search_end
+                .saturating_sub(LINE_START_SEARCH_CHUNK)
+                .max(floor);
             let scan_len = search_end - scan_start;
 
-            // Load the chunk we need to scan
             if let Ok(chunk) = buffer.get_text_range_mut(scan_start, scan_len) {
-                // Scan backward through the chunk to find the last newline
-                for i in (0..chunk.len()).rev() {
-                    if chunk[i] == b'\n' {
-                        // Found newline - line starts at the next byte
-                        return scan_start + i + 1;
-                    }
+                if let Some(i) = chunk.iter().rposition(|&b| b == b'\n') {
+                    // Found newline - line starts at the next byte
+                    return scan_start + i + 1;
                 }
             }
 
-            // No newline found in this chunk
             if scan_start == 0 {
                 // Reached the start of the buffer - line starts at 0
                 return 0;
             }
 
-            // Continue searching from earlier position
             search_end = scan_start;
         }
+
+        Self::char_boundary_at_or_after(buffer, floor)
+    }
+
+    /// `pos`, or the next character boundary after it.
+    ///
+    /// UTF-8 continuation bytes are `0b10xxxxxx` and a character is at most
+    /// four bytes, so at most three need stepping over. A read that fails
+    /// leaves `pos` alone: this is a repair, not a place to invent an answer.
+    fn char_boundary_at_or_after(buffer: &mut TextBuffer, pos: usize) -> usize {
+        if pos == 0 || pos >= buffer.len() {
+            return pos;
+        }
+        let Ok(bytes) = buffer.get_text_range_mut(pos, 4.min(buffer.len() - pos)) else {
+            return pos;
+        };
+        let step = bytes
+            .iter()
+            .position(|&b| (b & 0xC0) != 0x80)
+            .unwrap_or(bytes.len());
+        pos + step
     }
 
     pub(crate) fn new(
@@ -114,7 +165,7 @@ impl<'a> LineIterator<'a> {
             // Scan backward from byte_pos to find the start of the line
             // We scan backward looking for a newline character
             // NOTE: We previously tried to use offset_to_position() but it has bugs with column calculation
-            Self::find_line_start_backward(buffer, byte_pos, estimated_line_length)
+            Self::find_line_start_backward(buffer, byte_pos)
         };
 
         let mut pending_trailing_empty_line = false;
@@ -167,6 +218,23 @@ impl<'a> LineIterator<'a> {
             estimated_line_length,
             pending_trailing_empty_line,
             max_line_bytes: MAX_LINE_BYTES,
+        }
+    }
+
+    /// Advance to the start of the next logical line without reading the rest
+    /// of this one, scanning at most `cap` bytes for the line break.
+    ///
+    /// `false` when no break lies within `cap`: the caller has reached a line
+    /// whose end is out of reach, and there is nothing further it can place.
+    /// This is how a reader that has taken all it can draw of one line moves on
+    /// to the next without paying for the part it skipped.
+    pub fn skip_to_next_line_within(&mut self, cap: usize) -> bool {
+        match self.buffer.next_line_start_within(self.current_pos, cap) {
+            Some(next) => {
+                self.current_pos = next;
+                true
+            }
+            None => false,
         }
     }
 
@@ -416,7 +484,7 @@ impl<'a> LineIterator<'a> {
         let prev_line_start = if prev_line_end == 0 {
             0
         } else {
-            Self::find_line_start_backward(self.buffer, prev_line_end, scan_distance)
+            Self::find_line_start_backward(self.buffer, prev_line_end)
         };
 
         // Load the previous line content

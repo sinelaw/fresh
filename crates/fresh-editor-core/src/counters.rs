@@ -1,8 +1,12 @@
-//! Global performance counters for observability and testing.
+//! Performance counters for observability and testing.
 //!
-//! Atomic counters that can be incremented from anywhere and read/reset in tests.
-//! All operations use relaxed ordering — these are best-effort metrics, not
-//! synchronization primitives.
+//! Two kinds, for two different questions:
+//!
+//! * [`Counters`] — process-global atomics for I/O that happens on whatever
+//!   thread does it (disk reads, recovery chunks). Relaxed ordering: these are
+//!   best-effort metrics, not synchronization primitives.
+//! * [`work`] — per-thread counters for the layout path, where a test needs to
+//!   measure exactly the work *it* caused.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
@@ -53,5 +57,70 @@ impl Counters {
 
     pub fn get_disk_bytes_read(&self) -> u64 {
         self.disk_bytes_read.load(Ordering::Relaxed)
+    }
+}
+
+/// Per-thread work counters for the layout path.
+///
+/// The question these answer is "did this operation stay bounded by the
+/// screen?": a frame, a keystroke or a scroll step should touch a few
+/// screenfuls of text whatever the file's size, and a figure that tracks the
+/// file instead is the signature of a per-line or whole-file scan — the cost
+/// the large-file paths exist to avoid. Tests assert on these rather than on
+/// the clock, so they mean the same on a loaded CI runner as on an idle
+/// laptop.
+///
+/// **Per thread, not global**, unlike [`Counters`] above. Editing and
+/// rendering are synchronous on the thread that drives them, so a test that
+/// resets and reads these observes exactly its own work — no interference
+/// from tests running beside it in the same process under `cargo test`, and
+/// no atomic in a path that runs once per token.
+pub mod work {
+    use std::cell::Cell;
+
+    thread_local! {
+        static BUFFER_BYTES_READ: Cell<u64> = const { Cell::new(0) };
+        static TEXT_BYTES_SEGMENTED: Cell<u64> = const { Cell::new(0) };
+        static TEXT_BYTES_MEASURED: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// Bytes handed out by `TextBuffer`'s range reads on this thread.
+    pub fn buffer_bytes_read() -> u64 {
+        BUFFER_BYTES_READ.with(|c| c.get())
+    }
+
+    /// Bytes put through UAX #29 grapheme segmentation by the view pipeline
+    /// on this thread. Text that reaches the segmenter but never reaches the
+    /// screen is per-frame waste.
+    pub fn text_bytes_segmented() -> u64 {
+        TEXT_BYTES_SEGMENTED.with(|c| c.get())
+    }
+
+    /// Bytes whose display width the wrap machine measured on this thread
+    /// ([`visual_layout::visual_width`](crate::primitives::visual_layout::visual_width)).
+    /// Measuring the same run twice is pure waste, and on a long token it is
+    /// the frame's second-largest cost after the split itself.
+    pub fn text_bytes_measured() -> u64 {
+        TEXT_BYTES_MEASURED.with(|c| c.get())
+    }
+
+    pub fn add_text_bytes_measured(n: u64) {
+        TEXT_BYTES_MEASURED.with(|c| c.set(c.get().wrapping_add(n)));
+    }
+
+    pub fn add_buffer_bytes_read(n: u64) {
+        BUFFER_BYTES_READ.with(|c| c.set(c.get().wrapping_add(n)));
+    }
+
+    pub fn add_text_bytes_segmented(n: u64) {
+        TEXT_BYTES_SEGMENTED.with(|c| c.set(c.get().wrapping_add(n)));
+    }
+
+    /// Zero this thread's counters. Call immediately before the operation
+    /// under measurement.
+    pub fn reset() {
+        BUFFER_BYTES_READ.with(|c| c.set(0));
+        TEXT_BYTES_SEGMENTED.with(|c| c.set(0));
+        TEXT_BYTES_MEASURED.with(|c| c.set(0));
     }
 }
