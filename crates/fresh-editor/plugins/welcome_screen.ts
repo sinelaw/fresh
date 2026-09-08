@@ -342,6 +342,19 @@ function accel(action: string): string {
     editor.getKeybindingLabel(action, "global") ?? "";
 }
 
+/** A chord for a key table: the reader's own binding where the host
+ *  knows one, the stock binding where it does not.
+ *
+ *  `accel` alone is not enough for these tables — it answers `""` for an
+ *  action this build has not bound, and a key column with a hole in it
+ *  reads as a broken page rather than as an unbound command. The
+ *  fallback is the documented default, so the worst case is teaching the
+ *  stock key to someone who has rebound it, and the normal case is
+ *  teaching them theirs. */
+function chord(action: string, fallback: string): string {
+  return accel(action) || fallback;
+}
+
 const VERBS: [string, string, string][] = [
   ["act_open", "Open file", "open"],
   ["act_recent", "Command palette", "quick_open"],
@@ -977,7 +990,7 @@ function finderCard(): WidgetSpec {
     // frame clipped the first one mid-word.
     for (
       const l of wrap(
-        "Fresh remembers your cursor position in every file. Hot Exit restores unsaved buffers after a crash — even unnamed scratch ones.",
+        `The same finder is on ${chord("quick_open", "Ctrl+P")} for every file in the project, and src/main.rs:42 lands on the line. Fresh remembers your cursor in every file it has opened; Hot Exit brings back unsaved buffers after a crash, unnamed scratch ones included.`,
         Math.max(20, cardMeasure() - 6),
       )
     ) {
@@ -993,22 +1006,61 @@ function level1(): WidgetSpec[] {
     banner("1", "Open a file. Type. Save. Fresh stays out of the way."),
     finderCard(),
     blank(),
+    card("find", "Find it — in this file, or anywhere in the repo", "one prompt, four modes", () => [
+      blank(),
+      ...keyRows([
+        [chord("quick_open", "Ctrl+P"), "files by name — then > commands · # buffers · : lines"],
+        [chord("search", "Ctrl+F"), "find here; F3 and Shift+F3 step, the bar stays open"],
+        [chord("replace", "Ctrl+R"), "replace, with regex and $1 capture groups"],
+        [chord("navigate_back", "Alt+Left"), "back to where you were — Alt+Right returns"],
+      ]),
+      blank(),
+      bullet(
+        "Live Grep searches the project as you type and previews each hit where it lives. Git Grep does the same over tracked files.",
+      ),
+      bullet(
+        "Search and Replace in Project rewrites across the repo — unsaved buffers included, narrowed to a glob when you want.",
+      ),
+      bullet(
+        "Terms match independently, so typing etc hosts finds /etc/hosts — and anywhere a path is asked for, src/main.rs:42:10 opens at the line.",
+      ),
+      blank(),
+      row(
+        spacer(2),
+        button("Live Grep", { key: "act_live_grep", hoverStyle: GLOW }),
+        spacer(2),
+        button("Search & replace in project", { key: "act_project_replace", hoverStyle: GLOW }),
+      ),
+      blank(),
+    ]),
+    blank(),
     card("ugly", "Built for the ugly files too", "big files, odd encodings", () => [
       blank(),
-      bullet("Multi-GB files open without blocking the UI — logs, dumps, CSVs."),
-      bullet("Instant startup; text appears as you type. Small memory footprint."),
-      bullet("Encodings beyond UTF-8: UTF-16, GBK, Shift-JIS, Latin-1 and more."),
-      bullet("Project-wide search & replace with regex — even across unsaved buffers."),
+      bullet(
+        "Multi-GB files open without blocking the UI — logs, dumps, CSVs. The gutter counts bytes until you ask for a line number, and a scan indexes the lines without holding the file.",
+      ),
+      bullet("Instant startup, small footprint: the text is there as fast as you can type into it."),
+      bullet(
+        "Encodings beyond UTF-8 — UTF-16, GBK, Shift-JIS, EUC-KR, Latin-1, Windows-125x — detected on open. Click the encoding in the status bar to change what gets written back.",
+      ),
+      bullet("Over SSH the scan runs on the far end, so only the index crosses the wire."),
       blank(),
     ]),
     blank(),
     card("editorvar", "Make it your $EDITOR", "shell setup", () => [
       blank(),
-      plain("  # Use Fresh for commit messages and rebases", C.muted),
+      plain("  # Commit messages and rebases, in Fresh", C.muted),
       plain("  git config --global core.editor \"fresh --wait\"", C.value),
       blank(),
-      plain("  # Keep a project session alive across terminal disconnects", C.muted),
+      plain("  # A named daemon: close the terminal, the state survives", C.muted),
       plain("  fresh -a myproject", C.value),
+      blank(),
+      plain("  # Straight to the line a compiler complained about", C.muted),
+      plain("  fresh src/main.rs:42:10", C.value),
+      blank(),
+      bullet(
+        "Hot Exit holds unsaved buffers, tabs and splits across a quit or a crash. Detach, in the palette, hands the terminal back and leaves the editor running behind it, tmux-style.",
+      ),
       blank(),
     ]),
   ];
@@ -1070,7 +1122,7 @@ function sample(): string {
 
 function level2(): WidgetSpec[] {
   return [
-    banner("2", "Language servers, git review, themes — here the whole time, waiting."),
+    banner("2", "Language servers, git review, a terminal, themes — here the whole time."),
     card("lsp", "Language smarts, zero setup", "real syntax highlighting", () => [
       blank(),
       // The sample sits in its own rounded box, labelled with the file
@@ -1108,10 +1160,17 @@ function level2(): WidgetSpec[] {
       ),
       blank(),
       bullet(
-        "Open a file and the language server starts itself. Hover, goto, references, rename, code actions and diagnostics, with no setup.",
+        "Open a file and its language server starts itself: hover, goto, references, rename, code actions and diagnostics, with nothing to configure first.",
       ),
-      bullet("Configs shipped for Python, TypeScript, Rust, Go, Java, C/C++ and more."),
-      bullet("Run multiple servers per language with merged completions."),
+      bullet(
+        "Shipped for Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP, Bash, Vue, Svelte, Terraform, Haskell, OCaml and Elixir — and a language pack adds the next one.",
+      ),
+      bullet(
+        "Run two servers on one language — pylsp and pyright together — with merged completions, and per-project roots found by walking up to Cargo.toml or package.json.",
+      ),
+      bullet(
+        "Format on save, code folding, inline diagnostics, and library and toolchain paths opened read-only, so a goto into a dependency can be read but not edited.",
+      ),
       blank(),
     ]),
     blank(),
@@ -1119,18 +1178,80 @@ function level2(): WidgetSpec[] {
     blank(),
     reviewCard(),
     blank(),
+    terminalCard(),
+    blank(),
     themeCard(),
     blank(),
     card("power", "Power tools when your hands get fast", "optional, all of it", () => [
       blank(),
-      bullet("Multi-cursor and block selection, keyboard macros, sort lines."),
-      bullet("Command palette with prefix routing: > commands · # buffers · : lines."),
-      bullet("Vi mode with operators, motions and text objects — if that's your thing."),
-      bullet("TypeScript plugins, sandboxed in QuickJS. No node_modules on disk."),
-      bullet("Tabs, split panes, integrated terminal, markdown preview."),
+      bullet(
+        "Multi-cursor and block selection, keyboard macros, sort lines, change case, and a selection you surround by typing the bracket.",
+      ),
+      bullet(
+        "Smart home, smart backspace, tree-sitter auto-indent and auto-closing pairs — per language, and off where they would be wrong: prose types a backtick as a backtick.",
+      ),
+      bullet(
+        "Rulers, indentation guides with rainbow levels, rainbow brackets, code folding, whitespace marks, markdown compose preview.",
+      ),
+      bullet(
+        "Vi mode with operators, motions, text objects and colon commands — or the Emacs keymap, if that is the muscle memory you arrived with.",
+      ),
       blank(),
     ]),
+    blank(),
+    pluginsCard(),
   ];
+}
+
+/** The terminal card. It is level 2 rather than level 3 because a shell
+ *  beside the code is what makes the editor a place you stay in, and
+ *  because everything on it is true of a buffer — which is the point
+ *  being made: the terminal is not a mode you enter. */
+function terminalCard(): WidgetSpec {
+  return card("terminal", "The terminal is just another buffer", "and it outlives its process", () => [
+    blank(),
+    bullet(
+      "Open one in this pane, beside it, below it, or in the dock along the bottom — then split it, search its scrollback, and leave it running while you work elsewhere.",
+    ),
+    bullet(
+      "Ctrl+Click a path in the output, scrollback included, and it opens. The shell's directory is tracked, so relative paths resolve — over SSH too.",
+    ),
+    bullet("Send Selection to Terminal runs the selection, or the current line, in the terminal you used last."),
+    bullet(
+      "When the process exits the transcript stays exactly where it was, and one click restarts it in the same buffer — ⟳ Resume claude, appended below what it already printed.",
+    ),
+    blank(),
+    row(
+      spacer(2),
+      button("Open a terminal", { key: "act_terminal", hoverStyle: GLOW }),
+    ),
+    blank(),
+  ]);
+}
+
+/** Plugins close level 2 because they are the answer to everything the
+ *  level does not list. Worth saying plainly that this page is one:
+ *  nothing here is a special case the editor keeps for itself. */
+function pluginsCard(): WidgetSpec {
+  return card("plugins", "Extend it in TypeScript", "sandboxed, no node_modules", () => [
+    blank(),
+    bullet(
+      "Plugins are compiled with OXC and run in an embedded QuickJS VM inside the same binary. No runtime to install, nothing left on disk.",
+    ),
+    bullet(
+      "A package manager for plugins, themes, language packs and bundles — from the registry, or straight from any git URL.",
+    ),
+    bullet("An init.ts runs at startup: your own commands, keybindings, status bar and dashboard rows."),
+    bullet(
+      "Load Plugin from Buffer hot-reloads the file you are editing, with LSP over the plugin API while you write it. This page is a plugin.",
+    ),
+    blank(),
+    row(
+      spacer(2),
+      button("Package manager", { key: "act_pkg", hoverStyle: GLOW }),
+    ),
+    blank(),
+  ]);
 }
 
 function gitCard(): WidgetSpec {
@@ -1177,7 +1298,7 @@ function gitCard(): WidgetSpec {
     rows.push(blank());
     rows.push(
       ...bodyText(
-        "Hunk-level stage / unstage / discard. Side-by-side diff, review notes, git gutter, git grep.",
+        "Stage, unstage and discard a hunk at a time. Git Log with the diff previewed beside it, magit-style blame, a gutter marking every line you change as you change it, and a resolver for when a merge goes sideways.",
       ),
     );
     rows.push(blank());
@@ -1211,7 +1332,7 @@ function reviewCard(): WidgetSpec {
     blank(),
     ...bodyText(
       "Your whole working tree as one diff you move through, stage from, and leave notes on. "
-        + "The palette opens it three ways: on the working tree, on a range or branch, or on a stash.",
+        + "The palette opens it three ways: on the working tree, on a range or a branch — main..feature, a whole PR flattened into one diff — or on a stash.",
     ),
     blank(),
     ...keyRows([
@@ -1235,6 +1356,10 @@ function reviewCard(): WidgetSpec {
       ["] / [", "walk the comments you have left"],
       ["e", "export the session as Markdown"],
     ]),
+    blank(),
+    ...bodyText(
+      "Comments are kept per repository, so a review you break off today is still open where you left it tomorrow.",
+    ),
     blank(),
     // One button, and only one that means anything from here: the
     // working tree is a thing this page can point at, and "this file" is
@@ -1272,8 +1397,16 @@ function themeCard(): WidgetSpec {
       row(...buttons),
       blank(),
       ...bodyText(
-        "Live theme editor with \"Inspect Theme at Cursor\". Configurable status bar. "
-          + "UI translated to 日本語, 한국어, 中文, Tiếng Việt and more.",
+        "Click one and the whole editor restyles, now. The theme editor edits colours live, and \"Inspect Theme at Cursor\" "
+          + "names the key that painted the cell you are on. Assemble the status bar from a picker, rebind any key with the "
+          + "conflicts shown to you, and read the UI in 日本語, 한국어, 中文, Tiếng Việt and more.",
+      ),
+      blank(),
+      row(
+        spacer(2),
+        button("Edit Theme", { key: "act_theme_editor", hoverStyle: GLOW }),
+        spacer(2),
+        button("Keybindings", { key: "act_keybindings", hoverStyle: GLOW }),
       ),
       blank(),
     ];
@@ -1345,8 +1478,9 @@ function orchestratorCard(): WidgetSpec {
     rows.push(blank());
     rows.push(
       ...bodyText(
-        "One workspace per git worktree, each with its own terminals and agent. "
-          + "Sessions resume after a restart. Leave the rest running.",
+        "One workspace per git worktree, each with its own tabs, splits, terminals and agent. "
+          + "Run Agent… starts claude, codex, opencode, aider or any command you like; New Workspace can cut the worktree and the branch for you, in the foreground or behind you. "
+          + "The dock carries each one's branch, git summary and PR badge; arrows switch between them and nothing is torn down. Agents that can resume rejoin their conversation after a restart.",
       ),
     );
     rows.push(blank());
@@ -1359,13 +1493,58 @@ function level3(): WidgetSpec[] {
     banner("3", "One workspace per git worktree. An agent in each. Hop with an arrow key."),
     orchestratorCard(),
     blank(),
-    card("remote", "Your other machines are workspaces too", "SSH + detachable daemon", () => [
+    card("tours", "Have the codebase explained to you", "steps beside the source", () => [
       blank(),
-      plain("  # Edit nginx config on prod — saves transfer only the patch", C.muted),
+      bullet(
+        "A tour plays in a dock panel: the steps on the left, the current step's prose on the right, and the file it points at open above, scrolled to the lines being discussed and highlighting them.",
+      ),
+      bullet(
+        "A tour is a small JSON file, so the good way to get one is to ask — walk me through what this branch changed — and let the agent write it and open it in your panel. Point it at fresh --cmd help tour and it gets the format right first time.",
+      ),
+      bullet(
+        "Worth having for a pull request, for the corner of the repo you have never read, and for explaining your own work to yourself in three months.",
+      ),
+      blank(),
+      row(
+        spacer(2),
+        button("Open a tour…", { key: "act_tour", hoverStyle: GLOW }),
+      ),
+      blank(),
+    ]),
+    blank(),
+    card("script", "Drive a running editor from outside it", "fresh --cmd script", () => [
+      blank(),
+      plain("  # What is the editor showing?", C.muted),
+      plain("  echo 'return editor.describeWorkspace()' \\", C.value),
+      plain("    | fresh --cmd script run", C.value),
+      blank(),
+      plain("  # Put the failure on screen, in the pane you are in", C.muted),
+      plain("  echo 'editor.openFileInSplit(0, \"src/main.rs\", 3502)' \\", C.value),
+      plain("    | fresh --cmd script run", C.value),
+      blank(),
+      bullet(
+        "A few lines of TypeScript can do anything a plugin can: open files, arrange and resize panes, cut a workspace, start an agent, open a tour. The program runs, prints its answer as JSON, and is forgotten — whatever it made stays.",
+      ),
+      bullet(
+        "A test wrapper can put the failing line in front of you; an agent working in your repo can show you its work instead of describing it.",
+      ),
+      blank(),
+    ]),
+    blank(),
+    card("remote", "Your other machines are workspaces too", "SSH, containers, daemons", () => [
+      blank(),
+      plain("  # Edit on prod — a save sends the patch, not the file", C.muted),
       plain("  fresh deploy@prod:/etc/nginx/nginx.conf", C.value),
       blank(),
       plain("  # Open a file in an already-running daemon", C.muted),
       plain("  fresh --cmd daemon open-file myproject src/main.rs:42", C.value),
+      blank(),
+      bullet(
+        "A dropped connection comes back on its own, and the file finder, the grep and even a sudo save work down the same wire.",
+      ),
+      bullet(
+        "Dev Container: Attach points the same machinery at a project's devcontainer: the terminal, the files and the language servers all run inside it, with no toolchain on your host.",
+      ),
       blank(),
     ]),
   ];
@@ -1383,6 +1562,15 @@ function footer(): WidgetSpec[] {
     blank(),
     plain("  That's the whole ladder. Most days you'll live on rung one — the rest", C.value),
     plain("  keeps up when you climb.", C.value),
+    blank(),
+    line([
+      { text: "  Everything above is in the palette: ", style: { fg: C.muted } },
+      { text: chord("quick_open", "Ctrl+P"), style: { fg: C.key, bold: true } },
+      { text: ", then ", style: { fg: C.muted } },
+      { text: ">", style: { fg: C.key, bold: true } },
+      { text: " to search commands by name.", style: { fg: C.muted } },
+    ]),
+    plain("  fresh --cmd help covers the command line. Docs and blog: getfresh.dev", C.muted),
     blank(),
   ];
 }
@@ -2274,6 +2462,41 @@ function activateKey(k: string): void {
       return;
     case "act_review_diff":
       editor.executeAction("start_review_diff");
+      return;
+    // The handler names below are the ones the bundled plugins register,
+    // not the palette labels they show — `executeAction` on a name no
+    // handler owns fails in the log rather than on screen, so a label
+    // and a handler that have drifted apart make a dead button that
+    // still promises something. Each was read off its plugin:
+    // `live_grep.ts`, `search_replace.ts`, `theme_editor.ts`, `pkg.ts`,
+    // `code-tour.ts`. `open_terminal` and `open_keybinding_editor` are
+    // core actions.
+    case "act_live_grep":
+      editor.executeAction("start_live_grep");
+      return;
+    case "act_project_replace":
+      editor.executeAction("start_search_replace");
+      return;
+    case "act_terminal":
+      editor.executeAction("open_terminal");
+      return;
+    case "act_theme_editor":
+      editor.executeAction("open_theme_editor");
+      return;
+    case "act_keybindings":
+      editor.executeAction("open_keybinding_editor");
+      return;
+    case "act_pkg":
+      // The package manager's UI, which is where installing a plugin, a
+      // theme or a language pack actually happens — the install commands
+      // themselves are reached from inside it rather than the palette.
+      editor.executeAction("pkg_list");
+      return;
+    case "act_tour":
+      // `Tour: Open Workspace Tour...` — a browser at the project root
+      // with dotfiles shown, because tours are dotfiles. `tour_load`
+      // takes a path instead, which this page does not have.
+      editor.executeAction("tour_discover");
       return;
     case "act_review":
       // Renamed by #3098, along with the palette entry: the command
