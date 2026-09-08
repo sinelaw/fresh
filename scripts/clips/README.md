@@ -168,6 +168,27 @@ steps after it — which is how a keystroke and the animation it causes end up
 inside one run. The spec stays an ordinary tui-clips spec, and upstream capture
 still works on it, just less well.
 
+**The terminal replays a backlog, so stop grabbing and you fall behind.** What
+a repaint paints is not "now": it is the next chunk of the program's queued
+output. Grab only during the runs and the gaps between them pile up, so a run
+opens on a screen from a second ago — which is what made the dock's highlight
+appear to change a beat late and then bounce. `xwd-capture.py` therefore grabs
+*continuously* for the whole session; between runs the frames go to one path
+that is overwritten every time, wanted not as pictures but as the asking that
+keeps the queue empty. A run then only decides which frames are kept.
+
+**Let the camera find the event instead of telling it when.** Even drained,
+the exact moment a keystroke lands on screen moves by a few hundred
+milliseconds between takes, and a 1.6s window aimed by `sleep` misses it often
+enough to matter. `{"record": "b", "seconds": 6, "keep": 40}` grabs a long
+window across the keystroke and afterwards keeps the 40 frames around the
+biggest frame-to-frame change in it — which, in a window whose only event is
+the switch, is the switch. A third of the kept frames sit before it and two
+thirds after: enough of the old screen to see that it *was* the old screen, and
+rather longer of the new one to read it. Check a take by asking which dock row
+is brightest in each frame of each run; the sequence should step once per
+switch beat and never step back.
+
 **Where you are stuck with `--shot`, slow the program down instead.** An
 ImageMagick screenshot samples about three times a second, and playing those
 frames at thirty is a ten-times fast-forward — for a coding agent, a parody of

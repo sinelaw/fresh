@@ -34,6 +34,24 @@ Steps understood, from `capture.keys`: `key` (with `repeat`), `type`, `sleep`,
 frames at its `fps`, running *alongside* the steps that follow it, which is what
 puts a keystroke and the animation it causes inside one run.
 
+A run can also be *trimmed* to what happened in it. The terminal replays what
+the program wrote at the rate it is asked, so a burst of output — a workspace
+switch redrawing the screen eleven times — arrives late and takes longer to come
+out than it took to go in. Wall-clock timing therefore cannot place a beat on
+it. A run with `keep` grabs a long window around the keystroke and then keeps
+`keep` frames around the biggest change in it, which is the switch: the camera
+finds the event rather than being told when to expect it.
+
+Grabbing never stops. The terminal here paints only when a client asks for its
+pixels, and what it paints is not "now" — it is the next chunk of whatever the
+program has written since the last time it was asked. So a gap in the grabbing
+is a queue: let two seconds pass between runs and the next run opens by
+replaying the two seconds it missed, which puts a workspace switch a whole beat
+late and makes the dock's highlight look like it bounced. The grabber therefore
+runs from the first step to the last, and a `record` step only decides whether
+the frame it takes is *kept* — the rest are overwritten in place, and exist
+only to keep the queue empty.
+
 `drag` is the mouse: `{"drag": {"from_col": 38, "to_col": 24, "row": 10}}`
 presses at one cell and releases at another, in cells rather than pixels
 because a spec is written in cells. It exists for the things a program only
@@ -84,8 +102,11 @@ class Session:
         self.env.setdefault("LC_ALL", "C.UTF-8")
         self.cell_w = 10.0               # measured once the window is up
         self.cell_h = 20.0
-        self.frames: list[str] = []      # xwd files still to convert
         self.pending: list[tuple[str, str]] = []   # (xwd, png)
+        self.run: str | None = None      # the run being kept, if any
+        self.run_n: dict[str, int] = {}
+        self.trims: dict[str, int] = {}  # run -> frames to keep around the event
+        self.grabbing = False
 
     # -- lifecycle ----------------------------------------------------------
     def x(self, *args, **kw):
@@ -195,27 +216,51 @@ class Session:
         self.pending.append(
             (raw, os.path.join(self.shots, f"{self.pane}-{name}.png")))
 
-    def film(self, name: str, seconds: float, fps: float) -> threading.Thread:
-        """A burst, on a thread, so the keys that cause the motion are pressed
-        while it runs. Paced to `fps` where the grab is faster than that, and
-        as fast as it can go where it is not."""
+    def grabber(self) -> threading.Thread:
+        """Grab for the whole sequence, keeping only what a run asked for.
+
+        The drain frames go to one path, overwritten every time: they are not
+        wanted as pictures, only as the asking that keeps the terminal's queue
+        from filling up behind them.
+        """
+        drain = os.path.join(self.raw, "drain.xwd")
+
+        def loop():
+            while self.grabbing:
+                name = self.run
+                if name is None:
+                    self.grab(drain)
+                    continue
+                i = self.run_n.get(name, 0)
+                self.run_n[name] = i + 1
+                raw = os.path.join(self.raw, f"{name}-{i:04d}.xwd")
+                self.grab(raw)
+                self.pending.append(
+                    (raw, os.path.join(self.shots, f"{self.pane}-{name}",
+                                       f"{i:04d}.png")))
+
+        self.grabbing = True
+        t = threading.Thread(target=loop, daemon=True)
+        t.start()
+        return t
+
+    def film(self, name: str, seconds: float, keep: int = 0) -> threading.Thread:
+        """Keep the next `seconds` of the stream under `name`. Returns at once
+        — the steps that follow are the point, since they are what makes the
+        motion this run is here to hold."""
         d = os.path.join(self.shots, f"{self.pane}-{name}")
         shutil.rmtree(d, ignore_errors=True)
         os.makedirs(d, exist_ok=True)
-        interval = 1.0 / fps
-        total = max(1, int(seconds * fps))
+        if keep:
+            self.trims[name] = keep
 
-        def run():
-            for i in range(total):
-                due = time.time() + interval
-                raw = os.path.join(self.raw, f"{name}-{i:04d}.xwd")
-                self.grab(raw)
-                self.pending.append((raw, os.path.join(d, f"{i:04d}.png")))
-                nap = due - time.time()
-                if nap > 0:
-                    time.sleep(nap)
+        def stop():
+            time.sleep(seconds)
+            if self.run == name:
+                self.run = None
 
-        t = threading.Thread(target=run, daemon=True)
+        self.run = name
+        t = threading.Thread(target=stop, daemon=True)
         t.start()
         return t
 
@@ -233,9 +278,42 @@ class Session:
             for p in procs:
                 p.wait()
 
+    def trim(self) -> None:
+        """Cut each `keep` run down to the frames around its biggest change.
+
+        A third of the window before the event and two thirds after: the eye
+        needs a moment of the old screen to see that it *was* the old screen,
+        and rather longer of the new one to read it.
+        """
+        from PIL import Image
+        import numpy as np
+
+        for name, keep in self.trims.items():
+            d = os.path.join(self.shots, f"{self.pane}-{name}")
+            fs = sorted(f for f in os.listdir(d) if f.endswith(".png"))
+            if len(fs) <= keep:
+                continue
+            prev, diffs = None, []
+            for f in fs:
+                a = np.asarray(Image.open(os.path.join(d, f))
+                               .convert("L").resize((240, 120)), dtype=np.int16)
+                diffs.append(0.0 if prev is None
+                             else float(np.abs(a - prev).mean()))
+                prev = a
+            anchor = int(np.argmax(diffs))
+            lo = max(0, min(len(fs) - keep, anchor - keep // 3))
+            print(f"  {name}: kept {keep} of {len(fs)} frames around #{anchor}",
+                  flush=True)
+            for i, f in enumerate(fs):
+                if not (lo <= i < lo + keep):
+                    os.remove(os.path.join(d, f))
+            for i, f in enumerate(sorted(os.listdir(d))):
+                os.rename(os.path.join(d, f),
+                          os.path.join(d, f"k{i:04d}.png"))
+
     # -- the sequence -------------------------------------------------------
     def play(self, steps: list[dict]) -> None:
-        films: list[threading.Thread] = []
+        films: list[threading.Thread] = [self.grabber()]
         for step in steps:
             if "key" in step:
                 rep = int(step.get("repeat", 1))
@@ -259,9 +337,11 @@ class Session:
             elif "record" in step:
                 films.append(self.film(step["record"],
                                        float(step.get("seconds", 5)),
-                                       float(step.get("fps", 30))))
-        for t in films:
+                                       int(step.get("keep", 0))))
+        for t in films[1:]:
             t.join()
+        self.grabbing = False
+        films[0].join(timeout=2)
         # The still `tui-clip` uses for a beat that names no shot.
         raw = os.path.join(self.raw, "final.xwd")
         self.grab(raw)
@@ -292,6 +372,7 @@ def main() -> None:
     finally:
         s.stop()
     s.convert()
+    s.trim()
     print(f"  {len(s.pending)} frames -> {out}")
 
 
