@@ -1454,10 +1454,12 @@ function themeCard(): WidgetSpec {
       ...bodyText("Click one and the editor restyles now. More themes come from the package manager."),
       blank(),
       ...bodyText("Also here:", C.muted),
-      ...bodyText("  · Theme editor — edit colours live; Inspect Theme at Cursor names the colour under the cursor."),
-      ...bodyText("  · Status bar — choose which parts show, and their order."),
-      ...bodyText("  · Keybindings — rebind anything; conflicts are shown."),
-      ...bodyText("  · Language — the interface reads in 日本語, 한국어, 中文, Tiếng Việt and more."),
+      ...cardBullets([
+        "Theme editor — edit colours live; Inspect Theme at Cursor names the colour under the cursor.",
+        "Status bar — choose which parts show, and their order.",
+        "Keybindings — rebind anything; conflicts are shown.",
+        "Language — the interface reads in 日本語, 한국어, 中文, Tiếng Việt and more.",
+      ]),
       blank(),
       row(
         spacer(2),
@@ -1538,9 +1540,11 @@ function orchestratorCard(): WidgetSpec {
     rows.push(
       ...bodyText("One workspace per git worktree, each with its own tabs, terminals and agent. Arrow keys switch between them; nothing is shut down when you leave."),
       blank(),
-      ...bodyText("  1. Run Agent… starts claude, codex, opencode, aider, or any command."),
-      ...bodyText("  2. New Workspace can make the worktree and branch for you."),
-      ...bodyText("  3. The dock shows each one's branch, git status and PR."),
+      ...cardBullets([
+        "Run Agent… starts claude, codex, opencode, aider, or any command.",
+        "New Workspace can make the worktree and branch for you.",
+        "The dock shows each one's branch, git status and PR.",
+      ]),
       blank(),
       ...bodyText("Agents that support it rejoin their conversation after a restart.", C.muted),
     );
