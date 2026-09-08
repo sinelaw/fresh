@@ -1127,9 +1127,6 @@ impl Editor {
                 .expect("Default theme must exist")
         });
 
-        // Set terminal cursor color to match theme
-        theme.set_terminal_cursor_color();
-
         let keybindings = KeybindingResolver::new(&config);
 
         // Create an empty initial buffer

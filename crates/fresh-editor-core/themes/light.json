@@ -3,7 +3,7 @@
   "editor": {
     "bg": [255, 255, 255],
     "fg": [0, 0, 0],
-    "cursor": [0, 0, 0],
+    "cursor": [70, 130, 180],
     "inactive_cursor": [180, 180, 180],
     "selection_bg": [225, 232, 242],
     "current_line_bg": [245, 245, 245],

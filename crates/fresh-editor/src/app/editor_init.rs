@@ -1001,8 +1001,6 @@ impl Editor {
                 .expect("Default theme must exist")
         });
 
-        // Set terminal cursor color to match theme
-        theme_inner.set_terminal_cursor_color();
         let theme = Arc::new(RwLock::new(theme_inner));
 
         t.phase("theme_setup");

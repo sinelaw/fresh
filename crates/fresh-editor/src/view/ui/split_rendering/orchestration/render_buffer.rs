@@ -46,6 +46,13 @@ pub(crate) struct BufferLayoutOutput {
     pub render_area: Rect,
     pub compose_layout: ComposeLayout,
     pub effective_editor_bg: Color,
+    /// The ground's *other* half. Stated for the same reason the background
+    /// is: a cell no span covers must still name both of its colours, because
+    /// the terminal's block cursor paints the caret by inverting the two it
+    /// finds there. Left at `Reset`, the cell past the end of a line inverted
+    /// to the terminal's own default foreground — white in a dark profile,
+    /// which on the `light` theme is a white cursor on a white ground.
+    pub effective_editor_fg: Color,
     pub view_mode: ViewMode,
     /// The horizontal scroll the rows were laid out with — the viewport's
     /// column after this frame's cursor-column check, which the pane's paint
@@ -210,6 +217,13 @@ pub(crate) fn compute_buffer_layout(
         Color::Reset
     } else {
         theme.editor_bg
+    };
+    // Both halves follow the same rule: with the terminal's own background in
+    // play, its foreground is what goes with it.
+    let effective_editor_fg = if use_terminal_bg {
+        Color::Reset
+    } else {
+        theme.editor_fg
     };
 
     let line_wrap = viewport.line_wrap_enabled;
@@ -512,6 +526,7 @@ pub(crate) fn compute_buffer_layout(
         render_area,
         compose_layout,
         effective_editor_bg,
+        effective_editor_fg,
         view_mode,
         left_column,
         gutter_width,
@@ -595,6 +610,7 @@ pub(crate) fn draw_buffer_in_split(
 ) {
     let render_area = layout_output.render_area;
     let effective_editor_bg = layout_output.effective_editor_bg;
+    let effective_editor_fg = layout_output.effective_editor_fg;
     let gutter_width = layout_output.gutter_width;
     let starting_line_num = 0; // used only for background offset
 
@@ -683,9 +699,11 @@ pub(crate) fn draw_buffer_in_split(
     }
 
     Clear.render(render_area, buf);
-    let editor_block = Block::default()
-        .borders(Borders::NONE)
-        .style(Style::default().bg(effective_editor_bg));
+    let editor_block = Block::default().borders(Borders::NONE).style(
+        Style::default()
+            .fg(effective_editor_fg)
+            .bg(effective_editor_bg),
+    );
     Paragraph::new(lines)
         .block(editor_block)
         .render(render_area, buf);

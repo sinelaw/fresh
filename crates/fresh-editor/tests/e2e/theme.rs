@@ -59,6 +59,22 @@ fn test_theme_loading_from_config_light() {
     // The pre-fix value `[0, 16, 128]` reads as near-black; the replacement
     // is a more saturated teal that actually stands out as a syntax color.
     assert_eq!(theme.syntax_variable, Color::Rgb(0, 90, 140));
+
+    // **`editor.cursor` is an accent, not ink.** The terminal draws the
+    // primary caret by its own rule and the editor no longer overrides its
+    // colour, so what this key still paints is everything the editor draws
+    // itself: the inactive split's cursor cell, the cursor-jump animation's
+    // head, and the border a focused dock or file explorer wears. `[0, 0, 0]`
+    // served none of them — a focus ring the same black as the body text
+    // reads as ink, not as focus, and it was also the colour that made the
+    // old themed block cursor swallow the character under it. The
+    // replacement is this theme's own steel-blue accent, shared with
+    // `ui.status_palette_bg` and `ui.split_separator_hover_fg`.
+    assert_eq!(theme.cursor, Color::Rgb(70, 130, 180));
+    assert_ne!(
+        theme.cursor, theme.editor_fg,
+        "an accent the colour of the body text cannot read as an accent"
+    );
 }
 
 #[test]
