@@ -54,9 +54,45 @@ pub fn dock(
 ) -> Node<UiMsg> {
     let described = interior.is_some();
     stack().children([
+        ground(described),
         column(interior),
         grip_strip(grip_hovered, focused, described),
     ])
+}
+
+/// The column's own background, under everything else in it.
+///
+/// **A panel is a surface, not a stack of rows.** The interior's rows each
+/// paint their own cells and nothing else does, so every cell no row reached
+/// kept the frame's ground — `Color::Reset`, the terminal's own colour. The
+/// slack after a toolbar button, the gap a `flexSpacer` opens between two of
+/// them, and the whole band below the last session row all came out in it: on
+/// a dark terminal running the `light` theme, black holes in a white column.
+///
+/// The other two surfaces built from the same `WidgetSpec` have had this all
+/// along and that is why neither showed the hole — `panel::frame_box` fills
+/// its ring, `sidebar::walls` fills a section's body. This is the dock saying
+/// the same thing, in the same colours its rows start from
+/// ([`widgets::panel_surface`](super::widgets::panel_surface)), so a row that
+/// states no background of its own is indistinguishable from the ground
+/// beside it.
+///
+/// **Bottom of the stack and transparent to the pointer**: it is painted
+/// before the column so everything the interior draws wins, and it offers no
+/// path of its own, so the column's gesture surface goes on answering the
+/// presses its widgets decline.
+///
+/// Nothing when the interior is still a painter: that column is the `Host`
+/// leaf's to fill, and two grounds on one cell is how they drift apart.
+fn ground(described: bool) -> Node<UiMsg> {
+    if !described {
+        return row();
+    }
+    row()
+        .theme(super::widgets::panel_surface().to_string())
+        .pointer_mode(PointerMode::Transparent)
+        .w(Sizing::Flex(1))
+        .h(Sizing::Flex(1))
 }
 
 /// The panel's own pointer surface.
