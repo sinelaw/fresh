@@ -4431,3 +4431,51 @@ fn dock_pointer_at_rest_requests_no_frame() {
         h.screen_to_string()
     );
 }
+
+/// **The dock stands on its own ground.** Every cell of the column is
+/// painted in the panel's background: the slack after a toolbar button, the
+/// gap a `flexSpacer` opens between two of them, and the whole band below
+/// the last session row.
+///
+/// Regression: `dock::column` laid the plugin's rows straight onto the
+/// frame, and a cell no row wrote kept whatever the terminal's own ground
+/// is — `Color::Reset`. On a dark terminal running the `light` theme that
+/// read as black gaps around the toolbar and a black band under the
+/// session list, in a column that is otherwise white. The floating panel
+/// never had it (`panel::frame_box` fills the ring) and neither does a
+/// sidebar section (`sidebar::walls` fills the body); the dock was the one
+/// surface with no ground of its own.
+///
+/// Asserted on the *style* rather than the glyph: an unpainted cell holds a
+/// space, exactly as a painted one does, so only its background tells them
+/// apart.
+#[test]
+fn dock_column_is_painted_to_its_edges() {
+    let (_tmp, root) = setup_project("groundproj");
+    let config = Config {
+        theme: "light".into(),
+        ..Default::default()
+    };
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, root.clone()).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Left of the divider is the dock's; the divider itself is the grip's.
+    let wall = dock_wall_col(&h);
+    let rows = h.buffer().area.height;
+    let bare: Vec<(u16, u16)> = (0..rows)
+        .flat_map(|y| (0..wall).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            !matches!(
+                h.get_cell_style(x, y).and_then(|s| s.bg),
+                Some(bg) if bg != ratatui::style::Color::Reset
+            )
+        })
+        .collect();
+    assert!(
+        bare.is_empty(),
+        "dock cells left on the terminal's default ground at {bare:?}\n{}",
+        h.screen_to_string()
+    );
+}
