@@ -135,9 +135,14 @@ const REGION_FILL={
 // surface APPEARS — not on the per-keystroke rebuilds of an already-open
 // one — and exits animate a positioned clone, since the region rebuild
 // removes the real node synchronously.
+// The display-list layer has none: a surface's items are SIBLINGS of its
+// marker (they are placed on the layer, at their own cell rects), so
+// animating the marker animates a ground with nothing on it — the dock would
+// slide its background out from under text that vanished in place. The dock's
+// opening and closing still moves the screen: the FLIP below slides every
+// region the new dock width displaced.
 const FX={
   palette:      {sel:".palette",                present:r=>!!r.palette,        out:"fx-out-pal",  dur:180},
-  tree:         {sel:".tree-surface.dock",      present:r=>!!(r.tree&&r.tree.surfaces&&r.tree.surfaces.some(s=>s.kind==="dock")), out:"fx-out-left", dur:280},
   fileExplorer: {sel:".fileexplorer",           present:r=>!!r.fileExplorer,   out:"fx-out-wipe", dur:280},
 };
 // Entrance timestamps: a surface often gets a second frame right after it
