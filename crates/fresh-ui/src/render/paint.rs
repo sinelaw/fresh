@@ -71,6 +71,7 @@ impl<M: 'static> Ui<M> {
                 rect: Rect::from_size(frame),
                 clip: Rect::from_size(frame),
                 theme: ThemeKey::default(),
+                classes: crate::render::spec::Classes::default(),
                 draw: Draw::Scrim(kind),
             });
         }
@@ -85,13 +86,14 @@ impl<M: 'static> Ui<M> {
     }
 
     fn paint_render(&mut self, r: RenderId, spec: &mut LayoutSpec) {
-        let (element, rect, clip, theme, key, kids, out_of_flow) = {
+        let (element, rect, clip, theme, classes, key, kids, out_of_flow) = {
             let Some(n) = self.render.get(r) else { return };
             (
                 n.element,
                 n.data.rect,
                 n.data.clip,
                 n.theme.clone(),
+                n.classes.clone(),
                 n.key.clone(),
                 n.children.clone(),
                 n.out_of_flow,
@@ -106,19 +108,30 @@ impl<M: 'static> Ui<M> {
         let mut list = DrawList::new(element);
         list.key = key.clone();
         list.theme = ThemeKey(theme.clone());
+        list.classes = crate::render::spec::Classes(classes.clone());
 
         let start = spec.items.len();
 
         // A region that names its own appearance is a region that paints: the
         // backend decides what the name looks like. Emitted before the node's
         // own content, so anything drawn inside it wins.
+        //
+        // Naming a class counts, for the same reason naming a theme does — both
+        // say a backend has something to say about this rectangle, and without
+        // an item to hang it on there is nowhere to say it. It is also what
+        // separates a control's box from its contents once the list is flat:
+        // the `Fill` is where the button *is*, the runs inside it are what the
+        // button *says*, and both wear the class.
         let (names_itself, wash) = self
             .arena
             .get(element)
             .map(|e| {
                 let d = resolve(&e.desc);
                 (
-                    e.desc.theme.is_some() || d.theme.is_some(),
+                    e.desc.theme.is_some()
+                        || d.theme.is_some()
+                        || e.desc.classes.is_some()
+                        || d.classes.is_some(),
                     matches!(&d.desc, crate::desc::Desc::Box(b) if b.wash),
                 )
             })
@@ -154,6 +167,7 @@ impl<M: 'static> Ui<M> {
             let mut over = DrawList::new(element);
             over.key = key.clone();
             over.theme = ThemeKey(theme.clone());
+            over.classes = crate::render::spec::Classes(classes.clone());
             obj.paint_over(Geom { rect, clip }, &mut over);
             spec.items.append(&mut over.items);
         }

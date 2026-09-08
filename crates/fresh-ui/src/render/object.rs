@@ -362,6 +362,7 @@ pub(crate) struct RenderNode {
     /// Provenance and identity, resolved through the elements with no geometry
     /// between this node and its render parent.
     pub theme: Option<Rc<str>>,
+    pub classes: Option<Rc<str>>,
     pub key: Option<crate::key::Key>,
     pub data: RenderData,
 }
