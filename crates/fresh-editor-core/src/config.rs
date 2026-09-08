@@ -1163,9 +1163,15 @@ pub struct EditorConfig {
     /// from its background, the one inside it two thirds, and the third
     /// row in normally. Constant, not animated — the same rows are
     /// shaded whether the view is moving or still, so scrolling is a
-    /// plain shift of the text through a fixed gradient. The top edge
-    /// only shades when there is something above it, so the first lines
-    /// of a file are not dimmed for no reason.
+    /// plain shift of the text through a fixed gradient.
+    ///
+    /// An edge shades only where there is something beyond it to trail off
+    /// into, so the first and last lines of a file are not dimmed for no
+    /// reason, and neither is a file that fits its pane. An edge whose facts
+    /// are missing — a pane with no scrollbar, or a file too large to count
+    /// lines on — is left alone rather than shaded on a guess. So is the edge
+    /// the cursor is sitting in: the shading helps reading, and the line being
+    /// edited is the one line the reader is certainly looking at.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub viewport_edge_fade: bool,

@@ -13,6 +13,7 @@
 //! `EditorTestApi` projection.
 
 use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use ratatui::style::Color;
 
@@ -485,4 +486,64 @@ fn one_wheel_notch_scrolls_the_configured_number_of_lines() {
 
     assert_eq!(top_after_one_notch(1), 2, "one line puts line 002 on top");
     assert_eq!(top_after_one_notch(5), 6, "five lines puts line 006 on top");
+}
+
+/// The edge the cursor is sitting in is not shaded.
+///
+/// The shading is an affordance for reading, and the line being edited is the
+/// one line the reader is certainly looking at — dimming it trades the
+/// affordance away for the thing it was meant to help. The whole band goes
+/// rather than the cursor's own row: the ramp is two rows deep, and a bright
+/// row in the middle of one reads as a fault rather than as an exception.
+///
+/// The opposite edge is unaffected, which is what says this suppresses a band
+/// and not the shading.
+#[test]
+fn the_edge_the_cursor_sits_in_is_not_shaded() {
+    const LINES: usize = 200;
+    const TEXT_COL: u16 = 20;
+    let mut config = edge_config();
+    // The viewport otherwise keeps three rows between the cursor and the edge,
+    // so the cursor never reaches a shaded row for this to be about.
+    config.editor.scroll_offset = 0;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
+    let path = harness.project_dir().unwrap().join("long.txt");
+    std::fs::write(&path, numbered_lines(LINES)).unwrap();
+    harness.open_file(&path).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("line 001"))
+        .unwrap();
+
+    // Walk the cursor down until it rests on the pane's bottom row, with the
+    // document carrying on below it — the state in which that row shades.
+    for _ in 0..60 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    let (first, last) = text_rows(&harness, LINES);
+    let painted = colors_at(&harness, TEXT_COL, first + 6).0;
+
+    assert_eq!(
+        colors_at(&harness, TEXT_COL, last).0,
+        painted,
+        "the cursor's own row must be fully painted, screen:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        colors_at(&harness, TEXT_COL, last - 1).0,
+        painted,
+        "and so must the rest of its band, or the ramp has a hole in it, \
+         screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // The top edge still has content above it and no cursor in it.
+    assert!(
+        level(&harness, TEXT_COL, first, painted) < 1.0,
+        "the other edge still shades: suppressing one band is not turning the \
+         shading off, screen:\n{}",
+        harness.screen_to_string()
+    );
 }

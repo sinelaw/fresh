@@ -404,7 +404,7 @@
           "x-section": "Display"
         },
         "viewport_edge_fade": {
-          "description": "Shade the top and bottom rows of each pane, so text meets the\nedge by fading out rather than being cut off mid-line.\n\nThe row hard against the edge is painted a third of the way up\nfrom its background, the one inside it two thirds, and the third\nrow in normally. Constant, not animated — the same rows are\nshaded whether the view is moving or still, so scrolling is a\nplain shift of the text through a fixed gradient. The top edge\nonly shades when there is something above it, so the first lines\nof a file are not dimmed for no reason.",
+          "description": "Shade the top and bottom rows of each pane, so text meets the\nedge by fading out rather than being cut off mid-line.\n\nThe row hard against the edge is painted a third of the way up\nfrom its background, the one inside it two thirds, and the third\nrow in normally. Constant, not animated — the same rows are\nshaded whether the view is moving or still, so scrolling is a\nplain shift of the text through a fixed gradient.\n\nAn edge shades only where there is something beyond it to trail off\ninto, so the first and last lines of a file are not dimmed for no\nreason, and neither is a file that fits its pane. An edge whose facts\nare missing — a pane with no scrollbar, or a file too large to count\nlines on — is left alone rather than shaded on a guess. So is the edge\nthe cursor is sitting in: the shading helps reading, and the line being\nedited is the one line the reader is certainly looking at.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
