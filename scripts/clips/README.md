@@ -223,6 +223,12 @@ Notes need the band, though: they are drawn with it, so `band: false` hides
 them. A beat whose point is *motion* — the wipe across a workspace switch —
 therefore carries no note, and the note goes on the beat either side of it.
 
+The same goes for the opening. A title card and an intro caption are the bottom
+bar again, in a hat: fifteen seconds is not long enough to spend two of them on
+words, and the first thing worth showing is the editor. The clip carries neither
+— `title_card` absent, `timing.title` at 0, `intro_caption` empty — and opens on
+the establishing shot.
+
 And a note that names a thing has to arrive *before* the thing happens. "Switch
 between sessions" pointing at the dock read as a caption on a switch that had
 already been and gone, so the clip now holds a beat on the untouched dock and
