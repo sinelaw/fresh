@@ -2,8 +2,8 @@
   "theme": "builtin://dracula",
   "check_for_updates": false,
   "editor": {
-    "animations": false,
-    "cursor_jump_animation": false
+    "animations": true,
+    "cursor_jump_animation": true
   },
   "keybindings": [
     {
@@ -14,6 +14,26 @@
         }
       ],
       "action": "toggle_dock_focus",
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {
+          "key": "F7",
+          "modifiers": []
+        }
+      ],
+      "action": "toggle_maximize_split",
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {
+          "key": "F6",
+          "modifiers": []
+        }
+      ],
+      "action": "next_split",
       "when": "normal"
     }
   ],

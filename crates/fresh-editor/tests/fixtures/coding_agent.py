@@ -10,19 +10,31 @@ pinned to the bottom of the pane. Lines are drawn from a large bank and seeded
 by the project name, so two instances running side by side diverge. It loops
 forever, so it keeps producing output for as long as a demo needs to film it.
 
-Usage:  python3 coding_agent.py [--as <comm-name>] [--ask [N]] <project-name>
+Usage:  python3 coding_agent.py [--as <comm-name>] [--ask [N]]
+                               [--dilate F] [--warm N] <project-name>
 
 `--as` renames the process (prctl PR_SET_NAME on Linux) and sets the terminal
 title (OSC 2), the two things Fresh's terminal auto-titling reads — the
 foreground process' `/proc/<pgid>/comm` and the OSC title. A demo can then put
-a shim called `claude` on `PATH` and get the tab a real agent launch produces,
-instead of one named `python3`. It also picks the accent colour, so agents
-launched under different names read as different programs on screen rather
-than as one program in three windows.
+a shim on `PATH` and get the tab a real agent launch produces, instead of one
+named `python3`. It also picks the skin — accent colour, spinner and the name
+the pane calls itself — so agents launched under different names read as
+different programs. The names it knows are invented ones (see `SKINS`): a
+staged transcript should not run under a real agent's name.
 
 `--ask` stops after N steps (default 4) on a permission prompt and stays there,
 which is the state a demo about *noticing* an agent needs one: the other panes
 keep moving, this one is waiting on a human.
+
+`--dilate F` slows this pane's whole clock by F, and `--warm N` fills it with N
+steps at once before that starts. Together they are how a filmed pane can look
+like an agent working at a normal pace. A screenshot of a terminal costs a few
+hundred milliseconds to take, so a filmed pane is sampled about three times a
+second; at F=8 that is about thirty samples per second of *this* clock, which
+played back at thirty frames a second is real-time motion, smooth. `--warm`
+then covers the other half: a pane whose clock is eight times slow has printed
+almost nothing by the time the camera arrives, and an agent with three lines in
+it looks like an agent that has just started rather than one at work.
 
 Any remaining argument that starts with `-` is ignored (a launcher may append
 its own flags); the first bare one, or else the current directory's name, is
@@ -63,19 +75,29 @@ RED, BLUE, VIOLET = "38;5;203", "38;5;75", "38;5;141"
 # add/remove rows carry a background rather than only coloured ink.
 ADD_BG, DEL_BG = "48;5;22;38;5;158", "48;5;52;38;5;217"
 
-# One agent per accent: a demo that runs three at once wants them to look like
-# three programs. Keyed by the name the launcher used (`--as`), because that is
-# the only thing that actually differs between the instances.
+# One skin per agent: a demo that runs four at once wants them to look like
+# four programs, not one program in four windows. Keyed by the name the
+# launcher used (`--as`), because that is the only thing that actually differs
+# between the instances.
+#
+# The names are invented, and the pane says the invented name. A staged
+# transcript under a real agent's name is a screenshot of that agent saying
+# things it never said — so this one is nobody's: `quill`, `marlin`, `tern`
+# and `scout` are coding agents that do not exist. A launcher that runs it
+# under some other name gets the neutral "Coding Agent" and the default skin.
 SKINS = {
-    "claude": ("38;5;209", "✻✳✶✻✳✢", "Coding Agent"),
-    "codex":  ("38;5;75",  "◐◓◑◒",   "Coding Agent"),
-    "opencode": ("38;5;141", "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", "Coding Agent"),
-    "aider":  ("38;5;115", "◜◠◝◞◡◟", "Coding Agent"),
+    "quill":  ("38;5;209", "✻✳✶✻✳✢", "Quill"),
+    "marlin": ("38;5;75",  "◐◓◑◒",   "Marlin"),
+    "tern":   ("38;5;141", "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", "Tern"),
+    "scout":  ("38;5;115", "◜◠◝◞◡◟", "Scout"),
 }
+DEFAULT_SKIN = ("38;5;209", "✻✳✶✻✳✢", "Coding Agent")
 
 argv = sys.argv[1:]
 skin = "claude"
 ask_after = None
+dilate = 1.0
+warm = 0
 while argv:
     if len(argv) >= 2 and argv[0] == "--as":
         announce_as(argv[1])
@@ -89,9 +111,17 @@ while argv:
             ask_after = int(argv[0])
             argv = argv[1:]
         continue
+    if len(argv) >= 2 and argv[0] == "--dilate":
+        dilate = max(0.05, float(argv[1]))
+        argv = argv[2:]
+        continue
+    if len(argv) >= 2 and argv[0] == "--warm":
+        warm = max(0, int(argv[1]))
+        argv = argv[2:]
+        continue
     break
 
-ACCENT, SPIN, BRAND = SKINS.get(skin, SKINS["claude"])
+ACCENT, SPIN, BRAND = SKINS.get(skin, DEFAULT_SKIN)
 
 bare = [a for a in argv if not a.startswith("-")]
 project = bare[0] if bare else os.path.basename(os.getcwd()) or "service"
@@ -251,7 +281,9 @@ def spin_line(glyph, msg, elapsed, tokens, width):
                  ""):
         room = width - visible(f"{glyph} …") - (visible(meta) + 1 if meta else 0)
         if room >= 12:
-            text = msg if len(msg) <= room else msg[:room - 1].rstrip() + "…"
+            # The line ends in the ellipsis that says "still going", so a
+            # message trimmed to fit borrows it rather than growing a second.
+            text = msg if len(msg) <= room else msg[:room].rstrip()
             line = f"{sgr(ACCENT, glyph)} {sgr(DIM, text + '…')}"
             return f"{line} {sgr(DIM, meta)}" if meta else line
     return f"{sgr(ACCENT, glyph)}"
@@ -488,6 +520,15 @@ def main():
     time.sleep(0.5)
 
     context = rng.randint(31, 74)
+    # The backlog, all at once: what this session did before the camera got
+    # here. Committed through `render` rather than printed, so the pane ends up
+    # in the same state a slow run would have reached.
+    for _ in range(warm):
+        pane.render(pane.live(f"{sgr(ACCENT, SPIN[0])} {sgr(DIM, 'Cogitating…')}",
+                              context),
+                    step(pane.width) + [""])
+        context = max(4, context - rng.randint(0, 3))
+
     for n in itertools.count():
         if ask_after is not None and n == ask_after:
             # Stop here, for good: an agent waiting on a person does not
@@ -499,16 +540,18 @@ def main():
         msg = think_line()
         tokens = rng.randint(2, 19) * 100
         started = time.time()
-        deadline = started + rng.uniform(1.6, 3.0)
+        deadline = started + rng.uniform(1.6, 3.0) * dilate
         spin = 0
         commit = []
         while time.time() < deadline:
             glyph = SPIN[spin % len(SPIN)]
-            elapsed = int(time.time() - started)
+            # Reported in the pane's own dilated seconds, so a slowed clock
+            # does not also read as an agent that has been stuck for a minute.
+            elapsed = int((time.time() - started) / dilate)
             spinner = spin_line(glyph, msg, elapsed, tokens, pane.width)
             pane.render(pane.live(spinner, context), commit)
             commit = []
-            time.sleep(0.22)
+            time.sleep(0.22 * dilate)
             spin += 1
         commit = step(pane.width) + [""]
         context = max(4, context - rng.randint(0, 3))

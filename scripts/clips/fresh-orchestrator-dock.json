@@ -1,7 +1,7 @@
 {
   "name": "fresh-orchestrator-dock",
   "capture": {
-    "geometry": "140x30",
+    "geometry": "140x29",
     "font": "JetBrains Mono 21",
     "screen": "2600x1300x24",
     "display": ":99",
@@ -32,31 +32,643 @@
         "shot": "dock"
       },
       {
+        "shot": "b001"
+      },
+      {
+        "shot": "b002"
+      },
+      {
+        "shot": "b003"
+      },
+      {
+        "shot": "b004"
+      },
+      {
+        "shot": "b005"
+      },
+      {
+        "shot": "b006"
+      },
+      {
         "key": "Down"
       },
       {
-        "sleep": 2.5
+        "shot": "b007"
       },
       {
-        "shot": "w1"
+        "shot": "b008"
+      },
+      {
+        "shot": "b009"
+      },
+      {
+        "shot": "b010"
+      },
+      {
+        "shot": "b011"
+      },
+      {
+        "shot": "b012"
+      },
+      {
+        "shot": "b013"
+      },
+      {
+        "shot": "b014"
+      },
+      {
+        "shot": "b015"
+      },
+      {
+        "shot": "b016"
+      },
+      {
+        "shot": "b017"
+      },
+      {
+        "shot": "b018"
+      },
+      {
+        "shot": "b019"
+      },
+      {
+        "shot": "b020"
+      },
+      {
+        "shot": "b021"
+      },
+      {
+        "shot": "b022"
+      },
+      {
+        "shot": "b023"
+      },
+      {
+        "shot": "b024"
+      },
+      {
+        "shot": "b025"
+      },
+      {
+        "shot": "b026"
+      },
+      {
+        "shot": "b027"
+      },
+      {
+        "shot": "b028"
+      },
+      {
+        "shot": "b029"
+      },
+      {
+        "shot": "b030"
+      },
+      {
+        "shot": "b031"
+      },
+      {
+        "shot": "b032"
+      },
+      {
+        "shot": "b033"
+      },
+      {
+        "shot": "b034"
+      },
+      {
+        "shot": "b035"
+      },
+      {
+        "shot": "b036"
+      },
+      {
+        "shot": "b037"
+      },
+      {
+        "shot": "b038"
+      },
+      {
+        "shot": "b039"
+      },
+      {
+        "shot": "b040"
+      },
+      {
+        "shot": "c001"
+      },
+      {
+        "shot": "c002"
+      },
+      {
+        "shot": "c003"
+      },
+      {
+        "shot": "c004"
+      },
+      {
+        "shot": "c005"
+      },
+      {
+        "shot": "c006"
       },
       {
         "key": "Down"
       },
       {
-        "sleep": 2.5
+        "shot": "c007"
       },
       {
-        "shot": "w2"
+        "shot": "c008"
+      },
+      {
+        "shot": "c009"
+      },
+      {
+        "shot": "c010"
+      },
+      {
+        "shot": "c011"
+      },
+      {
+        "shot": "c012"
+      },
+      {
+        "shot": "c013"
+      },
+      {
+        "shot": "c014"
+      },
+      {
+        "shot": "c015"
+      },
+      {
+        "shot": "c016"
+      },
+      {
+        "shot": "c017"
+      },
+      {
+        "shot": "c018"
+      },
+      {
+        "shot": "c019"
+      },
+      {
+        "shot": "c020"
+      },
+      {
+        "shot": "c021"
+      },
+      {
+        "shot": "c022"
+      },
+      {
+        "shot": "c023"
+      },
+      {
+        "shot": "c024"
+      },
+      {
+        "shot": "c025"
+      },
+      {
+        "shot": "c026"
+      },
+      {
+        "shot": "c027"
+      },
+      {
+        "shot": "c028"
+      },
+      {
+        "shot": "c029"
+      },
+      {
+        "shot": "c030"
+      },
+      {
+        "shot": "c031"
+      },
+      {
+        "shot": "c032"
+      },
+      {
+        "shot": "c033"
+      },
+      {
+        "shot": "c034"
+      },
+      {
+        "shot": "c035"
+      },
+      {
+        "shot": "c036"
+      },
+      {
+        "shot": "c037"
+      },
+      {
+        "shot": "c038"
+      },
+      {
+        "shot": "c039"
+      },
+      {
+        "shot": "c040"
+      },
+      {
+        "shot": "d001"
+      },
+      {
+        "shot": "d002"
+      },
+      {
+        "shot": "d003"
+      },
+      {
+        "shot": "d004"
+      },
+      {
+        "shot": "d005"
+      },
+      {
+        "shot": "d006"
       },
       {
         "key": "Down"
       },
       {
-        "sleep": 2.5
+        "shot": "d007"
       },
       {
-        "shot": "w3"
+        "shot": "d008"
+      },
+      {
+        "shot": "d009"
+      },
+      {
+        "shot": "d010"
+      },
+      {
+        "shot": "d011"
+      },
+      {
+        "shot": "d012"
+      },
+      {
+        "shot": "d013"
+      },
+      {
+        "shot": "d014"
+      },
+      {
+        "shot": "d015"
+      },
+      {
+        "shot": "d016"
+      },
+      {
+        "shot": "d017"
+      },
+      {
+        "shot": "d018"
+      },
+      {
+        "shot": "d019"
+      },
+      {
+        "shot": "d020"
+      },
+      {
+        "shot": "d021"
+      },
+      {
+        "shot": "d022"
+      },
+      {
+        "shot": "d023"
+      },
+      {
+        "shot": "d024"
+      },
+      {
+        "shot": "d025"
+      },
+      {
+        "shot": "d026"
+      },
+      {
+        "shot": "d027"
+      },
+      {
+        "shot": "d028"
+      },
+      {
+        "shot": "d029"
+      },
+      {
+        "shot": "d030"
+      },
+      {
+        "shot": "d031"
+      },
+      {
+        "shot": "d032"
+      },
+      {
+        "shot": "d033"
+      },
+      {
+        "shot": "d034"
+      },
+      {
+        "shot": "d035"
+      },
+      {
+        "shot": "d036"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "key": "F8"
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "shot": "e001"
+      },
+      {
+        "shot": "e002"
+      },
+      {
+        "shot": "e003"
+      },
+      {
+        "shot": "e004"
+      },
+      {
+        "shot": "e005"
+      },
+      {
+        "shot": "e006"
+      },
+      {
+        "shot": "e007"
+      },
+      {
+        "shot": "e008"
+      },
+      {
+        "shot": "e009"
+      },
+      {
+        "shot": "e010"
+      },
+      {
+        "shot": "e011"
+      },
+      {
+        "shot": "e012"
+      },
+      {
+        "shot": "e013"
+      },
+      {
+        "shot": "e014"
+      },
+      {
+        "shot": "e015"
+      },
+      {
+        "shot": "e016"
+      },
+      {
+        "shot": "e017"
+      },
+      {
+        "shot": "e018"
+      },
+      {
+        "shot": "e019"
+      },
+      {
+        "shot": "e020"
+      },
+      {
+        "shot": "e021"
+      },
+      {
+        "shot": "e022"
+      },
+      {
+        "shot": "e023"
+      },
+      {
+        "shot": "e024"
+      },
+      {
+        "shot": "e025"
+      },
+      {
+        "shot": "e026"
+      },
+      {
+        "shot": "e027"
+      },
+      {
+        "shot": "e028"
+      },
+      {
+        "shot": "e029"
+      },
+      {
+        "shot": "e030"
+      },
+      {
+        "shot": "e031"
+      },
+      {
+        "shot": "e032"
+      },
+      {
+        "shot": "e033"
+      },
+      {
+        "shot": "e034"
+      },
+      {
+        "shot": "e035"
+      },
+      {
+        "shot": "e036"
+      },
+      {
+        "shot": "e037"
+      },
+      {
+        "shot": "e038"
+      },
+      {
+        "shot": "e039"
+      },
+      {
+        "shot": "e040"
+      },
+      {
+        "shot": "e041"
+      },
+      {
+        "shot": "e042"
+      },
+      {
+        "shot": "e043"
+      },
+      {
+        "shot": "e044"
+      },
+      {
+        "shot": "e045"
+      },
+      {
+        "shot": "e046"
+      },
+      {
+        "shot": "e047"
+      },
+      {
+        "shot": "e048"
+      },
+      {
+        "shot": "e049"
+      },
+      {
+        "shot": "e050"
+      },
+      {
+        "shot": "e051"
+      },
+      {
+        "shot": "e052"
+      },
+      {
+        "shot": "e053"
+      },
+      {
+        "shot": "e054"
+      },
+      {
+        "shot": "e055"
+      },
+      {
+        "shot": "e056"
+      },
+      {
+        "shot": "e057"
+      },
+      {
+        "shot": "e058"
+      },
+      {
+        "shot": "e059"
+      },
+      {
+        "shot": "e060"
+      },
+      {
+        "shot": "e061"
+      },
+      {
+        "shot": "e062"
+      },
+      {
+        "shot": "e063"
+      },
+      {
+        "shot": "e064"
+      },
+      {
+        "shot": "e065"
+      },
+      {
+        "shot": "e066"
+      },
+      {
+        "shot": "e067"
+      },
+      {
+        "shot": "e068"
+      },
+      {
+        "shot": "e069"
+      },
+      {
+        "shot": "e070"
+      },
+      {
+        "shot": "e071"
+      },
+      {
+        "shot": "e072"
+      },
+      {
+        "shot": "e073"
+      },
+      {
+        "shot": "e074"
+      },
+      {
+        "shot": "e075"
+      },
+      {
+        "shot": "e076"
+      },
+      {
+        "shot": "e077"
+      },
+      {
+        "shot": "e078"
+      },
+      {
+        "shot": "e079"
+      },
+      {
+        "shot": "e080"
+      },
+      {
+        "shot": "e081"
+      },
+      {
+        "shot": "e082"
+      },
+      {
+        "shot": "e083"
+      },
+      {
+        "shot": "e084"
+      },
+      {
+        "shot": "e085"
+      },
+      {
+        "shot": "e086"
+      },
+      {
+        "shot": "e087"
+      },
+      {
+        "shot": "e088"
+      },
+      {
+        "shot": "e089"
+      },
+      {
+        "shot": "e090"
       }
     ],
     "panes": {
@@ -72,10 +684,10 @@
   "render": {
     "size": [
       1920,
-      1134
+      1104
     ],
     "fps": 60,
-    "rows": 30,
+    "rows": 29,
     "cols": 140,
     "header_height": 96,
     "caption_height": 118,
@@ -95,9 +707,8 @@
       "title": 2.0,
       "intro": 0.9,
       "zoom": 0.45,
-      "hold": 1.4,
+      "hold": 1.3,
       "pan": 0.3,
-      "push": 0.55,
       "outro": 0.6
     },
     "theme": {
@@ -137,48 +748,266 @@
         "shot": "dock",
         "rows": [
           0,
-          30
+          29
         ],
         "band": false,
-        "hold": 1.5,
+        "hold": 1.3,
         "head": "Every worktree is a workspace",
         "sub": "its own tabs, splits, terminals \u2014 and the agent working it"
       },
       {
-        "shot": "w1",
+        "shots": [
+          "b001",
+          "b002",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009",
+          "b010",
+          "b011",
+          "b012",
+          "b013",
+          "b014",
+          "b015",
+          "b016",
+          "b017",
+          "b018",
+          "b019",
+          "b020",
+          "b021",
+          "b022",
+          "b023",
+          "b024",
+          "b025",
+          "b026",
+          "b027",
+          "b028",
+          "b029",
+          "b030",
+          "b031",
+          "b032",
+          "b033",
+          "b034",
+          "b035",
+          "b036",
+          "b037",
+          "b038",
+          "b039",
+          "b040"
+        ],
         "rows": [
           0,
-          30
+          29
         ],
         "band": false,
-        "hold": 1.5,
-        "transition": "push",
-        "head": "\u2193 switches, live",
-        "sub": "one repository, checked out four times; nothing is torn down"
+        "hold": 1.3333,
+        "head": "\u2193 switches, and the switch is instant",
+        "sub": "nothing is torn down: the tabs, the split and the agent were already there"
       },
       {
-        "shot": "w2",
+        "shots": [
+          "c001",
+          "c002",
+          "c003",
+          "c004",
+          "c005",
+          "c006",
+          "c007",
+          "c008",
+          "c009",
+          "c010",
+          "c011",
+          "c012",
+          "c013",
+          "c014",
+          "c015",
+          "c016",
+          "c017",
+          "c018",
+          "c019",
+          "c020",
+          "c021",
+          "c022",
+          "c023",
+          "c024",
+          "c025",
+          "c026",
+          "c027",
+          "c028",
+          "c029",
+          "c030",
+          "c031",
+          "c032",
+          "c033",
+          "c034",
+          "c035",
+          "c036",
+          "c037",
+          "c038",
+          "c039",
+          "c040"
+        ],
         "rows": [
           0,
-          30
+          29
         ],
         "band": false,
-        "hold": 1.5,
-        "transition": "push",
+        "hold": 1.3333,
         "head": "The ones you are not looking at keep working",
-        "sub": "claude here, codex there, each in its own branch"
+        "sub": "quill on one branch, marlin on the next"
       },
       {
-        "shot": "w3",
+        "shots": [
+          "d001",
+          "d002",
+          "d003",
+          "d004",
+          "d005",
+          "d006",
+          "d007",
+          "d008",
+          "d009",
+          "d010",
+          "d011",
+          "d012",
+          "d013",
+          "d014",
+          "d015",
+          "d016",
+          "d017",
+          "d018",
+          "d019",
+          "d020",
+          "d021",
+          "d022",
+          "d023",
+          "d024",
+          "d025",
+          "d026",
+          "d027",
+          "d028",
+          "d029",
+          "d030",
+          "d031",
+          "d032",
+          "d033",
+          "d034",
+          "d035",
+          "d036"
+        ],
         "rows": [
           0,
-          30
+          29
         ],
         "band": false,
-        "hold": 1.9,
-        "transition": "push",
+        "hold": 1.2,
         "head": "And the dock says which one is waiting on you",
         "sub": "three still running \u00b7 this one wants an answer"
+      },
+      {
+        "shots": [
+          "e001",
+          "e002",
+          "e003",
+          "e004",
+          "e005",
+          "e006",
+          "e007",
+          "e008",
+          "e009",
+          "e010",
+          "e011",
+          "e012",
+          "e013",
+          "e014",
+          "e015",
+          "e016",
+          "e017",
+          "e018",
+          "e019",
+          "e020",
+          "e021",
+          "e022",
+          "e023",
+          "e024",
+          "e025",
+          "e026",
+          "e027",
+          "e028",
+          "e029",
+          "e030",
+          "e031",
+          "e032",
+          "e033",
+          "e034",
+          "e035",
+          "e036",
+          "e037",
+          "e038",
+          "e039",
+          "e040",
+          "e041",
+          "e042",
+          "e043",
+          "e044",
+          "e045",
+          "e046",
+          "e047",
+          "e048",
+          "e049",
+          "e050",
+          "e051",
+          "e052",
+          "e053",
+          "e054",
+          "e055",
+          "e056",
+          "e057",
+          "e058",
+          "e059",
+          "e060",
+          "e061",
+          "e062",
+          "e063",
+          "e064",
+          "e065",
+          "e066",
+          "e067",
+          "e068",
+          "e069",
+          "e070",
+          "e071",
+          "e072",
+          "e073",
+          "e074",
+          "e075",
+          "e076",
+          "e077",
+          "e078",
+          "e079",
+          "e080",
+          "e081",
+          "e082",
+          "e083",
+          "e084",
+          "e085",
+          "e086",
+          "e087",
+          "e088",
+          "e089",
+          "e090"
+        ],
+        "rows": [
+          0,
+          29
+        ],
+        "band": false,
+        "hold": 3.0,
+        "head": "An agent can have the whole workspace",
+        "sub": "filmed frame by frame \u2014 this is its own pace, not a speed-up"
       }
     ],
     "title_card": {

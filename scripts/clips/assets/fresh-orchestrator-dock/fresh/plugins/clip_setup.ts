@@ -28,26 +28,29 @@ const TASKS = [
   {
     name: "auth-bypass",
     branch: "fix/auth-bypass",
-    agent: "claude",
+    agent: "quill",
     files: ["src/auth.rs", "src/session.rs"],
   },
   {
     name: "db-pool",
     branch: "perf/db-pool",
-    agent: "codex",
+    agent: "marlin",
     files: ["src/db/pool.rs", "src/routes.rs"],
   },
   {
     name: "rate-limit",
     branch: "feat/rate-limit",
-    agent: "opencode",
+    agent: "tern",
     files: ["src/ratelimit.rs", "tests/api.rs"],
   },
   {
     name: "docs-refresh",
     branch: "docs/api-reference",
-    agent: "aider",
-    files: ["README.md", "src/routes.rs"],
+    agent: "scout",
+    // No files, so no split: this workspace is the agent and nothing else,
+    // which is both a real way to run one and the only way to film an agent
+    // filling a workspace without hopping focus between panes to maximise it.
+    files: [],
   },
 ];
 
@@ -82,6 +85,8 @@ registerHandler("clipSetupOnReady", async () => {
       teach: false,
     });
     await editor.flush();
+
+    if (task.files.length === 0) continue;
 
     // Code to the left of the agent, in the proportion the feature is usually
     // used in: the transcript is a column you glance at, the code is what you
