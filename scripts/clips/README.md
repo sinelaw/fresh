@@ -112,6 +112,12 @@ row a step and a step every output frame — perfectly even, because the timing
 comes from the playback rather than from the terminal. 150 steps buys five
 seconds at thirty a second, and costs about four minutes of capture.
 
+Capture a row a step even when the clip wants a faster scroll than that: the
+beat's speed is then a *cut*, not a re-shoot. Listing every third shot covers
+the same travel in a third of the time, and keeps the cadence exact as long as
+the output frames divide evenly by the steps — 70 steps over 140 frames is two
+frames each; 208 steps over 148 is a stutter.
+
 **A scroll starts late on the welcome screen.** The page moves its reading row
 down the viewport before it moves the viewport, so the first screenful of `Down`
 presses scrolls nothing. Send them as one `{"key": "Down", "repeat": N}` before
