@@ -526,12 +526,23 @@ impl Editor {
         let position = self.active_window().active_cursors().primary().position;
         let st = self.active_state();
         let row = st.buffer.get_line_number(position);
+        // **A display column, not a byte one.** The page's spans come off the
+        // laid-out tree, so the reader's column has to be in the same units
+        // the tree is in — and the rows carrying controls are exactly the
+        // rows drawn in box glyphs, where three bytes are one column. The
+        // mirror is where the two meet, so the conversion belongs here and in
+        // `mirror_page_reader_into_buffer`, which does it the other way.
         let col = st
             .buffer
             .line_start_offset(row)
-            .map(|start| position.saturating_sub(start))
+            .map(|start| {
+                display_col_of(
+                    &Self::page_line(&st.buffer, row),
+                    position.saturating_sub(start),
+                )
+            })
             .unwrap_or(0);
-        let at = (row as u32, col.min(u16::MAX as usize) as u16);
+        let at = (row as u32, col);
         if self.page_reading.get(&key) == Some(&at) {
             return;
         }
@@ -1778,34 +1789,46 @@ impl Editor {
         out
     }
 
-    /// How far `col` is from a span running `[start, start + width)`: zero
-    /// inside it, and the distance to the nearer edge outside.
-    fn column_distance(start: u16, width: u16, col: u16) -> u32 {
-        let end = start.saturating_add(width);
-        match col {
-            c if c < start => (start - c) as u32,
-            c if c >= end => (c - end) as u32 + 1,
-            _ => 0,
-        }
+    /// The mirror buffer's line `row`, without its newline.
+    fn page_line(buffer: &crate::model::buffer::Buffer, row: usize) -> String {
+        buffer
+            .get_line(row)
+            .map(|b| {
+                String::from_utf8_lossy(&b)
+                    .trim_end_matches('\n')
+                    .to_string()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Does a span running `[start, start + width)` cover `col`?
+    ///
+    /// A zero-width span covers nothing, which is what a zero-width node is:
+    /// a marker, not a place.
+    fn column_covers(start: u16, width: u16, col: u16) -> bool {
+        col >= start && col < start.saturating_add(width)
     }
 
     /// The widget in `panel_key` that a reader at `(row, col)` is on, or `""`
     /// for none.
     ///
-    /// **The row is the region; the column decides which control on it.** That
-    /// is a weaker rule than "a focus region is a widget's own placed
-    /// rectangle", and the weaker one is the one that works: a reader moving
-    /// down a page keeps whatever column they were in, and on this editor's own
-    /// pages that column is very often a framed card's border or the margin
-    /// left of an inset card. Requiring containment would mean moving down
-    /// through a card focuses nothing in it — including its text field, which
-    /// then does not take what you type.
+    /// **A focus region is the control's own rectangle: the reader has to be
+    /// standing on it, in both axes.** The rule was once "the row is the
+    /// region; the column decides which control on it", with no distance cap —
+    /// so on a row carrying one control that control was the answer for every
+    /// column of the row, and a reader walking down the page's left margin lit
+    /// up, and armed Enter on, a button forty columns away that they were
+    /// plainly not pointing at. Reaching a control now means going to it.
     ///
-    /// So containment wins where it applies (distance zero), and otherwise the
-    /// nearest control **on the same row**, ties leftmost. There is no distance
-    /// cap, which has a consequence worth stating rather than discovering: on a
-    /// row carrying exactly one control, that control is the answer for every
-    /// column of the row.
+    /// **Which is why the reading column is a display column** (see
+    /// [`Self::page_follows_caret`]): the spans come off the laid-out tree, so
+    /// a byte column would put the reader two columns right of where they are
+    /// on any row whose frame is drawn in box glyphs — exactly the rows the
+    /// controls are in.
+    ///
+    /// Nested spans are decided innermost-first (narrowest, ties leftmost): a
+    /// card's own key covers every row it occupies, and a control inside it is
+    /// the more specific answer for the cells it covers.
     ///
     /// An empty string is an answer, not the absence of one: a reader on a row
     /// with no control at all means *nothing* is focused, and a caller that
@@ -1824,17 +1847,19 @@ impl Editor {
         row: u32,
         col: u16,
     ) -> String {
-        let mut best: Option<(u32, u16, String)> = None;
+        let mut best: Option<(u16, u16, String)> = None;
         for (top, rows, start, width, key) in self.page_widget_spans(panel_key) {
             if row < top || row >= top + rows.max(1) as u32 {
                 continue;
             }
-            let d = Self::column_distance(start, width, col);
+            if !Self::column_covers(start, width, col) {
+                continue;
+            }
             if best
                 .as_ref()
-                .is_none_or(|(bd, bs, _)| d < *bd || (d == *bd && start < *bs))
+                .is_none_or(|(bw, bs, _)| width < *bw || (width == *bw && start < *bs))
             {
-                best = Some((d, start, key));
+                best = Some((width, start, key));
             }
         }
         best.map(|(_, _, k)| k).unwrap_or_default()
@@ -1968,13 +1993,38 @@ impl Editor {
     }
 
     /// A press on `pane` at screen `(x, y)` moves that pane's page reader, if
-    /// it has one and the press landed inside its window.
+    /// it has one and the press landed inside its window — and arms the
+    /// selection sweep the press may turn out to have started.
     ///
-    /// Screen coordinates in, content coordinates out — the same conversion
-    /// `page_widget_spans` does, in the other direction.
+    /// Screen coordinates in, content coordinates out ([`Self::page_point_at`])
+    /// — the same conversion `page_widget_spans` does, in the other direction.
     pub(super) fn press_moved_the_page_reader(&mut self, pane: LeafId, x: u16, y: u16) {
-        let Some(panel_key) = self
-            .widget_registry
+        let Some(panel_key) = self.page_panel_of_pane(pane) else {
+            return;
+        };
+        let Some(at) = self.page_point_at(&panel_key, x, y, false) else {
+            return;
+        };
+        self.move_page_reader_to(&panel_key, at);
+        self.sync_widget_focus_to_reading_row(&panel_key);
+        // **The press is also a selection's anchor.** The page's text is the
+        // mirror's, and a reader who wants to quote a paragraph of it sweeps
+        // the pointer across it exactly as they would over a file. The caret
+        // this press just seated is collapsed, so the anchor is where it is;
+        // every move of the pointer under the same capture extends from here
+        // (`drag_moved_the_page_selection`), and the release leaves the
+        // selection standing for Copy.
+        let ms = &mut self.active_window_mut().mouse_state;
+        ms.dragging_text_selection = true;
+        ms.drag_selection_split = Some(pane);
+        ms.drag_selection_by_words = false;
+        ms.drag_selection_word_end = None;
+    }
+
+    /// The page panel a pane holds, if it holds one whose focus follows its
+    /// reader.
+    fn page_panel_of_pane(&self, pane: LeafId) -> Option<crate::widgets::PanelKey> {
+        self.widget_registry
             .panel_keys()
             .into_iter()
             .find(|k| {
@@ -1986,27 +2036,115 @@ impl Editor {
                     .get(k)
                     .is_some_and(|p| p.page && p.focus_follows_cursor)
             })
-        else {
-            return;
+    }
+
+    /// Screen `(x, y)` as a point in the page's own content, or `None` when
+    /// the point is outside its window — unless `clamp`, which pins it to the
+    /// nearest cell inside instead, because a drag that leaves the window is
+    /// still a drag to the end of what it crossed.
+    fn page_point_at(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+        x: u16,
+        y: u16,
+        clamp: bool,
+    ) -> Option<(u32, u16)> {
+        let (ui, vp) = (self.shell_ui.as_ref()?, self.page_viewport(panel_key)?);
+        let window = ui.rect_of(vp);
+        let (scroll, _) = ui.scroll(vp);
+        let (x, y) = (x as i32, y as i32);
+        let inside = x >= window.x && x < window.right() && y >= window.y && y < window.bottom();
+        if !inside && !clamp {
+            return None;
+        }
+        let x = x.clamp(window.x, window.right().saturating_sub(1).max(window.x));
+        let y = y.clamp(window.y, window.bottom().saturating_sub(1).max(window.y));
+        Some((
+            (y - window.y + scroll.y).max(0) as u32,
+            (x - window.x + scroll.x).max(0) as u16,
+        ))
+    }
+
+    /// A move of the pointer the page's press captured: the selection grows
+    /// to wherever it is now.
+    ///
+    /// Returns whether this pane is a page at all — a pane that is not takes
+    /// its drag through the buffer's own path, which needs a screen-to-byte
+    /// projection a described pane does not have.
+    pub(super) fn drag_moved_the_page_selection(&mut self, pane: LeafId, x: u16, y: u16) -> bool {
+        let Some(panel_key) = self.page_panel_of_pane(pane) else {
+            return false;
         };
-        let at = {
-            let (Some(ui), Some(vp)) = (self.shell_ui.as_ref(), self.page_viewport(&panel_key))
-            else {
-                return;
-            };
-            let window = ui.rect_of(vp);
-            let (scroll, _) = ui.scroll(vp);
-            let (x, y) = (x as i32, y as i32);
-            if x < window.x || x >= window.right() || y < window.y || y >= window.bottom() {
-                return;
+        let ms = &self.active_window().mouse_state;
+        if !ms.dragging_text_selection || ms.drag_selection_split != Some(pane) {
+            return true;
+        }
+        let Some(at) = self.page_point_at(&panel_key, x, y, true) else {
+            return true;
+        };
+        // Deliberately not `sync_widget_focus_to_reading_row`: a sweep across
+        // the page is a statement about its text, and arming every control it
+        // crosses under Enter is not part of it.
+        self.move_page_reader(&panel_key, at, true);
+        true
+    }
+
+    /// The mirror buffer's selection as bands of display columns, one per
+    /// content row — what the description washes over the page.
+    ///
+    /// Read off whichever split carries the buffer, the active one first: the
+    /// selection is a cursor's, cursors are per split, and a page shown in
+    /// two panes is one buffer with two of them.
+    pub(super) fn page_selection_bands(&self, buffer_id: BufferId) -> Vec<(u32, u16, u16)> {
+        /// A whole-page selection is thousands of rows and a handful of them
+        /// are on screen; the cap is a guard against a pathological
+        /// description, not a limit anyone can reach by selecting.
+        const MAX_BANDS: usize = 8192;
+        let window = self.windows.get(&self.active_window);
+        let Some(state) = window.and_then(|w| w.buffers.get(&buffer_id)) else {
+            return Vec::new();
+        };
+        let Some((manager, view_states)) = window.and_then(|w| w.buffers.splits()) else {
+            return Vec::new();
+        };
+        let active = manager.active_split();
+        let mut leaves = self.splits_showing_buffer(buffer_id);
+        leaves.sort_by_key(|l| *l != active);
+        let Some(vs) = leaves.first().and_then(|l| view_states.get(l)) else {
+            return Vec::new();
+        };
+        let mut ranges = vs.cursors.selections();
+        ranges.sort_by_key(|r| r.start);
+        let mut bands = Vec::new();
+        for range in ranges {
+            let first = state.buffer.get_line_number(range.start);
+            let last = state.buffer.get_line_number(range.end);
+            for row in first..=last {
+                if bands.len() >= MAX_BANDS {
+                    return bands;
+                }
+                let Some(start) = state.buffer.line_start_offset(row) else {
+                    break;
+                };
+                let line = Self::page_line(&state.buffer, row);
+                let from = match row == first {
+                    true => display_col_of(&line, range.start.saturating_sub(start)),
+                    false => 0,
+                };
+                // A row inside the selection is selected past its own text,
+                // by the one column that stands for the line break it took —
+                // the same shape the buffer painter gives a multi-line
+                // selection.
+                let to = match row == last {
+                    true => display_col_of(&line, range.end.saturating_sub(start)),
+                    false => display_col_of(&line, line.len()).saturating_add(1),
+                };
+                if to > from {
+                    bands.push((row as u32, from, to));
+                }
             }
-            (
-                (y - window.y + scroll.y).max(0) as u32,
-                (x - window.x + scroll.x).max(0) as u16,
-            )
-        };
-        self.move_page_reader_to(&panel_key, at);
-        self.sync_widget_focus_to_reading_row(&panel_key);
+        }
+        bands
     }
 
     /// Put the reader at `(row, col)` and bring that row into the window.
@@ -2014,11 +2152,23 @@ impl Editor {
     /// The reveal is minimal, which is what following is: a Tab between two
     /// controls of one card must not move the page under them.
     fn move_page_reader_to(&mut self, panel_key: &crate::widgets::PanelKey, at: (u32, u16)) {
+        self.move_page_reader(panel_key, at, false);
+    }
+
+    /// The same, saying whether the caret it seats takes the selection with
+    /// it: a drag over the page is one gesture from its press, so every move
+    /// of it extends from where the press left the anchor.
+    fn move_page_reader(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        at: (u32, u16),
+        extend: bool,
+    ) {
         self.page_reading.insert(panel_key.clone(), at);
         if let Some(anchor) = self.page_anchors.get(panel_key) {
             anchor.reveal(at.0);
         }
-        self.mirror_page_reader_into_buffer(panel_key, at);
+        self.mirror_page_reader_into_buffer(panel_key, at, extend);
         self.shell_description_stale = true;
     }
 
@@ -2038,6 +2188,7 @@ impl Editor {
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         (row, col): (u32, u16),
+        extend: bool,
     ) {
         let Some(buffer_id) = self
             .widget_registry
@@ -2053,11 +2204,12 @@ impl Editor {
                 Some(next) => next.saturating_sub(1),
                 None => st.buffer.len(),
             };
-            Some((start + col as usize).min(end))
+            let line = Self::page_line(&st.buffer, row as usize);
+            Some((start + byte_at_display_col(&line, col)).min(end))
         }) else {
             return;
         };
-        self.seat_buffer_cursor(buffer_id, offset);
+        self.seat_buffer_cursor_selecting(buffer_id, offset, extend);
     }
 
     /// The other direction: the reader has landed somewhere on a
@@ -2128,6 +2280,18 @@ impl Editor {
     /// `set_buffer_cursor_in_splits` themselves, into buffers that can
     /// perfectly well carry a focus-following panel; they call this now.
     pub(super) fn seat_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
+        self.seat_buffer_cursor_selecting(buffer_id, position, false);
+    }
+
+    /// The same, saying whether the caret drags a selection behind it. Only
+    /// the page's pointer sweep passes `true`: every other seat here is a
+    /// placement, and a placement collapses.
+    pub(super) fn seat_buffer_cursor_selecting(
+        &mut self,
+        buffer_id: BufferId,
+        position: usize,
+        extend: bool,
+    ) {
         let splits = self.splits_showing_buffer(buffer_id);
         if splits.is_empty() {
             tracing::warn!("No splits found for buffer {:?}", buffer_id);
@@ -2137,7 +2301,7 @@ impl Editor {
             return;
         }
         self.active_window_mut()
-            .set_buffer_cursor_in_splits(buffer_id, position, &splits);
+            .set_buffer_cursor_in_splits_selecting(buffer_id, position, &splits, extend);
     }
 
     /// Offer a panel-focus transition to the kinds: the widget losing
@@ -4581,4 +4745,36 @@ mod tests {
             "the dropdown owns the keyboard, so ↑/↓ drive it and not the list"
         );
     }
+}
+
+/// The display column a byte offset sits at within `line`.
+///
+/// The page's rows are text and its spans are cells, and these two are where
+/// the one becomes the other. A byte column is what a buffer cursor is; a
+/// display column is what the tree laid out, what a press lands on, and what
+/// a selection is washed across.
+fn display_col_of(line: &str, byte: usize) -> u16 {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    for (at, ch) in line.char_indices() {
+        if at >= byte {
+            break;
+        }
+        cols += ch.width().unwrap_or(0);
+    }
+    cols.min(u16::MAX as usize) as u16
+}
+
+/// The byte offset at display column `col` of `line` — the start of the
+/// character covering that cell, and the line's length past its end.
+fn byte_at_display_col(line: &str, col: u16) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    for (at, ch) in line.char_indices() {
+        if cols >= col as usize {
+            return at;
+        }
+        cols += ch.width().unwrap_or(0);
+    }
+    line.len()
 }

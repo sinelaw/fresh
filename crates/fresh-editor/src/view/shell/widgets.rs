@@ -2207,7 +2207,23 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // `List::windowed` is the same window `widgets::List` gives every
             // other kind here. Its rows are one cell each, so its item scroll
             // *is* the row scroll the runtime had.
-            let rows_src = std::rc::Rc::new(out.entries.split_off(head));
+            let mut body_rows = out.entries.split_off(head);
+            // **The window is the box; the padding under a short document is
+            // not part of it.** The line count above is a guess whenever the
+            // widget is unkeyed — `value.split('\n')` counts a fenced block's
+            // ``` delimiters, which the render does not draw — and the
+            // collector pads its output to whatever height it was told, so
+            // the welcome page's nine-line sample came back eleven rows tall
+            // in a nine-row box and grew a scrollbar over a document that
+            // fits. Padding past the box is never content: it is trimmed,
+            // and never below the box's own height, so a document that
+            // really is taller still scrolls.
+            while body_rows.len() > (*rows).max(1) as usize
+                && body_rows.last().is_some_and(|e| e.text.trim().is_empty())
+            {
+                body_rows.pop();
+            }
+            let rows_src = std::rc::Rc::new(body_rows);
             let hits = std::rc::Rc::new(out.hits.clone());
             let n = rows_src.len();
             let slot = cx.slot;
@@ -7081,6 +7097,7 @@ mod tests {
 
             page: None,
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),

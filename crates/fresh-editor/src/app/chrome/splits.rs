@@ -504,6 +504,15 @@ impl Editor {
         if self.overlay_prompt_active() {
             return Ok(());
         }
+        // **A described page sweeps its own selection.** Its pane has no
+        // screen-to-byte projection — the content is the panel's subtree, not
+        // the buffer's leaf — so the buffer's drag below could not answer
+        // where the pointer is in the text. The page's own window can, and
+        // does; this returns true for any page pane, selecting or not, so the
+        // buffer path never runs over one.
+        if self.drag_moved_the_page_selection(pane, col, row) {
+            return Ok(());
+        }
         let ms = &self.active_window().mouse_state;
         if let Some((split_id, buffer_id, ocol, orow)) = ms.terminal_drag_pending {
             // The press landed on a live terminal grid and this is the first

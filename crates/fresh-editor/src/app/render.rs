@@ -6276,6 +6276,18 @@ impl Editor {
             keyboard: false,
             page: self.page_anchors.get(&key).cloned(),
             reading: self.page_reading.get(&key).copied(),
+            // **The mirror's selection, because nothing else would show it.**
+            // The pane draws this tree and not the buffer under it, so the
+            // painter that washes a selection everywhere else in the editor
+            // never runs here — shift-arrow and drag-to-select made a range
+            // that Copy took and the reader could not see.
+            selection: match self.page_anchors.contains_key(&key) {
+                true => self.page_selection_bands(buffer),
+                // Only a page is described with a window of its own to wash;
+                // every other pane-mounted panel would compute a selection
+                // that `splits::panel_content` never reads.
+                false => Vec::new(),
+            },
             compose: self.buffer_compose_width(buffer),
             // **A mounted panel's rows light under the pointer too.** The memo
             // is the registry's rather than a `Panel` record's, because a pane
@@ -6373,6 +6385,7 @@ impl Editor {
             page: None,
             // Not a page, so nothing reads a page.
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),

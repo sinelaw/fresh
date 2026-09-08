@@ -162,6 +162,21 @@ pub struct Interior {
     /// coordinates inside the scrolled content is the caret, and it travels
     /// with the page the way every other row does.
     pub reading: Option<(u32, u16)>,
+    /// The reader's selection on that page, one band per content row:
+    /// `(row, first column, last column + 1)`, in display columns.
+    ///
+    /// **Described for the same reason the caret is.** The pane shows this
+    /// tree rather than the mirror buffer, so the buffer painter — the thing
+    /// that washes a selection everywhere else in the editor — never runs
+    /// over this text: shift-arrow and drag-to-select made a selection the
+    /// reader could not see, on a page whose whole purpose is to be read and
+    /// quoted. Each band is a wash laid over the content and scrolled with
+    /// it (`splits::page_layers`), so what is copied and what is lit are one
+    /// thing.
+    ///
+    /// Empty for every panel that is not a page, and for a page whose reader
+    /// has selected nothing.
+    pub selection: Vec<(u32, u16, u16)>,
     /// The column a composed panel is laid out and centred in
     /// (`setLayoutHints({ composeWidth })`), when it is narrower than the
     /// pane. `None` for every surface that fills the box it was given.
@@ -999,6 +1014,7 @@ mod tests {
 
             page: None,
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
@@ -1238,6 +1254,7 @@ mod tests {
 
             page: None,
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
@@ -1293,6 +1310,7 @@ mod tests {
 
             page: None,
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
@@ -1361,6 +1379,7 @@ mod tests {
 
             page: None,
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),
@@ -1418,6 +1437,7 @@ mod tests {
 
             page: None,
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: None,
             hovered_item_key: String::new(),

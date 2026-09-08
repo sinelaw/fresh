@@ -672,6 +672,12 @@ fn moving_the_caret_onto_prose_disarms_the_focused_control() {
 /// Walking down the page with an arrow key onto the finder's input means
 /// the next character typed goes into the finder — no Tab count, no `/`,
 /// nothing to know. The caret is on the field, so the field has focus.
+///
+/// *Onto* it: the walk is down the field's own columns, because a control
+/// takes focus where it is and not across the whole width of its row (see
+/// `a_control_takes_focus_only_where_it_is`). A reader coming down the
+/// page's left margin passes the card without entering it, which is the
+/// point of the rule.
 #[test]
 fn the_caret_arriving_at_the_finder_field_types_into_it() {
     let (mut harness, _tmp) = harness_with_welcome();
@@ -682,6 +688,15 @@ fn the_caret_arriving_at_the_finder_field_types_into_it() {
     // makes reading its screen row unreliable.
     harness.wait_for_async_quiescence(4).unwrap();
     scroll_until(&mut harness, "find [");
+    // Start above the field, in its column: a click seats the caret, and
+    // Down keeps the column it was seated in.
+    {
+        let (col, row) = harness
+            .find_text_on_screen("find [")
+            .expect("the finder field is on screen");
+        harness.mouse_click(col + 7, row.saturating_sub(3)).unwrap();
+        harness.wait_for_async_quiescence(4).unwrap();
+    }
 
     // Down moves by *buffer* line and the gap read off the screen is in
     // *screen* rows; they agree only while nothing between them wraps
@@ -1105,5 +1120,222 @@ fn a_level_banner_has_air_before_its_description() {
          {} reads {description:?}. Screen:\n{}",
         rule_row + 2,
         harness.screen_to_string()
+    );
+}
+
+/// The page's own left and right edges on the row `needle` is on — the
+/// columns a full-measure row occupies, which is what "centred on the
+/// page" is measured against. The page is itself centred in the pane, and
+/// the pane's right margin carries the scrollbar, so the *screen* is not
+/// the frame of reference.
+fn page_edges(harness: &EditorTestHarness, needle: &str) -> (usize, usize) {
+    let screen = harness.screen_to_string();
+    let line = screen
+        .lines()
+        .find(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} is not on screen. Screen:\n{screen}"));
+    let cells: Vec<char> = line.chars().collect();
+    let left = cells
+        .iter()
+        .position(|c| *c != ' ')
+        .expect("a row with ink");
+    let right = cells
+        .iter()
+        .rposition(|c| *c != ' ')
+        .expect("a row with ink");
+    (left, right)
+}
+
+/// The columns of the first `╭ … ╮` box at or below `from`.
+fn box_edges(harness: &EditorTestHarness, from: u16) -> (usize, usize, u16) {
+    let screen = harness.screen_to_string();
+    for (y, line) in screen.lines().enumerate() {
+        if (y as u16) < from {
+            continue;
+        }
+        let cells: Vec<char> = line.chars().collect();
+        if let (Some(l), Some(r)) = (
+            cells.iter().position(|c| *c == '╭'),
+            cells.iter().rposition(|c| *c == '╮'),
+        ) {
+            return (l, r, y as u16);
+        }
+    }
+    panic!("no framed box below row {from}. Screen:\n{screen}");
+}
+
+/// **A box is a block, and a page is a column: the two share an axis.**
+/// The framed cards were laid out at the page's left edge and narrowed to
+/// less than the measure, so every one of them left a growing band of
+/// white down the right of the page — the boxes and the prose around them
+/// disagreeing about where the page was.
+#[test]
+fn a_framed_card_is_centred_on_the_page() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    scroll_until(&mut harness, "find [");
+
+    // A level banner is a full-measure row, so it names the page's edges.
+    let (page_left, page_right) = page_edges(&harness, "━━━━");
+    let (_, _, top) = box_edges(&harness, 0);
+    let (box_left, box_right, _) = box_edges(&harness, top);
+    let (before, after) = (box_left - page_left, page_right - box_right);
+    assert!(
+        before.abs_diff(after) <= 1,
+        "the card sits {before} columns from the page's left edge and \
+         {after} from its right. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// **A box is as tall as what is in it.** The code sample's box asks for
+/// exactly the rows its listing has, and the collector used to pad the
+/// document out to a row count taken from the *source* — which counts a
+/// fenced block's ``` delimiters, two rows nothing draws. The box then
+/// held eleven rows in nine and grew a scrollbar over a listing that fits.
+#[test]
+fn the_code_sample_box_holds_its_whole_listing() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    scroll_until(&mut harness, "src/store.rs");
+
+    let (left, right, top) = box_edges(&harness, 0);
+    let rows = harness.screen_to_string().lines().count() as u16;
+    for y in top..rows.min(top + 12) {
+        for x in (left + 1)..right {
+            assert!(
+                !harness.is_scrollbar_thumb_at(x as u16, y)
+                    && !harness.is_scrollbar_track_at(x as u16, y),
+                "a scrollbar at column {x} of row {y}: the sample's box is \
+                 shorter than the sample. Screen:\n{}",
+                harness.screen_to_string()
+            );
+        }
+    }
+}
+
+/// **Focus follows the reader onto a control, not merely onto its row.**
+/// The startup switch is alone on the page's first row and right-aligned
+/// on it, so every column left of it is empty — and every one of them used
+/// to resolve to the switch, because the rule was "nearest control on the
+/// row, no distance cap". A reader walking down the page's left margin lit
+/// it up and armed Enter on it from forty columns away.
+#[test]
+fn a_control_takes_focus_only_where_it_is() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    let (col, row) = harness
+        .find_text_on_screen("[✓] Show this screen on startup")
+        .expect("the startup switch is on the first row");
+
+    // Left of it on its own row: empty page, so nothing is focused.
+    harness.mouse_click(col.saturating_sub(20), row).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    assert!(
+        harness
+            .screen_to_string()
+            .contains("[✓] Show this screen on startup"),
+        "Enter from twenty columns left of the switch toggled it. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // And walking onto it — `End` is the editor's own binding, which this
+    // page's mode no longer hides, and one `Left` off the line's end is the
+    // switch's last cell — hands it the keyboard.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("[ ] Show this screen on startup")
+        })
+        .expect("Enter with the caret on the switch toggles it");
+}
+
+/// **The page is text you can quote.** Its mode used to inherit no normal
+/// bindings, so `Shift+Right` — every shift-movement, in fact — reached
+/// nothing at all, and `Ctrl+C` with it: a document the reader could read
+/// and could not copy a line of. The mode inherits now, and the selection
+/// the editor makes is described over the page, because the pane draws
+/// this tree rather than the buffer under it.
+#[test]
+fn a_keyboard_selection_is_visible_and_copies() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    let (col, row) = harness
+        .find_text_on_screen("It grows when your work does")
+        .expect("the tagline is on screen");
+    harness.mouse_click(col, row).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+
+    let ground = harness.buffer()[(col.saturating_sub(2), row)].bg;
+    let selected = harness.buffer()[(col + 3, row)].bg;
+    assert_ne!(
+        selected,
+        ground,
+        "the selected run is painted in the page's own ground: a selection \
+         nobody can see. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    assert_eq!(
+        harness.editor_mut().clipboard_content_for_test(),
+        "It grows",
+        "Ctrl+C did not take the eight characters Shift+Right selected"
+    );
+}
+
+/// **And swept with the pointer.** A described pane has no
+/// screen-to-byte projection of its own — its content is the panel's
+/// subtree, not the buffer's leaf — so the buffer's drag path could not
+/// answer where the pointer is in the text. The page's own window can,
+/// and the selection it makes is the buffer's, not a second model.
+#[test]
+fn dragging_across_the_page_selects_what_it_crossed() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    let (col, row) = harness
+        .find_text_on_screen("It grows when your work does")
+        .expect("the tagline is on screen");
+
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    harness.mouse_drag(col, row, col + 8, row).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    let ground = harness.buffer()[(col.saturating_sub(2), row)].bg;
+    let selected = harness.buffer()[(col + 3, row)].bg;
+    assert_ne!(
+        selected,
+        ground,
+        "the dragged run is not lit. Screen:\n{}",
+        harness.screen_to_string()
+    );
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    assert_eq!(
+        harness.editor_mut().clipboard_content_for_test(),
+        "It grows",
+        "the drag selected something other than what it crossed"
     );
 }

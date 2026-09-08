@@ -1899,6 +1899,24 @@ impl Window {
         position: usize,
         splits: &[LeafId],
     ) {
+        self.set_buffer_cursor_in_splits_selecting(buffer_id, position, splits, false);
+    }
+
+    /// The same, saying whether the caret takes a selection with it.
+    ///
+    /// `extend` is the pointer sweep over a described page
+    /// (`Editor::drag_moved_the_page_selection`), which is the one caller
+    /// here that is a *gesture* rather than a placement: it anchors on the
+    /// press and every move after it grows the range. Everything else is a
+    /// jump, and a jump collapses — see the goal-column note below, which is
+    /// the same argument.
+    pub fn set_buffer_cursor_in_splits_selecting(
+        &mut self,
+        buffer_id: BufferId,
+        position: usize,
+        splits: &[LeafId],
+        extend: bool,
+    ) {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 let mut moved_any = false;
@@ -1907,7 +1925,7 @@ impl Window {
                         continue;
                     };
                     let cursor = view_state.cursors.primary_mut();
-                    cursor.move_to(position, false);
+                    cursor.move_to(position, extend);
                     // An absolute placement is a jump, not a vertical move,
                     // so it clears the goal column — the same thing every
                     // other jump in the editor does (`new_sticky_column:

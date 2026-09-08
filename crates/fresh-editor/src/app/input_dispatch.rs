@@ -614,6 +614,7 @@ impl Editor {
             page: None,
             // Not a page, so nothing reads a page.
             reading: None,
+            selection: Vec::new(),
             compose: None,
             hovered_key: Some(hovered).filter(|k| !k.is_empty()),
             hovered_item_key: hovered_item,

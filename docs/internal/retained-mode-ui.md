@@ -313,6 +313,30 @@ port needed, each found by driving the surface rather than by reading the diff:
   working; nothing resolves focus from it, which is what breaks the loop the
   buffer-caret version had.
 
+Two more the surface taught after the port:
+
+* **A focus region is the control's rectangle, in display columns.** The rule
+  was row-then-nearest-column with no cap, so a control alone on its row
+  answered for every column of it — the welcome page's right-aligned startup
+  switch armed Enter from the left margin. Containment needs the two sides to
+  agree on what a column *is*: the spans come off layout and the reader's came
+  off the buffer, and on any row drawn in box glyphs three bytes are one
+  column. The mirror converts in both directions (`display_col_of`,
+  `byte_at_display_col`), which is the same "the mirror is where they meet"
+  rule as above.
+* **A selection is the mirror's, and the description shows it.** The pane
+  draws the tree, so the painter that washes a selection over every other text
+  surface never runs here: shift-movement and a pointer sweep made a range
+  that `Ctrl+C` took and nobody could see. `panel::Interior::selection` is
+  that range as bands of display columns, one per content row, washed over the
+  content by `splits::page_layers` and scrolled with it — the caret's own
+  argument, applied to the other half of what a caret is. The sweep itself is
+  the pane's press capture (`panel_content`'s gesture) mapped through the
+  page's window; it moves the reader with `extend`, so what grows is the
+  buffer's own cursor. No second selection model, and none wanted: a plugin
+  that hid this behind a mode with no inherited bindings is what made it look
+  like one was missing.
+
 **L6 — A keyed geometry index.** `find_by_key` has 160 call sites in the
 editor and walks the tree. After layout the library publishes `Key → Rect`
 (and the scroll/window facts `GeomSnapshot` already carries) as an O(1)
