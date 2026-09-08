@@ -32,6 +32,7 @@ specific to filming *this* program.
 | `fresh-popup-rect.json` | solo, before/after | one popup placed by arithmetic, then declared |
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
+| `fresh-welcome-scroll.json` | solo, recorded | the Welcome screen, scrolled from the wordmark down its three levels |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -40,7 +41,9 @@ builds the demo repo that clip reviews — Review Diff reads a working tree, so
 the diff on screen has to come from a real one — and
 `assets/fresh-popup-rect/make-files.sh` writes two versions of one function
 straight out of git, checking that the lines it films are still the ones it
-means to.
+means to. `assets/fresh-welcome-scroll/make-repo.sh` builds a small repo with no
+project manifest in it, which is the only way the Welcome screen's live cards
+film as live — see below.
 
 ## Filming fresh specifically
 
@@ -55,7 +58,11 @@ a clip is meant to show a plugin change, confirm the binary has it:
 strings -a target/debug/fresh | grep -c setSyntaxRegions
 ```
 
-Debug builds paint slowly; give the pane a `settle` of 16-18s.
+Debug builds paint slowly; give the pane a `settle` of 16-18s. A clip of
+something *moving* is the one case for filming `target/release/fresh` instead:
+the paint is the motion, and a debug paint is visibly slower than the thing it
+is filming. Build it with `cargo build --release -p fresh-editor`, and check the
+binary the same way.
 
 **Give every pane its own `XDG_RUNTIME_DIR`.** Shared, the second pane attaches
 to the daemon the first one left running and shows that pane's project root
@@ -89,4 +96,31 @@ reveal the raw source of the caret's line, which reads as a rendering flaw to
 anyone who does not know the editor.
 
 **Capture more rows than fit.** The camera pans vertically over the capture, so
-a screen that exactly fills the frame has nowhere to travel.
+a screen that exactly fills the frame has nowhere to travel. A clip that scrolls
+the *program* instead of the camera wants the opposite: size the capture to the
+frame it will be drawn in — `render.size` less `header_height` and
+`caption_height` — and every beat gets the whole screen, tab bar and status bar
+included, with nothing left over to travel through.
+
+**Film motion as stepped stills, not as a recording.** `--record` films the
+window with x11grab, which is right for something moving under its own clock and
+wrong for a scroll: xfce4-terminal on Xvfb repaints a full-screen frame about
+ten times a second, so a held `Down` lands as ten jumps of two or three rows
+each however fast the recording is. One `{"key": "Down"}` and one `{"shot": ...}`
+per row instead, played back as a beat's `shots` list, is the same travel at one
+row a step and a step every output frame — perfectly even, because the timing
+comes from the playback rather than from the terminal. 150 steps buys five
+seconds at thirty a second, and costs about four minutes of capture.
+
+**A scroll starts late on the welcome screen.** The page moves its reading row
+down the viewport before it moves the viewport, so the first screenful of `Down`
+presses scrolls nothing. Send them as one `{"key": "Down", "repeat": N}` before
+the stepped shots begin.
+
+**A workspace with a project manifest opens Restricted, and a restricted
+workspace has no live cards.** `Cargo.toml`, `package.json` and the rest are
+executable-content markers, so filming inside fresh's own tree starts the
+session Restricted — which blocks the `spawnProcess` calls the welcome screen's
+finder and git cards are made of, and puts a red pill in the status bar besides.
+A demo repo of prose and a couple of scripts has no marker in it, opens Trusted,
+and films with its cards alive.
