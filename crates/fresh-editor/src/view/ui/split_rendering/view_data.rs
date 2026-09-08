@@ -5,7 +5,7 @@
 //! `transforms`, `folding`, and `style` — its only dependencies are the
 //! (also self-contained) sibling modules and a few editor state types.
 
-use super::base_tokens::build_base_tokens;
+use super::base_tokens::{build_base_tokens, build_windowed_tokens};
 use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
@@ -38,6 +38,15 @@ pub(super) struct ViewData {
     /// discarded everything above the viewport — the O(scroll-depth) cost this
     /// replaces.
     pub first_drawn: usize,
+    /// How far into each logical line these rows start, in bytes.
+    ///
+    /// Zero for every ordinary build: the rows begin at their lines' starts and
+    /// the renderer skips `left_column` characters of them. Non-zero when the
+    /// rows *are* the window a horizontally scrolled pane draws, in which case
+    /// the renderer must skip nothing — see `build_windowed_tokens`. Carried
+    /// with the rows rather than recomputed downstream, because a build and a
+    /// renderer that disagree about this draw an empty pane.
+    pub line_window_byte: usize,
 }
 
 /// Where the build starts, when the caller could resolve a resumable row.
@@ -96,65 +105,6 @@ fn effective_wrap_width(
     };
     base.saturating_sub(1).max(1)
 }
-
-/// Columns of a logical line a pane can put on screen, and therefore the most
-/// of it worth reading.
-///
-/// With wrapping on, that is the row width: the rest of the line is on further
-/// rows, which are read as their own rows. With wrapping off, a logical line is
-/// one row and only the columns from the horizontal scroll offset to the right
-/// edge are drawn — so the read needs the line's first `left_column + width`
-/// columns and nothing beyond. The slack is a screen's worth, so that scrolling
-/// sideways a little does not re-read on every frame.
-///
-/// The window is measured from the further right of two things: where the view
-/// is now (`left_column`), and where the *cursor* sits along its own line. They
-/// are not the same, because one frame can move both — `End` on a long line
-/// puts the cursor at its end and the horizontal scroll follows it in the same
-/// frame — and a build sized by the old `left_column` alone would hand the
-/// renderer a row that stops short of the columns it is about to draw. The
-/// vertical budget already reaches for the cursor for exactly this reason;
-/// this is that, sideways.
-///
-/// Bytes stand in for columns in the cursor term, which can only over-estimate
-/// (a column is at least one byte) — the safe direction for a read budget.
-///
-/// [`MAX_SAFE_LINE_WIDTH`] caps it: that constant stops being the routine row
-/// width and goes back to being what its name says, a bound on how much of one
-/// line can ever be materialised.
-fn visible_line_span(
-    buffer: &mut crate::model::buffer::Buffer,
-    viewport: &Viewport,
-    content_width: usize,
-    cursor_positions: &[usize],
-) -> usize {
-    let width = content_width.max(1);
-    let furthest_cursor_column = cursor_positions
-        .iter()
-        .filter_map(|&pos| {
-            let line_start = buffer.prev_line_start_within(pos, CURSOR_COLUMN_SCAN_BYTES)?;
-            Some(pos.saturating_sub(line_start))
-        })
-        .max()
-        .unwrap_or(0);
-    // The cap bounds the *extent* — how much of one line past the window may be
-    // materialised — and not the window's position. Clamping the total is how
-    // scrolling a long line sideways came to blank it: the renderer skips
-    // `left_column` characters of the row it is given and draws what follows,
-    // so a row built as the line's first 10,000 columns has nothing under a
-    // view scrolled to column 100,000, and no cell to put the caret in either.
-    viewport
-        .left_column
-        .max(furthest_cursor_column)
-        .saturating_add(width.saturating_mul(2).min(MAX_SAFE_LINE_WIDTH))
-        .max(1)
-}
-
-/// How far back the cursor's own line start is looked for when sizing that
-/// window. A cursor deeper into its line than this is past the point where a
-/// column number means anything, and the window falls back to the view's own
-/// position.
-const CURSOR_COLUMN_SCAN_BYTES: usize = 64 * 1024;
 
 /// Character budget for [`build_base_tokens`], or `None` to bound the read by
 /// source lines alone.
@@ -286,8 +236,30 @@ pub(super) fn build_view_data(
     // build cannot see, and would draw past the end of a row cut to the split's
     // `left_column`.
     let bounded_rows = !line_wrap_enabled && state.buffer.is_large_file();
+    // How far into each logical line these rows begin.
+    //
+    // Only this mode can have an offset: with wrap off on a large file a row is
+    // a *window* into a line rather than the line's opening, and the window's
+    // position is the horizontal scroll the viewport maintains — in bytes, as
+    // every column measurement on this path already is. Reading the window
+    // where it is, instead of reading up to it, is what keeps a frame's cost
+    // and its reach independent of how far right the view has been scrolled.
+    // Not for a binary buffer: its rows are built byte-by-byte by a reader of
+    // its own, and a window into a line means nothing to a view already showing
+    // bytes rather than columns.
+    let line_window_byte = if bounded_rows && !is_binary {
+        viewport.left_column
+    } else {
+        0
+    };
     let row_span = if bounded_rows {
-        visible_line_span(&mut state.buffer, viewport, content_width, cursor_positions)
+        // The row is the window: its own width and a screen of slack, and
+        // nothing to do with how far along the line it sits.
+        content_width
+            .max(1)
+            .saturating_mul(2)
+            .min(MAX_SAFE_LINE_WIDTH)
+            .max(1)
     } else if line_wrap_enabled {
         effective_width
     } else {
@@ -323,29 +295,43 @@ pub(super) fn build_view_data(
         Some(a) => (a.byte, Some(a.carry), a.skip),
         None => (viewport.top_byte(), None, viewport.top_view_line_offset()),
     };
-    let base_tokens = build_base_tokens(
-        &mut state.buffer,
-        start_byte,
-        estimated_line_length,
-        adjusted_visible_count,
-        is_binary,
-        line_ending,
-        &fold_skip,
-        base_char_budget(
-            row_span,
-            adjusted_visible_count,
-            cursor_positions,
-            rows_before_window,
+    let base_tokens = if line_window_byte > 0 {
+        // The rows are the window. Nothing before it is read, so none of the
+        // budgets below apply — the read is a screenful by construction.
+        build_windowed_tokens(
+            &mut state.buffer,
             start_byte,
-        ),
-        // With wrapping off one logical line is one visual row, so a line
-        // contributes only the columns the pane can show. With it on the wrap
-        // machine already breaks the line into rows, and cutting it here would
-        // hide rows the viewport wants. Below the large-file threshold nothing
-        // is cut at all: see `bounded_rows` above.
-        bounded_rows.then_some(row_span),
-        anchor.is_some(),
-    );
+            adjusted_visible_count,
+            line_ending,
+            &fold_skip,
+            line_window_byte,
+            row_span,
+        )
+    } else {
+        build_base_tokens(
+            &mut state.buffer,
+            start_byte,
+            estimated_line_length,
+            adjusted_visible_count,
+            is_binary,
+            line_ending,
+            &fold_skip,
+            base_char_budget(
+                row_span,
+                adjusted_visible_count,
+                cursor_positions,
+                rows_before_window,
+                start_byte,
+            ),
+            // With wrapping off one logical line is one visual row, so a line
+            // contributes only the columns the pane can show. With it on the wrap
+            // machine already breaks the line into rows, and cutting it here would
+            // hide rows the viewport wants. Below the large-file threshold nothing
+            // is cut at all: see `bounded_rows` above.
+            bounded_rows.then_some(row_span),
+            anchor.is_some(),
+        )
+    };
 
     let mut tokens = base_tokens;
 
@@ -527,5 +513,6 @@ pub(super) fn build_view_data(
     ViewData {
         lines,
         first_drawn: rows_before_window,
+        line_window_byte,
     }
 }

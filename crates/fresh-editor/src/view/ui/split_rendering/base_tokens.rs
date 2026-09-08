@@ -43,6 +43,210 @@ fn line_terminator_offset(
     Some(line_start + idx)
 }
 
+/// Build the rows a horizontally scrolled pane draws, reading only the window
+/// each row shows rather than the line that leads up to it.
+///
+/// With soft wrap off on a large file a logical line is one visual row, and the
+/// pane draws a screenful of columns somewhere along it. Building that row as a
+/// *prefix* — every column from the line's start out to the right-hand edge —
+/// makes both the cost and the reach of a frame scale with how far right the
+/// view is scrolled: reading 50 MB to draw 160 columns, and, past the point
+/// where the read gives up, drawing nothing at all. `End` on a one-line file
+/// left an empty row and the caret in the gutter for exactly that reason.
+///
+/// So the window is read where it is. `window_byte` is how far into each
+/// logical line the row starts, which is the horizontal offset the viewport
+/// maintains — in bytes, as every column measurement on this path already is.
+/// Source offsets stay absolute, so a row that begins mid-line still says which
+/// bytes it shows, and the mapping the click and caret paths use is built from
+/// the drawn cells either way.
+///
+/// A line shorter than the offset draws nothing, which is what a line scrolled
+/// off the left edge looks like.
+pub(super) fn build_windowed_tokens(
+    buffer: &mut Buffer,
+    top_byte: usize,
+    visible_count: usize,
+    line_ending: LineEnding,
+    fold_skip: &[std::ops::Range<usize>],
+    window_byte: usize,
+    window_chars: usize,
+) -> Vec<ViewTokenWire> {
+    let mut tokens = Vec::new();
+    let buffer_len = buffer.len();
+    // Four bytes per character covers any UTF-8 scalar, plus room for the
+    // terminator the window may carry.
+    let read_bytes = window_chars.saturating_mul(4).saturating_add(16);
+    let mut line_start = top_byte.min(buffer_len);
+    let mut rows = 0usize;
+
+    while rows < visible_count {
+        // A line inside a collapsed fold is not drawn; step over the fold.
+        if let Some(r) = fold_skip.iter().find(|r| r.contains(&line_start)) {
+            line_start = r.end;
+            continue;
+        }
+        if line_start > buffer_len {
+            break;
+        }
+
+        // Where this line ends, when that is within reach. Out of reach means
+        // the line runs past anything a row could show, so the window is
+        // certainly inside it.
+        let next_line = buffer.next_line_start_within(line_start, LINE_SKIP_SCAN_BYTES);
+        let line_end = next_line.map(|n| n.saturating_sub(1)).unwrap_or(buffer_len);
+
+        let read_from = line_start.saturating_add(window_byte).min(line_end);
+        let take = (line_end.saturating_sub(read_from)).min(read_bytes);
+        let raw = buffer
+            .get_text_range_mut(read_from, take)
+            .unwrap_or_default();
+        let text = String::from_utf8_lossy(&raw);
+        // The end-of-line search is bounded, so `line_end` can be the buffer's
+        // end for a line whose break is merely far away. Stopping at the first
+        // break in what was read keeps a row to one line regardless.
+        let text = match text.find('\n') {
+            Some(i) => &text[..=i],
+            None => &text[..],
+        };
+
+        emit_line_text(&mut tokens, read_from, text, line_ending, window_chars);
+
+        // End the row. A window carrying the line's own terminator ends on a
+        // byte the document has; one that does not is a break the layout is
+        // inventing, and says so by carrying no source byte.
+        let terminator = line_terminator_offset(text.as_bytes(), read_from, line_ending);
+        let more_below = next_line.is_some_and(|n| n < buffer_len);
+        if !more_below {
+            break;
+        }
+        tokens.push(ViewTokenWire {
+            source_offset: terminator,
+            kind: ViewTokenWireKind::Newline,
+            style: None,
+        });
+
+        rows += 1;
+        match next_line {
+            Some(n) => line_start = n,
+            // No break within reach: this line is the last row there is.
+            None => break,
+        }
+    }
+
+    tokens
+}
+
+/// Emit one run of a line's text as tokens, anchored at `text_start`.
+///
+/// Shared by the two ways a row gets its text: reading a line from its start,
+/// and reading only the window of it that a horizontally scrolled pane draws.
+/// Source offsets are absolute either way, which is what lets the second exist
+/// — a row that begins mid-line still says which bytes it is showing.
+///
+/// Returns how many characters were emitted, and whether it stopped on
+/// `max_chars` with text still to come. The caller owns what that means: on a
+/// frame budget there is no room for another row, on a row budget there is.
+fn emit_line_text(
+    tokens: &mut Vec<ViewTokenWire>,
+    text_start: usize,
+    text: &str,
+    line_ending: LineEnding,
+    max_chars: usize,
+) -> (usize, bool) {
+    let content_bytes = text.as_bytes();
+    let mut byte_offset = 0usize;
+    let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
+    let mut emitted = 0usize;
+
+    for ch in text.chars() {
+        if emitted >= max_chars {
+            return (emitted, true);
+        }
+        emitted += 1;
+
+        let ch_len = ch.len_utf8();
+        let source_offset = Some(text_start + byte_offset);
+
+        match ch {
+            '\r' => {
+                // In CRLF mode with \r\n: emit Newline at \r position, skip the \n.
+                // In LF/Unix files, ANY \r is unusual and should be shown as <0D>.
+                let is_crlf_file = line_ending == LineEnding::CRLF;
+                let next_byte = content_bytes.get(byte_offset + 1);
+                if is_crlf_file && next_byte == Some(&b'\n') {
+                    tokens.push(ViewTokenWire {
+                        source_offset,
+                        kind: ViewTokenWireKind::Newline,
+                        style: None,
+                    });
+                    skip_next_lf = true;
+                    byte_offset += ch_len;
+                    continue;
+                }
+                tokens.push(ViewTokenWire {
+                    source_offset,
+                    kind: ViewTokenWireKind::BinaryByte(ch as u8),
+                    style: None,
+                });
+            }
+            '\n' if skip_next_lf => {
+                skip_next_lf = false;
+                byte_offset += ch_len;
+                continue;
+            }
+            '\n' => {
+                tokens.push(ViewTokenWire {
+                    source_offset,
+                    kind: ViewTokenWireKind::Newline,
+                    style: None,
+                });
+            }
+            ' ' => {
+                tokens.push(ViewTokenWire {
+                    source_offset,
+                    kind: ViewTokenWireKind::Space,
+                    style: None,
+                });
+            }
+            '\t' => {
+                tokens.push(ViewTokenWire {
+                    source_offset,
+                    kind: ViewTokenWireKind::Text(ch.to_string()),
+                    style: None,
+                });
+            }
+            _ if is_control_char(ch) => {
+                tokens.push(ViewTokenWire {
+                    source_offset,
+                    kind: ViewTokenWireKind::BinaryByte(ch as u8),
+                    style: None,
+                });
+            }
+            _ => {
+                if let Some(last) = tokens.last_mut() {
+                    if let ViewTokenWireKind::Text(ref mut s) = last.kind {
+                        let expected_offset = last.source_offset.map(|o| o + s.len());
+                        if expected_offset == Some(text_start + byte_offset) {
+                            s.push(ch);
+                            byte_offset += ch_len;
+                            continue;
+                        }
+                    }
+                }
+                tokens.push(ViewTokenWire {
+                    source_offset,
+                    kind: ViewTokenWireKind::Text(ch.to_string()),
+                    style: None,
+                });
+            }
+        }
+        byte_offset += ch_len;
+    }
+
+    (emitted, false)
+}
+
 /// Build tokens from a text buffer starting at `top_byte`, stopping roughly
 /// after `visible_count` visual lines. Honors CRLF / LF line endings and
 /// renders unsafe control characters as `BinaryByte` tokens.
@@ -161,105 +365,35 @@ pub(crate) fn build_base_tokens(
             if next_fold_start.is_some_and(|s| line_start >= s) {
                 break;
             }
-            let mut byte_offset = 0usize;
             let content_bytes = line_content.as_bytes();
-            let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
-            let mut chars_this_line = 0usize;
-            let mut cut_line = false;
-            for ch in line_content.chars() {
-                // Stop once the viewport's rows are covered. Unlike the
-                // `lines_seen` bound this fires inside a single long line,
-                // which is the only place it can fire at all.
-                if char_budget.is_some_and(|budget| chars_seen >= budget) {
-                    break 'segments;
-                }
-                // The rest of *this* line cannot be drawn, but the lines under
-                // it can: end the row here and move on to them.
-                if line_char_budget.is_some_and(|budget| chars_this_line >= budget) {
-                    cut_line = true;
-                    break;
-                }
-                chars_seen += 1;
-                chars_this_line += 1;
-
-                let ch_len = ch.len_utf8();
-                let source_offset = Some(line_start + byte_offset);
-
-                match ch {
-                    '\r' => {
-                        // In CRLF mode with \r\n: emit Newline at \r position, skip the \n.
-                        // In LF/Unix files, ANY \r is unusual and should be shown as <0D>.
-                        let is_crlf_file = line_ending == LineEnding::CRLF;
-                        let next_byte = content_bytes.get(byte_offset + 1);
-                        if is_crlf_file && next_byte == Some(&b'\n') {
-                            tokens.push(ViewTokenWire {
-                                source_offset,
-                                kind: ViewTokenWireKind::Newline,
-                                style: None,
-                            });
-                            skip_next_lf = true;
-                            byte_offset += ch_len;
-                            continue;
-                        }
-                        tokens.push(ViewTokenWire {
-                            source_offset,
-                            kind: ViewTokenWireKind::BinaryByte(ch as u8),
-                            style: None,
-                        });
-                    }
-                    '\n' if skip_next_lf => {
-                        skip_next_lf = false;
-                        byte_offset += ch_len;
-                        continue;
-                    }
-                    '\n' => {
-                        tokens.push(ViewTokenWire {
-                            source_offset,
-                            kind: ViewTokenWireKind::Newline,
-                            style: None,
-                        });
-                    }
-                    ' ' => {
-                        tokens.push(ViewTokenWire {
-                            source_offset,
-                            kind: ViewTokenWireKind::Space,
-                            style: None,
-                        });
-                    }
-                    '\t' => {
-                        tokens.push(ViewTokenWire {
-                            source_offset,
-                            kind: ViewTokenWireKind::Text(ch.to_string()),
-                            style: None,
-                        });
-                    }
-                    _ if is_control_char(ch) => {
-                        tokens.push(ViewTokenWire {
-                            source_offset,
-                            kind: ViewTokenWireKind::BinaryByte(ch as u8),
-                            style: None,
-                        });
-                    }
-                    _ => {
-                        if let Some(last) = tokens.last_mut() {
-                            if let ViewTokenWireKind::Text(ref mut s) = last.kind {
-                                let expected_offset = last.source_offset.map(|o| o + s.len());
-                                if expected_offset == Some(line_start + byte_offset) {
-                                    s.push(ch);
-                                    byte_offset += ch_len;
-                                    continue;
-                                }
-                            }
-                        }
-                        tokens.push(ViewTokenWire {
-                            source_offset,
-                            kind: ViewTokenWireKind::Text(ch.to_string()),
-                            style: None,
-                        });
-                    }
-                }
-                byte_offset += ch_len;
+            // Two budgets bound this line: the frame's remaining characters,
+            // which ends the whole build, and the row's own width, which ends
+            // only this line. Whichever is smaller stops the emission; which
+            // one it was decides what happens next.
+            let remaining_global = char_budget.map(|b| b.saturating_sub(chars_seen));
+            let line_cap = match (remaining_global, line_char_budget) {
+                (Some(g), Some(l)) => g.min(l),
+                (Some(g), None) => g,
+                (None, Some(l)) => l,
+                (None, None) => usize::MAX,
+            };
+            if remaining_global == Some(0) {
+                break 'segments;
             }
+            let (emitted, stopped_short) = emit_line_text(
+                &mut tokens,
+                line_start,
+                &line_content,
+                line_ending,
+                line_cap,
+            );
+            chars_seen += emitted;
+            // Stopped on the frame's budget rather than the row's: there is no
+            // room for another row, so nothing below this one can be drawn.
+            if stopped_short && remaining_global.is_some_and(|g| emitted >= g) {
+                break 'segments;
+            }
+            let cut_line = stopped_short;
             if cut_line {
                 // The rest of the line is off the right-hand edge of the pane,
                 // but the row still has to end and the lines under it still
