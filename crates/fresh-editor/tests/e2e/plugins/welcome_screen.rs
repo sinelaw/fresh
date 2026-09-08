@@ -643,7 +643,7 @@ fn moving_the_caret_onto_prose_disarms_the_focused_control() {
 
     // Click the tagline — prose, carrying no control of any kind.
     let (col, row) = harness
-        .find_text_on_screen("It grows when your work does")
+        .find_text_on_screen("A terminal text editor")
         .expect("the tagline is on screen");
     harness.mouse_click(col + 2, row).unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
@@ -943,8 +943,8 @@ fn the_contents_button_puts_the_pages_outline_in_the_sidebar() {
     for entry in [
         "LEVEL 1 · JUST EDIT",
         "LEVEL 2 · IT'S A PROJECT NOW",
-        "LEVEL 3 · RUN THE WHOLE SHOP",
-        "Review Diff — read a change",
+        "LEVEL 3 · MANY TASKS AT ONCE",
+        "Review Diff",
     ] {
         assert!(
             screen.contains(entry),
@@ -1069,21 +1069,29 @@ fn the_ui_row_opens_the_file_explorer() {
 }
 
 /// **The Review Diff card teaches keys the tool actually binds.** Every
-/// chord on it is one `audit_mode.ts` binds in `review-mode`; a welcome
-/// screen that teaches a chord the editor does not have is worse than
-/// one that teaches nothing.
+/// chord on it is resolved from `review-mode` at render time rather than
+/// written into the page, so it is the binding `audit_mode.ts` has —
+/// and where the mode is absent, as it is in this harness, the row is
+/// left out rather than guessed at. A welcome screen that teaches a
+/// chord the editor does not have is worse than one that teaches
+/// nothing, which is what makes the card's prose the part to pin here.
 #[test]
-fn the_review_diff_card_is_on_the_page_with_its_keys() {
+fn the_review_diff_card_is_on_the_page() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
     // In document order, walking to each: the card is taller than a
     // viewport once the git card above it has anything to say, so no one
     // screen holds all of it.
+    // Not the key column: those rows are resolved from `review-mode`,
+    // which `audit_mode.ts` registers — and this harness loads the
+    // welcome plugin alone, so the mode does not exist and every row
+    // that depends on it is correctly left out. What the card always
+    // carries is its prose and its button.
     for line in [
-        "next / previous hunk",
-        "stage · unstage · discard the hunk under the cursor",
-        "export the session as Markdown",
+        "Your changes as one diff",
+        "Review Diff: Range",
+        "Unstage and discard sit beside stage",
         "Review the working tree",
     ] {
         scroll_until(&mut harness, line);
@@ -1272,7 +1280,7 @@ fn a_keyboard_selection_is_visible_and_copies() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
     let (col, row) = harness
-        .find_text_on_screen("It grows when your work does")
+        .find_text_on_screen("A terminal text editor")
         .expect("the tagline is on screen");
     harness.mouse_click(col, row).unwrap();
     harness.wait_for_async_quiescence(4).unwrap();
@@ -1300,7 +1308,7 @@ fn a_keyboard_selection_is_visible_and_copies() {
     harness.wait_for_async_quiescence(4).unwrap();
     assert_eq!(
         harness.editor_mut().clipboard_content_for_test(),
-        "It grows",
+        "A termin",
         "Ctrl+C did not take the eight characters Shift+Right selected"
     );
 }
@@ -1315,7 +1323,7 @@ fn dragging_across_the_page_selects_what_it_crossed() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
     let (col, row) = harness
-        .find_text_on_screen("It grows when your work does")
+        .find_text_on_screen("A terminal text editor")
         .expect("the tagline is on screen");
 
     harness.editor_mut().set_clipboard_for_test(String::new());
@@ -1335,7 +1343,7 @@ fn dragging_across_the_page_selects_what_it_crossed() {
     harness.wait_for_async_quiescence(4).unwrap();
     assert_eq!(
         harness.editor_mut().clipboard_content_for_test(),
-        "It grows",
+        "A termin",
         "the drag selected something other than what it crossed"
     );
 }

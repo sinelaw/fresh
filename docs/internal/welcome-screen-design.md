@@ -1190,3 +1190,66 @@ across a restart** (the screen then stays away, and the `Welcome` command
 brings it back), `Ctrl+P` opening the palette from the page, the `[No Name]`
 seed keeping the pane with `Welcome ×` beside it, `fresh notes.txt` leaving a
 Welcome tab behind `notes.txt`, and both responsive breakpoints.
+
+---
+
+## 14. The content pass
+
+The first viewport was doing its job — wordmark, one line, three doors, the
+UI row, the verbs, the reassurance — and is unchanged. Everything below it
+was not: the three levels were a feature list with holes in it, and the holes
+were the features a reader is least likely to already know exist. A welcome
+screen is the product's only in-editor index, so the rule for what earns a
+card is *a reader would otherwise have to be told this by someone else*.
+
+**Added — five cards.** Level 1 gets **Find it** — the palette's four modes, `Ctrl+F` /
+`Ctrl+R`, position history, Live Grep and project-wide replace — because
+finding things is the second thing anyone does and the page never said how.
+Level 2 gets **The terminal is just another buffer** (dock, `Ctrl+Click` on a
+path, send-selection, restart-in-place) and **Extend it in TypeScript** (the
+QuickJS sandbox, the package manager, `init.ts`, hot-reload from the buffer).
+Level 3 gets **Have the codebase explained to you** (code tours, and the fact
+that the right way to get one is to ask an agent for it) and **Drive a running
+editor from outside it** (`fresh --cmd script`), which is the level's missing
+half: the Orchestrator is agents working in your worktrees, and scripting is
+how their work arrives on your screen.
+
+**Rewritten.** Every surviving card's prose was set against
+`docs/features/*` and the feature list on getfresh.dev rather than from
+memory — the LSP card now names the languages that ship and the two-servers-
+per-language case, the git card names the log, blame, gutter and conflict
+resolver, the review card names what a range review is for and that comments
+outlive the session, the big-files card explains the byte-offset gutter and
+the line scan, and `$EDITOR` covers the daemon as well as `--wait`.
+
+**Three rules held throughout.**
+
+*Nothing is named that was not read off its definition.* Command labels come
+from the plugin's `i18n.json`, handler names from its `registerCommand` call,
+CLI lines from the docs page that documents them. The distinction that bites
+is label versus handler: `executeAction` on a name no handler owns fails in
+the log and not on screen, so a button whose label drifted from its handler
+is a dead control that still makes a promise. Every new button names the
+handler (`start_live_grep`, `start_search_replace`, `open_theme_editor`,
+`pkg_list`, `tour_discover`, plus the core `open_terminal` and
+`open_keybinding_editor`).
+
+*Chords come from the live keymap.* `chord(action, fallback)` prefers
+`getKeybindingLabel` and falls back to the documented default, so a reader
+who has rebound `Ctrl+P` is taught their key, and an action this build has
+not bound leaves a stock chord rather than a hole in the key column.
+
+*The page got longer, and that is the outline's problem, not the reader's.*
+Five new cards is five new entries in the Contents section and five new fold
+arrows. The first viewport still mentions no LSP, git, worktree or agent, and
+the permission to stop climbing still closes the prose — the two lines added
+after it are a signpost to the palette and the docs, not another rung.
+
+**What the review caught.** Four claims were wrong and are fixed here rather
+than left standing: a language server does *not* start itself on open (every
+shipped config is `auto_start: false`, so the card now says to turn one on);
+`fresh --cmd help` serves three feature guides, not the CLI reference, which
+is `fresh --help`; the scripting sample assumed split `0` still exists, where
+the docs derive the pane; and the footer's one styled row was 80 columns, so
+it wrapped on an 80-column terminal — the one width on the page that had not
+been measured.
