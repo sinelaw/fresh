@@ -1,0 +1,101 @@
+{
+  "name": "fresh-wave-logic",
+  "capture": {
+    "geometry": "152x15",
+    "font": "DejaVu Sans Mono 15",
+    "screen": "2100x700x24",
+    "display": ":99",
+    "settle": 18,
+    "copy_files": [
+      "~/repos/fresh/scripts/clips/assets/fresh-wave-logic/WINGDINGS.TXT"
+    ],
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-wave-logic/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 3
+      },
+      {
+        "record": "wave",
+        "seconds": 16,
+        "fps": 30
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "key": "F9"
+      }
+    ],
+    "panes": {
+      "wave": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "WINGDINGS.TXT"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1920,
+      1080
+    ],
+    "fps": 60,
+    "rows": 15,
+    "cols": 152,
+    "title": "Microsoft Word - WAVE.DOC",
+    "chrome": {
+      "style": "word6",
+      "assets": "~/Documents/fresh-clip-assets",
+      "scale": 3,
+      "layout": "side",
+      "headline_width": 0.3,
+      "header_block": 152,
+      "body_size": 22,
+      "body_lead": 27,
+      "body_lines": 5
+    },
+    "timing": {
+      "intro": 0,
+      "zoom": 0,
+      "hold": 16,
+      "pan": 0,
+      "outro": 0
+    },
+    "annotations": [
+      {
+        "shots": "wave",
+        "hold": 16,
+        "typewriter": 0.5,
+        "misspell": [
+          "sim"
+        ],
+        "head": [
+          "Fresh",
+          "Wave"
+        ],
+        "sub": [
+          "The wave animation is actually a particle sim.",
+          "It grabs the real terminal state \u2014 every",
+          "character cell on screen \u2014 then floods it",
+          "with three stacked sine waves, and throws",
+          "each cell the crest reaches."
+        ]
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

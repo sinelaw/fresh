@@ -74,3 +74,8 @@ tests/wrap_model/.venv/
 tests/wrap_model/.hypothesis/
 __pycache__/
 *.pyc
+
+# Clip assets extracted from licensed Microsoft media (XP VM font directory).
+# Usable locally to render scripts/clips, never redistributable.
+# Backup lives in ~/Documents/fresh-clip-assets/.
+scripts/clips/assets/*/fonts/

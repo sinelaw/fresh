@@ -1,0 +1,258 @@
+  /* Web theme: Word — Microsoft Word 6.0 on Windows 3.1.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Gated on body.theme-word (set by js/15-theme.js). A SHELL theme: it
+     reuses the COSMOS layout — the grid stays inset inside #device and the
+     dock floats beside it (SHELL_THEMES / layoutShell / widgetSurfaceEls) —
+     but dresses the bezel as one application window: caption, menu bar, a
+     single toolbar row, a ruler. Its decoration is DECLARED as theme furniture
+     (WEB_THEME_FURNITURE.word), not baked into shell.html.
+
+     The menu bar is the odd one out: it is not furniture but fresh's own
+     .region.menubar, translated up out of the grid onto a band in the bezel,
+     so Word's caption/menu/toolbar/ruler order is met without giving up the
+     real File/Edit/View element. See "the real menu bar, lifted" below.
+
+     THE WHOLE PALETTE IS FIVE COLOURS. #C0C0C0 face, #808080 shadow, white,
+     black, and #000080 for selection with #0000C0 for the caption. Windows
+     3.1 has no "button light" tone — that arrived with Win95 — so a raised
+     edge is white against shadow or black and nothing is a soft grey. Every
+     corner is square and every shadow is a hard offset with no blur.
+
+     Menu bars are WHITE here. Windows 3.1's were, and painting them grey is
+     the single fastest way to make 1993 look like 1995.
+
+     Word's own toolbar icons are Microsoft artwork and are not ours to ship,
+     so the plates carry abstract CSS marks that read as a toolbar without
+     copying one.
+
+     Anything painted over the cell grid uses colour + inset shadows only —
+     borders or padding on chrome rows would slide the DOM off the cell pitch.
+     ====================================================================== */
+
+  body.theme-word{
+    --wd-face:#c0c0c0;
+    --wd-shadow:#808080;
+    --wd-title:#0000c0;
+    /* A raised Win3.1 edge: white top-left, shadow then black bottom-right.
+       Two rings, not one, which is what gives the plates their thickness. */
+    --wd-raise:inset 1px 1px 0 #fff, inset -1px -1px 0 #000,
+               inset 2px 2px 0 var(--wd-face), inset -2px -2px 0 var(--wd-shadow);
+    /* ...and the same read backwards, for wells and pressed plates. */
+    --wd-sink:inset 1px 1px 0 var(--wd-shadow), inset -1px -1px 0 #fff,
+              inset 2px 2px 0 #000, inset -2px -2px 0 var(--wd-face);
+    --wd-ui:"MS Sans Serif","Microsoft Sans Serif",Tahoma,Verdana,Geneva,sans-serif;
+    /* Where the menu-bar band sits inside #device. The band is placed at it and
+       the real menu bar is translated onto it, so one value moves both. */
+    --wd-band-y:25px;
+    letter-spacing:normal;
+  }
+
+  /* ---- the desk: the Windows 3.1 teal, with its 50% dither ---- */
+  body.theme-word:not(.mobile){background:
+    repeating-conic-gradient(rgba(255,255,255,.035) 0 25%, transparent 0 50%)
+      0 0/4px 4px,
+    #008080}
+
+  /* ==================== the application window ========================== */
+  /* Outer black rule, a face-coloured frame, then an inner black rule — and no
+     bottom edge on either. The window is taller than the screen, so the
+     document runs off it and there is visibly more to scroll to. */
+  body.theme-word #device{border-radius:0;position:relative;background:var(--wd-face);
+    box-shadow:inset 0 0 0 1px #000, inset 3px 3px 0 var(--wd-face),
+      inset 0 3px 0 #000, inset 3px 0 0 #000, inset -3px 0 0 #000,
+      inset 4px 4px 0 var(--wd-face)}
+
+  /* The document well: white paper, sunken into the frame on two sides only.
+     A closed border all round would read as a short window rather than a tall
+     one, which is the opposite of what the missing status bar is saying. */
+  body.theme-word #device .dv-screen{border-radius:0;background:#fff;
+    box-shadow:inset 1px 1px 0 var(--wd-shadow), inset 0 0 0 1px rgba(0,0,0,.25)}
+
+  /* ---- caption: the control-menu box, then centred white bold ---- */
+  body.theme-word #device .wd-title{position:absolute;left:4px;right:4px;top:4px;
+    height:20px;display:flex;align-items:center;background:var(--wd-title)}
+  body.theme-word #device .wd-title-text{flex:1;text-align:center;
+    font:700 13px/1 var(--wd-ui);color:#fff;letter-spacing:.01em;
+    /* Sits over the caption, so it must clear the box on the left without
+       being nudged off centre by it. */
+    padding-right:22px}
+  /* The control-menu box: NOT a bevelled button. A flat black-outlined bar,
+     white filled, with a one-pixel grey drop shadow, in a face-coloured cell
+     fenced off the caption by a black rule. */
+  body.theme-word #device .wd-sysbox{position:relative;width:22px;height:100%;
+    flex:0 0 auto;background:var(--wd-face);box-shadow:inset -1px 0 0 #000}
+  body.theme-word #device .wd-sysbox::before{content:"";position:absolute;
+    left:4px;right:7px;top:50%;height:4px;margin-top:-2px;
+    background:#fff;box-shadow:0 0 0 1px #000, 2px 2px 0 -1px var(--wd-shadow)}
+
+  /* ---- the menu-bar band: the white strip the real menu bar is lifted onto ----
+     Windows 3.1 menu bars are WHITE, and painting one grey is the fastest way
+     to make 1993 look like 1995. The band is deliberately taller than the
+     one-cell-tall element that lands on it, so the leftover strip reads as
+     more menu bar rather than as a seam. The black rules that fence the
+     caption off above and the toolbar off below are drawn by the band as
+     outer shadows on its own edges, so no separate hairline nodes are needed. */
+  body.theme-word #device .wd-menuband{position:absolute;left:4px;right:4px;
+    top:var(--wd-band-y);height:22px;background:#fff;
+    box-shadow:0 -1px 0 #000, 0 1px 0 #000}
+
+  /* ---- one toolbar row: plates, then the zoom field ---- */
+  body.theme-word #device .wd-toolbar{position:absolute;left:4px;right:4px;top:48px;
+    height:28px;display:flex;align-items:center;gap:8px;padding:0 6px;
+    background:var(--wd-face);box-shadow:inset 0 -1px 0 #fff, inset 0 -2px 0 var(--wd-shadow)}
+  body.theme-word #device .wd-grp{display:flex;gap:1px}
+  body.theme-word #device .wd-grow{flex:1}
+  body.theme-word #device .wd-btn{position:relative;width:22px;height:22px;
+    background:var(--wd-face);box-shadow:var(--wd-raise)}
+  /* Buttons are real controls here, not decoration: the furniture host is
+     pointer-transparent, so each plate has to opt back in. */
+  body.theme-word #device .wd-btn{pointer-events:auto;cursor:default;
+    background-repeat:no-repeat;background-position:center;background-size:16px 16px}
+  body.theme-word #device .wd-btn:active{box-shadow:var(--wd-sink)}
+  body.theme-word #device .wd-btn:focus-visible{outline:1px dotted #000;outline-offset:-4px}
+
+  /* Toolbar icons: 16x16 in the Windows 3.1 palette, authored here. Word's
+     own artwork is Microsoft's and is not ours to ship, so these are drawn
+     to read as the same commands rather than to copy the same pictures. */
+  body.theme-word #device .wd-new{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><path d='M3.5 1.5h6l3 3v10h-9z' fill='%23fff' stroke='%23000'/><path d='M9.5 1.5v3h3' fill='none' stroke='%23000'/><path d='M5 7h6M5 9h6M5 11h4' stroke='%23808080'/></svg>")}
+  body.theme-word #device .wd-open{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><path d='M1.5 13.5V3.5h4l1.5 2h6v8z' fill='%23c8a02c' stroke='%23000'/><path d='M3.5 13.5l2-5h9l-2 5z' fill='%23e0c060' stroke='%23000'/></svg>")}
+  body.theme-word #device .wd-save{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><rect x='1.5' y='1.5' width='13' height='13' fill='%23c8a02c' stroke='%23000'/><rect x='4.5' y='1.5' width='7' height='5' fill='%23fff' stroke='%23000'/><rect x='9' y='2.5' width='2' height='3' fill='%23000080'/><rect x='3.5' y='8.5' width='9' height='6' fill='%23fff' stroke='%23000'/></svg>")}
+  body.theme-word #device .wd-cut{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><path d='M4 2l7 9M12 2l-7 9' stroke='%23000080' stroke-width='1.4' fill='none'/><circle cx='4.5' cy='12.5' r='2' fill='%23fff' stroke='%23000080'/><circle cx='11.5' cy='12.5' r='2' fill='%23fff' stroke='%23000080'/></svg>")}
+  body.theme-word #device .wd-copy{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><rect x='1.5' y='1.5' width='8' height='10' fill='%23fff' stroke='%23000'/><rect x='5.5' y='4.5' width='9' height='10' fill='%23fff' stroke='%23000'/><path d='M7 7h6M7 9h6M7 11h4' stroke='%23000080'/></svg>")}
+  body.theme-word #device .wd-paste{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><rect x='2.5' y='2.5' width='11' height='12' fill='%23c8a02c' stroke='%23000'/><rect x='5.5' y='1' width='5' height='3' fill='%23c0c0c0' stroke='%23000'/><rect x='4.5' y='6.5' width='7' height='7' fill='%23fff' stroke='%23000'/></svg>")}
+  body.theme-word #device .wd-undo{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><path d='M13 12a5 5 0 0 0-9-3' fill='none' stroke='%23000080' stroke-width='2'/><path d='M2 4v5h5z' fill='%23000080'/></svg>")}
+  body.theme-word #device .wd-redo{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><path d='M3 12a5 5 0 0 1 9-3' fill='none' stroke='%23000080' stroke-width='2'/><path d='M14 4v5h-5z' fill='%23000080'/></svg>")}
+  body.theme-word #device .wd-search{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><circle cx='6.5' cy='6.5' r='4.5' fill='%23fff' stroke='%23000080' stroke-width='1.6'/><path d='M10 10l4 4' stroke='%23000080' stroke-width='2'/></svg>")}
+  body.theme-word #device .wd-palette{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><path d='M8 1l1.8 4.4 4.7.4-3.6 3 1.1 4.6L8 11l-4 2.4 1.1-4.6-3.6-3 4.7-.4z' fill='%23c8a02c' stroke='%23000'/></svg>")}
+  body.theme-word #device .wd-explorer{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><rect x='1.5' y='2.5' width='5' height='11' fill='%23c0c0c0' stroke='%23000'/><rect x='6.5' y='2.5' width='8' height='11' fill='%23fff' stroke='%23000'/><path d='M8 5h5M8 7.5h5M8 10h3' stroke='%23808080'/></svg>")}
+  body.theme-word #device .wd-settings{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><circle cx='8' cy='8' r='3' fill='%23fff' stroke='%23000'/><path d='M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13' stroke='%23000080' stroke-width='1.6'/></svg>")}
+
+  /* The zoom field: a white well and a detached drop-down plate, the way Word
+     6.0 drew a combo — the arrow button stands off the field, not inside it. */
+  body.theme-word #device .wd-zoom{min-width:46px;height:20px;background:#fff;
+    font:700 12px/20px var(--wd-ui);color:#000;text-align:center;
+    box-shadow:var(--wd-sink)}
+  body.theme-word #device .wd-arrow{position:relative;width:17px;height:22px;
+    margin-left:3px;background:var(--wd-face);box-shadow:var(--wd-raise)}
+  body.theme-word #device .wd-arrow::before{content:"";position:absolute;
+    left:5px;top:9px;width:7px;height:5px;background:#000;
+    clip-path:polygon(0 0,100% 0,50% 100%)}
+
+  /* ---- ruler: a sunken white strip of tick marks ---- */
+  body.theme-word #device .wd-ruler{position:absolute;left:4px;right:4px;top:76px;
+    height:16px;background:var(--wd-face)}
+  body.theme-word #device .wd-rmark{position:absolute;left:36px;right:40px;top:3px;
+    height:10px;background:#fff;box-shadow:var(--wd-sink);
+    background-image:repeating-linear-gradient(90deg,
+      var(--wd-shadow) 0 1px,transparent 1px 12px)}
+
+  /* ===================== chrome inside the document ===================== */
+  /* Cell-aligned rows: colour + inset bevels only, never box metrics. */
+  /* The menu bar is white — Windows 3.1's was. The bevel underneath it is for
+     the full-bleed (mobile) shell, where the bar stays in the grid and has to
+     fence itself off the document; the lift below drops it again. */
+  body.theme-word .menubar{background:#fff;color:#000;
+    box-shadow:inset 0 -1px 0 #000}
+
+  /* ---- the real menu bar and its menus, lifted into the chrome ----
+     Word's bands run caption, menu bar, toolbar, ruler, but fresh's menu bar
+     is row 0 of the CELL GRID, which starts below the whole bezel — so left
+     alone it lands under the ruler. Rebuilding it as furniture would mean a
+     second File/Edit/View with none of the editor's hit-testing behind it, so
+     the REAL element is translated onto the band and keeps every handler it
+     already has. Row 0 of the grid is left blank in exchange; that is the cost
+     of the lift, not an artefact to reclaim. The offset is the band's y less
+     the bezel's height, because layoutShell pins #device exactly --bezel-top
+     above the grid's origin.
+
+     The whole menu family moves, not just the bar: the pipeline places the
+     dropdown box on the row directly under the menu bar, so one shared offset
+     keeps the panel hanging off the bar at every zoom, and lifting the bar
+     alone would strand its menus on the empty top row. The rows are SIBLINGS
+     of the .dropdown that backs them, not children (js/80-input.js names the
+     same family for the same reason), and fitMenuWidths pairs them up by
+     client rect — which includes transforms — so a panel that moved without
+     its rows could no longer size itself. Their shared container is no
+     shortcut: it is display:contents and has no box to transform. The menus
+     covering the toolbar, ruler and document is correct — that is what a menu
+     does.
+
+     Nothing needs a z-index: #app follows #device and neither is stacked, so
+     this already paints over the bezel. The band draws the rules above and
+     below, so the bar drops its own rather than doubling the lower one. */
+  body.theme-word:not(.mobile) .menubar,
+  body.theme-word:not(.mobile) .dropdown,
+  body.theme-word:not(.mobile) .mitem,
+  body.theme-word:not(.mobile) .msep,
+  body.theme-word:not(.mobile) .mlabel{
+    transform:translateY(calc(var(--wd-band-y) - var(--bezel-top)))}
+  /* The band draws the rules above and below, so the bar drops its own rather
+     than doubling the lower one. The dock clip stays: the lift is vertical
+     only, so the bar still spans the full grid width from APPX while
+     layoutShell shifts #device right by the dock's width — without the clip its
+     leftmost --clip-left px reach out past the bezel and over the dock. A
+     clip-path applies after the transform, against the element's own border
+     box, so the two do not interfere. */
+  body.theme-word:not(.mobile) .menubar{box-shadow:none;
+    clip-path:inset(0 0 0 var(--clip-left,0px))}
+  body.theme-word .menu{color:#000}
+  body.theme-word .menu:hover,body.theme-word .menu.open{background:#000080;color:#fff}
+  /* Tabs: raised plates, the active one pressed into the frame. */
+  body.theme-word .tab{background:var(--wd-face);color:#000;
+    box-shadow:inset 1px 1px 0 #fff, inset -1px -1px 0 var(--wd-shadow)}
+  body.theme-word .tab.active{background:#fff;color:#000;
+    box-shadow:inset 1px 1px 0 var(--wd-shadow), inset -1px -1px 0 #fff}
+  /* Status bar: face grey with a hairline lip, and its indicators greyed —
+     they are switched off, and that greying is most of what makes a Word
+     status bar recognisable. */
+  body.theme-word .statusbar{background:var(--wd-face);color:#000;
+    box-shadow:inset 0 1px 0 var(--wd-shadow), inset 0 2px 0 #fff}
+  /* File explorer: a sunken white pane. */
+  body.theme-word .fileexplorer{background:#fff;color:#000;
+    box-shadow:var(--wd-sink)}
+  body.theme-word .fileexplorer .fx-row.sel{background:#000080;color:#fff}
+  body.theme-word .fileexplorer .fx-title{background:var(--wd-face);color:#000;
+    box-shadow:inset 0 -1px 0 var(--wd-shadow)}
+
+  /* ---- floating surfaces: dialogs, not frosted glass ---- */
+  body.theme-word .palette,body.theme-word .ctxmenu,body.theme-word .dropdown,
+  body.theme-word .m-sheet,body.theme-word .popup{border-radius:0;border:0;
+    background:var(--wd-face);color:#000;
+    box-shadow:var(--wd-raise), 2px 2px 0 rgba(0,0,0,.45)}
+  /* Their list bodies are white wells. */
+  body.theme-word .palette .plist{background:#fff;box-shadow:var(--wd-sink)}
+  /* Selection is the flat navy block, no ring and no rounding. */
+  body.theme-word .ctxmenu .ctxitem.sel,body.theme-word .mitem.hi,
+  body.theme-word .palette .prow.sel{background:#000080;color:#fff;border-radius:0}
+  body.theme-word .mitem.hi .accel{color:#fff}
+  /* Engraved menu separators: a grey groove capped by a white highlight. */
+  body.theme-word .msep{background:none;height:2px;
+    box-shadow:inset 0 1px 0 var(--wd-shadow), inset 0 -1px 0 #fff}
+
+  /* Text fields: recessed white wells. */
+  body.theme-word input,body.theme-word .pinput{
+    border-radius:0;border:0;background:#fff;color:#000;box-shadow:var(--wd-sink)}
+  /* Buttons: raised plates that press in. */
+  body.theme-word .w-button,body.theme-word button{border-radius:0;border:0;
+    background:var(--wd-face);color:#000;box-shadow:var(--wd-raise);
+    font-family:var(--wd-ui)}
+  body.theme-word .w-button:active,body.theme-word button:active{
+    box-shadow:var(--wd-sink)}
+  /* Chunky bevelled scrollbars on a dithered trough. */
+  body.theme-word ::-webkit-scrollbar{width:16px;height:16px}
+  body.theme-word ::-webkit-scrollbar-track{
+    background:repeating-conic-gradient(#fff 0 25%, var(--wd-face) 0 50%) 0 0/2px 2px}
+  body.theme-word ::-webkit-scrollbar-thumb{border-radius:0;
+    background:var(--wd-face);box-shadow:var(--wd-raise)}
+
+  /* The theme switcher pill, re-skinned as a dialog control. */
+  body.theme-word #themebtn,body.theme-word #thememenu{border-radius:0;border:0;
+    background:var(--wd-face);color:#000;
+    box-shadow:var(--wd-raise), 2px 2px 0 rgba(0,0,0,.45);font-family:var(--wd-ui)}
+  body.theme-word .ts-row{border-radius:0}
+  body.theme-word .ts-row.on,body.theme-word .ts-row:hover{background:#000080;color:#fff}
+  body.theme-word .ts-row.on .ts-desc,body.theme-word .ts-row:hover .ts-desc,
+  body.theme-word .ts-row.on .ts-check{color:#fff}
