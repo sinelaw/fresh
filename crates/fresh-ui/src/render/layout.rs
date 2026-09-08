@@ -33,6 +33,7 @@ pub(crate) struct Carry {
     priority: u8,
     pointer: Option<crate::desc::PointerMode>,
     theme: Option<Rc<str>>,
+    classes: Option<Rc<str>>,
     key: Option<crate::key::Key>,
     focus_parent: Option<crate::focus::FocusId>,
 }
@@ -388,6 +389,15 @@ impl<M: 'static> Ui<M> {
             .clone()
             .or_else(|| resolve(&el.desc).theme.clone())
             .or(carry.theme);
+        // Inherited exactly as provenance is: a node that names no class wears
+        // the nearest enclosing one, so a button's label run is still part of
+        // the button.
+        let classes = el
+            .desc
+            .classes
+            .clone()
+            .or_else(|| resolve(&el.desc).classes.clone())
+            .or(carry.classes);
         let key = el.key.clone().or(carry.key);
         let render = el.render;
         let focus = el.focus;
@@ -418,9 +428,11 @@ impl<M: 'static> Ui<M> {
                     n.priority = priority;
                     n.pointer = pointer;
                     n.theme = theme;
+                    n.classes = classes;
                     n.key = key;
                 }
                 let carried = self.render[r].theme.clone();
+                let carried_classes = self.render[r].classes.clone();
                 let mut inner = Vec::new();
                 let mut finner = Vec::new();
                 for k in kids {
@@ -432,6 +444,7 @@ impl<M: 'static> Ui<M> {
                         Carry {
                             parent: Some(r),
                             theme: carried.clone(),
+                            classes: carried_classes.clone(),
                             focus_parent,
                             ..Carry::default()
                         },
@@ -466,6 +479,7 @@ impl<M: 'static> Ui<M> {
                             priority,
                             pointer,
                             theme: theme.clone(),
+                            classes: classes.clone(),
                             key: key.clone(),
                             focus_parent,
                         },

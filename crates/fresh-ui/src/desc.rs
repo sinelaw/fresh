@@ -83,6 +83,9 @@ pub struct Node<M> {
     /// Per-item provenance for the display list. Inherited by descendants that
     /// do not set their own. The library never interprets it.
     pub theme: Option<Rc<str>>,
+    /// What this node is — a space-separated class list, inherited the same
+    /// way and interpreted just as little. See `render::spec::Classes`.
+    pub classes: Option<Rc<str>>,
     /// An owner's handle to this element, bound when it mounts.
     pub anchor: Option<Rc<crate::behavior::Anchor>>,
     pub desc: Desc<M>,
@@ -954,6 +957,7 @@ impl<M> Clone for Node<M> {
             priority: self.priority,
             pointer: self.pointer,
             theme: self.theme.clone(),
+            classes: self.classes.clone(),
             anchor: self.anchor.clone(),
             desc: self.desc.clone(),
             children: self.children.clone(),
@@ -1062,6 +1066,7 @@ impl<M> Node<M> {
             min_h: 0,
             pointer: None,
             theme: None,
+            classes: None,
             anchor: None,
             desc,
             children: Vec::new(),
@@ -1079,6 +1084,7 @@ impl<M> Node<M> {
             min_h: 0,
             pointer: None,
             theme: None,
+            classes: None,
             anchor: None,
             desc: Desc::Box(BoxProps::default()),
             children: Vec::new(),
@@ -1268,6 +1274,12 @@ impl<M> Node<M> {
     /// on every display-list item they produce.
     pub fn theme(mut self, name: impl AsRef<str>) -> Self {
         self.theme = Some(Rc::from(name.as_ref()));
+        self
+    }
+
+    /// Name what this node is, for a backend's stylesheet to match on.
+    pub fn classes(mut self, names: impl AsRef<str>) -> Self {
+        self.classes = Some(Rc::from(names.as_ref()));
         self
     }
 

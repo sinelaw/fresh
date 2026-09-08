@@ -881,6 +881,7 @@ impl<M: 'static> Ui<M> {
             raw_input,
             scrollbar,
             theme: None,
+            classes: None,
             key: None,
             data: RenderData::fresh(),
         });

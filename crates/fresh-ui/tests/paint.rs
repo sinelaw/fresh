@@ -1096,3 +1096,98 @@ fn a_layer_that_places_its_own_cursor_keeps_that_one() {
         "the layer's own field's"
     );
 }
+
+/// A class is inherited by descendants that name none of their own — the same
+/// rule provenance follows, and the reason a button's label run is still part
+/// of the button by the time a backend sees it.
+///
+/// It is a *separate* slot from the theme, and the two do not interfere: a node
+/// may name one, the other, or both, and each is carried independently.
+#[test]
+fn classes_are_inherited_like_provenance_and_are_not_the_theme() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().theme("panel").child(
+            col()
+                .classes("button primary")
+                .theme("ui.fg/ui.bg")
+                .child(text("New Task…")),
+        ),
+        FRAME,
+    );
+
+    let run = spec
+        .items
+        .iter()
+        .find(|i| matches!(&i.draw, Draw::Lines(l) if l.iter().any(|s| s.contains("New Task"))))
+        .expect("the label run is in the display list");
+
+    // The run names no class of its own and still wears its parent's.
+    assert_eq!(run.classes.as_str(), "button primary");
+    assert_eq!(
+        run.classes.iter().collect::<Vec<_>>(),
+        vec!["button", "primary"],
+        "a class list reads in the order it was written"
+    );
+    // …and the theme is carried on its own slot, untouched by any of that.
+    assert_eq!(run.theme.as_str(), "ui.fg/ui.bg");
+
+    // A node outside the classed subtree inherits nothing from it.
+    let outer = spec
+        .items
+        .iter()
+        .find(|i| i.classes.is_empty() && i.theme.as_str() == "panel");
+    assert!(
+        outer.is_some(),
+        "the enclosing panel names a theme and no class"
+    );
+
+    // **The box and its content are both classed, and the KIND tells them
+    // apart.** A classed node emits a fill over its own rectangle and its text
+    // arrives as a separate run wearing the same class — so "where is the
+    // button" is answered by the fill, and "what is inside it" by the lines.
+    // A backend that ignored the distinction would draw the control twice.
+    let mut classed = spec
+        .items
+        .iter()
+        .filter(|i| i.classes.as_str() == "button primary");
+    assert!(
+        classed.any(|i| matches!(i.draw, Draw::Fill)),
+        "the classed node paints a fill over its own rect — the control's box"
+    );
+}
+
+/// A node that names classes *replaces* the inherited list rather than adding
+/// to it, exactly as it does for a theme. There is no ancestor cascade in a
+/// flat display list: an item's classes are the innermost list and nothing
+/// else, so a rule that needs "a button inside a card" is written as one list
+/// by whoever describes it.
+#[test]
+fn a_named_class_replaces_the_inherited_one() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col()
+            .classes("card")
+            .child(col().classes("button").child(text("inner"))),
+        FRAME,
+    );
+
+    let run = spec
+        .items
+        .iter()
+        .find(|i| matches!(&i.draw, Draw::Lines(l) if l.iter().any(|s| s.contains("inner"))))
+        .expect("the inner run is in the display list");
+    assert_eq!(run.classes.as_str(), "button");
+
+    // Neither node names a theme, and both still get a ground of their own: a
+    // class alone is enough to make a region paint, because a class alone is
+    // enough for a backend to have something to say about it.
+    for class in ["card", "button"] {
+        assert!(
+            spec.items
+                .iter()
+                .any(|i| i.classes.as_str() == class && matches!(i.draw, Draw::Fill)),
+            "`{class}` names no theme and still paints its own box"
+        );
+    }
+}

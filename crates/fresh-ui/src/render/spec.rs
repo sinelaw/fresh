@@ -84,6 +84,8 @@ pub struct Item {
     pub clip: Rect,
     /// Where this item's appearance comes from.
     pub theme: ThemeKey,
+    /// What this item *is*, as opposed to how it is painted.
+    pub classes: Classes,
     pub draw: Draw,
 }
 
@@ -103,6 +105,37 @@ impl ThemeKey {
         self.0.as_deref().unwrap_or("")
     }
 }
+
+/// Per-item semantics: the nearest enclosing `classes(..)` tag, a
+/// space-separated list. A backend maps it to an appearance; the library never
+/// interprets it.
+///
+/// **The companion to [`ThemeKey`], and deliberately not the same slot.** The
+/// theme says how an item is painted and its vocabulary is a grammar, because
+/// colour combines — selection × focus × git status multiplies. This says what
+/// an item *is*, and its vocabulary is a list, because structure does not: a
+/// button is a button whether or not it is focused. Two slots, each shaped
+/// like what it names, and each with its own discipline — a theme name that
+/// does not resolve is a bug, while a class no backend knows simply decorates
+/// nothing, which is how a stylesheet is supposed to degrade.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Classes(pub Option<Rc<str>>);
+
+impl Classes {
+    pub fn as_str(&self) -> &str {
+        self.0.as_deref().unwrap_or("")
+    }
+
+    /// The classes, in the order they were written. Later ones win.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.as_str().split_whitespace()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.as_str().is_empty()
+    }
+}
+
 /// Which corner glyphs a [`Draw::Border`] is drawn with.
 ///
 /// **A border's corners are a description, not a backend default.** The fold
@@ -264,6 +297,7 @@ pub struct DrawList {
     pub(crate) key: Option<Key>,
     pub(crate) id: ElementId,
     pub(crate) theme: ThemeKey,
+    pub(crate) classes: Classes,
     pub(crate) cursor: Option<CursorSpec>,
 }
 
@@ -274,6 +308,7 @@ impl DrawList {
             key: None,
             id,
             theme: ThemeKey::default(),
+            classes: Classes::default(),
             cursor: None,
         }
     }
@@ -313,6 +348,7 @@ impl DrawList {
             rect,
             clip,
             theme,
+            classes: self.classes.clone(),
             draw,
         });
     }
