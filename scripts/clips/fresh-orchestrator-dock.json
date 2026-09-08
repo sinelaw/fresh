@@ -804,8 +804,8 @@
         ],
         "band": false,
         "hold": 1.3333,
-        "head": "\u2193 switches, and the switch is instant",
-        "sub": "nothing is torn down: the tabs, the split and the agent were already there"
+        "head": "\u2193 walks the dock, and the editor follows",
+        "sub": "nothing is torn down: the agent, the split and the tabs were already there"
       },
       {
         "shots": [
@@ -857,7 +857,7 @@
         "band": false,
         "hold": 1.3333,
         "head": "The ones you are not looking at keep working",
-        "sub": "quill on one branch, marlin on the next"
+        "sub": "quill on one branch, marlin on the next, each in its own worktree"
       },
       {
         "shots": [
@@ -904,8 +904,8 @@
         ],
         "band": false,
         "hold": 1.2,
-        "head": "And the dock says which one is waiting on you",
-        "sub": "three still running \u00b7 this one wants an answer"
+        "head": "The one that is waiting, with its work open beside it",
+        "sub": "three still running \u00b7 this one wants an answer, and its diff is right there"
       },
       {
         "shots": [
