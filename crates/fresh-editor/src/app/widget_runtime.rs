@@ -790,6 +790,38 @@ impl Editor {
         }
     }
 
+    /// Forget every panel mounted into `buffer_id`, because that buffer is
+    /// being closed.
+    ///
+    /// **The registry is the editor's and the buffer is the window's, and
+    /// nothing else joined those two lifetimes.** A panel whose buffer went
+    /// away — the tab's `×`, `Ctrl+W`, closing the workspace's last file —
+    /// stayed mounted, so every later sweep over the registry kept trying to
+    /// paint it: a resize re-renders *all* of them, and each attempt wrote
+    /// its rows into a buffer that no longer exists. That is the
+    /// `rerender_widget_panel(welcome_screen:1) failed: Buffer not found`
+    /// that appeared in the log on every terminal resize after the welcome
+    /// page's tab was closed.
+    ///
+    /// The plugin learns of the close from the `buffer_closed` hook and drops
+    /// its own handle; this is the host's half of the same teardown, and it
+    /// mirrors what `handle_unmount_widget_panel` does when the plugin
+    /// unmounts a panel itself.
+    pub(crate) fn drop_widget_panels_for_buffer(&mut self, buffer_id: BufferId) {
+        for panel_key in self.widget_registry.panels_for_buffer(buffer_id) {
+            self.page_anchors.remove(&panel_key);
+            self.widget_panel_render_heights.remove(&panel_key);
+            self.widget_registry.unmount(&panel_key);
+            // The description names the panels, so losing one changes it.
+            self.shell_description_stale = true;
+            tracing::debug!(
+                "Dropped widget panel {} with its buffer {:?}",
+                panel_key,
+                buffer_id
+            );
+        }
+    }
+
     /// Re-render an existing widget panel after an in-host state
     /// change (focus advance, scroll move, etc.) without the plugin
     /// re-emitting the spec. Reads the panel's current spec from
@@ -4265,6 +4297,40 @@ mod tests {
             "a pane-mounted panel is the tree's as well: {} boxes, {} painted windows",
             panel.boxes.len(),
             panel.painted.len()
+        );
+    }
+
+    /// **A panel dies with the buffer it paints into.**
+    ///
+    /// Closing the tab is the reader's move, not the plugin's, and nothing
+    /// joined the editor-level registry to the window's buffer map: the panel
+    /// stayed mounted over a buffer that had been freed, and every later
+    /// sweep over the registry — a resize re-renders every panel key — failed
+    /// against it with `Buffer not found`, once per resize, for the rest of
+    /// the session.
+    #[test]
+    fn closing_a_buffer_unmounts_the_panels_mounted_into_it() {
+        let (mut editor, _t) = make_editor();
+        let panel_key = crate::widgets::PanelKey::new("welcome_screen", 1);
+        let buffer = editor.active_buffer();
+        mount_list_panel(&mut editor, &panel_key, buffer);
+        editor.record_widget_panel_render_height(&panel_key, Some(20));
+        assert!(
+            editor.widget_registry.get(&panel_key).is_some(),
+            "mounted to begin with"
+        );
+
+        editor
+            .close_buffer(buffer)
+            .expect("an unmodified buffer closes");
+
+        assert!(
+            editor.widget_registry.get(&panel_key).is_none(),
+            "the panel went with its buffer"
+        );
+        assert!(
+            !editor.widget_panel_render_heights.contains_key(&panel_key),
+            "and so did the row budget it was last rendered against"
         );
     }
 
