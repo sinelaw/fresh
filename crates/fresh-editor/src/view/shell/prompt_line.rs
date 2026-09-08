@@ -66,15 +66,32 @@ fn ellipsis_ink() -> String {
 }
 
 /// The row, fitted to the width layout gives it.
+///
+/// Its height is `Auto`: one cell for the usual single-line prompt, and as
+/// many as the message needs when a confirmation prompt wraps on a narrow
+/// terminal (see `build`). The frame's prompt region is `Auto` too, so the
+/// body above gives up exactly those rows.
 pub fn prompt_line(p: &PromptRow) -> Node<UiMsg> {
     let p = Rc::new(p.clone());
     layout_reader(move |info: LayoutInfo| build(&p, info.constraints.max_w))
-        .h(Sizing::Cells(1))
+        .h(Sizing::Auto)
         .theme(base())
 }
 
 /// The row at `width` cells: the label, then the input's window.
 fn build(p: &PromptRow, width: u16) -> Node<UiMsg> {
+    // A confirmation prompt carries its whole message, including its hotkey
+    // options, in `message` and takes no typed input. When that message is
+    // wider than the row it used to be hard-cut at the last column, hiding
+    // trailing options like "(C)ancel" (issue #3214). Wrap it across rows
+    // instead. Input prompts keep their single scrolling row: their label is
+    // short and it is the query, not the label, that can overflow.
+    if p.input.is_empty() && p.dir.is_none() && str_width(&p.message) > width as usize {
+        return text_runs([Run::plain(&p.message)])
+            .wrap()
+            .w(Sizing::Cells(width));
+    }
+
     let label = label_runs(p, width);
     let label_cells: usize = label.iter().map(|r| str_width(&r.text)).sum();
     let label_cols = label_cells.min(width as usize) as u16;
@@ -225,6 +242,33 @@ mod tests {
         ui.spec().cursor.map(|c| (c.pos.x, c.pos.y))
     }
 
+    /// The drawn text as visual rows, keyed by absolute `y` (an item's rect
+    /// plus the line's index within it), each row's cells joined left to
+    /// right. Unlike `row_text`, this keeps the rows apart, so a wrapped
+    /// prompt reads as several lines. A `Draw::Lines` carries one string per
+    /// visual row it occupies.
+    fn rows_text(ui: &Ui<UiMsg>) -> Vec<String> {
+        let mut by_row: std::collections::BTreeMap<i32, Vec<(i32, String)>> =
+            std::collections::BTreeMap::new();
+        for i in &ui.spec().items {
+            if let Draw::Lines(lines) = &i.draw {
+                for (n, line) in lines.iter().enumerate() {
+                    by_row
+                        .entry(i.rect.y + n as i32)
+                        .or_default()
+                        .push((i.rect.x, line.to_string()));
+                }
+            }
+        }
+        by_row
+            .into_values()
+            .map(|mut cells| {
+                cells.sort_by_key(|(x, _)| *x);
+                cells.into_iter().map(|(_, s)| s).collect()
+            })
+            .collect()
+    }
+
     /// The painter's own test, on the description: a query longer than the
     /// row scrolls so its tail and the caret are in view, the caret riding
     /// the last column; moving the caret left moves the window with it; a
@@ -317,6 +361,56 @@ mod tests {
         let text = row_text(&ui);
         assert!(text.contains("[...]"), "truncated in the middle: {text:?}");
         assert!(text.ends_with("main.rs"), "the query is whole: {text:?}");
+    }
+
+    /// A confirmation prompt whose message is wider than the row wraps across
+    /// rows instead of being hard-cut at the last column, so trailing options
+    /// like "(C)ancel" stay visible on a narrow terminal (issue #3214).
+    #[test]
+    fn a_long_confirmation_message_wraps_across_rows() {
+        let message = "1 buffer has unsaved changes. (s)ave and quit, \
+                       (d)iscard and quit, (q)uit (recoverable), (C)ancel? ";
+        assert!(str_width(message) > 80, "the fixture overflows 80 columns");
+        let p = PromptRow {
+            message: message.into(),
+            input: String::new(),
+            cursor: 0,
+            selection: None,
+            dir: None,
+        };
+        // An 80-column terminal with room to grow downward.
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(prompt_line(&p), Size::new(80, 6));
+        let rows = rows_text(&ui);
+
+        assert!(
+            rows.len() >= 2,
+            "the message wrapped onto more rows: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains("(C)ancel")),
+            "the cancel option is visible: {rows:?}"
+        );
+        assert!(
+            rows.iter().all(|r| str_width(r) <= 80),
+            "no visual row overflows the width: {rows:?}"
+        );
+    }
+
+    /// A confirmation prompt that fits stays on one row: the wrap only kicks in
+    /// when the message actually overflows.
+    #[test]
+    fn a_short_confirmation_message_stays_on_one_row() {
+        let p = PromptRow {
+            message: "Discard changes? (y/n) ".into(),
+            input: String::new(),
+            cursor: 0,
+            selection: None,
+            dir: None,
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(prompt_line(&p), Size::new(80, 6));
+        assert_eq!(rows_text(&ui), vec!["Discard changes? (y/n) ".to_string()]);
     }
 
     /// The selected bytes are their own run, in the selection's ink.
