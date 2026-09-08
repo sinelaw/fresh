@@ -231,9 +231,13 @@ impl RecoveryService {
     /// is a background Orchestrator workspace that was never materialized —
     /// its unsaved content was never shown to the user, never offered in a
     /// quit prompt, and deleting it destroys the edit with no warning at any
-    /// point (issue #3189). So it is kept, and only garbage-collected once it
-    /// has aged past `max_recovery_age_secs`, which bounds the store rather
-    /// than letting stale entries pile up forever.
+    /// point (issue #3189). It is kept, unconditionally and indefinitely.
+    ///
+    /// Not aged out, deliberately. Any age threshold is a guess at when the
+    /// user stopped caring, and being wrong once means silently destroying
+    /// work — the exact failure this function exists to prevent. Unsaved
+    /// content leaves the store when the user resolves it (saves, or
+    /// discards) and not otherwise, so the only way to lose it is to ask.
     pub fn end_session_accounting(
         &mut self,
         preserve_ids: &[String],
@@ -258,7 +262,6 @@ impl RecoveryService {
         let mut cleaned = 0;
         let mut preserved = 0;
         let mut kept_unaccounted = 0;
-        let mut aged_out = 0;
         for entry in entries {
             if preserve_ids.contains(&entry.id) {
                 preserved += 1;
@@ -269,19 +272,14 @@ impl RecoveryService {
                 if self.storage.delete_recovery(&entry.id).is_ok() {
                     cleaned += 1;
                 }
-            } else if entry.age_seconds() > self.config.max_recovery_age_secs {
-                if self.storage.delete_recovery(&entry.id).is_ok() {
-                    aged_out += 1;
-                }
             } else {
                 kept_unaccounted += 1;
             }
         }
         tracing::info!(
-            "Cleaned up {} recovery files ({} aged out), preserved {} unsaved buffer(s) \
+            "Cleaned up {} recovery files, preserved {} unsaved buffer(s) \
              and {} entry/entries this session never held",
             cleaned,
-            aged_out,
             preserved,
             kept_unaccounted,
         );
@@ -672,11 +670,12 @@ mod tests {
         );
     }
 
-    /// The keep-what-you-cannot-account-for rule is still bounded: an
-    /// unaccounted entry older than `max_recovery_age_secs` is collected, so
-    /// the store cannot grow without limit.
+    /// The keep-what-you-cannot-account-for rule has no expiry. An entry no
+    /// live buffer backed survives however old it is: an age threshold is a
+    /// guess at when the user stopped caring, and being wrong once destroys
+    /// work nobody asked to delete.
     #[test]
-    fn end_session_accounting_ages_out_stale_unaccounted_entries() {
+    fn end_session_accounting_never_ages_out_unaccounted_entries() {
         let (mut service, temp) = create_test_service();
         service.start_session().unwrap();
 
@@ -687,22 +686,28 @@ mod tests {
             .save_buffer(&id, chunks, Some(path), None, Some(1), 0, 3)
             .unwrap();
 
-        // Backdate the entry past the max age. Rewriting `updated_at` is how
-        // `age_seconds()` reads it, and is far less brittle than sleeping out
-        // a real interval.
+        // Backdate the entry far past any plausible threshold — the epoch.
         let meta_path = temp.path().join(format!("{id}.meta.json"));
         let mut meta: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
         meta["updated_at"] = serde_json::json!(1u64);
         std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap()).unwrap();
 
-        // Nothing preserved, nothing accounted for: the entry is unaccounted,
-        // but it is older than `max_recovery_age_secs`.
+        // Nothing preserved, nothing accounted for: unaccounted, and ancient.
         service.end_session_accounting(&[], &[]).unwrap();
 
-        assert!(
-            service.storage.list_entries().unwrap().is_empty(),
-            "an unaccounted entry past max_recovery_age_secs is garbage-collected"
+        let surviving: Vec<String> = service
+            .storage
+            .list_entries()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(
+            surviving,
+            vec![id],
+            "unsaved work this session never held must survive regardless of \
+             age — it leaves the store only when the user resolves it"
         );
     }
 
