@@ -32,7 +32,7 @@ specific to filming *this* program.
 | `fresh-popup-rect.json` | solo, before/after | one popup placed by arithmetic, then declared |
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
-| `fresh-welcome-scroll.json` | solo, recorded | the Welcome screen, scrolled from the wordmark down its three levels |
+| `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -115,7 +115,19 @@ seconds at thirty a second, and costs about four minutes of capture.
 **A scroll starts late on the welcome screen.** The page moves its reading row
 down the viewport before it moves the viewport, so the first screenful of `Down`
 presses scrolls nothing. Send them as one `{"key": "Down", "repeat": N}` before
-the stepped shots begin.
+the stepped shots begin — and count only the rest against the row you mean to
+stop on, which is a screenful lower than the arithmetic suggests otherwise.
+
+**Work a live card with Tab, and back into it with `shift+Tab`.** There is no
+click in a spec, and the page's controls do not need one: `Tab` walks the
+focusable widgets in document order and `Return` activates the focused one, so
+the theme swatches film as a walk along the row — `Tab`, `Return`, and the whole
+editor is repainted in the next theme, chrome and all. Focus survives the
+repaint, so the walk carries on from where it was. Two cautions: `Tab` from a
+page at rest lands further on than you expect (the host remembers a focus you
+never set), so `shift+Tab` back onto the row you want and check with a still
+before filming 200 shots against the guess; and a `Tab` that leaves a card
+scrolls the page to the next one, which ends the shot you were composing.
 
 **A workspace with a project manifest opens Restricted, and a restricted
 workspace has no live cards.** `Cargo.toml`, `package.json` and the rest are

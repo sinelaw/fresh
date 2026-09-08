@@ -931,14 +931,415 @@
         "shot": "s150"
       },
       {
-        "key": "Down",
-        "repeat": 250
+        "key": "Down"
       },
       {
-        "sleep": 1
+        "shot": "s151"
       },
       {
-        "shot": "end"
+        "key": "Down"
+      },
+      {
+        "shot": "s152"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s153"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s154"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s155"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s156"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s157"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s158"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s159"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s160"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s161"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s162"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s163"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s164"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s165"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s166"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s167"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s168"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s169"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s170"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s171"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s172"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s173"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s174"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s175"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s176"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s177"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s178"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s179"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s180"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s181"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s182"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s183"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s184"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s185"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s186"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s187"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s188"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s189"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s190"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s191"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s192"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s193"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s194"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s195"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s196"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s197"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s198"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s199"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s200"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s201"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s202"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s203"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s204"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s205"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s206"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s207"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s208"
+      },
+      {
+        "key": "shift+Tab"
+      },
+      {
+        "key": "shift+Tab"
+      },
+      {
+        "key": "shift+Tab"
+      },
+      {
+        "key": "shift+Tab"
+      },
+      {
+        "shot": "t0"
+      },
+      {
+        "key": "Tab"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "shot": "t1"
+      },
+      {
+        "key": "Tab"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "shot": "t2"
+      },
+      {
+        "key": "Tab"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "shot": "t3"
+      },
+      {
+        "key": "Tab"
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "shot": "t4"
       }
     ],
     "panes": {
@@ -971,19 +1372,14 @@
     "title_card": {
       "lines": [
         {
-          "text": "FRESH",
+          "text": "you're welcome",
           "effect": "shine",
-          "at": 0.02
+          "at": 0.03
         },
         {
-          "text": "opens where nobody is lost",
+          "text": "fresh onboarding page",
           "small": true,
-          "at": 0.36
-        },
-        {
-          "text": "and scrolls all the way to mission control",
-          "small": true,
-          "at": 0.58
+          "at": 0.42
         }
       ]
     },
@@ -996,13 +1392,13 @@
       "github.com/sinelaw/fresh"
     ],
     "timing": {
-      "title": 1.3,
-      "intro": 0.7,
+      "title": 2.3,
+      "intro": 0.5,
       "zoom": 0.4,
       "hold": 1.0,
       "pan": 0.3,
       "push": 0.6,
-      "outro": 0.35
+      "outro": 0.4
     },
     "theme": {
       "bg": [
@@ -1041,16 +1437,15 @@
         "shot": "rest",
         "rows": [
           0,
-          30
+          27
         ],
         "band": false,
-        "hold": 0.8,
+        "hold": 0.7,
         "head": "It opens where nobody is lost",
         "sub": "a wordmark, one line, and three numbered doors"
       },
       {
         "shots": [
-          "rest",
           "s001",
           "s002",
           "s003",
@@ -1200,28 +1595,92 @@
           "s147",
           "s148",
           "s149",
-          "s150"
+          "s150",
+          "s151",
+          "s152",
+          "s153",
+          "s154",
+          "s155",
+          "s156",
+          "s157",
+          "s158",
+          "s159",
+          "s160",
+          "s161",
+          "s162",
+          "s163",
+          "s164",
+          "s165",
+          "s166",
+          "s167",
+          "s168",
+          "s169",
+          "s170",
+          "s171",
+          "s172",
+          "s173",
+          "s174",
+          "s175",
+          "s176",
+          "s177",
+          "s178",
+          "s179",
+          "s180",
+          "s181",
+          "s182",
+          "s183",
+          "s184",
+          "s185",
+          "s186",
+          "s187",
+          "s188",
+          "s189",
+          "s190",
+          "s191",
+          "s192",
+          "s193",
+          "s194",
+          "s195",
+          "s196",
+          "s197",
+          "s198",
+          "s199",
+          "s200",
+          "s201",
+          "s202",
+          "s203",
+          "s204",
+          "s205",
+          "s206",
+          "s207",
+          "s208"
         ],
         "rows": [
           0,
-          30
+          27
         ],
         "band": false,
-        "hold": 5.0,
+        "hold": 3.4667,
         "head": "Scrolling is the gesture that says \"show me more\"",
-        "sub": "just edit text, then a real IDE, then the whole shop"
+        "sub": "one document: just edit text, then a real IDE, then the whole shop"
       },
       {
-        "shot": "end",
+        "shots": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4"
+        ],
         "rows": [
           0,
-          30
+          27
         ],
         "band": false,
-        "hold": 0.7,
+        "hold": 2.5,
         "transition": "push",
-        "head": "And it lets you off at the bottom",
-        "sub": "\"most people use the first level and nothing else\""
+        "head": "Every card is a live demo, not a bullet",
+        "sub": "pick a theme and the editor restyles now \u2014 really"
       }
     ],
     "header_height": 96
