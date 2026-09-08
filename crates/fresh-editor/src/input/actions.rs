@@ -2269,19 +2269,40 @@ fn handle_page_up(
             calculate_visual_column(&mut state.buffer, cursor.position, estimated_line_length);
         let goal_column = cursor.sticky_column.unwrap_or(current_visual_column);
 
-        let mut iter = state
-            .buffer
-            .line_iterator(cursor.position, estimated_line_length);
-        let mut new_pos = cursor.position;
+        // The mirror of `handle_page_down`, and bounded for the same reason:
+        // walking back through the reader's pieces measured a page in read
+        // budgets rather than in lines.
+        let mut line_start = logical_line_start(&mut state.buffer, cursor.position);
+        let mut landed = None;
+        let mut ran_out = false;
         for _ in 0..lines_to_move {
-            if let Some((line_start, line_content)) = iter.prev() {
-                let line_text = line_content.trim_end_matches('\n');
-                new_pos = line_start + byte_offset_at_visual_column(line_text, goal_column);
-            } else {
-                new_pos = 0;
+            if line_start == 0 {
+                ran_out = true;
                 break;
             }
+            match state
+                .buffer
+                .prev_line_start_within(line_start - 1, VERTICAL_MOVE_SCAN_BYTES)
+            {
+                Some(prev) => {
+                    line_start = prev;
+                    landed = Some(prev);
+                }
+                None => {
+                    ran_out = true;
+                    break;
+                }
+            }
         }
+        let new_pos = match (landed, ran_out) {
+            // Fewer lines above than a page: the first page starts at the top.
+            (Some(_), true) => 0,
+            (Some(start), false) => {
+                let text = line_text_for_column(&mut state.buffer, start, goal_column);
+                start + byte_offset_at_visual_column(text.trim_end_matches('\n'), goal_column)
+            }
+            (None, _) => cursor.position,
+        };
 
         let new_anchor = if extend_selection {
             Some(cursor.anchor.unwrap_or(cursor.position))
@@ -2319,21 +2340,43 @@ fn handle_page_down(
             calculate_visual_column(&mut state.buffer, cursor.position, estimated_line_length);
         let goal_column = cursor.sticky_column.unwrap_or(current_visual_column);
 
-        let mut iter = state
-            .buffer
-            .line_iterator(cursor.position, estimated_line_length);
-        iter.next_line(); // consume current line
-
-        let mut new_pos = cursor.position;
+        // Logical lines, not the reader's pieces. Asking the reader for "the
+        // next line" hands back the next hundred-kilobyte piece of the line the
+        // cursor is already on, so a page down a file that is one long line
+        // walked thirty-nine pieces along it — a distance with no relation to
+        // anything on screen.
+        let mut line_start = cursor.position;
+        let mut landed = None;
+        let mut ran_out = false;
         for _ in 0..lines_to_move {
-            if let Some((line_start, line_content)) = iter.next_line() {
-                let line_text = line_content.trim_end_matches('\n');
-                new_pos = line_start + byte_offset_at_visual_column(line_text, goal_column);
-            } else {
-                new_pos = max_cursor_position(&state.buffer);
-                break;
+            match state
+                .buffer
+                .next_line_start_within(line_start, VERTICAL_MOVE_SCAN_BYTES)
+            {
+                Some(next) => {
+                    line_start = next;
+                    landed = Some(next);
+                }
+                None => {
+                    ran_out = true;
+                    break;
+                }
             }
         }
+        let new_pos = match (landed, ran_out) {
+            // Fewer lines below than a page: the last page ends at the
+            // buffer's end, which is where paging down the final screen has
+            // always landed.
+            (Some(_), true) => max_cursor_position(&state.buffer),
+            (Some(start), false) => {
+                let text = line_text_for_column(&mut state.buffer, start, goal_column);
+                start + byte_offset_at_visual_column(text.trim_end_matches('\n'), goal_column)
+            }
+            // No line below at all. On a file that is one enormous line that is
+            // the truth, and the cursor stays where it is — the same answer
+            // `Down` gives.
+            (None, _) => cursor.position,
+        };
 
         let new_anchor = if extend_selection {
             Some(cursor.anchor.unwrap_or(cursor.position))
@@ -3334,24 +3377,14 @@ pub fn action_to_events(
 
         Action::SelectLineStart => {
             select_each_cursor(cursors, &mut events, |c| {
-                state
-                    .buffer
-                    .line_iterator(c.position, estimated_line_length)
-                    .next_line()
-                    .map(|(ls, _)| ls)
-                    .unwrap_or(c.position)
+                logical_line_start(&mut state.buffer, c.position)
             });
         }
 
         Action::SelectLineEnd => {
             // Cursor lands at the first byte of line ending (LF: on \n; CRLF: on \r).
             select_each_cursor(cursors, &mut events, |c| {
-                state
-                    .buffer
-                    .line_iterator(c.position, estimated_line_length)
-                    .next_line()
-                    .map(|(ls, lc)| ls + content_len_without_line_ending(&lc))
-                    .unwrap_or(c.position)
+                logical_line_end(&mut state.buffer, c.position)
             });
         }
 

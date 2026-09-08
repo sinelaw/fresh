@@ -544,3 +544,51 @@ fn end_reaches_the_end_of_a_long_line_and_home_comes_back() {
         "the start of the line should be back on screen:\n{screen}"
     );
 }
+
+#[test]
+fn stepping_left_from_the_end_of_a_long_line_moves_the_caret_not_the_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, _, bytes) = write_pair(dir.path());
+
+    let mut harness = opened(&path, false);
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        bytes,
+        "End reaches the line's end"
+    );
+
+    let settled = harness.left_column();
+    assert!(
+        settled > 0,
+        "End should have scrolled the view along the line"
+    );
+
+    // Ten steps, all of them well inside a 120-column pane: the caret has room
+    // to walk left without the view needing to move at all.
+    //
+    // The view is clamped so it never scrolls into the empty space past a
+    // line's end, and that clamp needs the line's length. Measuring the line by
+    // reading it stops at the reader's cap, so the length came back as the
+    // cursor's own column — which makes the clamp say the cursor *is* the last
+    // visible column. Every Left then dragged the window left with it and the
+    // caret stayed pinned to the right-hand edge, which is not stepping left,
+    // it is scrolling.
+    for step in 1..=10 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        assert_eq!(
+            harness.cursor_position(),
+            bytes - step,
+            "Left must step the caret back one byte"
+        );
+        assert_eq!(
+            harness.left_column(),
+            settled,
+            "the view must hold still while the caret has room to move in it \
+             (step {step}):\n{}",
+            harness.screen_to_string()
+        );
+    }
+}
