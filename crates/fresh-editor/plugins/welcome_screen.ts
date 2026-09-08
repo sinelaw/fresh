@@ -1160,7 +1160,7 @@ function level2(): WidgetSpec[] {
       ),
       blank(),
       bullet(
-        "Open a file and its language server starts itself: hover, goto, references, rename, code actions and diagnostics, with nothing to configure first.",
+        "Turn a server on for the language you are in — Start/Restart LSP Server, or the LSP section of Settings — and you have hover, goto, references, rename, code actions and diagnostics, with no config file to write.",
       ),
       bullet(
         "Shipped for Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP, Bash, Vue, Svelte, Terraform, Haskell, OCaml and Elixir — and a language pack adds the next one.",
@@ -1518,8 +1518,8 @@ function level3(): WidgetSpec[] {
       plain("  echo 'return editor.describeWorkspace()' \\", C.value),
       plain("    | fresh --cmd script run", C.value),
       blank(),
-      plain("  # Put the failure on screen, in the pane you are in", C.muted),
-      plain("  echo 'editor.openFileInSplit(0, \"src/main.rs\", 3502)' \\", C.value),
+      plain("  # Open the file beside what you are reading", C.muted),
+      plain("  echo 'return editor.splitWindow({ file: \"src/main.rs\" })' \\", C.value),
       plain("    | fresh --cmd script run", C.value),
       blank(),
       bullet(
@@ -1564,13 +1564,13 @@ function footer(): WidgetSpec[] {
     plain("  keeps up when you climb.", C.value),
     blank(),
     line([
-      { text: "  Everything above is in the palette: ", style: { fg: C.muted } },
+      { text: "  It is all in the palette: ", style: { fg: C.muted } },
       { text: chord("quick_open", "Ctrl+P"), style: { fg: C.key, bold: true } },
       { text: ", then ", style: { fg: C.muted } },
       { text: ">", style: { fg: C.key, bold: true } },
-      { text: " to search commands by name.", style: { fg: C.muted } },
+      { text: " searches it by name.", style: { fg: C.muted } },
     ]),
-    plain("  fresh --cmd help covers the command line. Docs and blog: getfresh.dev", C.muted),
+    plain("  fresh --help lists the command line. Docs and blog: getfresh.dev", C.muted),
     blank(),
   ];
 }
@@ -2487,9 +2487,10 @@ function activateKey(k: string): void {
       editor.executeAction("open_keybinding_editor");
       return;
     case "act_pkg":
-      // The package manager's UI, which is where installing a plugin, a
-      // theme or a language pack actually happens — the install commands
-      // themselves are reached from inside it rather than the palette.
+      // The package manager's UI: one door to installed packages,
+      // updates and the registry, rather than the three separate
+      // `Package: Install …` palette entries the card would have to pick
+      // between.
       editor.executeAction("pkg_list");
       return;
     case "act_tour":

@@ -1202,7 +1202,7 @@ were the features a reader is least likely to already know exist. A welcome
 screen is the product's only in-editor index, so the rule for what earns a
 card is *a reader would otherwise have to be told this by someone else*.
 
-**Added.** Level 1 gets **Find it** — the palette's four modes, `Ctrl+F` /
+**Added — five cards.** Level 1 gets **Find it** — the palette's four modes, `Ctrl+F` /
 `Ctrl+R`, position history, Live Grep and project-wide replace — because
 finding things is the second thing anyone does and the page never said how.
 Level 2 gets **The terminal is just another buffer** (dock, `Ctrl+Click` on a
@@ -1240,6 +1240,16 @@ who has rebound `Ctrl+P` is taught their key, and an action this build has
 not bound leaves a stock chord rather than a hole in the key column.
 
 *The page got longer, and that is the outline's problem, not the reader's.*
-Four new cards is four new entries in the Contents section and four new fold
+Five new cards is five new entries in the Contents section and five new fold
 arrows. The first viewport still mentions no LSP, git, worktree or agent, and
-the last line still grants permission to stop climbing.
+the permission to stop climbing still closes the prose — the two lines added
+after it are a signpost to the palette and the docs, not another rung.
+
+**What the review caught.** Four claims were wrong and are fixed here rather
+than left standing: a language server does *not* start itself on open (every
+shipped config is `auto_start: false`, so the card now says to turn one on);
+`fresh --cmd help` serves three feature guides, not the CLI reference, which
+is `fresh --help`; the scripting sample assumed split `0` still exists, where
+the docs derive the pane; and the footer's one styled row was 80 columns, so
+it wrapped on an 80-column terminal — the one width on the page that had not
+been measured.
