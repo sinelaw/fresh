@@ -14,6 +14,19 @@ use super::window::Window;
 impl Window {
     /// Collect all LSP text document changes from an event (recursively for batches)
     pub(super) fn collect_lsp_changes(&self, event: &Event) -> Vec<TextDocumentContentChangeEvent> {
+        self.collect_lsp_changes_for_buffer(self.active_buffer(), event)
+    }
+
+    /// Collect LSP changes for a specific buffer. Plugin commands may edit a
+    /// background buffer, so they cannot use the active-buffer-only wrapper.
+    pub(super) fn collect_lsp_changes_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        event: &Event,
+    ) -> Vec<TextDocumentContentChangeEvent> {
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            return Vec::new();
+        };
         match event {
             Event::Insert { position, text, .. } => {
                 tracing::trace!(
@@ -21,10 +34,7 @@ impl Window {
                     position
                 );
                 // For insert: create a zero-width range at the insertion point
-                let (line, character) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(*position);
+                let (line, character) = state.buffer.position_to_lsp_position(*position);
                 let lsp_pos = Position::new(line as u32, character as u32);
                 let lsp_range = LspRange::new(lsp_pos, lsp_pos);
                 vec![TextDocumentContentChangeEvent {
@@ -36,14 +46,8 @@ impl Window {
             Event::Delete { range, .. } => {
                 tracing::trace!("collect_lsp_changes: processing Delete range {:?}", range);
                 // For delete: create a range from start to end, send empty string
-                let (start_line, start_char) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(range.start);
-                let (end_line, end_char) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(range.end);
+                let (start_line, start_char) = state.buffer.position_to_lsp_position(range.start);
+                let (end_line, end_char) = state.buffer.position_to_lsp_position(range.end);
                 let lsp_range = LspRange::new(
                     Position::new(start_line as u32, start_char as u32),
                     Position::new(end_line as u32, end_char as u32),
@@ -63,7 +67,7 @@ impl Window {
                 );
                 let mut all_changes = Vec::new();
                 for sub_event in events {
-                    all_changes.extend(self.collect_lsp_changes(sub_event));
+                    all_changes.extend(self.collect_lsp_changes_for_buffer(buffer_id, sub_event));
                 }
                 all_changes
             }
