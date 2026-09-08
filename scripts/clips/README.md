@@ -33,6 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `fresh-orchestrator-dock.json` | solo | four worktrees, four agents, one editor — switched from the dock |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -43,7 +44,10 @@ the diff on screen has to come from a real one — and
 straight out of git, checking that the lines it films are still the ones it
 means to. `assets/fresh-welcome-scroll/make-repo.sh` builds a small repo with no
 project manifest in it, which is the only way the Welcome screen's live cards
-film as live — see below.
+film as live — see below. `assets/fresh-orchestrator-dock/` carries three
+things of its own: the repo the clip cuts worktrees off, a `bin/` of shims that
+put `claude`, `codex`, `opencode` and `aider` on `PATH`, and a
+`fresh/plugins/clip_setup.ts` that builds the four workspaces at startup.
 
 ## Filming fresh specifically
 
@@ -134,6 +138,32 @@ page at rest lands further on than you expect (the host remembers a focus you
 never set), so `shift+Tab` back onto the row you want and check with a still
 before filming 200 shots against the guess; and a `Tab` that leaves a card
 scrolls the page to the next one, which ends the shot you were composing.
+
+**Stage a multi-window clip with a plugin, not with keystrokes.** Cutting three
+worktrees through the New Workspace dialogue is thirty keystrokes, thirty
+chances for a capture to desync, and none of them the thing being filmed. The
+scripting API does each in one call — `orch.newWorkspace({ newBranch, agent })`
+*is* what the dialogue submits — so the setup goes in a plugin in the clip's own
+config asset, on the `ready` hook, and the capture opens on a workspace that is
+already several tasks deep. Two details it taught: a split inherits the tab list
+of the pane it was cut from, so a code pane split off an agent's terminal opens
+carrying a tab for it (`closeBuffersToLeftInSplit` drops it without touching the
+terminal); and `git worktree` leaves its branches behind, so the repo script has
+to run before *every* capture or the second one fails with "Branch already
+exists".
+
+**The agents are `tests/fixtures/coding_agent.py`, aliased by a shim.** It is a
+scripted fake — a transcript, tool calls, diff hunks, a todo list and a spinner,
+none of it real — and `--as <name>` makes it rename its own process so the tab
+and the dock card read `claude` or `codex` the way a real launch would. `--ask`
+stops one of them on a permission prompt and leaves it there, which is what the
+dock's "which session is waiting on you" is *for*: with it, three cards carry
+the working mark and the fourth does not.
+
+**Give the capture a UTF-8 locale.** `LANG=C.UTF-8`, or xfce4-terminal decodes
+the pane's box-drawing and bullet glyphs as latin-1 — three columns per
+character, every line wrapped, and a program that draws a bottom-anchored pane
+(any coding agent, real or fake) desynced from the first frame.
 
 **A workspace with a project manifest opens Restricted, and a restricted
 workspace has no live cards.** `Cargo.toml`, `package.json` and the rest are
