@@ -331,8 +331,9 @@ fn arrow_down_walks_deep_into_one_enormous_line() {
 /// piece and clamped the row index into it, pinning the cursor at that piece's
 /// last row — and a cursor off the drawn window cannot be moved at all.
 ///
-/// Asserts on rendered output (CONTRIBUTING §2): the status bar reports the
-/// cursor's byte offset in large-file mode.
+/// Asserts on rendered output (CONTRIBUTING §2): the status bar reports where
+/// the cursor is, as a byte offset or — once the walk has indexed the file — as
+/// a line and column.
 #[test]
 fn paging_down_one_long_line_carries_the_cursor_past_the_read_boundary() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -365,12 +366,13 @@ fn paging_down_one_long_line_carries_the_cursor_past_the_read_boundary() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    let cursor_byte = status_bar_byte(&screen)
-        .expect("large-file mode reports the cursor's byte offset in the status bar");
+    let cursor_byte =
+        status_bar_cursor_byte(&screen).expect("the status bar reports the cursor's position");
     assert!(
         cursor_byte > READ_PIECE_BYTES,
         "after 40 PageDown presses the cursor should be well past byte \
-         {READ_PIECE_BYTES} of the line, but the status bar reads Byte {cursor_byte} — it is \
+         {READ_PIECE_BYTES} of the line, but the status bar puts it at byte \
+         {cursor_byte} — it is \
          pinned to the end of the first read piece while the view scrolled \
          on:\n{screen}"
     );
@@ -384,6 +386,30 @@ fn status_bar_byte(screen: &str) -> Option<usize> {
         .next()?
         .parse()
         .ok()
+}
+
+/// The cursor's byte, however the status bar is currently spelling it.
+///
+/// Large-file mode reports `Byte N` only while the file has not been indexed.
+/// A walk down one of these files indexes it as it goes — the line-boundary
+/// searches record the line-feed counts of every piece they cross — so partway
+/// through the walk the editor knows how many lines the file has and the bar
+/// switches to `Ln 1, Col N`. On a file that is one line of ASCII the two say
+/// the same thing: column N is byte N - 1.
+///
+/// A walk that reads only one of the two forms mistakes that switch for the
+/// cursor vanishing, which is what it did.
+fn status_bar_cursor_byte(screen: &str) -> Option<usize> {
+    if let Some(byte) = status_bar_byte(screen) {
+        return Some(byte);
+    }
+    let at = screen.find("Ln 1, Col ")?;
+    let column: usize = screen[at + "Ln 1, Col ".len()..]
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some(column.saturating_sub(1))
 }
 
 /// Issue #1806, reported against this branch: holding `Down` eventually stopped
@@ -435,7 +461,8 @@ fn arrow_down_never_revisits_a_row_across_the_read_boundary() {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
         let screen = harness.screen_to_string();
-        let at = status_bar_byte(&screen).expect("the status bar reports the cursor's byte");
+        let at =
+            status_bar_cursor_byte(&screen).expect("the status bar reports the cursor's position");
         assert!(
             at > previous,
             "press {press} moved the cursor from byte {previous} to {at} — it is not \
@@ -572,7 +599,8 @@ fn arrow_down_at_the_last_row_does_not_jump_back_to_a_read_boundary() {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
         let screen = harness.screen_to_string();
-        let at = status_bar_byte(&screen).expect("the status bar reports the cursor's byte");
+        let at =
+            status_bar_cursor_byte(&screen).expect("the status bar reports the cursor's position");
         assert!(
             at >= previous,
             "press {press} moved the cursor backwards, from byte {previous} to {at}. \
