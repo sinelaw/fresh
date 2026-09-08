@@ -239,6 +239,9 @@ fn walk_rows(
         line_ending,
         folds,
         Some(budget),
+        // The rule decides where rows end here; the total budget above is what
+        // bounds the read.
+        None,
         // Read from `from` itself rather than its line start: that walk back is
         // the cost this module removes.
         true,

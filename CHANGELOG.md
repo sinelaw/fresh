@@ -36,9 +36,12 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * A multi-line paste now arrives whole instead of only its last line (#3215)
     * A killed editor leaves it usable instead of exiting straight out of raw mode and the alternate screen (#3197)
     * No longer loses recent scrollback (#3151)
-* **Opening large files**
-    * Huge single-line files (tens of MB) no longer loop or stall for cursor movement, scrolling and paging (#1806)
+* **Large single-line files (minified JSON and friends)**
+    * Opening one no longer loops or stalls for cursor movement, scrolling and paging (#1806)
     * Very large binary/zip files open instantly instead of freezing or risking an out-of-memory crash (#3142, reported by @mommysgoodpuppy)
+    * **Editing one is no longer slow.** A frame, a keystroke and an arrow press now cost the size of the screen rather than the size of the line: on a 19 MB one-line JSON a frame reads ~150 KB instead of ~12 MB, and a keystroke ~180 KB instead of ~14 MB. The scans behind that — where a line starts, where it ends, how many lines are below this one — are bounded, and a stretch already found to hold no line break is remembered rather than re-walked on every frame
+    * With **soft wrap off**, a logical line is now one visual row, so a file with no line breaks draws one row and `Down` has nowhere to go — turn soft wrap on to read such a file vertically. Rows used to be chopped at a fixed 10,000 columns, which put ~400,000 characters through layout to draw ~4,800 and left the viewport and the renderer counting rows differently
+    * Plugin decorations that consume source lines (blame, live diff, compose reflow) are bounded to the visible text on such a file, so a plugin can no longer make a frame read the line
 * **Wave screensaver** now ends when you return to the window (or the GUI window), not just on the next keypress (#3204)
 * **`deno.json`** no longer disables TypeScript on a project without Deno (#2981, reported by @atk)
 * **Keymap chords** - a single-key binding on a chord prefix now fires, and deleting a keybinding frees the key (#3171)

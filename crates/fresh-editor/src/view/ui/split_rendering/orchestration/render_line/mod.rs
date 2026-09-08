@@ -171,8 +171,10 @@ impl ActiveIndentationGuide {
         // fold whose last hidden line starts at or after the target, so probing
         // with the raw cursor byte would miss the enclosing block whenever the
         // cursor sits past the indentation of that block's last line.
+        // No line start within reach means the cursor sits inside a line with
+        // no foldable indentation structure — nothing to draw a guide for.
         let target_byte =
-            indent_folding::find_line_start_byte(&state.buffer, primary_cursor_position);
+            indent_folding::find_line_start_byte(&state.buffer, primary_cursor_position)?;
         let (header_byte, body_start_byte, body_end_byte) =
             indent_folding::find_fold_range_at_byte(
                 &state.buffer,
@@ -361,7 +363,9 @@ fn prime_guide_stack_from_buffer(
         if line_start == 0 {
             break;
         }
-        let prev_line_start = find_line_start_byte(buffer, line_start - 1);
+        let Some(prev_line_start) = find_line_start_byte(buffer, line_start - 1) else {
+            break;
+        };
         // Slice the previous line's content *excluding* its trailing `\n` (at
         // `line_start - 1`) so a whitespace-only line is correctly classified
         // as blank rather than as content ending in a newline.
@@ -510,8 +514,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     let primary_cursor_position = selection.primary_cursor_position;
 
     // Compute cursor line start byte — universal key for cursor line highlight
+    // Or-floor rather than the exact start: on a line longer than the scan
+    // window the highlight covers the window instead of the whole line, which
+    // is what is on screen anyway.
     let cursor_line_start_byte =
-        indent_folding::find_line_start_byte(&state.buffer, primary_cursor_position);
+        indent_folding::line_start_byte_or_floor(&state.buffer, primary_cursor_position);
 
     // Exclusive end of the cursor's logical line. A view sub-row whose first
     // source byte falls in `[cursor_line_start_byte, cursor_line_end_byte)`
@@ -522,7 +529,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     // so it doesn't depend on the cached `primary_cursor_line_number` being
     // in sync with the cursor position.
     let cursor_line_end_byte =
-        indent_folding::find_line_end_byte(&state.buffer, primary_cursor_position);
+        indent_folding::line_end_byte_or_ceiling(&state.buffer, primary_cursor_position);
 
     let active_indentation_guide = ActiveIndentationGuide::for_view_lines(
         indentation_guide,
@@ -556,12 +563,15 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             .flatten()
             .find_map(|line| line.source_start_byte);
         let stack = match first_visible_source {
-            Some(src) => prime_guide_stack_from_buffer(
-                &state.buffer,
-                indent_folding::find_line_start_byte(&state.buffer, src),
-                state.buffer_settings.tab_size,
-                crate::config::INDENT_FOLD_MAX_UPWARD_SCAN,
-            ),
+            Some(src) => match indent_folding::find_line_start_byte(&state.buffer, src) {
+                Some(line_start) => prime_guide_stack_from_buffer(
+                    &state.buffer,
+                    line_start,
+                    state.buffer_settings.tab_size,
+                    crate::config::INDENT_FOLD_MAX_UPWARD_SCAN,
+                ),
+                None => Vec::new(),
+            },
             None => Vec::new(),
         };
         GuideColumnScanner { stack }

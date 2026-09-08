@@ -144,6 +144,7 @@ pub mod close_buffer_shared_split_cursor;
 pub mod finder_preview;
 pub mod keybinding_editor;
 pub mod language_features_e2e;
+pub mod large_file_edit_bounded;
 pub mod large_file_inplace_write_bug;
 pub mod large_file_mode;
 pub mod large_file_open_bounded;

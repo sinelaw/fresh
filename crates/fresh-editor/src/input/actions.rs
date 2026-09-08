@@ -30,24 +30,189 @@ enum BlockDirection {
 
 /// Calculate the visual column (display width) at the cursor position.
 /// Returns (visual_column, byte_column_within_line).
+/// How far the vertical motions search for a line boundary.
+///
+/// Down asks "where does the next line start", Up asks "where did this one",
+/// and the column math asks "how wide is the text before the cursor". Each is a
+/// bounded question about the neighbourhood of the cursor; unbounded, each is a
+/// scan of everything above or below it on a file that is one long line, paid
+/// per keypress. Past the bound there is no line above or below to move to,
+/// which is the truth for such a file.
+///
+/// Sized at the chunk the file is loaded in, so the search costs at most one
+/// chunk's worth of scanning over bytes that had to be read anyway — and the
+/// piece tree remembers what each chunk holds, so asking twice costs once. A
+/// tighter bound is not free: a file of hundred-kilobyte lines — minified
+/// JavaScript, a log with embedded payloads — has real lines above and below
+/// the cursor, and a search that stops short of them makes the arrow keys do
+/// nothing at all.
+const VERTICAL_MOVE_SCAN_BYTES: usize = fresh_editor_core::model::buffer::LOAD_CHUNK_SIZE;
+
+/// How much of the target line is read to place a column on it.
+///
+/// Separate from the search bound above because this one materialises text.
+/// A goal column is a screen column, so four bytes each plus a terminator
+/// covers any of them; the cap only binds when something has asked for a
+/// column further right than any pane can show.
+const VERTICAL_MOVE_READ_BYTES: usize = 64 * 1024;
+
+/// The next logical line after `pos`: its start, and as much of its text as a
+/// goal column that far along could need.
+///
+/// `None` when no line break lies within [`VERTICAL_MOVE_SCAN_BYTES`] — there
+/// is no line below, so a downward motion has nowhere to go.
+fn next_logical_line(
+    buffer: &mut Buffer,
+    pos: usize,
+    goal_visual_column: usize,
+) -> Option<(usize, String)> {
+    let start = buffer.next_line_start_within(pos, VERTICAL_MOVE_SCAN_BYTES)?;
+    Some((
+        start,
+        line_text_for_column(buffer, start, goal_visual_column),
+    ))
+}
+
+/// Start of the logical line containing `pos`.
+///
+/// Unbounded, deliberately, and unlike every other line-boundary search on
+/// this path. The bounded ones answer questions about layout — "is there a row
+/// below", "how far down is the cursor" — where "not within reach" is a usable
+/// answer and the budget keeps a keypress off the whole file. `Home` is not
+/// that question. It names a position, that position exists, and an answer
+/// bounded by how far the search felt like looking is simply wrong: it puts the
+/// caret in the middle of the line and takes a second press to leave.
+///
+/// The cost is a scan of the line above the cursor, once. The piece tree
+/// records what the scan crosses, so asking again is answered from metadata.
+fn logical_line_start(buffer: &mut Buffer, pos: usize) -> usize {
+    // A cap of the whole buffer cannot run out, so `None` is unreachable here
+    // — the search returns 0 once its floor reaches the start of the buffer.
+    buffer
+        .prev_line_start_within(pos, buffer.len())
+        .unwrap_or(0)
+}
+
+/// The byte `End` rests on for the line containing `pos`: the first byte of the
+/// line's terminator, or the end of the buffer for a line that has none.
+///
+/// Unbounded for the same reason as [`logical_line_start`]. It is also why this
+/// does not go through the line *reader*: that hands back a long line in
+/// hundred-kilobyte pieces, and a piece boundary is a read budget, not the end
+/// of anything — `End` on a file that is one long line landed on byte 100,000,
+/// which is the cap's value and no part of the document's structure.
+fn logical_line_end(buffer: &mut Buffer, pos: usize) -> usize {
+    let len = buffer.len();
+    let Some(next_line) = buffer.next_line_start_within(pos, len) else {
+        // No line break between here and the end of the buffer, so the line
+        // ends where the buffer does. Unambiguous only because the cap was the
+        // whole buffer: a smaller one could not tell this from "didn't reach".
+        return len;
+    };
+    // `next_line` is one past the terminator. Step back over it — over both
+    // bytes of a CRLF pair — so the caret rests on the terminator's first byte.
+    let mut end = next_line.saturating_sub(1);
+    if end > 0
+        && buffer
+            .get_text_range_mut(end.saturating_sub(1), 1)
+            .is_ok_and(|b| b.first() == Some(&b'\r'))
+    {
+        end -= 1;
+    }
+    end
+}
+
+/// What lies above the cursor's line, for a vertical motion.
+enum LineAbove {
+    /// Start of the line above, and as much of its text as a goal column that
+    /// far along could need.
+    Found(usize, String),
+    /// The cursor is on the first line of the buffer; there is nothing above.
+    TopOfBuffer,
+    /// The line above begins further back than [`VERTICAL_MOVE_SCAN_BYTES`].
+    /// Not the top of the buffer, and not somewhere a keypress can afford to
+    /// go looking for.
+    OutOfReach,
+}
+
+/// The logical line before `pos`.
+///
+/// The mirror of [`next_logical_line`], and bounded for the same reason: asking
+/// the line iterator to walk back to the previous line reads the previous line,
+/// and on a file whose lines are hundreds of kilobytes that is the whole cost
+/// of an arrow key.
+fn previous_logical_line(buffer: &mut Buffer, pos: usize, goal_visual_column: usize) -> LineAbove {
+    let Some(this_line) = buffer.prev_line_start_within(pos, VERTICAL_MOVE_SCAN_BYTES) else {
+        return LineAbove::OutOfReach;
+    };
+    if this_line == 0 {
+        return LineAbove::TopOfBuffer;
+    }
+    // One byte back from this line's start is its predecessor's terminator, so
+    // the same search from there lands on the line above.
+    match buffer.prev_line_start_within(this_line - 1, VERTICAL_MOVE_SCAN_BYTES) {
+        Some(start) => LineAbove::Found(
+            start,
+            line_text_for_column(buffer, start, goal_visual_column),
+        ),
+        None => LineAbove::OutOfReach,
+    }
+}
+
+/// As much of the line at `line_start` as landing on `goal_visual_column`
+/// needs: the column in bytes at worst four bytes per column, plus room for the
+/// terminator. A caller mapping a column onto a line never looks past that, and
+/// on a line of millions of columns reading the rest is the whole cost.
+fn line_text_for_column(
+    buffer: &mut Buffer,
+    line_start: usize,
+    goal_visual_column: usize,
+) -> String {
+    let want = goal_visual_column
+        .saturating_mul(4)
+        .saturating_add(8)
+        .min(VERTICAL_MOVE_READ_BYTES);
+    let end = line_start.saturating_add(want).min(buffer.len());
+    // A read that loads. `slice_bytes` hands back nothing at all for a region
+    // that has not been faulted in yet — which, on the lazily-loaded large
+    // files this bound exists for, is most of the file — and an empty line maps
+    // every goal column to zero.
+    let bytes = buffer
+        .get_text_range_mut(line_start, end.saturating_sub(line_start))
+        .unwrap_or_default();
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    match text.find('\n') {
+        Some(i) => text[..=i].to_string(),
+        None => text,
+    }
+}
+
 fn calculate_visual_column(
     buffer: &mut Buffer,
     cursor_position: usize,
-    estimated_line_length: usize,
+    _estimated_line_length: usize,
 ) -> (usize, usize) {
-    let mut iter = buffer.line_iterator(cursor_position, estimated_line_length);
-    let current_line_start = iter.current_position();
+    // Only the text *before* the cursor decides its column, so read that and
+    // nothing else. Asking the line iterator for "the line" read a 100 KB piece
+    // of it — on every arrow key, several times per press.
+    let Some(current_line_start) =
+        buffer.prev_line_start_within(cursor_position, VERTICAL_MOVE_SCAN_BYTES)
+    else {
+        // The line began further back than the scan: no column worth
+        // reporting, and the caller only uses it as a goal to preserve.
+        return (0, 0);
+    };
     let byte_column = cursor_position.saturating_sub(current_line_start);
-
-    if let Some((_, line_content)) = iter.next_line() {
-        if byte_column > 0 && byte_column <= line_content.len() {
-            (str_width(&line_content[..byte_column]), byte_column)
-        } else {
-            (byte_column, byte_column) // Fallback for edge cases
-        }
-    } else {
-        (byte_column, byte_column) // Fallback
+    if byte_column == 0 {
+        return (0, 0);
     }
+    // Loading, for the same reason: a prefix read as empty reports column 0,
+    // and the column is what the next Up or Down aims at.
+    let prefix = buffer
+        .get_text_range_mut(current_line_start, byte_column)
+        .unwrap_or_default();
+    let prefix = String::from_utf8_lossy(&prefix);
+    (str_width(&prefix), byte_column)
 }
 
 /// Pattern for matching line ending characters (\r and \n)
@@ -1942,8 +2107,8 @@ fn handle_vertical_up(
             calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
         let goal_visual_column = cursor.sticky_column.unwrap_or(current_visual_column);
 
-        let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
-        if let Some((prev_line_start, prev_line_content)) = iter.prev() {
+        let above = previous_logical_line(&mut state.buffer, from_pos, goal_visual_column);
+        if let LineAbove::Found(prev_line_start, prev_line_content) = above {
             let prev_line_text = prev_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(prev_line_text, goal_visual_column);
             let mut new_pos = prev_line_start + byte_offset;
@@ -1967,11 +2132,17 @@ fn handle_vertical_up(
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
-        } else if extend_selection && cursor.position > 0 {
+        } else if matches!(above, LineAbove::TopOfBuffer) && extend_selection && cursor.position > 0
+        {
             // No line above: the cursor sits on the first line. Shift+Up still
             // extends the selection head to the very start of the buffer
             // (VSCode/Sublime behaviour, issue #3006). The goal column is kept
             // so a later Shift+Down returns to the original column.
+            //
+            // Only when the buffer really does start above the cursor. A line
+            // that merely begins further back than the search reaches is not
+            // the first line, and taking the selection to byte 0 on the
+            // strength of it would swallow the file.
             events.push(Event::MoveCursor {
                 cursor_id,
                 old_position: cursor.position,
@@ -2014,22 +2185,13 @@ fn handle_vertical_down(
             calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
         let goal_visual_column = cursor.sticky_column.unwrap_or(current_visual_column);
 
-        let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
-        iter.next_line(); // consume current line
-
-        // `next_line` yields an over-long logical line in `MAX_LINE_BYTES`
-        // pieces, so on a file that is one enormous line the "next line" is the
-        // next read *piece* of the line the cursor is already on — a byte
-        // behind it. Taking it threw the cursor back to byte 100,000 (or
-        // 200,000) from the last row, and the view followed, so walking down
-        // such a file looped instead of stopping at the end (issue #1806).
-        //
-        // A genuine next line always starts after the cursor, which is the one
-        // thing every caller of this can rely on; anything else is this line
-        // continuing, and there is no line below.
-        let next = iter
-            .next_line()
-            .filter(|(next_line_start, _)| *next_line_start > from_pos);
+        // The next *logical* line, found by scanning for the line break rather
+        // than by reading the line. `next_line` yields an over-long line in
+        // `MAX_LINE_BYTES` pieces, so asking it for "the next line" on a file
+        // that is one enormous line hands back the next read *piece* of the
+        // line the cursor is already on, and the cursor jumps 100 KB down a
+        // line it never left (issue #1806). A line break or nothing.
+        let next = next_logical_line(&mut state.buffer, from_pos, goal_visual_column);
 
         if let Some((next_line_start, next_line_content)) = next {
             let next_line_text = next_line_content.trim_end_matches('\n');
@@ -3004,24 +3166,14 @@ pub fn action_to_events(
 
         Action::MoveLineStart => {
             move_each_cursor(cursors, &mut events, |c| {
-                state
-                    .buffer
-                    .line_iterator(c.position, estimated_line_length)
-                    .next_line()
-                    .map(|(ls, _)| ls)
-                    .unwrap_or(c.position)
+                logical_line_start(&mut state.buffer, c.position)
             });
         }
 
         Action::MoveLineEnd => {
             // Cursor lands at the first byte of line ending (LF: on \n; CRLF: on \r).
             move_each_cursor(cursors, &mut events, |c| {
-                state
-                    .buffer
-                    .line_iterator(c.position, estimated_line_length)
-                    .next_line()
-                    .map(|(ls, lc)| ls + content_len_without_line_ending(&lc))
-                    .unwrap_or(c.position)
+                logical_line_end(&mut state.buffer, c.position)
             });
         }
 
@@ -3753,6 +3905,76 @@ mod tests {
     use crate::model::cursor::Cursors;
     use crate::model::event::{CursorId, Event};
     use crate::state::EditorState;
+
+    /// A vertical motion finds the line above as well as the line below, and
+    /// finds them on lines that are long.
+    ///
+    /// Both directions are bounded, because unbounded each is a scan of
+    /// everything above or below the cursor on a file that is one enormous
+    /// line, paid per keypress. A bound is also a claim — "past here there is
+    /// no line" — and a bound sized for the pathological file makes the claim
+    /// falsely on the merely-long one: a file of hundred-kilobyte lines has
+    /// real lines above and below, and `k` and `j` do nothing at all.
+    ///
+    /// The upward search is the one that had no bound of its own: it read the
+    /// previous line through the line iterator, which scans back a few hundred
+    /// bytes for the line's break and gives up silently when the line is longer
+    /// than that.
+    #[test]
+    fn vertical_motion_finds_the_line_above_and_below_on_long_lines() {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+
+        // Three lines, each far longer than any per-keypress scan should be
+        // sized for, and far longer than the line iterator's own look-back.
+        let width = 200 * 1024;
+        let text: String = (0..3).map(|_| format!("{}\n", "x".repeat(width))).collect();
+        let second_line = width + 1;
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text,
+                cursor_id: CursorId(0),
+            },
+        );
+
+        // Down, from the first line to the second.
+        assert_eq!(
+            next_logical_line(&mut state.buffer, 0, 0).map(|(start, _)| start),
+            Some(second_line),
+            "no line below a {width}-byte line: `j` does nothing"
+        );
+
+        // And back up.
+        match previous_logical_line(&mut state.buffer, second_line, 0) {
+            LineAbove::Found(start, _) => assert_eq!(
+                start, 0,
+                "the line above the second one starts at the top of the buffer"
+            ),
+            LineAbove::TopOfBuffer => {
+                panic!("the second line is not the first: there is a line above it")
+            }
+            LineAbove::OutOfReach => {
+                panic!("no line above a {width}-byte line: `k` does nothing")
+            }
+        }
+
+        // The first line really is the first: nothing above it, and that is a
+        // different answer from "further than I looked".
+        assert!(
+            matches!(
+                previous_logical_line(&mut state.buffer, 0, 0),
+                LineAbove::TopOfBuffer
+            ),
+            "the first line has nothing above it"
+        );
+    }
 
     #[test]
     fn test_backspace_deletes_newline() {

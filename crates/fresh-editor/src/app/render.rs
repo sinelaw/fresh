@@ -42,6 +42,18 @@ struct ExplorerSection {
 /// block head.
 const FLOW_RUN_MAX_LINES: usize = 200;
 
+/// Bytes of source text one frame offers the plugins through `lines_changed`.
+///
+/// The offer covers the lines under the viewport, and a plugin can only
+/// decorate what is drawn — a screenful. Bounding the offer in bytes as well as
+/// in lines is what keeps a frame's cost the screen's size on a file whose
+/// viewport sits inside a single multi-megabyte line, where "the lines under
+/// the viewport" is one line and reading it is reading the file. Text past the
+/// bound is not offered, so a decoration that would have landed there is not
+/// drawn — the same trade the renderer already makes by drawing only the rows
+/// that fit.
+const PLUGIN_LINE_OFFER_BYTES: usize = 64 * 1024;
+
 /// Whether a line separates two runs: empty, or nothing but whitespace.
 fn line_is_blank(content: &str) -> bool {
     content.trim().is_empty()
@@ -561,6 +573,16 @@ impl Editor {
                         );
 
                         let visible_count = split_area.height as usize;
+                        // What the pane can show, in bytes at four per column:
+                        // the offer covers the visible rows, and a row holds a
+                        // pane's width. Bounding the offer by the screen rather
+                        // than by a flat constant is what keeps it screen-sized
+                        // on a file whose lines are megabytes long.
+                        let offer_budget = (split_area.width as usize)
+                            .saturating_mul(visible_count.max(1))
+                            .saturating_mul(4)
+                            .saturating_add(1024)
+                            .min(PLUGIN_LINE_OFFER_BYTES);
 
                         let top_byte = viewport_top_byte;
                         let seen_byte_ranges = seen_ranges_for_win.entry(buffer_id).or_default();
@@ -617,7 +639,19 @@ impl Editor {
 
                         let mut walked: Vec<WalkedLine> = Vec::new();
                         let mut line_number = state.buffer.get_line_number(walk_start);
-                        let mut iter = state.buffer.line_iterator(walk_start, estimated_line_length);
+                        // Capped per read *and* in total: the walk offers the
+                        // plugins the lines under the viewport, and on a file
+                        // that is one enormous line "a line" is the file. The
+                        // reader's own 100 KB piece cap still made this a
+                        // multi-megabyte read every frame — for text no plugin
+                        // can decorate, since only the first screenful of it is
+                        // ever drawn.
+                        let buffer_len = state.buffer.len();
+                        let mut iter = state
+                            .buffer
+                            .line_iterator(walk_start, estimated_line_length)
+                            .with_max_line_bytes(offer_budget);
+                        let mut walked_bytes = 0usize;
                         // End of the last line walked, so the embedded-region
                         // probe below covers exactly the lines we iterated.
                         let mut walked_end = walk_start;
@@ -631,10 +665,19 @@ impl Editor {
                             };
                             let byte_end = line_start + line_content.len();
                             walked_end = byte_end;
+                            walked_bytes += line_content.len();
                             let blank = line_is_blank(&line_content);
                             if line_start < top_byte {
                                 lead_in += 1;
                             }
+                            // A piece that stopped short of its line's own
+                            // terminator is the front of a line, not a line:
+                            // the read cap above cut it. Counting it as one
+                            // would number every line below it wrongly, and
+                            // there is nothing below it to offer anyway —
+                            // only the part that fits on screen is ever drawn.
+                            let complete =
+                                line_content.ends_with('\n') || byte_end >= buffer_len;
                             walked.push(WalkedLine {
                                 line_number,
                                 byte_start: line_start,
@@ -642,8 +685,14 @@ impl Editor {
                                 seen: seen_byte_ranges.contains(&(line_start, byte_end)),
                                 content: line_content,
                             });
+                            if !complete {
+                                break;
+                            }
                             line_number += 1;
 
+                            if walked_bytes >= offer_budget {
+                                break;
+                            }
                             if walked.len() < lead_in + rows {
                                 continue;
                             }

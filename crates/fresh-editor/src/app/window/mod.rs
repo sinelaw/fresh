@@ -58,6 +58,16 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Scanning budget for "where does the visible window end".
+///
+/// A drawn row holds at most a pane's width of text, so a screenful of lines
+/// is a few tens of kilobytes; this is generous against that and, unlike the
+/// line count alone, it bounds the answer on a file whose next line break is
+/// megabytes away. Overshooting merely widens a window that is compared
+/// against the cursor's byte, so a generous bound costs nothing but is still a
+/// bound.
+const VISIBLE_WINDOW_SCAN_BYTES: usize = 256 * 1024;
+
 /// A project-rooted unit of editor state.
 ///
 /// After Step 0b every per-subsystem field listed below is owned
@@ -4068,17 +4078,10 @@ impl Window {
 
         let visible_start = top_byte;
         let mut visible_end = top_byte;
-        {
-            let mut line_iter = state.buffer.line_iterator(top_byte, 80);
-            for _ in 0..visible_height {
-                if let Some((line_start, line_content)) = line_iter.next_line() {
-                    visible_end = line_start + line_content.len();
-                } else {
-                    break;
-                }
-            }
-        }
-        visible_end = visible_end.min(state.buffer.len());
+        visible_end = state
+            .buffer
+            .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
+            .min(state.buffer.len());
         let visible_text = state.get_text_range(visible_start, visible_end);
 
         for mat in regex.find_iter(&visible_text) {

@@ -2676,6 +2676,11 @@ impl EditorTestHarness {
         self.editor.active_viewport().top_view_line_offset()
     }
 
+    /// The viewport's horizontal scroll offset, in columns.
+    pub fn left_column(&self) -> usize {
+        self.editor.active_viewport().left_column
+    }
+
     /// Get the viewport height (number of content lines that can be displayed)
     pub fn viewport_height(&self) -> usize {
         self.editor.active_viewport().height as usize
