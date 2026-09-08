@@ -85,7 +85,6 @@ const FOCUS_GUTTER_BLANK: &str = "  ";
 // `full_width` button so the finished control lands on the panel width
 // exactly.
 const FOCUS_GUTTER_COLS: usize = 2;
-const FRAMED_BUTTON_CHROME_COLS: usize = 4;
 
 /// The two-column gutter prefix a focusable control leads with when
 /// the render reserves the focus-marker gutter
@@ -954,7 +953,8 @@ pub fn fill_button_label(label: &str, bare: bool, marker_gutter: bool, panel_wid
     let chrome = if bare {
         0
     } else {
-        FRAMED_BUTTON_CHROME_COLS + if marker_gutter { FOCUS_GUTTER_COLS } else { 0 }
+        crate::widgets::frame::Frame::BUTTON.chrome()
+            + if marker_gutter { FOCUS_GUTTER_COLS } else { 0 }
     };
     let target = (panel_width as usize).saturating_sub(chrome).max(1);
     let mut filled = label.to_string();
@@ -2472,10 +2472,12 @@ pub fn dual_cursor_marker(on_cursor: bool, column_active: bool) -> &'static str 
 
 /// Render a `Button` to a single `TextPropertyEntry`.
 ///
-/// Layout: `[ Label ]` (with explicit space padding so the label
-/// is visually inset from the brackets), or the bare label when
-/// `bare` — see [`render_bare_button`]. Styling depends on `kind`
+/// Layout: [`Frame::BUTTON`] around the label — `[ Label ]`, the padding
+/// keeping it visually inset from the brackets — or the bare label when
+/// `bare`, see [`render_bare_button`]. Styling depends on `kind`
 /// and `focused`:
+///
+/// [`Frame::BUTTON`]: crate::widgets::frame::Frame::BUTTON
 ///
 /// * `Normal`  — default fg; focused → fg/bg flip + bold.
 /// * `Primary` — bold; focused → fg/bg flip.
@@ -2507,7 +2509,14 @@ pub fn render_button(
     // because the gutter is always reserved, the row never reflows as
     // focus moves between buttons.
     let marker = focus_gutter_prefix(focused && !disabled, marker_gutter);
-    let text = format!("{}[ {} ]", marker, label);
+    // The frame is `Frame::BUTTON`'s, not this function's. The shell's
+    // stylesheet reserves columns from the very same glyphs and lets its fold
+    // draw them, so the two renderers cannot spell a button differently.
+    let text = format!(
+        "{}{}",
+        marker,
+        crate::widgets::frame::Frame::BUTTON.wrap(label)
+    );
     let mut overlays = Vec::new();
 
     // Disabled overrides intent: a "Delete" button that isn't

@@ -85,6 +85,7 @@ mod settings_actions;
 mod settings_prompts;
 mod shell_command;
 pub(crate) mod shell_host;
+pub(crate) mod shell_style;
 pub(crate) mod sidebar;
 mod smart_home;
 mod split_actions;

@@ -1117,9 +1117,9 @@ impl Editor {
 // consuming the display list the TUI already folds, the way it consumes the
 // status bar, the settings dialog and the file browser.
 //
-// **The web's plugin panels do not render at all until that lands.** Every
-// other surface is unaffected — this deletes one region of the scene, not the
-// bridge.
+// That landed: the panel subtrees below are what the web draws from now.
+// Every other surface was unaffected throughout — this deleted one region of
+// the scene, not the bridge.
 
 // ─────────────────────────── the tree: plugin panels as the display list ───────────────────────────
 //
@@ -1133,13 +1133,16 @@ impl Editor {
 // over the tree like a terminal click; a text press reaches the field through
 // `text_byte` like any other. See `docs/internal/retained-mode-ui.md` §3.9.
 //
-// What is shipped is the panel subtrees only — the dock column, the floating
-// panel's frame, and each sidebar section a plugin mounted — plus every layer
-// those subtrees raised (a dropdown's pop-over, a modal's scrim), found by
-// element ancestry rather than by key range, because a layer paints in the
-// display list's tail and not inside its parent's range. The rest of the
-// chrome the web still draws natively from its own region views; they retire
-// onto this projection surface by surface.
+// What is shipped is the panel subtrees only — the dock, the floating panel's
+// frame, and each sidebar section a plugin mounted — plus every layer those
+// subtrees raised (a dropdown's pop-over, a modal's scrim), found by element
+// ancestry rather than by key range, because a layer paints in the display
+// list's tail and not inside its parent's range. A subtree is the whole of
+// what stands there, not the keyed element alone: the dock's wall is the
+// column's sibling, so the column by itself is a dock with no right edge and
+// no grip to drag (`items_from_parent`, below). The rest of the chrome the web
+// still draws natively from its own region views; they retire onto this
+// projection surface by surface.
 
 /// One of the panel subtrees the web draws from the display list.
 #[derive(Debug, Clone, Serialize)]
@@ -1160,7 +1163,20 @@ pub struct TreeSurfaceView {
 }
 
 /// One display-list item, resolved for a backend that does not hold the
-/// theme: the colours are the fold's answer, not the key.
+/// theme: the colours are the fold's answer.
+///
+/// **And the question with it.** `ThemeKey` is the library's per-item
+/// provenance — "a backend maps it to colours; the library never interprets
+/// it" (`fresh_ui::render::spec`) — and for the shell it is an `Ink` naming
+/// the two theme keys the fold read. The terminal is one backend and answers
+/// with the editor's theme. The web is a second, and its *chrome* look is a
+/// frontend choice layered over that (`web-ui/README.md`): a Winamp dock is a
+/// sunken green playlist whatever the editor's palette says. Shipping the
+/// names next to the answer is what lets a web theme re-map the handful of
+/// keys it wants to dress and inherit the fold's answer for the rest — the
+/// same latitude the terminal backend has, in the language the frontend
+/// already thinks in. Nothing here decides a colour: `fg`/`bg` stay the
+/// fold's, and a frontend that ignores the names renders exactly as before.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TreeItemView {
@@ -1188,6 +1204,25 @@ pub struct TreeItemView {
     pub fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bg: Option<String>,
+    /// The theme keys the two colours above were read from, when the item's
+    /// provenance names them. `None` for a half the ink spelled as a literal
+    /// colour (it has no name, by construction) and for an untagged item.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fg_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bg_key: Option<String>,
+    /// What the item *is* — the space-separated class list its node named, or
+    /// the nearest enclosing one. The terminal reads the same string through
+    /// its own rule table; here it becomes `data-class`, and CSS decides what
+    /// a button looks like.
+    ///
+    /// **Read it together with `kind`.** A classed node emits a `fill` over
+    /// its own rectangle and its label arrives as a separate `lines` item
+    /// wearing the same class, so the fill is *where the control is* and the
+    /// lines are *what it says*. A rule that matched the class alone would
+    /// draw the control twice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classes: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub bold: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1308,14 +1343,20 @@ impl Editor {
         };
         let mut surfaces = Vec::new();
         let mut roots = Vec::new();
-        // `whole_layer`: the surface's rectangle is the keyed element's, but
-        // the items belong to the layer *around* it — a floating panel's
-        // scrim is the layer's own item, and the layer is the frame's parent.
+        // `items_from_parent`: the surface's rectangle is the keyed element's,
+        // but the items to collect are its *parent's* — the keyed element is
+        // one child of what actually stands there. Two surfaces need it, for
+        // the same reason. A floating panel's scrim is its layer's own item,
+        // and the layer is the panel's parent. And `dock::dock` stacks the
+        // column with `grip_strip`, which draws the divider in the column's
+        // last cell — so rooting the dock at `dock_column` shipped the web a
+        // dock with no wall down its edge and nothing to say the edge drags,
+        // while the terminal drew both.
         let mut push = |kind: &'static str,
                         key: fresh_ui::Key,
                         anchored: bool,
                         section: Option<usize>,
-                        whole_layer: bool| {
+                        items_from_parent: bool| {
             if let Some(el) = ui.find_by_key(&key) {
                 let r = ui.rect_of(el);
                 if r.w > 0 && r.h > 0 {
@@ -1328,7 +1369,7 @@ impl Editor {
                         anchored,
                         section,
                     });
-                    let root = match whole_layer {
+                    let root = match items_from_parent {
                         true => ui.parent(el).unwrap_or(el),
                         false => el,
                     };
@@ -1342,7 +1383,7 @@ impl Editor {
                 crate::view::shell::dock::column_key(),
                 false,
                 None,
-                false,
+                true,
             );
         }
         if let Some(f) = self.floating_widget_panel.as_ref() {
@@ -1391,6 +1432,16 @@ impl Editor {
                 continue;
             }
             let style = palette.style(&item.theme);
+            // The names behind those colours, read back out of the ink the
+            // item was tagged with — the value carries its own provenance, so
+            // nothing has to be threaded alongside it.
+            let (fg_key, bg_key) =
+                crate::app::shell_host::shell_theme::Ink::parse(item.theme.as_str())
+                    .map(|ink| {
+                        let (f, b) = ink.names();
+                        (f.map(str::to_string), b.map(str::to_string))
+                    })
+                    .unwrap_or((None, None));
             let m = style.add_modifier;
             let (mut horizontal, mut marks) = (false, None);
             let (kind, lines, border, thumb, dim) = match &item.draw {
@@ -1459,6 +1510,9 @@ impl Editor {
                 oy: item.rect.y,
                 fg: style.fg.and_then(css_color),
                 bg: style.bg.and_then(css_color),
+                fg_key,
+                bg_key,
+                classes: (!item.classes.is_empty()).then(|| item.classes.as_str().to_string()),
                 bold: m.contains(ratatui::style::Modifier::BOLD),
                 italic: m.contains(ratatui::style::Modifier::ITALIC),
                 underline: m.contains(ratatui::style::Modifier::UNDERLINED),
