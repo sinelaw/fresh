@@ -771,13 +771,23 @@ impl Viewport {
             self.scroll_up_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
             let new_position = if hidden_ranges.is_empty() {
-                let mut iter = buffer.line_iterator(self.top_byte(), 80);
+                // With wrap off a row is a logical line, so scrolling by rows
+                // is walking line starts. Walking the *reader* instead hands
+                // back the previous piece of the line the viewport is already
+                // on, and its backward search gives up after 64 KB — so a page
+                // up on a file that is one long line moved the top by that
+                // bound rather than by a screenful of anything.
+                let mut pos = self.top_byte();
                 for _ in 0..lines {
-                    if iter.prev().is_none() {
+                    if pos == 0 {
                         break;
                     }
+                    match buffer.prev_line_start_within(pos - 1, CLAMP_SCAN_BYTES) {
+                        Some(prev) => pos = prev,
+                        None => break,
+                    }
                 }
-                iter.current_position()
+                pos
             } else {
                 Self::walk_up_visible_lines(buffer, hidden_ranges, self.top_byte(), lines)
             };
@@ -869,13 +879,19 @@ impl Viewport {
             self.scroll_down_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
             let new_position = if hidden_ranges.is_empty() {
-                let mut iter = buffer.line_iterator(self.top_byte(), 80);
+                // The mirror of `scroll_up`: line starts, not the reader's
+                // pieces. A piece boundary is a read budget, so paging down a
+                // file that is one long line moved the viewport a hundred
+                // kilobytes per row — the pane's height times a constant, and
+                // nothing to do with the document.
+                let mut pos = self.top_byte();
                 for _ in 0..lines {
-                    if iter.next_line().is_none() {
-                        break;
+                    match buffer.next_line_start_within(pos, CLAMP_SCAN_BYTES) {
+                        Some(next) => pos = next,
+                        None => break,
                     }
                 }
-                iter.current_position()
+                pos
             } else {
                 Self::walk_down_visible_lines(buffer, hidden_ranges, self.top_byte(), lines)
             };
@@ -2164,15 +2180,39 @@ impl Viewport {
         // Horizontal scrolling (disabled when wrapping — all columns visible via wrap).
         if !self.line_wrap_enabled {
             let cursor_column = cursor.position.saturating_sub(cursor_line_start) + virtual_columns;
-            let mut line_iter = buffer.line_iterator(cursor_line_start, 80);
-            let line_length = if let Some((_, content)) = line_iter.next_line() {
-                content.trim_end_matches('\n').len()
-            } else {
-                0
+            // The line's length, and only when its end is within reach.
+            //
+            // The clamp this feeds keeps the view from scrolling into the empty
+            // space past a line's end. Measuring the line by *reading* it gives
+            // back a hundred-kilobyte piece on a long one, so the old code took
+            // the larger of that and the cursor's own column — which on a line
+            // longer than either makes the length equal to the cursor's column,
+            // and the clamp then says the cursor must be the last visible
+            // column. Every step left dragged the window left with it, the
+            // caret pinned to the right-hand edge.
+            //
+            // Zero disables the clamp, which is the right answer when the end is
+            // out of reach: a line that runs past the search is far longer than
+            // the window, so there is no empty space beyond it to scroll into.
+            let buffer_len = buffer.len();
+            let searched_to_eof = cursor_line_start.saturating_add(CLAMP_SCAN_BYTES) >= buffer_len;
+            let line_end = match buffer.next_line_start_within(cursor_line_start, CLAMP_SCAN_BYTES)
+            {
+                Some(next) => Some(next.saturating_sub(1)),
+                // No break found. If the search reached the end of the buffer
+                // there is nothing left to find and the last line ends there;
+                // otherwise the end is simply beyond reach.
+                None if searched_to_eof => Some(buffer_len),
+                None => None,
             };
-            // In virtual space the cursor column exceeds the line length;
-            // widen the scroll limit so the viewport can follow it.
-            let line_length = line_length.max(cursor_column);
+            let line_length = line_end
+                .map(|end| {
+                    end.saturating_sub(cursor_line_start)
+                        // In virtual space the cursor column exceeds the line
+                        // length; widen the limit so the view can follow it.
+                        .max(cursor_column)
+                })
+                .unwrap_or(0);
             self.ensure_column_visible(cursor_column, line_length, buffer);
         } else {
             self.left_column = 0;
