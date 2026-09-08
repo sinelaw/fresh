@@ -4,6 +4,7 @@
 //! no dependencies on `Editor`. See `docs/internal/editor-modules-refactor-plan.md`
 //! (phase 1) for why these live here instead of on `Editor`.
 
+use std::cell::OnceCell;
 use std::path::{Component, Path, PathBuf};
 
 /// Exact counts for the editor-thread cost of explorer path admission.
@@ -39,6 +40,99 @@ pub(crate) mod stats {
     pub(crate) fn take_canonical_fallbacks() -> u64 {
         CANONICAL_FALLBACKS.with(|c| c.replace(0))
     }
+
+    #[cfg(debug_assertions)]
+    thread_local! {
+        static ROOT_KEYS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// Counted where the root's canonical spelling is actually built.
+    ///
+    /// The root's key is one answer for a whole batch, so this is the
+    /// counter that says whether it is being rebuilt per path — the cost
+    /// [`super::ExplorerRoot`] exists to remove, and the one a duration
+    /// cannot pin in CI any more than the fallback count above.
+    #[inline]
+    pub(crate) fn note_root_key_build() {
+        #[cfg(debug_assertions)]
+        ROOT_KEYS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// The root keys built since the last call, which resets the count.
+    #[cfg(all(test, debug_assertions))]
+    pub(crate) fn take_root_key_builds() -> u64 {
+        ROOT_KEYS.with(|c| c.replace(0))
+    }
+}
+
+/// A window root prepared to admit a batch of plugin-supplied explorer paths.
+///
+/// The root's canonical spelling is one answer for every path in a batch,
+/// but the free functions below each rebuilt it per path: two
+/// `canonicalize` syscalls per decoration whose result never varies, so a
+/// plugin sending 25 000 decorations paid 50 000 of them to learn one
+/// thing. Hold it here instead, built at most once for the whole batch.
+///
+/// Built *lazily*, not eagerly. The lexical fast path admits an ordinary
+/// in-root path without consulting the filesystem at all, so a batch that
+/// stays on it must not pay even one canonicalization — an eager key would
+/// put a syscall back into the case that already has none. The `stats`
+/// counters above pin both halves of that: zero root keys for an in-root
+/// batch, exactly one for a batch that needs the fallback.
+pub(crate) struct ExplorerRoot<'a> {
+    root: &'a Path,
+    key: OnceCell<PathBuf>,
+}
+
+impl<'a> ExplorerRoot<'a> {
+    /// Prepare `root` — canonical, native-separator, as the file tree
+    /// stores it — to admit paths. Cheap: nothing is resolved until a path
+    /// actually needs the canonical spelling.
+    pub(crate) fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            key: OnceCell::new(),
+        }
+    }
+
+    /// The root's canonical key, resolved on first use and kept.
+    fn key(&self) -> &Path {
+        self.key.get_or_init(|| {
+            stats::note_root_key_build();
+            explorer_path_key(self.root)
+        })
+    }
+
+    /// Admit a plugin path into this root, rewritten into the spelling the
+    /// file tree stores — or `None` when it lies outside the root.
+    ///
+    /// One pass where the call sites used to make two. Testing the path and
+    /// rewriting it asked the same question (`starts_with` and
+    /// `strip_prefix` over the same keys), so the normalization, the
+    /// candidate list and the root key were all built twice per path to
+    /// produce one decision. The gate is now the rewrite: a path is in the
+    /// root exactly when this returns its rewritten form.
+    pub(crate) fn admit(&self, path: &Path) -> Option<PathBuf> {
+        let path = normalize_path(path);
+        if path.starts_with(self.root) {
+            return Some(path);
+        }
+        stats::note_canonical_fallback();
+        let root_key = self.key();
+
+        for candidate in explorer_path_candidates(&path) {
+            let key = explorer_path_key(&candidate);
+            if let Ok(relative) = key.strip_prefix(root_key) {
+                return Some(if relative.as_os_str().is_empty() {
+                    self.root.to_path_buf()
+                } else {
+                    self.root.join(relative)
+                });
+            }
+        }
+
+        None
+    }
 }
 
 /// Normalize a plugin-supplied explorer path so it matches the native paths
@@ -48,38 +142,21 @@ pub(crate) mod stats {
 /// slashes even on Windows. The explorer tree is rooted at a canonicalized
 /// `window.root` with native separators, so a naïve `starts_with` / hash
 /// lookup would silently drop every decoration/slot override on Windows.
+///
+/// Single-path form. A batch should build one [`ExplorerRoot`] and call
+/// [`ExplorerRoot::admit`], which resolves the root once for all of them.
 pub(crate) fn normalize_explorer_plugin_path(path: &Path, root: &Path) -> PathBuf {
-    let path = normalize_path(path);
-    if path.starts_with(root) {
-        return path;
-    }
-    stats::note_canonical_fallback();
-    let root_key = explorer_path_key(root);
-
-    for candidate in explorer_path_candidates(&path) {
-        let key = explorer_path_key(&candidate);
-        if let Ok(relative) = key.strip_prefix(&root_key) {
-            return if relative.as_os_str().is_empty() {
-                root.to_path_buf()
-            } else {
-                root.join(relative)
-            };
-        }
-    }
-
-    path
+    ExplorerRoot::new(root)
+        .admit(path)
+        .unwrap_or_else(|| normalize_path(path))
 }
 
 /// Return true when `path` lies under `root`, tolerant of Windows separator
 /// and `\\?\` extended-prefix differences between plugin and tree paths.
+///
+/// Single-path form, as above.
 pub(crate) fn explorer_path_under_root(path: &Path, root: &Path) -> bool {
-    if path.starts_with(root) {
-        return true;
-    }
-    let root_key = explorer_path_key(root);
-    explorer_path_candidates(path)
-        .into_iter()
-        .any(|candidate| explorer_path_key(&candidate).starts_with(&root_key))
+    ExplorerRoot::new(root).admit(path).is_some()
 }
 
 fn explorer_path_candidates(path: &Path) -> Vec<PathBuf> {
@@ -226,6 +303,94 @@ mod tests {
              fast path regressed, so a plugin decoration batch costs a \
              filesystem canonicalization per path again"
         );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn a_batch_builds_the_root_key_at_most_once() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+
+        // Off-root, so every path is forced past the lexical fast path and
+        // onto the fallback that needs the root's canonical spelling.
+        let elsewhere = TempDir::new().unwrap();
+
+        let explorer_root = ExplorerRoot::new(&root);
+        stats::take_root_key_builds();
+        stats::take_canonical_fallbacks();
+        for i in 0..25_000 {
+            assert!(
+                explorer_root
+                    .admit(&elsewhere.path().join(format!("gen_{i}.rs")))
+                    .is_none(),
+                "an off-root path must not be admitted"
+            );
+        }
+
+        assert_eq!(
+            stats::take_canonical_fallbacks(),
+            25_000,
+            "every off-root path should have reached the fallback"
+        );
+        assert_eq!(
+            stats::take_root_key_builds(),
+            1,
+            "the root's canonical spelling is one answer for the batch: \
+             rebuilding it per path is a `canonicalize` syscall per \
+             decoration that the batch already knows"
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn an_in_root_batch_builds_no_root_key_at_all() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+
+        let explorer_root = ExplorerRoot::new(&root);
+        stats::take_root_key_builds();
+        for i in 0..25_000 {
+            assert!(explorer_root
+                .admit(&src.join(format!("gen_{i}.rs")))
+                .is_some());
+        }
+
+        assert_eq!(
+            stats::take_root_key_builds(),
+            0,
+            "the lexical fast path answers without the filesystem, so the \
+             root key must stay unbuilt: building it eagerly would put a \
+             syscall back into the case that has none"
+        );
+    }
+
+    #[test]
+    fn admit_agrees_with_the_single_path_helpers() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let inside = root.join("src/lib.rs");
+        let elsewhere = TempDir::new().unwrap();
+        let outside = elsewhere.path().join("a.rs");
+
+        let explorer_root = ExplorerRoot::new(&root);
+        for path in [inside.as_path(), outside.as_path(), root.as_path()] {
+            let admitted = explorer_root.admit(path);
+            assert_eq!(
+                admitted.is_some(),
+                explorer_path_under_root(path, &root),
+                "admit must gate exactly as explorer_path_under_root did for {path:?}"
+            );
+            if let Some(admitted) = admitted {
+                assert_eq!(
+                    admitted,
+                    normalize_explorer_plugin_path(path, &root),
+                    "admit must rewrite exactly as normalize_explorer_plugin_path did \
+                     for {path:?}"
+                );
+            }
+        }
     }
 
     #[test]

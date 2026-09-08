@@ -1890,21 +1890,20 @@ impl crate::app::window::Window {
         decorations: Vec<crate::view::file_tree::FileExplorerDecoration>,
     ) {
         let root = self.root.clone();
+        // One root for the whole batch: its canonical spelling is the same
+        // answer for every path, and resolving it per path was two
+        // `canonicalize` syscalls per decoration.
+        let explorer_root = crate::app::ExplorerRoot::new(&root);
         let normalized: Vec<crate::view::file_tree::FileExplorerDecoration> = decorations
             .into_iter()
             .filter_map(|mut decoration| {
                 let path = if decoration.path.is_absolute() {
-                    decoration.path
+                    std::mem::take(&mut decoration.path)
                 } else {
                     root.join(&decoration.path)
                 };
-                let path = crate::app::normalize_path(&path);
-                if crate::app::explorer_path_under_root(&path, &root) {
-                    decoration.path = crate::app::normalize_explorer_plugin_path(&path, &root);
-                    Some(decoration)
-                } else {
-                    None
-                }
+                decoration.path = explorer_root.admit(&path)?;
+                Some(decoration)
             })
             .collect();
 
@@ -1928,21 +1927,18 @@ impl crate::app::window::Window {
         slots: Vec<fresh_core::file_explorer::FileExplorerSlotEntry>,
     ) {
         let root = self.root.clone();
+        // One root for the whole batch, as in the decoration handler above.
+        let explorer_root = crate::app::ExplorerRoot::new(&root);
         let normalized: Vec<fresh_core::file_explorer::FileExplorerSlotEntry> = slots
             .into_iter()
             .filter_map(|mut slot| {
                 let path = if slot.path.is_absolute() {
-                    slot.path
+                    std::mem::take(&mut slot.path)
                 } else {
                     root.join(&slot.path)
                 };
-                let path = crate::app::normalize_path(&path);
-                if crate::app::explorer_path_under_root(&path, &root) {
-                    slot.path = crate::app::normalize_explorer_plugin_path(&path, &root);
-                    Some(slot)
-                } else {
-                    None
-                }
+                slot.path = explorer_root.admit(&path)?;
+                Some(slot)
             })
             .collect();
 
