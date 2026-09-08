@@ -62,7 +62,10 @@ pub struct CollapsedFoldLineRange {
 /// enforce the same invariant from opposite ends: a blank line never owns a
 /// fold, whether it got there by an edit or by stale saved coordinates.
 fn header_line_is_blank(buffer: &Buffer, line_start: usize) -> bool {
-    let line_end = indent_folding::find_line_end_byte(buffer, line_start);
+    // A line whose end is out of reach is far too long to be blank.
+    let Some(line_end) = indent_folding::find_line_end_byte(buffer, line_start) else {
+        return false;
+    };
     let bytes = buffer.slice_bytes(line_start..line_end);
     indent_folding::slice_indent(&bytes, 1).1
 }
@@ -105,10 +108,10 @@ impl FoldManager {
         }
 
         // All right gravity, like every `MarkerList::create` marker.
-        let header_marker = marker_list.create(indent_folding::find_line_start_byte(
-            buffer,
-            start.saturating_sub(1),
-        ));
+        let header_marker = marker_list.create(
+            indent_folding::find_line_start_byte(buffer, start.saturating_sub(1))
+                .unwrap_or(start.saturating_sub(1)),
+        );
         let start_marker = marker_list.create(start);
         let end_marker = marker_list.create(end);
 
@@ -499,36 +502,79 @@ pub mod indent_folding {
     /// the scans effectively memchr-speed.
     const LINE_SCAN_CHUNK: usize = 4096;
 
-    /// Find the byte offset of the start of the line containing `pos`.
-    /// Scans backward for `\n` (or returns 0).
-    pub fn find_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
+    /// How far either scan looks before giving up.
+    ///
+    /// These run per rendered frame — the active indentation guide probes the
+    /// cursor's line on every one — and they answer a question about
+    /// *indentation structure*. A line longer than this has none worth
+    /// drawing: no guide, no fold, no header. Scanning on regardless is how a
+    /// frame on a file that is one 19 MB line came to walk the file twice
+    /// looking for a newline that isn't there.
+    ///
+    /// Matches `primitives::line_iterator::LINE_START_SEARCH_BYTES`, which
+    /// bounds the same search on the text-reading path.
+    const LINE_SCAN_LIMIT: usize = 64 * 1024;
+
+    /// Byte offset of the start of the line containing `pos`, or `None` when
+    /// no line start lies within [`LINE_SCAN_LIMIT`] bytes above it.
+    pub fn find_line_start_byte(buffer: &Buffer, pos: usize) -> Option<usize> {
         let mut end = pos.min(buffer.len());
-        while end > 0 {
-            let start = end.saturating_sub(LINE_SCAN_CHUNK);
+        let floor = end.saturating_sub(LINE_SCAN_LIMIT);
+        if floor > 0 && buffer.known_newline_free(floor..end) {
+            return None;
+        }
+        while end > floor {
+            let start = end.saturating_sub(LINE_SCAN_CHUNK).max(floor);
             let bytes = buffer.slice_bytes(start..end);
             if let Some(i) = bytes.iter().rposition(|&b| b == b'\n') {
-                return start + i + 1;
+                return Some(start + i + 1);
+            }
+            if start == 0 {
+                return Some(0);
             }
             end = start;
         }
-        0
+        (floor == 0).then_some(0)
     }
 
-    /// Find the exclusive byte offset just past the line containing `pos`
-    /// (i.e. one byte past its terminating `\n`, or the buffer length if the
-    /// line has no trailing newline). Scans forward for `\n`.
-    pub fn find_line_end_byte(buffer: &Buffer, pos: usize) -> usize {
+    /// [`find_line_start_byte`], falling back to the far end of the search
+    /// window when no line start is within reach.
+    ///
+    /// For callers that want a *range* rather than a structural decision — the
+    /// current-line highlight, a margin key — where "as far back as we looked"
+    /// is a serviceable answer and `None` is not.
+    pub fn line_start_byte_or_floor(buffer: &Buffer, pos: usize) -> usize {
+        find_line_start_byte(buffer, pos).unwrap_or_else(|| pos.saturating_sub(LINE_SCAN_LIMIT))
+    }
+
+    /// [`find_line_end_byte`], falling back to the far end of the search window.
+    pub fn line_end_byte_or_ceiling(buffer: &Buffer, pos: usize) -> usize {
+        find_line_end_byte(buffer, pos)
+            .unwrap_or_else(|| pos.saturating_add(LINE_SCAN_LIMIT).min(buffer.len()))
+    }
+
+    /// Exclusive byte offset just past the line containing `pos` (one byte past
+    /// its terminating `\n`, or the buffer length if the line ends the buffer),
+    /// or `None` when the line runs past [`LINE_SCAN_LIMIT`].
+    pub fn find_line_end_byte(buffer: &Buffer, pos: usize) -> Option<usize> {
         let buf_len = buffer.len();
         let mut start = pos.min(buf_len);
-        while start < buf_len {
-            let end = (start + LINE_SCAN_CHUNK).min(buf_len);
+        let ceiling = start.saturating_add(LINE_SCAN_LIMIT).min(buf_len);
+        // A stretch this buffer has already walked and found no break in is not
+        // walked again: on a file with no line structure this scan runs every
+        // frame and always fails.
+        if ceiling < buf_len && buffer.known_newline_free(start..ceiling) {
+            return None;
+        }
+        while start < ceiling {
+            let end = (start + LINE_SCAN_CHUNK).min(ceiling);
             let bytes = buffer.slice_bytes(start..end);
             if let Some(i) = bytes.iter().position(|&b| b == b'\n') {
-                return start + i + 1;
+                return Some(start + i + 1);
             }
             start = end;
         }
-        buf_len
+        (ceiling == buf_len).then_some(buf_len)
     }
 
     /// Measure leading indent of a line. The slice may carry its trailing line
@@ -674,10 +720,9 @@ pub mod indent_folding {
         Some(header_byte + byte_offset)
     }
 
-    /// Find the byte offset of the start of the *next* line after `pos`.
-    /// Scans forward for `\n` and returns the byte after it. If no `\n` is
-    /// found, returns `buffer.len()`.
-    pub fn find_next_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
+    /// Byte offset of the start of the *next* line after `pos`, or `None` when
+    /// the line containing `pos` runs past the scan limit.
+    pub fn find_next_line_start_byte(buffer: &Buffer, pos: usize) -> Option<usize> {
         find_line_end_byte(buffer, pos)
     }
 
@@ -702,15 +747,17 @@ pub mod indent_folding {
         max_scan_bytes: usize,
         max_upward_lines: usize,
     ) -> Option<(usize, usize, usize)> {
-        let mut header_byte = find_line_start_byte(buffer, target_byte);
+        // No line start within reach means no indentation structure to fold:
+        // the position sits inside a line longer than the scan limit.
+        let mut header_byte = find_line_start_byte(buffer, target_byte)?;
 
         for _ in 0..=max_upward_lines {
             if let Some(fold_end_byte) =
                 indent_fold_end_byte(buffer, header_byte, tab_size, max_scan_bytes)
             {
                 if fold_end_byte >= target_byte {
-                    let eb = find_next_line_start_byte(buffer, fold_end_byte);
-                    let sb = find_next_line_start_byte(buffer, header_byte);
+                    let eb = find_next_line_start_byte(buffer, fold_end_byte)?;
+                    let sb = find_next_line_start_byte(buffer, header_byte)?;
                     if sb < eb {
                         return Some((header_byte, sb, eb));
                     }
@@ -719,7 +766,7 @@ pub mod indent_folding {
             if header_byte == 0 {
                 break;
             }
-            header_byte = find_line_start_byte(buffer, header_byte.saturating_sub(1));
+            header_byte = find_line_start_byte(buffer, header_byte.saturating_sub(1))?;
         }
 
         None

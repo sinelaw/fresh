@@ -294,7 +294,9 @@ pub(crate) fn fold_toggle_byte_from_position(
     }
 
     use crate::view::folding::indent_folding;
-    let line_start = indent_folding::find_line_start_byte(&state.buffer, target_position);
+    // No line start within reach: the click is inside a line too long to have
+    // foldable indentation structure, so there is no fold to toggle.
+    let line_start = indent_folding::find_line_start_byte(&state.buffer, target_position)?;
 
     // Already collapsed → allow toggling (unfold). This stays available even
     // with the indicators hidden: the collapsed line still renders its "..."

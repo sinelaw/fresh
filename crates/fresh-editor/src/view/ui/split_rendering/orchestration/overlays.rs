@@ -298,10 +298,12 @@ pub(crate) fn decoration_context(
         .iter()
         .filter_map(|(overlay, range)| {
             if overlay.namespace.as_ref() == Some(&diagnostic_ns) {
-                return Some(indent_folding::find_line_start_byte(
-                    &state.buffer,
-                    range.start,
-                ));
+                // A diagnostic inside a line too long to find the start of is
+                // placed at its own byte: the row it lands on is still drawn.
+                return Some(
+                    indent_folding::find_line_start_byte(&state.buffer, range.start)
+                        .unwrap_or(range.start),
+                );
             }
             None
         })
@@ -315,7 +317,8 @@ pub(crate) fn decoration_context(
                 continue;
             }
             if let Some(ref message) = overlay.message {
-                let line_start = indent_folding::find_line_start_byte(&state.buffer, range.start);
+                let line_start = indent_folding::find_line_start_byte(&state.buffer, range.start)
+                    .unwrap_or(range.start);
                 let priority = overlay.priority;
                 let dominated = by_line
                     .get(&line_start)
@@ -341,6 +344,7 @@ pub(crate) fn decoration_context(
             .margins
             .get_indicators_for_viewport(viewport_start, viewport_end, |byte_offset| {
                 indent_folding::find_line_start_byte(&state.buffer, byte_offset)
+                    .unwrap_or(byte_offset)
             });
 
     // Merge native diff-since-saved indicators (cornflower blue │ for unsaved edits).

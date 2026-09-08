@@ -288,13 +288,15 @@ pub(super) fn calculate_compose_layout(
     }
 }
 
-/// A line whose content reaches this many bytes is treated as "over-long": it
-/// already fills (far past) the visible row, and with horizontal scrolling
-/// (line-wrap off) it occupies a single screen row. `LineIterator` also splits
-/// such lines into chunks of `MAX_LINE_BYTES` (100 KB) and yields each chunk as
-/// a separate "line", so without a guard `calculate_viewport_end` would walk
-/// chunk-by-chunk hundreds of KB into the line. Kept in step with that limit.
-const OVERLONG_LINE_BYTES: usize = 100_000;
+/// How far [`calculate_viewport_end`] scans for one line's end.
+///
+/// It needs the end only to clamp a window that the byte budget already caps at
+/// a few screenfuls, so a line whose end is further away than this is treated
+/// as running to the end of the buffer — which, for the files where that
+/// happens, it does. It is also where the walk stops: a line this long already
+/// fills (far past) its single unwrapped row, and there is nothing below it on
+/// screen to walk to.
+const VIEWPORT_END_SCAN_BYTES: usize = 64 * 1024;
 
 /// Compute the byte offset just past the last visible line of the viewport.
 ///
@@ -323,29 +325,39 @@ pub(super) fn calculate_viewport_end(
     // clamp so we keep the previous full-line behavior.
     let visible_byte_budget = left_column.saturating_add(viewport_width).saturating_mul(4);
 
-    let mut iter_temp = state
-        .buffer
-        .line_iterator(viewport_start, estimated_line_length);
+    // Line *starts* walked, not lines read: the window's end only needs each
+    // line's position and the byte budget above. Reading the lines meant
+    // pulling a 100 KB piece per row of a file that is one long line, every
+    // frame, to compute a bound the budget already caps.
+    let _ = estimated_line_length;
     let mut viewport_end = viewport_start;
+    let mut line_start = viewport_start;
+    let buffer_len = state.buffer.len();
     for _ in 0..visible_count {
-        let Some((line_start, line_content)) = iter_temp.next_line() else {
-            break;
+        let next = state
+            .buffer
+            .next_line_start_within(line_start, VIEWPORT_END_SCAN_BYTES);
+        let line_end = match next {
+            // The next line starts where this one ends — after its terminator,
+            // which is what the reader's own `line_start + content.len()` gave.
+            Some(next) => next,
+            None => buffer_len,
         };
-        let line_len = line_content.len();
-        let line_end = line_start + line_len;
 
         if visible_byte_budget == 0 {
             viewport_end = line_end;
-            continue;
+        } else {
+            viewport_end = line_end.min(line_start.saturating_add(visible_byte_budget));
         }
 
-        let clamped_end = line_end.min(line_start.saturating_add(visible_byte_budget));
-        viewport_end = clamped_end;
-
-        // An over-long line fills its single (unwrapped) screen row and may be
-        // yielded as multiple 100 KB chunks; the clamp above already covers the
-        // visible window, so stop rather than walking the rest of the line.
-        if line_len >= OVERLONG_LINE_BYTES {
+        // No line break within reach is the over-long line this walk used to
+        // guard against by measuring: the clamp above already covers the
+        // visible window, and there is nothing below such a line to walk to.
+        let Some(next) = next else {
+            break;
+        };
+        line_start = next;
+        if line_start >= buffer_len {
             break;
         }
     }

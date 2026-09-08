@@ -337,10 +337,23 @@ impl<'a> ViewLineIterator<'a> {
             // profile at 7.81% self, on text that is almost always ASCII.
             //
             // Excludes control bytes (so tab, ESC and the unprintables still
-            // take the general path), binary mode, and any token being watched
-            // by an ANSI parser.
+            // take the general path), binary mode, and a run the ANSI parser
+            // is part-way through.
+            //
+            // The parser's presence is not itself a reason to segment. It is
+            // constructed whenever the pipeline is `ansi_aware`, which every
+            // production caller sets to `!is_binary` — so testing it for
+            // `is_none()` here meant "binary mode", which the first condition
+            // already excludes, and the fast path never ran outside its own
+            // unit tests. What the parser actually needs is the bytes of an
+            // escape sequence: an ESC is a control byte and already excluded,
+            // and a sequence *opened by an earlier token* is the only way
+            // plain bytes can still belong to one. `parse_char` returns the
+            // current style unchanged for every other character, so skipping
+            // it over a run with no ESC in it is exactly equivalent.
+            let mid_escape = ansi_parser.as_ref().is_some_and(|p| p.in_escape());
             let ascii_fast = !self.binary_mode
-                && ansi_parser.is_none()
+                && !mid_escape
                 && valid.is_ascii()
                 && !valid.bytes().any(|b| b < 0x20 || b == 0x7f);
             if ascii_fast {
@@ -352,6 +365,7 @@ impl<'a> ViewLineIterator<'a> {
             }
 
             let mut segmented_bytes = 0usize;
+            fresh_editor_core::counters::work::add_text_bytes_segmented(valid.len() as u64);
             for (g_byte_offset, grapheme) in valid.grapheme_indices(true) {
                 segmented_bytes = g_byte_offset + grapheme.len();
 
@@ -810,6 +824,7 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fresh_editor_core::counters::work;
 
     fn make_text_token(text: &str, source_offset: Option<usize>) -> ViewTokenWire {
         ViewTokenWire {
@@ -1381,6 +1396,78 @@ mod tests {
             lines[1].source_byte_at_visual_col(2),
             Some(6),
             "Line 2 col 2 (newline)"
+        );
+    }
+
+    /// The ASCII fast path has to be reachable in the configuration the
+    /// editor actually renders in.
+    ///
+    /// Every production caller builds the pipeline with `ansi_aware =
+    /// !is_binary`, so the parser exists for all text buffers. Gating the fast
+    /// path on the parser being *absent* therefore meant "binary mode", which
+    /// the same condition excludes — the path ran only in its own unit tests,
+    /// which passed `ansi_aware = false`, while real frames put every
+    /// character of every row through UAX #29 segmentation (12% of a frame's
+    /// self time on a minified-JSON buffer).
+    #[test]
+    fn plain_ascii_skips_segmentation_when_ansi_aware() {
+        let tokens = vec![make_text_token("plain ascii, no escapes here", Some(0))];
+
+        work::reset();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, true, 4, false).collect();
+        let segmented = work::text_bytes_segmented();
+
+        assert_eq!(
+            segmented, 0,
+            "plain ASCII was segmented ({segmented} bytes) with an ANSI parser \
+             present — the fast path is unreachable in the production config"
+        );
+        assert_eq!(lines[0].text, "plain ascii, no escapes here");
+    }
+
+    /// And it produces exactly what the general path produces.
+    #[test]
+    fn ascii_fast_path_matches_the_general_path() {
+        let tokens = vec![
+            make_text_token("abc", Some(0)),
+            make_newline_token(Some(3)),
+            make_text_token("de", Some(4)),
+        ];
+
+        let fast: Vec<_> = ViewLineIterator::new(&tokens, false, true, 4, false).collect();
+        let general: Vec<_> = ViewLineIterator::new(&tokens, true, true, 4, false).collect();
+
+        assert_eq!(fast.len(), general.len());
+        for (f, g) in fast.iter().zip(general.iter()) {
+            assert_eq!(f.text, g.text);
+            assert_eq!(f.char_source_bytes, g.char_source_bytes);
+            assert_eq!(f.char_visual_cols, g.char_visual_cols);
+            assert_eq!(f.visual_to_char, g.visual_to_char);
+        }
+    }
+
+    /// An escape sequence split across two tokens still hides its tail.
+    ///
+    /// The second token is plain ASCII, so it is exactly what the fast path
+    /// would claim — but its bytes are the body of a sequence the first token
+    /// opened, and they must stay invisible and zero-width. This is why the
+    /// fast path asks whether the parser is *part-way through* a sequence
+    /// rather than whether it exists.
+    #[test]
+    fn a_split_escape_sequence_stays_invisible() {
+        let tokens = vec![
+            make_text_token("\x1b[", Some(0)),
+            make_text_token("31mhello", Some(2)),
+        ];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, true, 4, false).collect();
+
+        assert_eq!(
+            lines[0].visual_width(),
+            "hello".len(),
+            "only `hello` is visible; `31m` completes the sequence opened by \
+             the previous token, got {:?}",
+            lines[0].text
         );
     }
 }

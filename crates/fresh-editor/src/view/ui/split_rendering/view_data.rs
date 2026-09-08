@@ -59,7 +59,9 @@ pub(super) struct BuildAnchor {
 /// Wrapping is always applied for safety, but with different thresholds. When
 /// line_wrap is on: wrap at viewport width (or `wrap_column` if set). When
 /// line_wrap is off: wrap at `MAX_SAFE_LINE_WIDTH` to prevent memory
-/// exhaustion from extremely long lines.
+/// exhaustion from extremely long lines — except on the large-file path, where
+/// a line is one row and the caller widens this to the row's own span (see
+/// `build_view_data`), because a chop inside the drawn columns is a blank pane.
 ///
 /// When wrapping is on, reserve the last content column so the end-of-line
 /// cursor never lands on top of the vertical scrollbar. The cursor sits one
@@ -95,6 +97,65 @@ fn effective_wrap_width(
     base.saturating_sub(1).max(1)
 }
 
+/// Columns of a logical line a pane can put on screen, and therefore the most
+/// of it worth reading.
+///
+/// With wrapping on, that is the row width: the rest of the line is on further
+/// rows, which are read as their own rows. With wrapping off, a logical line is
+/// one row and only the columns from the horizontal scroll offset to the right
+/// edge are drawn — so the read needs the line's first `left_column + width`
+/// columns and nothing beyond. The slack is a screen's worth, so that scrolling
+/// sideways a little does not re-read on every frame.
+///
+/// The window is measured from the further right of two things: where the view
+/// is now (`left_column`), and where the *cursor* sits along its own line. They
+/// are not the same, because one frame can move both — `End` on a long line
+/// puts the cursor at its end and the horizontal scroll follows it in the same
+/// frame — and a build sized by the old `left_column` alone would hand the
+/// renderer a row that stops short of the columns it is about to draw. The
+/// vertical budget already reaches for the cursor for exactly this reason;
+/// this is that, sideways.
+///
+/// Bytes stand in for columns in the cursor term, which can only over-estimate
+/// (a column is at least one byte) — the safe direction for a read budget.
+///
+/// [`MAX_SAFE_LINE_WIDTH`] caps it: that constant stops being the routine row
+/// width and goes back to being what its name says, a bound on how much of one
+/// line can ever be materialised.
+fn visible_line_span(
+    buffer: &mut crate::model::buffer::Buffer,
+    viewport: &Viewport,
+    content_width: usize,
+    cursor_positions: &[usize],
+) -> usize {
+    let width = content_width.max(1);
+    let furthest_cursor_column = cursor_positions
+        .iter()
+        .filter_map(|&pos| {
+            let line_start = buffer.prev_line_start_within(pos, CURSOR_COLUMN_SCAN_BYTES)?;
+            Some(pos.saturating_sub(line_start))
+        })
+        .max()
+        .unwrap_or(0);
+    // The cap bounds the *extent* — how much of one line past the window may be
+    // materialised — and not the window's position. Clamping the total is how
+    // scrolling a long line sideways came to blank it: the renderer skips
+    // `left_column` characters of the row it is given and draws what follows,
+    // so a row built as the line's first 10,000 columns has nothing under a
+    // view scrolled to column 100,000, and no cell to put the caret in either.
+    viewport
+        .left_column
+        .max(furthest_cursor_column)
+        .saturating_add(width.saturating_mul(2).min(MAX_SAFE_LINE_WIDTH))
+        .max(1)
+}
+
+/// How far back the cursor's own line start is looked for when sizing that
+/// window. A cursor deeper into its line than this is past the point where a
+/// column number means anything, and the window falls back to the view's own
+/// position.
+const CURSOR_COLUMN_SCAN_BYTES: usize = 64 * 1024;
+
 /// Character budget for [`build_base_tokens`], or `None` to bound the read by
 /// source lines alone.
 ///
@@ -105,28 +166,17 @@ fn effective_wrap_width(
 /// single-line file (`lines_seen` advances only once per `MAX_SAFE_LINE_WIDTH`
 /// characters, so the line bound never fires inside one long line).
 ///
-/// With wrapping off there is no budget to give: a long line is chopped into
-/// rows of `MAX_SAFE_LINE_WIDTH` columns each, so covering the viewport's rows
-/// genuinely costs `rows × MAX_SAFE_LINE_WIDTH` characters.
+/// With wrapping off a logical line is one visual row, so the rows the
+/// renderer can draw are covered by `rows × ` [`visible_line_span`] — the
+/// columns a row can actually show, not the safety chop it would be broken at
+/// if one line ever reached it.
 fn base_char_budget(
-    line_wrap_enabled: bool,
-    effective_width: usize,
+    row_span: usize,
     adjusted_visible_count: usize,
     cursor_positions: &[usize],
     rows_before_window: usize,
     start_byte: usize,
 ) -> Option<usize> {
-    // Wrap off still wraps, at the `MAX_SAFE_LINE_WIDTH` safety chop, so it has
-    // a real budget: rows × that width. It used to be `None` because the read
-    // was bounded instead by a `Break` the token build injected at the same
-    // interval — removed, since it placed row boundaries relative to wherever
-    // the read started, so no two reads of a line agreed on them.
-    let effective_width = if line_wrap_enabled {
-        effective_width
-    } else {
-        MAX_SAFE_LINE_WIDTH
-    };
-
     // Rows the build must cover: the window, plus whatever precedes it. With an
     // anchor that prefix is the walk-back to a resumable row — usually zero.
     // Without one it is every row of the logical line above the viewport.
@@ -141,7 +191,7 @@ fn base_char_budget(
     // generously rather than trying to be exact — over-reading a little is
     // free next to the 50× the budget saves.
     let mut budget = rows
-        .saturating_mul(effective_width.max(1))
+        .saturating_mul(row_span.max(1))
         .saturating_mul(2)
         .saturating_add(1024);
 
@@ -157,7 +207,7 @@ fn base_char_budget(
     {
         budget = budget.max(
             (furthest - start_byte)
-                .saturating_add(effective_width.saturating_mul(2))
+                .saturating_add(row_span.saturating_mul(2))
                 .saturating_add(1024),
         );
     }
@@ -225,6 +275,43 @@ pub(super) fn build_view_data(
     // rather than just before `apply_wrapping_transform` — because it also
     // sizes the token build's character budget (see `base_char_budget`).
     let effective_width = effective_wrap_width(viewport, line_wrap_enabled, content_width);
+    // What a row can show, which with wrapping off is not what a row is
+    // *chopped* at: the chop is a safety bound no real line reaches, while this
+    // is the handful of columns the pane draws.
+    // Sizing a row by the pane's own window applies to the files it exists for:
+    // the ones too large to read whole. Below the large-file threshold a line
+    // costs nothing to read in full, and reading it in full is what keeps every
+    // *other* consumer of these rows correct — a diff pane scrolls sideways on a
+    // viewport of its own (`CompositeViewState::get_pane_viewport`) that this
+    // build cannot see, and would draw past the end of a row cut to the split's
+    // `left_column`.
+    let bounded_rows = !line_wrap_enabled && state.buffer.is_large_file();
+    let row_span = if bounded_rows {
+        visible_line_span(&mut state.buffer, viewport, content_width, cursor_positions)
+    } else if line_wrap_enabled {
+        effective_width
+    } else {
+        MAX_SAFE_LINE_WIDTH
+    };
+    // With wrap off on a large file a logical line is one visual row, so in
+    // that mode the line is not chopped at all — the build already stopped it
+    // at `row_span`, and the row carries every column from the line's start to
+    // there so the renderer can skip to `left_column` and draw from it.
+    //
+    // A chop here is a chop inside the drawn columns, and both ways of getting
+    // it wrong are visible: at `MAX_SAFE_LINE_WIDTH` the columns a view
+    // scrolled past 10,000 wants are on a row the viewport never reaches, so
+    // `End` on a long line blanks the pane, caret and all; at `row_span` — a
+    // read budget, roughly two screens — the line breaks into screen-wide rows
+    // and `Down` walks them, which is soft wrap by another name and exactly
+    // what this mode exists not to do. So: a bound no row can reach. Twice the
+    // characters the build may emit, since no character is wider than two
+    // columns.
+    let effective_width = if bounded_rows {
+        row_span.saturating_mul(2).saturating_add(1024)
+    } else {
+        effective_width
+    };
 
     // Build base token stream from source, skipping any source-byte range
     // that falls inside a collapsed fold.
@@ -245,13 +332,18 @@ pub(super) fn build_view_data(
         line_ending,
         &fold_skip,
         base_char_budget(
-            line_wrap_enabled,
-            effective_width,
+            row_span,
             adjusted_visible_count,
             cursor_positions,
             rows_before_window,
             start_byte,
         ),
+        // With wrapping off one logical line is one visual row, so a line
+        // contributes only the columns the pane can show. With it on the wrap
+        // machine already breaks the line into rows, and cutting it here would
+        // hide rows the viewport wants. Below the large-file threshold nothing
+        // is cut at all: see `bounded_rows` above.
+        bounded_rows.then_some(row_span),
         anchor.is_some(),
     );
 

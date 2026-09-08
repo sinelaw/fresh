@@ -5,8 +5,43 @@
 //! render-time "mega struct" is required.
 
 use super::MAX_SAFE_LINE_WIDTH;
+
+/// How far the builder scans for the end of a line it had to cut short.
+///
+/// Reaching the next line means finding this line's break, and on a file that
+/// is one enormous line there isn't one — so the search is bounded and a
+/// failure means "there is nothing below this row to draw", which is the truth
+/// for such a file. Sized to skip over any line a person wrote and to stop long
+/// before the cost shows up in a frame.
+const LINE_SKIP_SCAN_BYTES: usize = 256 * 1024;
 use crate::model::buffer::{Buffer, LineEnding};
 use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
+/// Byte offset of the line's own terminator, when the piece just read carries
+/// it.
+///
+/// A reader hands back at most a fixed number of bytes at a time, so a piece
+/// that ends without a terminator may be either the end of the document or the
+/// middle of a line that continues past the read. Telling the two apart is what
+/// keeps a row that was cut short from stepping over the line below it.
+///
+/// The offset is the terminator's *first* byte, so a CRLF pair reports the
+/// `\r` — the same anchor the character loop above gives a `Newline` token it
+/// emits itself.
+fn line_terminator_offset(
+    content: &[u8],
+    line_start: usize,
+    line_ending: LineEnding,
+) -> Option<usize> {
+    if content.last() != Some(&b'\n') {
+        return None;
+    }
+    let mut idx = content.len() - 1;
+    if line_ending == LineEnding::CRLF && idx > 0 && content[idx - 1] == b'\r' {
+        idx -= 1;
+    }
+    Some(line_start + idx)
+}
 
 /// Build tokens from a text buffer starting at `top_byte`, stopping roughly
 /// after `visible_count` visual lines. Honors CRLF / LF line endings and
@@ -20,6 +55,15 @@ use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 /// would ask for 54 "lines" and tokenise megabytes to fill rows that hold a few
 /// thousand characters. Callers that know the width a row wraps at pass roughly
 /// `rows × width`; pass `None` to bound by source lines only.
+///
+/// `line_char_budget` bounds a *single* line the same way: once a line has
+/// contributed this many characters the rest of it is skipped and the build
+/// moves to the next line, with an injected `Newline` ending the row. This is
+/// what soft-wrap-off needs, where one logical line is one visual row and the
+/// only part of it that can ever be drawn is the columns the pane shows —
+/// `left_column + width`. Without it a file of a few enormous lines fills its
+/// whole budget on the first of them and leaves the rest of the screen blank.
+/// `None` means a line is bounded only by the total budget above.
 ///
 /// `start_mid_line` means `top_byte` is a *visual row* start rather than a
 /// logical line start — the caller obtained it from the wrap index — so the read
@@ -35,6 +79,7 @@ pub(crate) fn build_base_tokens(
     line_ending: LineEnding,
     fold_skip: &[std::ops::Range<usize>],
     char_budget: Option<usize>,
+    line_char_budget: Option<usize>,
     start_mid_line: bool,
 ) -> Vec<ViewTokenWire> {
     let mut tokens = Vec::new();
@@ -96,12 +141,13 @@ pub(crate) fn build_base_tokens(
         } else {
             buffer.line_iterator(cursor, estimated_line_length)
         };
-        if let Some(budget) = char_budget {
-            // Bytes, not characters — UTF-8 runs to 4 bytes per character — so
-            // the first piece the iterator yields always covers the whole
-            // budget and the loop below never asks for a second one. Without
-            // this the iterator reads and UTF-8-decodes 100 KB of a long line
-            // to hand back text we stop consuming after a few thousand chars.
+        // Bytes, not characters — UTF-8 runs to 4 bytes per character — so the
+        // first piece the iterator yields always covers the whole budget and
+        // the loop below never asks for a second one. Without this the iterator
+        // reads and UTF-8-decodes 100 KB of a long line to hand back text we
+        // stop consuming after a few thousand chars. The per-line budget binds
+        // it tighter still: nothing past it is ever emitted.
+        if let Some(budget) = line_char_budget.or(char_budget) {
             iter = iter.with_max_line_bytes(budget.saturating_mul(4).saturating_add(1024));
         }
         while lines_seen < max_lines {
@@ -118,6 +164,8 @@ pub(crate) fn build_base_tokens(
             let mut byte_offset = 0usize;
             let content_bytes = line_content.as_bytes();
             let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
+            let mut chars_this_line = 0usize;
+            let mut cut_line = false;
             for ch in line_content.chars() {
                 // Stop once the viewport's rows are covered. Unlike the
                 // `lines_seen` bound this fires inside a single long line,
@@ -125,7 +173,14 @@ pub(crate) fn build_base_tokens(
                 if char_budget.is_some_and(|budget| chars_seen >= budget) {
                     break 'segments;
                 }
+                // The rest of *this* line cannot be drawn, but the lines under
+                // it can: end the row here and move on to them.
+                if line_char_budget.is_some_and(|budget| chars_this_line >= budget) {
+                    cut_line = true;
+                    break;
+                }
                 chars_seen += 1;
+                chars_this_line += 1;
 
                 let ch_len = ch.len_utf8();
                 let source_offset = Some(line_start + byte_offset);
@@ -204,6 +259,44 @@ pub(crate) fn build_base_tokens(
                     }
                 }
                 byte_offset += ch_len;
+            }
+            if cut_line {
+                // The rest of the line is off the right-hand edge of the pane,
+                // but the row still has to end and the lines under it still
+                // have to be drawn. Where the rest of the line lies decides how.
+                match line_terminator_offset(content_bytes, line_start, line_ending) {
+                    // This piece already carried the line's own terminator, so
+                    // the iterator is standing on the next line and the break is
+                    // a real one at a byte the document has. Skipping here would
+                    // step over that next line and drop it from the frame
+                    // entirely — which is what happens to every other line of a
+                    // large file whose lines are merely wider than the pane.
+                    Some(offset) => {
+                        tokens.push(ViewTokenWire {
+                            source_offset: Some(offset),
+                            kind: ViewTokenWireKind::Newline,
+                            style: None,
+                        });
+                    }
+                    // The line runs past what was read. Step over the remainder
+                    // without reading it — and if its end is out of reach, stop
+                    // rather than scan the file for it: the row is left
+                    // unterminated, which is what it is, and no row follows.
+                    None => {
+                        if !iter.skip_to_next_line_within(LINE_SKIP_SCAN_BYTES) {
+                            break 'segments;
+                        }
+                        // The break carries no source byte, because the line's
+                        // own newline is somewhere past the part that could be
+                        // drawn; the row after it starts a genuinely new logical
+                        // line, which is what `AfterInjectedNewline` says.
+                        tokens.push(ViewTokenWire {
+                            source_offset: None,
+                            kind: ViewTokenWireKind::Newline,
+                            style: None,
+                        });
+                    }
+                }
             }
             lines_seen += 1;
         }
@@ -404,6 +497,7 @@ mod tests {
             LineEnding::LF,
             &[],
             None,
+            None,
             false,
         );
         assert!(
@@ -422,6 +516,7 @@ mod tests {
             LineEnding::LF,
             &[],
             Some(50 * 200),
+            None,
             false,
         );
         let budgeted_chars = char_count(&budgeted);
@@ -454,6 +549,7 @@ mod tests {
             LineEnding::LF,
             &[],
             None,
+            None,
             false,
         );
         let budgeted = build_base_tokens(
@@ -465,6 +561,7 @@ mod tests {
             LineEnding::LF,
             &[],
             Some(30 * 200),
+            None,
             false,
         );
 
@@ -488,6 +585,7 @@ mod tests {
             LineEnding::LF,
             &[],
             Some(0),
+            None,
             false,
         );
         assert!(
@@ -513,6 +611,7 @@ mod tests {
             LineEnding::LF,
             &[],
             None,
+            None,
             false,
         );
         let budgeted = build_base_tokens(
@@ -524,6 +623,7 @@ mod tests {
             LineEnding::LF,
             &[],
             Some(4_000),
+            None,
             false,
         );
 
@@ -592,6 +692,7 @@ pub(crate) fn build_line_tokens_from(
         false,
         line_ending,
         fold_skip,
+        None,
         None,
         start.is_some(),
     );

@@ -686,7 +686,7 @@ impl crate::app::window::Window {
             state.buffer.line_start_offset(line).unwrap_or_else(|| {
                 use crate::view::folding::indent_folding;
                 let approx = line * state.buffer.estimated_line_length();
-                indent_folding::find_line_start_byte(&state.buffer, approx)
+                indent_folding::find_line_start_byte(&state.buffer, approx).unwrap_or(approx)
             })
         };
         self.toggle_fold_at_byte(buffer_id, byte_pos);
@@ -710,6 +710,7 @@ impl crate::app::window::Window {
                 let header_byte = {
                     use crate::view::folding::indent_folding;
                     indent_folding::find_line_start_byte(&state.buffer, byte_pos)
+                        .unwrap_or(byte_pos)
                 };
                 if buf_state.folds.remove_by_header_byte(
                     &state.buffer,

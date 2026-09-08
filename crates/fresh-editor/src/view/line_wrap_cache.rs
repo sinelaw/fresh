@@ -571,7 +571,9 @@ pub fn compute_line_layout(
         line_ending,
         &[], // no fold skip ranges — folds affect what's rendered, not per-line wrap count
         // No character budget: callers ask this for the line's *total* visual
-        // row count, so a viewport-sized read would under-report it.
+        // row count, so a viewport-sized read would under-report it — and for
+        // the same reason the line is not cut short either.
+        None,
         None,
         false,
     );

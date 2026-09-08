@@ -267,7 +267,7 @@ pub(super) fn diff_indicators_for_viewport(
             continue;
         }
 
-        let line_start = indent_folding::find_line_start_byte(&state.buffer, lo);
+        let line_start = indent_folding::find_line_start_byte(&state.buffer, lo).unwrap_or(lo);
         if line_start >= viewport_start && line_start < viewport_end {
             indicators
                 .entry(line_start)

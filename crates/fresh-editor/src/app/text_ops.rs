@@ -56,17 +56,34 @@ impl Editor {
             } else {
                 // Fall back to physical-line toggle.
                 let state = self.active_state_mut();
-                let mut iter = state
+                // The line's real start. Asking the reader for it scans back on
+                // a budget and, when the budget runs out, reports how far it
+                // looked — a "line start" in the middle of the line. Home then
+                // lands there, and a second press is needed to reach the real
+                // one, which is exactly what a long line used to do.
+                let buffer_len = state.buffer.len();
+                let line_start = state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                let Some((line_start, line_content)) = iter.next_line() else {
-                    continue;
-                };
-                let first_non_ws = line_content
-                    .chars()
-                    .take_while(|c| *c != '\n')
-                    .position(|c| !c.is_whitespace())
-                    .map(|offset| line_start + offset)
+                    .prev_line_start_within(cursor.position, buffer_len)
+                    .unwrap_or(0);
+                // Only the indent decides where Home goes, and indentation is at
+                // the front of the line — so read a page of it rather than the
+                // line, which on a minified file is the file.
+                const INDENT_SCAN_BYTES: usize = 4096;
+                let head_len = INDENT_SCAN_BYTES.min(buffer_len.saturating_sub(line_start));
+                let head = state
+                    .buffer
+                    .get_text_range_mut(line_start, head_len)
+                    .unwrap_or_default();
+                let head = String::from_utf8_lossy(&head);
+                // Byte offsets, not character counts: the two differ the moment
+                // a line is indented with anything but ASCII, and this is added
+                // to a byte position.
+                let first_non_ws = head
+                    .char_indices()
+                    .take_while(|(_, c)| *c != '\n')
+                    .find(|(_, c)| !c.is_whitespace())
+                    .map(|(offset, _)| line_start + offset)
                     .unwrap_or(line_start);
                 if cursor.position == first_non_ws {
                     line_start

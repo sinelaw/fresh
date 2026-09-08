@@ -350,6 +350,20 @@ impl BracketHighlightOverlay {
             0
         };
 
+        // A match the frame cannot draw changes nothing on screen, so the
+        // search covers the drawn span plus a screenful either side and stops
+        // there. Unbounded by the viewport it was a megabyte of scanning per
+        // keystroke on a file that is one long line — for a bracket that could
+        // not have been highlighted wherever it turned out to be.
+        let margin = viewport_end
+            .saturating_sub(viewport_start)
+            .max(BRACKET_SCAN_CHUNK);
+        let search_bound = if forward {
+            viewport_end.saturating_add(margin)
+        } else {
+            viewport_start.saturating_sub(margin)
+        };
+
         // Find matching bracket
         let matching_pos = self.find_matching_bracket(
             buffer,
@@ -358,6 +372,7 @@ impl BracketHighlightOverlay {
             closing,
             forward,
             skip_ranges,
+            search_bound,
         );
 
         // Determine color based on depth
@@ -446,6 +461,10 @@ impl BracketHighlightOverlay {
     ///
     /// Brackets inside `skip_ranges` (comments/strings) are ignored so the
     /// match reflects only structural punctuation (issue #2405).
+    /// The match for the bracket at `position`, searched for no further than
+    /// `search_bound` (an absolute byte, ahead of `position` when `forward` and
+    /// behind it otherwise).
+    #[allow(clippy::too_many_arguments)]
     fn find_matching_bracket(
         &self,
         buffer: &Buffer,
@@ -454,6 +473,7 @@ impl BracketHighlightOverlay {
         closing: char,
         forward: bool,
         skip_ranges: &[Range<usize>],
+        search_bound: usize,
     ) -> Option<usize> {
         let buffer_len = buffer.len();
         let open = opening as u8;
@@ -461,7 +481,9 @@ impl BracketHighlightOverlay {
         let mut depth: i32 = 1;
 
         if forward {
-            let search_limit = (position + 1 + MAX_BRACKET_SEARCH_BYTES).min(buffer_len);
+            let search_limit = (position + 1 + MAX_BRACKET_SEARCH_BYTES)
+                .min(buffer_len)
+                .min(search_bound.max(position + 1));
             let mut pos = position + 1;
             while pos < search_limit {
                 let chunk_end = (pos + BRACKET_SCAN_CHUNK).min(search_limit);
@@ -482,7 +504,9 @@ impl BracketHighlightOverlay {
                 pos = chunk_end;
             }
         } else {
-            let search_limit = position.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
+            let search_limit = position
+                .saturating_sub(MAX_BRACKET_SEARCH_BYTES)
+                .max(search_bound.min(position));
             let mut pos = position;
             while pos > search_limit {
                 let chunk_start = pos.saturating_sub(BRACKET_SCAN_CHUNK).max(search_limit);
@@ -900,7 +924,7 @@ mod tests {
         let buffer = Buffer::from_str_test("(hello)");
         let overlay = BracketHighlightOverlay::new();
 
-        let result = overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[]);
+        let result = overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX);
         assert_eq!(result, Some(6));
     }
 
@@ -909,7 +933,7 @@ mod tests {
         let buffer = Buffer::from_str_test("(hello)");
         let overlay = BracketHighlightOverlay::new();
 
-        let result = overlay.find_matching_bracket(&buffer, 6, '(', ')', false, &[]);
+        let result = overlay.find_matching_bracket(&buffer, 6, '(', ')', false, &[], 0);
         assert_eq!(result, Some(0));
     }
 
@@ -919,11 +943,11 @@ mod tests {
         let overlay = BracketHighlightOverlay::new();
 
         // Outer opening bracket should match outer closing
-        let result = overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[]);
+        let result = overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX);
         assert_eq!(result, Some(8));
 
         // Inner opening bracket should match inner closing
-        let result = overlay.find_matching_bracket(&buffer, 1, '(', ')', true, &[]);
+        let result = overlay.find_matching_bracket(&buffer, 1, '(', ')', true, &[], usize::MAX);
         assert_eq!(result, Some(7));
     }
 
@@ -1004,14 +1028,14 @@ mod tests {
 
         // Without skipping, `(` at 0 matches the `)` at 2.
         assert_eq!(
-            overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[]),
+            overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX),
             Some(2)
         );
 
         // Treat byte 2 (the first `)`) as inside a comment: it should be
         // skipped, so the match becomes the `)` at 4.
         assert_eq!(
-            overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[2..3]),
+            overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[2..3], usize::MAX),
             Some(4)
         );
     }

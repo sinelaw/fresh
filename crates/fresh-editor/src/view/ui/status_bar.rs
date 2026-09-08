@@ -597,8 +597,14 @@ const CURSOR_COL_RESERVE: usize = 3;
 /// — rather than bytes or code points — keeps the reported column consistent
 /// with the editor's grapheme-based cursor movement.
 fn cursor_column(buffer: &mut crate::model::buffer::TextBuffer, cursor_position: usize) -> usize {
-    let mut iter = buffer.line_iterator(cursor_position, 80);
-    let line_start = iter.current_position();
+    // The line's real start, not the reader's guess at one. The reader's
+    // backward scan is bounded, and past that bound it reports how far it
+    // looked — which is a column of 65,537 for a cursor anywhere beyond 64 KB
+    // into its line, the same wrong number for every position past it.
+    let line_start = buffer
+        .prev_line_start_within(cursor_position, buffer.len())
+        .unwrap_or(0);
+    let mut iter = buffer.line_iterator(line_start, 80);
     let byte_col = cursor_position.saturating_sub(line_start);
     if byte_col == 0 {
         return 0;

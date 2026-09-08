@@ -151,6 +151,49 @@ pub struct Viewport {
     pub(crate) wrap_row_cache: crate::view::line_wrap_cache::RowCountCache,
 }
 
+/// Scanning budget for the unwrapped scroll clamp.
+///
+/// The clamp asks how many rows lie below a candidate top, and with soft wrap
+/// off a row is a line — so on a file whose next line break is megabytes away
+/// the honest answer is "not many, and finding out costs what we let it". A
+/// screenful of ordinary lines is a few tens of kilobytes; past this the clamp
+/// concludes the rows are not there, which for such a file is correct.
+const CLAMP_SCAN_BYTES: usize = 256 * 1024;
+
+/// How much scanning a row-counting walk gets per row it is counting.
+///
+/// The question is "how many rows lie between these two bytes", and with soft
+/// wrap off a row is a line, so the answer costs the line breaks between them.
+/// Budgeting per row rather than for the walk as a whole is what makes the
+/// bound scale with the pane: a forty-row viewport over a file of ten-kilobyte
+/// lines must look at four hundred kilobytes to count its own rows, and under a
+/// flat quarter-megabyte budget it gives up two thirds of the way down and
+/// concludes the rows are not there — a viewport that refuses to scroll where
+/// it was pointed.
+///
+/// Each individual search is still capped at [`CLAMP_SCAN_BYTES`]: a line
+/// longer than that has no row below it worth finding, and the piece tree
+/// remembers what it walked, so a second frame over the same region asks the
+/// tree instead of the file.
+const ROW_SCAN_BYTES_PER_ROW: usize = 64 * 1024;
+
+/// Start of the line above the one containing `byte`, or `None` at the start of
+/// the buffer / when no line start is within reach.
+///
+/// Bounded like every other line-start search: a file that is one long line has
+/// no previous line, and discovering that must not cost the file.
+fn previous_line_start(buffer: &mut Buffer, byte: usize) -> Option<usize> {
+    if byte == 0 {
+        return None;
+    }
+    // The buffer's own bounded search, which faults in the chunks it crosses.
+    // The `&Buffer` probes in `folding` read through `slice_bytes`, which is
+    // silent about a region that has not been loaded — on a lazily-loaded large
+    // file that reads as "no line break here", and the clamp would place the
+    // viewport on the strength of it.
+    buffer.prev_line_start_within(byte.saturating_sub(1), CLAMP_SCAN_BYTES)
+}
+
 impl Viewport {
     /// Byte the viewport starts at.
     ///
@@ -239,7 +282,7 @@ impl Viewport {
             if start == 0 {
                 return 0;
             }
-            p = crate::view::folding::indent_folding::find_line_start_byte(buffer, start - 1);
+            p = crate::view::folding::indent_folding::line_start_byte_or_floor(buffer, start - 1);
         }
         p
     }
@@ -1788,72 +1831,62 @@ impl Viewport {
         proposed_top_byte: usize,
         viewport_height: usize,
     ) {
-        let mut iter = buffer.line_iterator(proposed_top_byte, 80);
-        let mut lines_visible = 0;
-
-        while iter.next_line().is_some() {
-            lines_visible += 1;
-            if lines_visible >= viewport_height {
-                // We have a full viewport of content, use proposed position
-                tracing::trace!(
-                    "DEBUG: Full viewport available, setting top_byte={}",
-                    proposed_top_byte
-                );
-                self.set_top_byte(proposed_top_byte);
-                return;
+        // With soft wrap off a logical line is one visual row, so "can this
+        // position fill the viewport" is "are there this many line starts below
+        // it" — a question about structure, answered by walking line starts
+        // rather than by reading the lines. Reading them meant materialising
+        // `viewport_height` × 100 KB of a file that is one long line, per
+        // scroll event, only to count to forty.
+        let buffer_len = buffer.len();
+        let mut rows_below = 0usize;
+        let mut pos = proposed_top_byte.min(buffer_len);
+        let mut budget = viewport_height
+            .max(1)
+            .saturating_mul(ROW_SCAN_BYTES_PER_ROW);
+        // Whether the count stopped because it ran out of scanning rather than
+        // out of lines — the difference between "there are no more rows below"
+        // and "I did not finish looking".
+        let mut unfinished = false;
+        while rows_below < viewport_height {
+            if budget == 0 {
+                unfinished = true;
+                break;
+            }
+            match buffer.next_line_start_within(pos, budget.min(CLAMP_SCAN_BYTES)) {
+                Some(next) => {
+                    budget = budget.saturating_sub(next - pos);
+                    pos = next;
+                    rows_below += 1;
+                }
+                None => break,
             }
         }
+        // The row the position itself sits on counts.
+        let rows_from_here = rows_below.saturating_add(1);
 
-        tracing::trace!(
-            "DEBUG: After iteration, lines_visible={}, viewport_height={}",
-            lines_visible,
-            viewport_height
-        );
-
-        // If we have enough lines to fill the viewport, we're good
-        if lines_visible >= viewport_height {
-            tracing::trace!(
-                "DEBUG: Enough lines to fill viewport, setting top_byte={}",
-                proposed_top_byte
-            );
+        // Backing up moves the viewport away from where the caller pointed it,
+        // so it takes a finished count to justify. An unfinished one means
+        // there are at least this many rows below and probably more; leave the
+        // position alone rather than yank it upward on a half-answer.
+        if unfinished || rows_from_here >= viewport_height {
             self.set_top_byte(proposed_top_byte);
             return;
         }
 
-        // We don't have enough lines to fill the viewport from proposed_top_byte
-        // Calculate how many lines we're short and scroll back
-        let lines_short = viewport_height - lines_visible;
-        tracing::trace!("DEBUG: lines_short={}, scrolling back", lines_short);
-
-        let mut backtrack_iter = buffer.line_iterator(proposed_top_byte, 80);
-        tracing::trace!(
-            "DEBUG: Backtracking from byte {}",
-            backtrack_iter.current_position()
-        );
-        for i in 0..lines_short {
-            let pos_before = backtrack_iter.current_position();
-            if backtrack_iter.prev().is_none() {
-                tracing::trace!(
-                    "DEBUG: Hit beginning of buffer at backtrack iteration {}",
-                    i
-                );
-                break; // Hit the beginning of the buffer
+        // Not enough rows below: back up so the last row still rests at the
+        // bottom. Each step is one line start above the current one.
+        let short_by = viewport_height - rows_from_here;
+        let mut top = proposed_top_byte;
+        for _ in 0..short_by {
+            let Some(prev) = previous_line_start(buffer, top) else {
+                break;
+            };
+            if prev == top {
+                break;
             }
-            let pos_after = backtrack_iter.current_position();
-            tracing::trace!(
-                "DEBUG: Backtrack iteration {}: {} -> {}",
-                i,
-                pos_before,
-                pos_after
-            );
+            top = prev;
         }
-
-        let final_top_byte = backtrack_iter.current_position();
-        tracing::trace!(
-            "DEBUG: After backtracking, setting top_byte={}",
-            final_top_byte
-        );
-        self.set_top_byte(final_top_byte);
+        self.set_top_byte(top);
     }
 
     /// Scroll to a specific line (byte-based)
@@ -2038,7 +2071,26 @@ impl Viewport {
             return;
         }
 
-        let cursor_line_start = buffer.line_iterator(cursor.position, 80).current_position();
+        // The cursor's line start, exactly — not bounded like the walks that
+        // count rows.
+        //
+        // Those answer "is there a row above / below", where "not within reach"
+        // is a usable answer. This one is the origin the cursor's *column* is
+        // measured from, and the column decides how far right the view scrolls
+        // and therefore what is drawn. Substituting the cursor's own position
+        // when the search runs out reports column 0 for a cursor a megabyte
+        // into its line: the view then scrolls vertically into the middle of
+        // that line, as if its rows were addressed by byte, and stays at column
+        // 0 horizontally. `End` on a long line lands nowhere near the end of it
+        // — 64 KB short, that being how far the search looked.
+        //
+        // Costs a scan back to the line start, once: the piece tree records the
+        // pieces the scan crosses, so the next cursor move on the same line is
+        // answered from metadata. A cursor at the start of its line — every
+        // cursor on a file with ordinary lines — answers immediately.
+        let cursor_line_start = buffer
+            .prev_line_start_within(cursor.position, buffer.len())
+            .unwrap_or(0);
         let effective_offset = self.scroll_offset.min(viewport_lines / 2);
 
         let (cursor_is_visible, cursor_near_top) = if self.row_pass_owns_placement {
@@ -2432,22 +2484,30 @@ impl Viewport {
         effective_offset: usize,
         hidden_ranges: &[(usize, usize)],
     ) -> (bool, bool) {
-        let mut iter = buffer.line_iterator(self.top_byte(), 80);
+        // How many rows down from the top the cursor's line sits — with soft
+        // wrap off a row is a line, so this counts line starts. Walking them
+        // rather than reading the lines is what keeps it a screenful of work on
+        // a file whose lines are megabytes.
+        let mut pos = self.top_byte();
         let mut lines_from_top: usize = 0;
+        let mut budget = viewport_lines.max(1).saturating_mul(ROW_SCAN_BYTES_PER_ROW);
 
-        while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
-            let pos = iter.current_position();
+        while pos < cursor_line_start && lines_from_top < viewport_lines {
             if let Some((_, end)) = Self::containing_hidden_range(hidden_ranges, pos) {
-                while iter.current_position() < end && iter.current_position() < cursor_line_start {
-                    if iter.next_line().is_none() {
-                        break;
-                    }
-                }
+                // A collapsed body draws as its header's single row: step over
+                // it without counting the lines inside.
+                pos = end.min(cursor_line_start);
                 continue;
             }
-            if iter.next_line().is_none() {
+            if budget == 0 {
                 break;
             }
+            let Some(next) = buffer.next_line_start_within(pos, budget.min(CLAMP_SCAN_BYTES))
+            else {
+                break;
+            };
+            budget = budget.saturating_sub(next - pos);
+            pos = next;
             lines_from_top += 1;
         }
 
@@ -2874,6 +2934,44 @@ mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
     use crate::model::cursor::Cursor;
+
+    /// The scroll clamp leaves the viewport where it was pointed when it
+    /// cannot finish counting the rows below.
+    ///
+    /// With soft wrap off a row is a line, so the clamp asks "are there a
+    /// screenful of line starts below this position" and backs the viewport up
+    /// when there are not. The walk that answers is bounded — it has to be, on
+    /// a file whose next line break is megabytes away — but a budget for the
+    /// walk as a whole rather than per row it counts runs out partway down a
+    /// pane of ten-kilobyte lines. The clamp then reads an unfinished count as
+    /// "no more rows" and hauls the position back up, and the file will not
+    /// scroll past its first screen.
+    #[test]
+    fn the_clamp_does_not_back_up_on_a_count_it_could_not_finish() {
+        // Forty rows of ten-kilobyte lines is four hundred kilobytes to count,
+        // well past any single flat budget the walk would carry.
+        let width = 10 * 1024;
+        let lines = 200;
+        let content: String = (0..lines)
+            .map(|_| format!("{}\n", "x".repeat(width - 1)))
+            .collect();
+        let mut buffer = Buffer::from_str_test(&content);
+
+        let mut vp = Viewport::new(120, 40); // wrap off by default
+                                             // A position near the top, with hundreds of lines below it: the clamp
+                                             // has no reason to move it.
+        let proposed = width * 5;
+        vp.set_top_byte_with_limit(&mut buffer, &[], &[], proposed);
+
+        assert_eq!(
+            vp.top_byte(),
+            proposed,
+            "the clamp pulled the viewport back from byte {proposed} to {} with \
+             {} lines still below it",
+            vp.top_byte(),
+            lines - 5
+        );
+    }
 
     /// The capped count agrees with the plain one whenever it does not
     /// saturate — the guarantee that lets scroll math use it everywhere.
