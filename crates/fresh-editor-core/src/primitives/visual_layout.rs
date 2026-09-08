@@ -182,6 +182,7 @@ impl LineMappingsBuilder {
 /// This is the canonical function for visual width calculation.
 /// Use this instead of `str_width()` when the text may contain ANSI codes or tabs.
 pub fn visual_width(s: &str, start_col: usize) -> usize {
+    crate::counters::work::add_text_bytes_measured(s.len() as u64);
     if !s.contains('\x1b') && !s.contains('\t') {
         // Fast path: no special handling needed
         return crate::primitives::display_width::str_width(s);

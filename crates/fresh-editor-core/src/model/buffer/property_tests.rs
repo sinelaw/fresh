@@ -429,3 +429,129 @@ fn test_detect_binary_executable_formats() {
     let pe_header: &[u8] = &[0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00];
     assert!(is_detected_as_binary(pe_header));
 }
+
+/// Where a naive scan of the bytes says the next line starts, under the exact
+/// contract of [`TextBuffer::next_line_start_within`].
+fn shadow_next_line_start(text: &[u8], from: usize, cap: usize) -> Option<usize> {
+    if from >= text.len() || cap == 0 {
+        return None;
+    }
+    let end = from.saturating_add(cap).min(text.len());
+    text[from..end]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|i| from + i + 1)
+}
+
+/// The backward twin, under the contract of
+/// [`TextBuffer::prev_line_start_within`]: the buffer start is a line start,
+/// and out of reach is `None`.
+fn shadow_prev_line_start(text: &[u8], from: usize, cap: usize) -> Option<usize> {
+    let from = from.min(text.len());
+    if from == 0 {
+        return Some(0);
+    }
+    let floor = from.saturating_sub(cap);
+    if let Some(i) = text[floor..from].iter().rposition(|&b| b == b'\n') {
+        return Some(floor + i + 1);
+    }
+    (floor == 0).then_some(0)
+}
+
+proptest! {
+    /// The line-feed counts the bounded searches write into the piece tree
+    /// agree with the bytes, after any sequence of edits.
+    ///
+    /// These searches do not only read the tree's per-piece line-feed counts,
+    /// they fill them in — the same counts `line_count` and line-number lookup
+    /// are computed from. So a count recorded from a piece and then carried
+    /// across an edit is now load-bearing for correctness, not just for speed,
+    /// and a wrong one is silent: line numbering drifts, or a search reports no
+    /// line break in a stretch that has one.
+    ///
+    /// The searches are run *between* the edits as well as after them, because
+    /// a count that is never recorded can never be stale — the bug this guards
+    /// against needs the buffer to have learnt something first.
+    #[test]
+    fn prop_recorded_line_feed_counts_agree_with_the_bytes(
+        operations in operation_strategy(),
+        probes in prop::collection::vec((0usize..300, 1usize..300), 1..8),
+        forget_counts in any::<bool>(),
+    ) {
+        let mut buffer = TextBuffer::from_bytes(b"line1\nline2\nline3".to_vec(), test_fs());
+
+        // A buffer built from memory knows every piece's line-feed count
+        // already, so the searches only ever *read* the tree — the recording
+        // path, which is the new one, would never run. Splitting the leaves
+        // puts the tree in the state a lazily-loaded file is in: many small
+        // pieces, none of them counted, exactly what the searches are there to
+        // fill in.
+        if forget_counts {
+            buffer.piece_tree.split_leaves_to_chunk_size(8);
+        }
+
+        // One round of probing before any edit, so the tree has counts to carry.
+        for &(from, cap) in &probes {
+            let _ = buffer.next_line_start_within(from, cap);
+            let _ = buffer.prev_line_start_within(from, cap);
+        }
+
+        for op in operations {
+            match op {
+                Operation::Insert { offset, text } => {
+                    let offset = offset.min(buffer.total_bytes());
+                    buffer.insert_bytes(offset, text);
+                }
+                Operation::Delete { offset, bytes } => {
+                    buffer.delete_bytes(offset, bytes);
+                }
+            }
+
+            let text = buffer.get_all_text().expect("in-memory buffer is loaded");
+
+            // The tree's own line index, which the searches write into. It is
+            // allowed not to know — a piece nobody has read has no count — but
+            // when it claims to, it has to be right.
+            let newlines = text.iter().filter(|&&b| b == b'\n').count();
+            if let Some(lines) = buffer.line_count() {
+                prop_assert_eq!(
+                    lines,
+                    newlines + 1,
+                    "line_count disagrees with the bytes after an edit"
+                );
+            }
+
+            for &(from, cap) in &probes {
+                let from = from.min(text.len());
+
+                prop_assert_eq!(
+                    buffer.next_line_start_within(from, cap),
+                    shadow_next_line_start(&text, from, cap),
+                    "next_line_start_within({}, {}) disagrees with a scan of the bytes",
+                    from,
+                    cap
+                );
+                prop_assert_eq!(
+                    buffer.prev_line_start_within(from, cap),
+                    shadow_prev_line_start(&text, from, cap),
+                    "prev_line_start_within({}, {}) disagrees with a scan of the bytes",
+                    from,
+                    cap
+                );
+
+                // Claiming a stretch holds no line break is a claim about the
+                // bytes; it may say "don't know" (false), never a falsehood.
+                let end = from.saturating_add(cap);
+                if buffer.known_newline_free(from..end) {
+                    let end = end.min(text.len());
+                    prop_assert!(
+                        !text[from..end].contains(&b'\n'),
+                        "known_newline_free({}..{}) over a stretch that has one",
+                        from,
+                        end
+                    );
+                }
+            }
+        }
+    }
+}

@@ -2121,6 +2121,135 @@ mod rebuild_pristine_saved_root_tests {
         }
     }
 
+    /// `next_line_start_within` answers where the next line begins without
+    /// reading the line — the property every scroll and row-counting caller
+    /// needs on a file whose "line" is the whole file.
+    #[test]
+    fn next_line_start_reads_only_what_it_scans() {
+        let mut buf = TextBuffer::from_str_test("one\ntwo\nthree");
+
+        assert_eq!(buf.next_line_start_within(0, 64), Some(4));
+        assert_eq!(buf.next_line_start_within(4, 64), Some(8));
+        // Scanning from inside a line finds that line's own break.
+        assert_eq!(buf.next_line_start_within(5, 64), Some(8));
+        // The last line has no terminator.
+        assert_eq!(buf.next_line_start_within(8, 64), None);
+        // Past the end.
+        assert_eq!(buf.next_line_start_within(99, 64), None);
+    }
+
+    /// The cap is the whole point: a search that runs past it reports "no line
+    /// break in reach" rather than walking the file.
+    #[test]
+    fn next_line_start_stops_at_the_cap() {
+        let mut content = "x".repeat(10_000);
+        content.push('\n');
+        content.push_str("after");
+        let mut buf = TextBuffer::from_str_test(&content);
+
+        assert_eq!(buf.next_line_start_within(0, 100), None);
+        assert_eq!(buf.next_line_start_within(0, 20_000), Some(10_001));
+
+        // And it costs what it scans, not what the line contains.
+        crate::counters::work::reset();
+        assert_eq!(buf.next_line_start_within(0, 100), None);
+        let read = crate::counters::work::buffer_bytes_read();
+        assert!(
+            read <= 100,
+            "a 100-byte capped scan read {read} bytes of a {} byte line",
+            content.len()
+        );
+    }
+
+    /// On the lazily-loaded path the scan pulls chunks as it reaches them and
+    /// no further — the same laziness a read has, without the copy.
+    #[test]
+    fn next_line_start_on_an_unloaded_buffer_loads_only_what_it_reaches() {
+        // 4 MB with a newline early on, so the answer is a long way from the
+        // end of the file.
+        let mut content = vec![b'x'; 4 * 1024 * 1024];
+        content[1000] = b'\n';
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), &content).unwrap();
+        let mut buf = large_file_buffer_unloaded(tmp.path(), content.len());
+
+        assert_eq!(buf.next_line_start_within(0, 64 * 1024), Some(1001));
+        assert!(
+            buf.resident_bytes() < content.len(),
+            "the scan pulled the whole file in ({} of {} bytes resident)",
+            buf.resident_bytes(),
+            content.len()
+        );
+
+        // No newline within the cap further in: still bounded.
+        assert_eq!(buf.next_line_start_within(2_000_000, 4096), None);
+    }
+
+    /// The backward twin: the start of the line containing a byte, bounded.
+    #[test]
+    fn prev_line_start_is_bounded_and_exact_within_the_bound() {
+        let mut buf = TextBuffer::from_str_test("one\ntwo\nthree");
+
+        assert_eq!(buf.prev_line_start_within(0, 64), Some(0));
+        assert_eq!(buf.prev_line_start_within(2, 64), Some(0));
+        assert_eq!(buf.prev_line_start_within(4, 64), Some(4));
+        assert_eq!(buf.prev_line_start_within(6, 64), Some(4));
+        assert_eq!(buf.prev_line_start_within(10, 64), Some(8));
+
+        // Out of reach: a line whose start is further back than the cap.
+        let long = "x".repeat(10_000);
+        let mut buf = TextBuffer::from_str_test(&long);
+        assert_eq!(buf.prev_line_start_within(9_000, 100), None);
+        assert_eq!(buf.prev_line_start_within(9_000, 20_000), Some(0));
+    }
+
+    /// A stretch known to hold no line break is not walked to find that out —
+    /// the question every layout pass asks about a file with no line structure
+    /// — and editing inside it does not make the editor forget.
+    ///
+    /// A buffer built from memory has its per-piece line-feed counts from the
+    /// start, so here the search never has to read anything at all; on a
+    /// lazily-loaded file it reads each piece once and then behaves like this.
+    /// Either way the answer comes from the piece tree, and the tree carries it
+    /// across edits.
+    #[test]
+    fn a_newline_free_stretch_survives_edits_that_cannot_add_a_break() {
+        let content = "x".repeat(200_000);
+        let mut buf = TextBuffer::from_str_test(&content);
+
+        crate::counters::work::reset();
+        assert_eq!(buf.next_line_start_within(0, 100_000), None);
+        assert_eq!(
+            crate::counters::work::buffer_bytes_read(),
+            0,
+            "the tree already counts the line feeds in this piece; the search \
+             must not re-derive that by reading it"
+        );
+
+        // Typing a character cannot introduce a line break, so the answer is
+        // still known — this is the keystroke case, where re-walking would cost
+        // a quarter of a megabyte per press.
+        buf.insert(10, "y");
+        crate::counters::work::reset();
+        assert_eq!(buf.next_line_start_within(0, 100_000), None);
+        assert_eq!(
+            crate::counters::work::buffer_bytes_read(),
+            0,
+            "an insertion with no newline in it must not cost a rescan"
+        );
+
+        // Deleting cannot introduce one either.
+        buf.delete(10..11);
+        crate::counters::work::reset();
+        assert_eq!(buf.next_line_start_within(0, 100_000), None);
+        assert_eq!(crate::counters::work::buffer_bytes_read(), 0);
+
+        // But an inserted newline is noticed, which is the whole correctness
+        // requirement.
+        buf.insert(50, "\n");
+        assert_eq!(buf.next_line_start_within(0, 100_000), Some(51));
+    }
+
     #[test]
     fn test_unloaded_buffer_no_edits_line_count() {
         let content = make_content(2 * 1024 * 1024);
@@ -3131,4 +3260,152 @@ fn find_all_in_range_skips_overlapping_matches() {
     assert!(buffer
         .find_all_in_range("", 0..buffer.len(), usize::MAX)
         .is_empty());
+}
+
+/// A stretch the line-break search has already walked is not walked again —
+/// and staying knowledgeable about one stretch does not cost the answer for
+/// another.
+///
+/// On a file that is one enormous line, every layout question ends in the same
+/// search ("is there a line break within reach?"), several times per frame and
+/// per keystroke, and the answer is always no. The search records what it
+/// learns on the piece tree's own per-piece line-feed counts as it crosses
+/// them, so the second frame asks the tree instead of the file. Because the
+/// record is per piece rather than one remembered span, scrolling to a distant
+/// part of the file and back does not put the first stretch back to unknown.
+#[test]
+fn a_walked_stretch_is_not_walked_twice() {
+    let file_size = LOAD_CHUNK_SIZE * 3;
+    // One line: no break anywhere in three megabytes.
+    let content = vec![b'x'; file_size];
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), &content).unwrap();
+
+    let buffer = crate::model::piece_tree::StringBuffer::new_unloaded(
+        0,
+        tmp.path().to_path_buf(),
+        0,
+        file_size,
+    );
+    let piece_tree = PieceTree::new(BufferLocation::Stored(0), 0, file_size, None);
+    let saved_root = piece_tree.root();
+    let mut buf = TextBuffer {
+        piece_tree,
+        buffers: vec![buffer],
+        next_buffer_id: 1,
+        persistence: Persistence::new(
+            test_fs(),
+            Some(tmp.path().to_path_buf()),
+            saved_root,
+            Some(file_size),
+        ),
+        file_kind: BufferFileKind::new(true, false),
+        format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
+        version: 0,
+        config: BufferConfig::default(),
+    };
+
+    let cap = 256 * 1024;
+    let far = LOAD_CHUNK_SIZE * 2 + 1000;
+
+    // Walk near the start, then near the far end — two separate regions.
+    assert_eq!(buf.next_line_start_within(0, cap), None);
+    assert_eq!(buf.next_line_start_within(far, cap), None);
+
+    // Ask about the first region again. Nothing about the file has changed and
+    // nothing about it needs re-reading.
+    crate::counters::work::reset();
+    assert_eq!(buf.next_line_start_within(0, cap), None);
+    let reread = crate::counters::work::buffer_bytes_read();
+    assert_eq!(
+        reread, 0,
+        "re-asking where the first line break is read {reread} bytes; the search \
+         already walked this stretch and recorded that it holds none"
+    );
+
+    // And the far region, which was walked second.
+    crate::counters::work::reset();
+    assert_eq!(buf.next_line_start_within(far, cap), None);
+    let reread = crate::counters::work::buffer_bytes_read();
+    assert_eq!(
+        reread, 0,
+        "re-asking at the far end read {reread} bytes; both stretches are known, \
+         not just the most recent one"
+    );
+
+    // Backwards is the same search and shares the same knowledge. Starting far
+    // enough in that the search window does not reach byte 0, which is itself a
+    // line start and would end the search on structure rather than knowledge.
+    crate::counters::work::reset();
+    assert_eq!(buf.prev_line_start_within(cap * 2, cap), None);
+    let reread = crate::counters::work::buffer_bytes_read();
+    assert_eq!(
+        reread, 0,
+        "searching backwards over an already-walked stretch read {reread} bytes"
+    );
+}
+
+/// What the search learnt survives typing, including typing somewhere else.
+///
+/// Inserting text with no line break in it cannot introduce one, and the piece
+/// tree already knows how to carry line-feed counts across an edit: the pieces
+/// the insertion splits get counted from the text that made them, and every
+/// piece it did not touch keeps the count it had. So a keystroke near the top
+/// of a huge line does not make the frame rediscover the rest of it.
+#[test]
+fn typing_does_not_forget_where_the_line_breaks_are_not() {
+    let file_size = LOAD_CHUNK_SIZE * 3;
+    let content = vec![b'x'; file_size];
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), &content).unwrap();
+
+    let buffer = crate::model::piece_tree::StringBuffer::new_unloaded(
+        0,
+        tmp.path().to_path_buf(),
+        0,
+        file_size,
+    );
+    let piece_tree = PieceTree::new(BufferLocation::Stored(0), 0, file_size, None);
+    let saved_root = piece_tree.root();
+    let mut buf = TextBuffer {
+        piece_tree,
+        buffers: vec![buffer],
+        next_buffer_id: 1,
+        persistence: Persistence::new(
+            test_fs(),
+            Some(tmp.path().to_path_buf()),
+            saved_root,
+            Some(file_size),
+        ),
+        file_kind: BufferFileKind::new(true, false),
+        format: BufferFormat::new(LineEnding::LF, Encoding::Utf8),
+        version: 0,
+        config: BufferConfig::default(),
+    };
+
+    let cap = 256 * 1024;
+    // The stretch the viewport is looking at, well past the start of the file.
+    let viewport = LOAD_CHUNK_SIZE * 2 + 1000;
+    assert_eq!(buf.next_line_start_within(viewport, cap), None);
+
+    // Type a character somewhere else entirely — a megabyte above.
+    buf.insert_bytes(1000, b"h".to_vec());
+
+    crate::counters::work::reset();
+    assert_eq!(buf.next_line_start_within(viewport + 1, cap), None);
+    let reread = crate::counters::work::buffer_bytes_read();
+    assert_eq!(
+        reread, 0,
+        "a keystroke a megabyte away cost the viewport {reread} bytes of \
+         rediscovering that the line it is drawing still has no break in it"
+    );
+
+    // An inserted break is found, though — knowledge is not a licence to lie.
+    buf.insert_bytes(viewport + 100, b"\n".to_vec());
+    assert_eq!(
+        buf.next_line_start_within(viewport + 1, cap),
+        Some(viewport + 101)
+    );
 }
