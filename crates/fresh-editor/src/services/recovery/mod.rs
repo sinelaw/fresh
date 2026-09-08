@@ -618,7 +618,7 @@ mod tests {
         // Chunk: insert "PREFIX: " at offset 0
         let chunks = vec![RecoveryChunk::new(0, 0, b"PREFIX: ".to_vec())];
         service
-            .save_buffer(
+            .save_buffer_owned(
                 &id,
                 chunks,
                 Some(&original_path),
@@ -626,6 +626,7 @@ mod tests {
                 Some(1),
                 original_content.len(), // original_file_size > 0
                 original_content.len() + 8,
+                None,
             )
             .unwrap();
 
