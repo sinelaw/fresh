@@ -432,9 +432,6 @@ impl Editor {
                 *self.theme.write().unwrap() = theme;
                 self.start_theme_transition_animation();
 
-                // Set terminal cursor color to match theme
-                self.theme.read().unwrap().set_terminal_cursor_color();
-
                 // Re-apply all overlays so colors match the new theme
                 // (diagnostic and semantic token overlays bake RGB at creation time).
                 self.reapply_all_overlays();
@@ -546,7 +543,6 @@ impl Editor {
                     // a new transition replaces the in-flight one and
                     // fades from whatever is on screen right now.
                     self.start_theme_transition_animation();
-                    self.theme.read().unwrap().set_terminal_cursor_color();
                     self.reapply_all_overlays();
                 }
             }

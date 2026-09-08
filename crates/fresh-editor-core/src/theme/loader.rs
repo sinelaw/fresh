@@ -561,40 +561,36 @@ impl ThemeLoader {
     }
 }
 
-// Cursor color methods on Theme (no I/O for theme loading)
-impl Theme {
-    /// Set the terminal cursor color using OSC 12 escape sequence.
-    /// This makes the hardware cursor visible on any background.
-    pub fn set_terminal_cursor_color(&self) {
-        use super::types::color_to_rgb;
-        use std::io::Write;
-        if let Some((r, g, b)) = color_to_rgb(self.cursor) {
-            // OSC 12 sets cursor color: \x1b]12;#RRGGBB\x07
-            // Best-effort terminal escape writes
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = write!(
-                std::io::stdout(),
-                "\x1b]12;#{:02x}{:02x}{:02x}\x07",
-                r,
-                g,
-                b
-            );
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = std::io::stdout().flush();
-        }
-    }
-
-    /// Reset the terminal cursor color to default.
-    pub fn reset_terminal_cursor_color() {
-        use std::io::Write;
-        // OSC 112 resets cursor color to default
-        // Best-effort terminal escape writes
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = write!(std::io::stdout(), "\x1b]112\x07");
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = std::io::stdout().flush();
-    }
-}
+// **The terminal's cursor colour is the terminal's.** This is where the theme
+// used to claim it, with OSC 12 (`\x1b]12;#RRGGBB`) at startup and on every
+// theme change, and OSC 112 to put it back on the way out.
+//
+// The colour was never the problem; overriding was. A block cursor has two
+// colours — the block and the glyph inside it — and OSC 12 names only the
+// first. Terminals disagree about the second: some draw the character in the
+// cell's background (a themed block stays readable), others leave it in the
+// cell's *foreground*, and there the character survives only if the theme's
+// one cursor colour happens to contrast whatever that byte is painted in.
+// It cannot, for every syntax colour at once: the `light` theme's black
+// cursor swallowed black body text whole, and a mid-tone chosen to fix that
+// then collided with the syntax colours nearest it.
+//
+// Left alone, every terminal already has a rule that cannot collide, because
+// it is computed per cell rather than fixed: the cursor inverts the cell it
+// sits on, or draws the glyph in a colour it picks to go with its own. That
+// is what a `fresh` session under the daemon has always looked like — the
+// daemon relays a grid and cursor moves, never an OSC, so the client's
+// terminal has always used its own rule — and it reads better than what
+// direct mode was doing. Now they are the same editor.
+//
+// So: no OSC 12, and therefore no OSC 112 either. The reset existed to undo
+// our own write, and a terminal we never wrote to is one we must not "restore"
+// — a cursor colour set from the user's shell profile is theirs to keep, not
+// ours to clear on the way past. `editor.cursor` still names a colour, for
+// everything the editor paints itself: the inactive split's cursor cell, the
+// cursor-jump animation's head, and the accent a focused dock or explorer
+// border wears. The *cursor style* (block, bar, underline) stays the editor's
+// to set — that one is a config the user asked for, not a guess we made.
 
 #[cfg(test)]
 mod tests {
