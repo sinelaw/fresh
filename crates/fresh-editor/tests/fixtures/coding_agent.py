@@ -383,6 +383,11 @@ class Pane:
     def __init__(self, out, header):
         self.out = out
         self.header = header
+        # Every line committed so far. A pane that is split, or resized by the
+        # host a moment after it starts, has to lay itself out again — and a
+        # re-layout that only redraws the header throws away the session. Real
+        # agents redraw their transcript; so does this.
+        self.log = []
         self.width = 60
         self.rows = 24
         self.drawn = 0        # lines the last live block occupied, 0 if none
@@ -411,9 +416,12 @@ class Pane:
         so a resize starts the pane over rather than desyncing it."""
         self.measure()
         self.out.write("\033[H\033[2J")
-        pad = max(0, self.rows - len(self.header) - self.LIVE_LINES)
+        body = self.header + self.log
+        room = max(0, self.rows - self.LIVE_LINES)
+        body = body[-room:] if len(body) > room else body
+        pad = max(0, room - len(body))
         self.out.write("\n" * pad)
-        for line in self.header:
+        for line in body:
             self.out.write(truncate(line, self.width) + "\n")
         self.drawn = 0
         self.resized = False
@@ -483,6 +491,7 @@ class Pane:
             # Cursor sits on the last live line: rewind to the first and wipe.
             self.out.write(f"\r\033[{self.drawn - 1}A\033[J")
         for line in commit:
+            self.log.append(line)
             self.out.write(truncate(line, self.width) + "\n")
         self.out.write("\n".join(truncate(line, self.width) for line in block))
         self.out.flush()

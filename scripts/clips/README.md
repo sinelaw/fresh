@@ -160,13 +160,24 @@ one-eighth speed would not otherwise have by the time filming starts. Measured
 in the finished clip: 4.8 visible changes a second, which is what an agent's
 spinner actually does.
 
-**Do not fake a transition the program does not have.** The dock's live switch
-was filmed at 60fps with animations enabled, to catch the slide: it has none.
-One frame holds the old workspace, the next holds the new one, with nothing in
-between and no frames either side. So the clip cuts, because the editor cuts —
-a `push` transition in the spec would have been the renderer inventing motion
-the feature does not have, over the one claim it does make, which is that the
-switch is instant.
+**The switch does wipe. The camera is what cannot see it.** Arrow-navigating
+the dock calls `setActiveWindowAnimated`, and the host slides everything right
+of the dock in from the edge you came from — `AnimationKind::SlideIn`, 180ms.
+None of it reaches a clip filmed this way: a `--record` catches one frame,
+because the animation is self-driven and self-driven frames do not reach the
+window (above), and `--shot` cannot help either, because `tui-capture` sleeps
+1.2s after a `--key` before the next action — seven times the length of the
+thing being filmed. At a small window, where a screenshot costs about 60ms
+rather than 350, it is easy to catch: `110x26` at font 10 gives two or three
+mid-wipe frames per switch, the outgoing workspace pushed up and the incoming
+one arriving underneath.
+
+So the clip cuts because the *camera* cuts, and it says so. A `push` transition
+in the spec would not have fixed that: it would be the renderer inventing a
+different motion, in a different direction, over the top of the real one.
+Filming this one properly wants either a burst-of-shots step in tui-clips (fire
+the key, then N screenshots with no sleep between) or the harness path the blog
+showcases use, which renders every frame the editor draws.
 
 **Keep the scaled capture off a half-pixel.** The renderer caches scaled
 screens under the scale factor rounded to four decimals, so two frames whose
@@ -175,6 +186,24 @@ lands on exactly `.5`, where the two round to heights one pixel apart and the
 cross-fade between two beats dies with `ValueError: images do not match`. A
 140x30 capture at 1920 wide is exactly that case (1142 × 1920/2382 = 920.5);
 140x29 is not. Worth knowing before blaming the capture.
+
+**Put the agent on the left, and what checks it on the right.** Every session
+in this clip is arranged that way, and one of them has **Review Diff** in the
+right-hand pane rather than a file — the agent that is waiting for an answer,
+with the diff of what it already changed open beside it. Two things that needs:
+a file to open the split on (a split made with no file shows the pane it was cut
+from, so the agent ends up on screen twice), and a wait afterwards, because
+`runCommand` resolves when the command was *dispatched* and Review Diff shells
+out to git. Poll `listBuffers()` for the review buffer before moving on, or the
+review lands in whichever workspace the setup has reached by the time git
+answers.
+
+**A pane that gets split has to redraw its own transcript.** The host resizes an
+agent's PTY the moment a split appears beside it, and a bottom-anchored pane
+that answers `SIGWINCH` by clearing and redrawing only its header throws the
+session away — which is how a filmed agent ends up looking like one that has
+just started. The fixture keeps its committed lines and re-lays the last
+screenful of them, which is what a real agent does.
 
 **Stage a multi-window clip with a plugin, not with keystrokes.** Cutting three
 worktrees through the New Workspace dialogue is thirty keystrokes, thirty
