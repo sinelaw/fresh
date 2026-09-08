@@ -1,0 +1,41 @@
+{
+  "theme": "builtin://dracula",
+  "check_for_updates": false,
+  "editor": {
+    "animations": false,
+    "cursor_jump_animation": false
+  },
+  "keybindings": [
+    {
+      "keys": [
+        {
+          "key": "F8",
+          "modifiers": []
+        }
+      ],
+      "action": "toggle_dock_focus",
+      "when": "normal"
+    }
+  ],
+  "plugins": {
+    "orchestrator": {
+      "enabled": true,
+      "settings": {
+        "autoOpenDock": true,
+        "defaultView": "compact"
+      }
+    },
+    "welcome_screen": {
+      "enabled": false
+    },
+    "dashboard": {
+      "enabled": false
+    },
+    "git_heatmap": {
+      "enabled": false
+    },
+    "vi_mode": {
+      "enabled": false
+    }
+  }
+}

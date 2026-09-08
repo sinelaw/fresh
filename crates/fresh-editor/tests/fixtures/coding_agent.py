@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """Coding Agent — a *fake* interactive coding agent used by Fresh's showcase
-GIFs. Every line of output is staged; it does not read, run, or change
-anything.
+GIFs and feature clips. Every line of output is staged; it does not read, run,
+or change anything.
 
 It renders the shape a real terminal coding agent has: a transcript that
-scrolls (a user turn, assistant bullets, tool calls with their `⎿` results)
-under a spinner line, and an input box pinned to the bottom of the pane. Lines
-are drawn from a large bank and seeded by the project name, so two instances
-running side by side diverge. It loops forever, so it keeps producing output
-for as long as a demo needs to film it.
+scrolls (a user turn, assistant bullets, tool calls with their `⎿` results,
+todo lists, edits with their diff hunks) under a spinner line, and an input box
+pinned to the bottom of the pane. Lines are drawn from a large bank and seeded
+by the project name, so two instances running side by side diverge. It loops
+forever, so it keeps producing output for as long as a demo needs to film it.
 
-Usage:  python3 coding_agent.py [--as <comm-name>] <project-name>
+Usage:  python3 coding_agent.py [--as <comm-name>] [--ask [N]] <project-name>
 
 `--as` renames the process (prctl PR_SET_NAME on Linux) and sets the terminal
 title (OSC 2), the two things Fresh's terminal auto-titling reads — the
 foreground process' `/proc/<pgid>/comm` and the OSC title. A demo can then put
 a shim called `claude` on `PATH` and get the tab a real agent launch produces,
-instead of one named `python3`.
+instead of one named `python3`. It also picks the accent colour, so agents
+launched under different names read as different programs on screen rather
+than as one program in three windows.
+
+`--ask` stops after N steps (default 4) on a permission prompt and stays there,
+which is the state a demo about *noticing* an agent needs one: the other panes
+keep moving, this one is waiting on a human.
 
 Any remaining argument that starts with `-` is ignored (a launcher may append
 its own flags); the first bare one, or else the current directory's name, is
@@ -52,19 +58,46 @@ def announce_as(name):
 
 DIM, BOLD = "2", "1"
 CYAN, GREEN, YELLOW, MAGENTA, ORANGE = "36", "32", "33", "35", "38;5;209"
+RED, BLUE, VIOLET = "38;5;203", "38;5;75", "38;5;141"
+# Diff hunks are read as blocks of colour before they are read as text, so the
+# add/remove rows carry a background rather than only coloured ink.
+ADD_BG, DEL_BG = "48;5;22;38;5;158", "48;5;52;38;5;217"
+
+# One agent per accent: a demo that runs three at once wants them to look like
+# three programs. Keyed by the name the launcher used (`--as`), because that is
+# the only thing that actually differs between the instances.
+SKINS = {
+    "claude": ("38;5;209", "✻✳✶✻✳✢", "Coding Agent"),
+    "codex":  ("38;5;75",  "◐◓◑◒",   "Coding Agent"),
+    "opencode": ("38;5;141", "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", "Coding Agent"),
+    "aider":  ("38;5;115", "◜◠◝◞◡◟", "Coding Agent"),
+}
 
 argv = sys.argv[1:]
-if len(argv) >= 2 and argv[0] == "--as":
-    announce_as(argv[1])
-    argv = argv[2:]
+skin = "claude"
+ask_after = None
+while argv:
+    if len(argv) >= 2 and argv[0] == "--as":
+        announce_as(argv[1])
+        skin = argv[1]
+        argv = argv[2:]
+        continue
+    if argv[0] == "--ask":
+        ask_after = 4
+        argv = argv[1:]
+        if argv and argv[0].isdigit():
+            ask_after = int(argv[0])
+            argv = argv[1:]
+        continue
+    break
+
+ACCENT, SPIN, BRAND = SKINS.get(skin, SKINS["claude"])
 
 bare = [a for a in argv if not a.startswith("-")]
 project = bare[0] if bare else os.path.basename(os.getcwd()) or "service"
 # `random.Random` accepts a str seed and hashes it stably (sha512), so the
 # stream is deterministic per project and differs between projects.
 rng = random.Random(project)
-
-SPIN = "✻✳✶✻✳✢"
 
 FILES = [
     "src/auth.rs", "src/session.rs", "src/handlers.rs", "src/routes.rs",
@@ -121,6 +154,49 @@ CMDS = [
     ("rg 'unwrap\\(\\)' src/", lambda: f"{rng.randint(3, 24)} matches"),
 ]
 
+# Edits are the one thing an agent does that a reader wants to *see* rather
+# than be told about, so each carries a hunk: the line it replaced and the line
+# it wrote. Kept short — these render in a pane beside the code, not across a
+# full-width terminal.
+HUNKS = [
+    ("src/auth.rs", "if claims.sub.is_some() {",
+     "if claims.sub.is_some() && !claims.expired() {"),
+    ("src/session.rs", "let now = SystemTime::now();",
+     "let now = clock.now();  // injectable, for tests"),
+    ("src/db/pool.rs", "let conn = pool.get().await?;",
+     "let conn = pool.get().timeout(DEADLINE).await??;"),
+    ("src/ratelimit.rs", "self.hits += 1;",
+     "self.hits = self.hits.saturating_add(1);"),
+    ("src/token.rs", "let key = self.keys[0].clone();",
+     "let key = self.keys.by_kid(header.kid)?;"),
+    ("src/middleware.rs", ".layer(TraceLayer::new())",
+     ".layer(TraceLayer::new().on_failure(log_failure))"),
+]
+
+TODOS = [
+    ["Reproduce the bypass in a test", "Reject expired refresh tokens",
+     "Add a regression test"],
+    ["Measure the hot path", "Move the lock off the await",
+     "Re-run the load test"],
+    ["Read the failing case", "Make the clock injectable",
+     "Unignore the test"],
+]
+
+
+def visible(line):
+    """Printable columns of `line`, ignoring SGR escapes."""
+    out, i = 0, 0
+    while i < len(line):
+        if line[i] == "\033":
+            end = line.find("m", i)
+            if end == -1:
+                break
+            i = end + 1
+            continue
+        out += 1
+        i += 1
+    return out
+
 
 def truncate(line, width):
     """Trim to `width` printable columns, ignoring SGR escapes, so a long
@@ -143,70 +219,153 @@ def truncate(line, width):
     return "".join(out)
 
 
+def wrap(text, width, indent="  "):
+    """Prose, broken to the pane. Truncating a sentence loses the half that
+    said something; a real agent wraps, and the wrapped remainder is indented
+    so the bullet column stays a column."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        probe = f"{cur} {w}".strip()
+        if len(probe) > width and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = probe
+    if cur:
+        lines.append(cur)
+    return [lines[0]] + [indent + rest for rest in lines[1:]]
+
+
+def spin_line(glyph, msg, elapsed, tokens, width):
+    """The working line, fitted to the pane.
+
+    Three things want the same row — what it is doing, how long it has been,
+    and how to stop it — and a narrow pane cannot have all three. Drop the
+    tail before the message, and shorten the message before losing it: a line
+    the pane cuts mid-word reads as a rendering fault, which is the one thing
+    a fake agent must not look like.
+    """
+    for meta in (f"({elapsed}s · ↑ {tokens} tokens · esc to interrupt)",
+                 f"({elapsed}s · ↑ {tokens} tokens)",
+                 f"({elapsed}s)",
+                 ""):
+        room = width - visible(f"{glyph} …") - (visible(meta) + 1 if meta else 0)
+        if room >= 12:
+            text = msg if len(msg) <= room else msg[:room - 1].rstrip() + "…"
+            line = f"{sgr(ACCENT, glyph)} {sgr(DIM, text + '…')}"
+            return f"{line} {sgr(DIM, meta)}" if meta else line
+    return f"{sgr(ACCENT, glyph)}"
+
+
 def think_line():
     return rng.choice(THINK).format(f=rng.choice(FILES), s=rng.choice(SYMS))
 
 
-def step():
+def diff_block(width):
+    """An edit and the hunk it wrote, the way a coding agent shows one."""
+    f, before, after = rng.choice(HUNKS)
+    n = rng.randint(24, 180)
+    add, rem = rng.randint(2, 22), rng.randint(0, 9)
+    # The hunk rows are `     <line> <block>`, and the block is what is left
+    # of the pane after that gutter — computed from it rather than guessed at,
+    # since a block one cell too wide wraps into the next row.
+    gutter = 5 + len(str(n)) + 1
+    body = max(12, width - gutter)
+
+    def hunk(bg, text):
+        return f"{'':5}{sgr(DIM, str(n))} {sgr(bg, text[:body].ljust(body))}"
+
+    return [
+        f"{sgr(ACCENT, '⏺')} {sgr(BOLD, 'Update')}({f})",
+        f"  {sgr(DIM, '⎿')}  Updated {f} "
+        f"{sgr(GREEN, f'+{add}')} {sgr(RED, f'−{rem}')}",
+        hunk(DEL_BG, "- " + before),
+        hunk(ADD_BG, "+ " + after),
+    ]
+
+
+def todo_block(width):
+    """The plan, with what is done struck off it — the block that says an
+    agent is working to a plan rather than replying to a prompt."""
+    items = rng.choice(TODOS)
+    done = rng.randint(1, len(items) - 1)
+    rows = [f"{sgr(ACCENT, '⏺')} {sgr(BOLD, 'Update Todos')}"]
+    for i, item in enumerate(items):
+        mark = "☒" if i < done else "☐"
+        ink = DIM if i < done else ("1;" + ACCENT if i == done else "0")
+        lead = f"  {sgr(DIM, '⎿')}  " if i == 0 else "     "
+        rows.append(f"{lead}{sgr(ink, mark + ' ' + item)}"[:width + 40])
+    return rows
+
+
+def step(width):
     """One committed transcript step: a list of lines, blank-separated from
     whatever came before."""
     roll = rng.random()
     f = rng.choice(FILES)
-    if roll < 0.26:
-        a, d = rng.randint(2, 48), rng.randint(0, 14)
-        return [
-            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Update')}({f})",
-            f"  {sgr(DIM, '⎿')}  Updated {f} with {a} additions and {d} removals",
-        ]
-    if roll < 0.44:
+    if roll < 0.24:
+        return diff_block(width)
+    if roll < 0.34:
+        return todo_block(width)
+    if roll < 0.50:
         cmd, result = rng.choice(CMDS)
         ms = rng.randint(80, 900)
         line = result().replace("{ok}", sgr(GREEN, "✓"))
         return [
-            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Bash')}({cmd})",
+            f"{sgr(ACCENT, '⏺')} {sgr(BOLD, 'Bash')}({cmd})",
             f"  {sgr(DIM, '⎿')}  {line} {sgr(DIM, f'({ms}ms)')}",
         ]
-    if roll < 0.58:
+    if roll < 0.62:
         return [
-            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Read')}({f})",
+            f"{sgr(ACCENT, '⏺')} {sgr(BOLD, 'Read')}({f})",
             f"  {sgr(DIM, '⎿')}  Read {rng.randint(24, 310)} lines",
         ]
-    if roll < 0.68:
+    if roll < 0.72:
         s = rng.choice(SYMS)
         return [
-            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Search')}(pattern: \"{s}\")",
+            f"{sgr(ACCENT, '⏺')} {sgr(BOLD, 'Search')}(pattern: \"{s}\")",
             f"  {sgr(DIM, '⎿')}  Found {rng.randint(2, 19)} matches across "
             f"{rng.randint(2, 7)} files",
         ]
-    if roll < 0.78:
+    if roll < 0.80:
         nf = f.replace("src/", "src/new_")
         return [
-            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Write')}({nf})",
+            f"{sgr(ACCENT, '⏺')} {sgr(BOLD, 'Write')}({nf})",
             f"  {sgr(DIM, '⎿')}  Wrote {rng.randint(18, 90)} lines",
         ]
     say = rng.choice(SAYS).format(
         s=rng.choice(SYMS), n=rng.randint(4, 17), n2=rng.randint(2, 4)
     )
-    return [f"{sgr(GREEN, '●')} {say}"]
+    body = wrap(say, max(20, width - 2))
+    return [f"{sgr(ACCENT, '⏺')} {body[0]}"] + body[1:]
 
 
 class Pane:
     """Transcript above, spinner + input box pinned below."""
 
-    #  spinner, blank, rule, prompt, rule, hint
+    #  spinner, blank, top rule, prompt, bottom rule, hint
     LIVE_LINES = 6
+    #  the permission prompt is taller: it replaces the live block entirely
+    ASK_LINES = 9
 
     def __init__(self, out, header):
         self.out = out
         self.header = header
         self.width = 60
         self.rows = 24
-        self.drawn = False
-        self.resized = True  # first render lays the pane out from scratch
+        self.drawn = 0        # lines the last live block occupied, 0 if none
+        self.resized = True   # first render lays the pane out from scratch
 
     def measure(self):
         size = shutil.get_terminal_size((80, 24))
-        self.width = max(28, size.columns - 1)
+        # Three off the reported width. One is the column a terminal pane
+        # keeps for its scrollbar; the other two are slack, because several
+        # glyphs this pane is drawn with (⎿ ⏺ ☒ │) are East-Asian *ambiguous*
+        # width and a host is entitled to render them two cells wide. A line
+        # one cell too long wraps, and a wrapped line desyncs the fixed-height
+        # rewind below — so the cost of being wrong is the whole pane, and the
+        # cost of the slack is three columns nobody notices.
+        self.width = max(28, size.columns - 3)
         self.rows = max(8, size.lines)
 
     def on_resize(self, *_):
@@ -224,36 +383,78 @@ class Pane:
         self.out.write("\n" * pad)
         for line in self.header:
             self.out.write(truncate(line, self.width) + "\n")
-        self.drawn = False
+        self.drawn = 0
         self.resized = False
 
-    def live(self, spinner):
+    def live(self, spinner, context):
+        """The block pinned to the foot of the pane. Its two furniture lines
+        are written to the width they have rather than to a fixed sentence: a
+        hint the pane cuts in half reads as a rendering fault, and this pane is
+        a third of a screen the moment a demo puts an editor beside it."""
         rule = sgr(DIM, "─" * self.width)
+        hint = "⏵⏵ accept edits on · ? for shortcuts"
+        tail = f" · {context}% context left"
+        if visible(hint + tail) + 2 > self.width:
+            hint = "⏵⏵ accept edits on"
+        if visible(hint + tail) + 2 > self.width:
+            hint = ""
+            tail = tail.lstrip(" ·")
         return [
             spinner,
             "",
             rule,
-            f"{sgr(ORANGE, '❯')} {sgr(DIM, '▏')}",
+            f"{sgr(ACCENT, '❯')} {sgr(DIM, '▏')}",
             rule,
-            f"  {sgr(DIM, '⏸ manual mode on · ? for shortcuts · ← for agents')}",
+            f"  {sgr(DIM, (hint + tail).strip())}",
         ]
 
-    def render(self, spinner, commit=()):
+    def ask(self, file):
+        """The prompt a real agent stops on, and the reason a dock that says
+        which session is waiting is worth having."""
+        w = min(self.width - 1, 48)
+        top = "╭" + "─" * (w - 2) + "╮"
+        bot = "╰" + "─" * (w - 2) + "╯"
+
+        def row(text, ink="0"):
+            """One line of the box, fitted to it: the borders have to line up
+            under each other, so the text is cut to the box rather than the
+            box grown to the text."""
+            room = w - 4
+            if visible(text) > room:
+                text = text[:room - 1].rstrip() + "…"
+            pad = " " * max(0, room - visible(text))
+            return f"{sgr(YELLOW, '│')} {sgr(ink, text)}{pad} {sgr(YELLOW, '│')}"
+
+        hint = "waiting for you · ← the dock says which one"
+        if visible(hint) + 2 > self.width:
+            hint = "waiting for you · ← the dock knows"
+        if visible(hint) + 2 > self.width:
+            hint = "waiting for you"
+        return [
+            "",
+            sgr(YELLOW, top),
+            row(f"Edit {file}", BOLD),
+            row("Do you want to make this edit?", DIM),
+            row("❯ 1. Yes", "1;" + ACCENT),
+            row("  2. Yes, and don't ask again"),
+            row("  3. No, tell it what to do instead (esc)"),
+            sgr(YELLOW, bot),
+            f"  {sgr(DIM, hint)}",
+        ]
+
+    def render(self, block, commit=()):
         """Erase the live block, append `commit` to the transcript, redraw."""
         if self.resized:
             self.lay_out()
         self.measure()
         if self.drawn:
             # Cursor sits on the last live line: rewind to the first and wipe.
-            self.out.write(f"\r\033[{self.LIVE_LINES - 1}A\033[J")
+            self.out.write(f"\r\033[{self.drawn - 1}A\033[J")
         for line in commit:
             self.out.write(truncate(line, self.width) + "\n")
-        block = self.live(spinner)
-        self.out.write(
-            "\n".join(truncate(line, self.width) for line in block)
-        )
+        self.out.write("\n".join(truncate(line, self.width) for line in block))
         self.out.flush()
-        self.drawn = True
+        self.drawn = len(block)
 
 
 def main():
@@ -261,12 +462,21 @@ def main():
     task, ask = rng.choice(TASKS)
     header = [
         "",
-        f" {sgr(f'1;{ORANGE}', '✻ Coding Agent')}{sgr(DIM, f'  ·  {project}')}",
+        f" {sgr('1;' + ACCENT, '✻ ' + BRAND)}{sgr(DIM, f'  ·  {project}')}",
         f" {sgr(DIM, 'task: ' + task)}",
         "",
-        f"{sgr(ORANGE, '❯')} {ask}",
+        f"{sgr(ACCENT, '❯')} {ask}",
         "",
     ]
+    if os.environ.get("CODING_AGENT_RULER"):
+        # A width probe for whoever is framing a demo: one row of digits at
+        # the width this process thinks it has, and one of the box-drawing
+        # glyphs the pane furniture is made of. Where the two disagree, the
+        # host is rendering a glyph wider than one cell.
+        w = shutil.get_terminal_size((80, 24)).columns
+        header.insert(0, "".join(str(i % 10) for i in range(w)))
+        header.insert(1, "│" * w)
+        header.insert(2, f"cols={w}")
     pane = Pane(out, header)
     try:
         signal.signal(signal.SIGWINCH, pane.on_resize)
@@ -277,7 +487,15 @@ def main():
     # opening frames from being a redraw.
     time.sleep(0.5)
 
-    for _ in itertools.count():
+    context = rng.randint(31, 74)
+    for n in itertools.count():
+        if ask_after is not None and n == ask_after:
+            # Stop here, for good: an agent waiting on a person does not
+            # carry on in the background, and the demo wants one pane that
+            # is still asking when the camera comes back to it.
+            pane.render(pane.ask(rng.choice(HUNKS)[0]))
+            while True:
+                time.sleep(3600)
         msg = think_line()
         tokens = rng.randint(2, 19) * 100
         started = time.time()
@@ -287,16 +505,17 @@ def main():
         while time.time() < deadline:
             glyph = SPIN[spin % len(SPIN)]
             elapsed = int(time.time() - started)
-            spinner = (
-                f"{sgr(ORANGE, glyph)} {sgr(DIM, msg + '…')} "
-                f"{sgr(DIM, f'({elapsed}s · ↑ {tokens} tokens)')}"
-            )
-            pane.render(spinner, commit)
+            spinner = spin_line(glyph, msg, elapsed, tokens, pane.width)
+            pane.render(pane.live(spinner, context), commit)
             commit = []
             time.sleep(0.22)
             spin += 1
-        commit = step() + [""]
-        pane.render(f"{sgr(ORANGE, SPIN[0])} {sgr(DIM, 'Cogitating…')}", commit)
+        commit = step(pane.width) + [""]
+        context = max(4, context - rng.randint(0, 3))
+        pane.render(
+            pane.live(f"{sgr(ACCENT, SPIN[0])} {sgr(DIM, 'Cogitating…')}", context),
+            commit,
+        )
 
 
 if __name__ == "__main__":

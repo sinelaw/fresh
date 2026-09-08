@@ -1,0 +1,207 @@
+{
+  "name": "fresh-orchestrator-dock",
+  "capture": {
+    "geometry": "140x30",
+    "font": "JetBrains Mono 21",
+    "screen": "2600x1300x24",
+    "display": ":99",
+    "workdir": "~/repos/fresh/target/clips/fresh-orchestrator-dock/api",
+    "settle": 55,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-orchestrator-dock/fresh": "{scratch}/config/fresh",
+      "~/repos/fresh/scripts/clips/assets/fresh-orchestrator-dock/bin": "{scratch}/bin"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "PATH": "{scratch}/bin:$PATH",
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8",
+      "FRESH_CLIP_AGENT": "~/repos/fresh/crates/fresh-editor/tests/fixtures/coding_agent.py"
+    },
+    "keys": [
+      {
+        "key": "F8"
+      },
+      {
+        "sleep": 2
+      },
+      {
+        "shot": "dock"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "sleep": 2.5
+      },
+      {
+        "shot": "w1"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "sleep": 2.5
+      },
+      {
+        "shot": "w2"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "sleep": 2.5
+      },
+      {
+        "shot": "w3"
+      }
+    ],
+    "panes": {
+      "dock": {
+        "argv": [
+          "~/repos/fresh/target/release/fresh",
+          "--no-restore",
+          "--no-upgrade-check"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1920,
+      1134
+    ],
+    "fps": 60,
+    "rows": 30,
+    "cols": 140,
+    "header_height": 96,
+    "caption_height": 118,
+    "title": "fresh \u00b7 orchestrator",
+    "labels": {
+      "solo": "NEW"
+    },
+    "intro_caption": [
+      "The Orchestrator dock",
+      "a worktree per task, an agent per worktree"
+    ],
+    "outro_caption": [
+      "fresh",
+      "github.com/sinelaw/fresh"
+    ],
+    "timing": {
+      "title": 2.0,
+      "intro": 0.9,
+      "zoom": 0.45,
+      "hold": 1.4,
+      "pan": 0.3,
+      "push": 0.55,
+      "outro": 0.6
+    },
+    "theme": {
+      "bg": [
+        18,
+        19,
+        26
+      ],
+      "caption_bg": [
+        28,
+        29,
+        40
+      ],
+      "panel_border": [
+        68,
+        71,
+        90
+      ],
+      "muted": [
+        150,
+        157,
+        192
+      ],
+      "fg": [
+        248,
+        248,
+        242
+      ],
+      "after": [
+        80,
+        250,
+        123
+      ]
+    },
+    "annotations": [
+      {
+        "shot": "dock",
+        "rows": [
+          0,
+          30
+        ],
+        "band": false,
+        "hold": 1.5,
+        "head": "Every worktree is a workspace",
+        "sub": "its own tabs, splits, terminals \u2014 and the agent working it"
+      },
+      {
+        "shot": "w1",
+        "rows": [
+          0,
+          30
+        ],
+        "band": false,
+        "hold": 1.5,
+        "transition": "push",
+        "head": "\u2193 switches, live",
+        "sub": "one repository, checked out four times; nothing is torn down"
+      },
+      {
+        "shot": "w2",
+        "rows": [
+          0,
+          30
+        ],
+        "band": false,
+        "hold": 1.5,
+        "transition": "push",
+        "head": "The ones you are not looking at keep working",
+        "sub": "claude here, codex there, each in its own branch"
+      },
+      {
+        "shot": "w3",
+        "rows": [
+          0,
+          30
+        ],
+        "band": false,
+        "hold": 1.9,
+        "transition": "push",
+        "head": "And the dock says which one is waiting on you",
+        "sub": "three still running \u00b7 this one wants an answer"
+      }
+    ],
+    "title_card": {
+      "lines": [
+        {
+          "text": "mission control",
+          "effect": "shine",
+          "at": 0.03
+        },
+        {
+          "text": "one editor, every worktree",
+          "small": true,
+          "at": 0.4
+        }
+      ]
+    },
+    "vignette": {
+      "edge": 0.012,
+      "side": 0.0
+    }
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}
