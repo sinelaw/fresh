@@ -451,7 +451,11 @@ class Pane:
     def ask(self, file):
         """The prompt a real agent stops on, and the reason a dock that says
         which session is waiting is worth having."""
-        w = min(self.width - 1, 48)
+        # Four columns of slack, not one. The border glyphs are ambiguous
+        # width, so a host may draw each of them two cells wide, and a box one
+        # cell too wide wraps every one of its rows — which is the ugliest
+        # thing this pane can do on camera.
+        w = min(self.width - 4, 44)
         top = "╭" + "─" * (w - 2) + "╮"
         bot = "╰" + "─" * (w - 2) + "╯"
 

@@ -37,12 +37,6 @@ type Task = {
  *  screenshot. */
 const TASKS: Task[] = [
   {
-    name: "auth-bypass",
-    branch: "fix/auth-bypass",
-    agent: "quill",
-    files: ["src/auth.rs", "src/session.rs"],
-  },
-  {
     name: "db-pool",
     branch: "perf/db-pool",
     agent: "marlin",
@@ -73,12 +67,19 @@ const TASKS: Task[] = [
     ],
   },
   {
+    name: "auth-bypass",
+    branch: "fix/auth-bypass",
+    agent: "quill",
+    files: ["src/auth.rs", "src/session.rs"],
+  },
+  {
     name: "docs-refresh",
     branch: "docs/api-reference",
     agent: "scout",
     // No files, so no split: this workspace is the agent and nothing else,
     // which is both a real way to run one and the only way to film an agent
     // filling a workspace without hopping focus between panes to maximise it.
+    // Created last, so the clip opens on it and walks *up* the dock from here.
     files: [],
   },
 ];
@@ -139,7 +140,7 @@ registerHandler("clipSetupOnReady", async () => {
     const right = await editor.splitWindow({
       direction: "vertical",
       place: "after",
-      ratio: 0.46,
+      ratio: 0.5,
       // The review pane opens on the file the branch is about, so the split
       // has a buffer of its own; without one it shows the agent's terminal
       // twice, which is the same pane side by side rather than a layout.
@@ -177,9 +178,19 @@ registerHandler("clipSetupOnReady", async () => {
     }
   }
 
-  if (launch) {
-    await orch.focusWorkspace(launch);
-  }
+  // Deliberately *not* back to the launch workspace: the clip opens on the
+  // last task created — an agent with a workspace to itself — and walks up the
+  // dock from there. `launch` is still read above so a change of mind is one
+  // line, and so the intent is on the record.
+  void launch;
+
+  // Hand the dock the keyboard, here rather than with a keystroke in the
+  // capture. That workspace is one pane and the pane is a terminal, so a
+  // focused terminal eats every key the spec could press to get here —
+  // including the one bound to this very action. An action dispatch is not
+  // routed through the keymap, so it lands.
+  editor.executeAction("toggle_dock_focus");
+  await editor.flush();
 });
 
 editor.on("ready", "clipSetupOnReady");
