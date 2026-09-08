@@ -84,7 +84,22 @@ impl Editor {
         // IMPORTANT: Calculate LSP changes and line info BEFORE applying to buffer!
         // The byte positions in the events are relative to the ORIGINAL buffer,
         // so we must convert them to LSP positions before modifying the buffer.
-        let lsp_changes = self.active_window().collect_lsp_changes(event);
+        //
+        // Only when a server could receive them. Deriving the change set reads
+        // the line up to the cursor to convert byte offsets into LSP's UTF-16
+        // positions, and step 5's empty-set fallback snapshots the whole
+        // document; on a file that is one long line those were 18 MB and the
+        // file respectively, per keystroke, and `send_lsp_changes_for_buffer`
+        // then discarded them because the buffer has no server. Ask first.
+        let lsp_wanted = {
+            let buf = self.active_buffer();
+            self.active_window().lsp_change_could_be_sent(buf)
+        };
+        let lsp_changes = if lsp_wanted {
+            self.active_window().collect_lsp_changes(event)
+        } else {
+            Vec::new()
+        };
 
         // Calculate line info for plugin hooks (using same pre-modification buffer state)
         let line_info = self.active_window().calculate_event_line_info(event);
@@ -234,21 +249,23 @@ impl Editor {
         // collect_lsp_changes returns empty because there are no incremental byte
         // positions to convert — BulkEdit restores a tree snapshot.  Send a
         // full-document replacement so the LSP server stays in sync.
-        if lsp_changes.is_empty() && event.modifies_buffer() {
-            if let Some(full_text) = self.active_state().buffer.to_string() {
-                let full_change = vec![TextDocumentContentChangeEvent {
-                    range: None,
-                    range_length: None,
-                    text: full_text,
-                }];
+        if lsp_wanted {
+            if lsp_changes.is_empty() && event.modifies_buffer() {
+                if let Some(full_text) = self.active_state().buffer.to_string() {
+                    let full_change = vec![TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: full_text,
+                    }];
+                    let buf = self.active_buffer();
+                    self.active_window_mut()
+                        .send_lsp_changes_for_buffer(buf, full_change);
+                }
+            } else {
                 let buf = self.active_buffer();
                 self.active_window_mut()
-                    .send_lsp_changes_for_buffer(buf, full_change);
+                    .send_lsp_changes_for_buffer(buf, lsp_changes);
             }
-        } else {
-            let buf = self.active_buffer();
-            self.active_window_mut()
-                .send_lsp_changes_for_buffer(buf, lsp_changes);
         }
     }
 

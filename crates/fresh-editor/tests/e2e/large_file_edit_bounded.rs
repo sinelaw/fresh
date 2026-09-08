@@ -592,3 +592,60 @@ fn stepping_left_from_the_end_of_a_long_line_moves_the_caret_not_the_view() {
         );
     }
 }
+
+/// Typing costs the same wherever the caret sits on a line.
+///
+/// It did not. An edit at the far end of a 19 MB line read the line twice —
+/// 38 MB per keystroke, 2.3 s in a debug build — while the identical edit at
+/// byte 0 of the same file read a few hundred kilobytes. Two unrelated callers,
+/// each asking for the text between the line's start and the caret:
+///
+/// * `line_start_and_blank_prefix` walked backwards to find the line start,
+///   which on a file that is one line is the whole file.
+/// * `collect_lsp_changes` converted the edit's byte offsets into LSP's UTF-16
+///   positions, which needs the line prefix counted — and the send path then
+///   threw the result away, because the buffer has no language server.
+///
+/// Stated as a ratio against the same edit near the line's start rather than as
+/// an absolute figure: the claim is that the caret's column does not enter into
+/// what a keystroke costs, and that holds whatever the fixture's size.
+#[test]
+fn an_edit_costs_the_same_at_either_end_of_a_long_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (single_path, _, file_bytes) = write_pair(dir.path());
+    let mut harness = opened(&single_path, false);
+
+    let at_start = bytes_read(&mut harness, |h| {
+        h.send_key(KeyCode::Char('X'), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    });
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        file_bytes,
+        "the caret should be at the line's far end"
+    );
+
+    let at_end = bytes_read(&mut harness, |h| {
+        h.send_key(KeyCode::Char('X'), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    });
+
+    eprintln!(
+        "edit at byte 0: {at_start} bytes, at byte {file_bytes}: {at_end} bytes \
+         (file is {file_bytes})"
+    );
+    let budget = (at_start * 8).max(4 * 1024 * 1024);
+    assert!(
+        at_end < budget,
+        "typing at byte {file_bytes} of a {file_bytes}-byte line read {at_end} \
+         bytes against {at_start} for the same keystroke at byte 0 (budget \
+         {budget}) — the caret's column is back in the cost of a keystroke"
+    );
+}

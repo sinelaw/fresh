@@ -4268,6 +4268,29 @@ impl Window {
         let _sent = self.send_lsp_changes_inner(buffer_id, changes, false);
     }
 
+    /// Whether a `didChange` for this buffer could reach a server at all.
+    ///
+    /// The side-effect-free head of [`Self::send_lsp_changes_inner`]'s guard:
+    /// the metadata exists, LSP is enabled for the buffer, it has a URI to be
+    /// named by, and its state is still around. It deliberately stops short of
+    /// `try_spawn`, which can start a server — this only answers "would that
+    /// call have anywhere to go", never causes one.
+    ///
+    /// It exists so the caller can ask *before* deriving the change set.
+    /// Building one converts byte offsets to LSP's UTF-16 positions, which
+    /// costs a read of the line up to the cursor — 18 MB per keystroke on a
+    /// file that is one long line, measured — and the empty fallback below is
+    /// worse still, since it snapshots the whole document. Both were being
+    /// paid on every edit and then dropped here.
+    pub(crate) fn lsp_change_could_be_sent(&self, buffer_id: BufferId) -> bool {
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return false;
+        };
+        metadata.lsp_enabled
+            && metadata.file_uri().is_some()
+            && self.buffers.get(&buffer_id).is_some()
+    }
+
     /// `resync_only` restricts the send to servers whose copy of the document
     /// is known to have diverged, so a repair pass cannot disturb servers that
     /// are still in sync (#3038).
