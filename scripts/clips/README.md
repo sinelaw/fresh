@@ -33,7 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
-| `fresh-orchestrator-dock.json` | solo, stepped | four worktrees, four agents, one editor — switched from the dock, ending on one agent at full size |
+| `fresh-orchestrator-dock.json` | solo, filmed | four worktrees, four agents, one editor — switched from the dock, wipe and all, ending on one agent at full size |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -139,53 +139,54 @@ never set), so `shift+Tab` back onto the row you want and check with a still
 before filming 200 shots against the guess; and a `Tab` that leaves a card
 scrolls the page to the next one, which ends the shot you were composing.
 
-**The window only repaints when something asks it to, and `--shot` is what
-asks.** Filming an agent working — a program that animates on its own clock,
-with nobody typing — an eight-second `--record` at 30fps produced 240 frames
+**The window only repaints when a client asks the server for its pixels.**
+Filming an agent working — a program that animates on its own clock, with
+nobody typing — an eight-second `--record` at 30fps produced 240 frames
 containing *three* distinct images, and all three landed at the moment an
-`import` happened to be taken. Stills taken four seconds apart, meanwhile,
-differ by 160,000 pixels. So on this stack (Xvfb + xfce4-terminal) a recording
-films what the keyboard causes and little else, and the screenshot that looks
-like the slow, primitive option is the one that makes a frame exist at all.
-Anything self-animating is therefore filmed with `--shot`, one per frame.
+`import` happened to be taken. Stills four seconds apart differ by 160,000
+pixels. It is not the emulator (xterm behaves the same), not the window manager
+(openbox does not help), and not CPU (the box is idle): on this stack a
+recording films what the keyboard causes and little else, while a screenshot
+makes a frame exist.
 
-**Then slow the program down to the rate the camera samples at.** A screenshot
-of a full window costs 300-500ms, so a filmed pane is sampled about three times
-a second. Playing those frames at thirty is a ten-times fast-forward — which
-for a coding agent reads as a parody of one. The fix is to give the *subject* a
-slower clock instead: `coding_agent.py --dilate 8` stretches its spinner and its
-pauses by eight, so three samples a second of dilated time is thirty frames a
-second of natural motion, and `--warm 9` prints the backlog a pane at
-one-eighth speed would not otherwise have by the time filming starts. Measured
-in the finished clip: 4.8 visible changes a second, which is what an agent's
-spinner actually does.
+**Which is what `xwd-capture.py` is for.** `xwd` is the same forced repaint at a
+fraction of the cost — about 20ms for a pane-sized window against ImageMagick's
+150-300ms, because it writes the server's bytes instead of encoding a PNG. Fast
+enough to *sample* motion rather than step past it. `scripts/clips/xwd-capture.py`
+drives the session itself, so it can also press a key and keep grabbing instead
+of sleeping 1.2s afterwards, and it writes exactly what `tui-clip --skip-capture`
+expects to find:
 
-**The switch does wipe. The camera is what cannot see it.** Arrow-navigating
-the dock calls `setActiveWindowAnimated`, and the host slides everything right
-of the dock in from the edge you came from — `AnimationKind::SlideIn`, 180ms.
-None of it reaches a clip filmed this way: a `--record` catches one frame,
-because the animation is self-driven and self-driven frames do not reach the
-window (above), and `--shot` cannot help either, because `tui-capture` sleeps
-1.2s after a `--key` before the next action — seven times the length of the
-thing being filmed. At a small window, where a screenshot costs about 60ms
-rather than 350, it is easy to catch: `110x26` at font 10 gives two or three
-mid-wipe frames per switch, the outgoing workspace pushed up and the incoming
-one arriving underneath.
+```sh
+scripts/clips/xwd-capture.py scripts/clips/fresh-orchestrator-dock.json \
+    --out ~/repos/tui-clips/out/fresh-orchestrator-dock
+~/repos/tui-clips/bin/tui-clip scripts/clips/fresh-orchestrator-dock.json --skip-capture
+```
 
-So the clip cuts because the *camera* cuts, and it says so. A `push` transition
-in the spec would not have fixed that: it would be the renderer inventing a
-different motion, in a different direction, over the top of the real one.
-Filming this one properly wants either a burst-of-shots step in tui-clips (fire
-the key, then N screenshots with no sleep between) or the harness path the blog
-showcases use, which renders every frame the editor draws.
+A `{"record": …}` step becomes a burst at its `fps`, running alongside the
+steps after it — which is how a keystroke and the animation it causes end up
+inside one run. The spec stays an ordinary tui-clips spec, and upstream capture
+still works on it, just less well.
 
-**Keep the scaled capture off a half-pixel.** The renderer caches scaled
-screens under the scale factor rounded to four decimals, so two frames whose
-scale differs in the fifth can share a key — harmless until the scaled height
-lands on exactly `.5`, where the two round to heights one pixel apart and the
-cross-fade between two beats dies with `ValueError: images do not match`. A
-140x30 capture at 1920 wide is exactly that case (1142 × 1920/2382 = 920.5);
-140x29 is not. Worth knowing before blaming the capture.
+**Where you are stuck with `--shot`, slow the program down instead.** An
+ImageMagick screenshot samples about three times a second, and playing those
+frames at thirty is a ten-times fast-forward — for a coding agent, a parody of
+one. `coding_agent.py --dilate 8` stretches its spinner and its pauses by eight
+so that three samples a second of dilated time play back as natural motion, and
+`--warm N` prints the backlog a pane at one-eighth speed has not reached yet.
+Filming with `xwd-capture.py` needs neither: it samples at thirty a second, so
+the agents run at their own pace and `--warm` alone is enough.
+
+**The switch wipes, and it is filmable.** Arrow-navigating the dock calls
+`setActiveWindowAnimated`, and the host slides everything right of the dock in
+from the edge you came from — `AnimationKind::SlideIn`, 180ms. `--record` gets
+one frame of it (see above) and `--shot` cannot reach it at all, because
+`tui-capture` sleeps 1.2s after a key before the next action — seven times the
+length of the thing being filmed. An `xwd` burst across the keystroke gets five
+or six: the old workspace squeezed to a sliver at the top, the new one arriving
+underneath. That is what the clip's switch beats are, and why they carry no
+`transition` of their own: the motion in them is the editor's, not the
+renderer's.
 
 **Put the agent on the left, and what checks it on the right.** Every session
 in this clip is arranged that way, and one of them has **Review Diff** in the

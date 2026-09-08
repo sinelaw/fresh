@@ -4,9 +4,8 @@
 # It renders the shape of an agent session and nothing else, and it is nobody's
 # product: see the fixture's docstring.
 #
-# `--dilate` slows its clock to the rate a screenshotting camera can sample
-# (about three frames a second), so the filmed motion plays back smooth and at
-# a natural pace; `--warm` gives it a backlog so the pane is already at work
-# when the camera arrives.
+# It runs at its own pace: the clip is filmed with `xwd-capture.py`, which
+# samples fast enough to show one. `--warm` gives it a backlog, so the pane is
+# already at work when the camera arrives rather than three lines in.
 AGENT="${FRESH_CLIP_AGENT:-$HOME/repos/fresh/crates/fresh-editor/tests/fixtures/coding_agent.py}"
-exec python3 "$AGENT" --as scout --dilate 8 --warm 9  docs-refresh "$@"
+exec python3 "$AGENT" --as scout --warm 9  docs-refresh "$@"
