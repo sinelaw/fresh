@@ -188,11 +188,10 @@ impl RecoveryService {
     /// content leaves the store when the user resolves it (saves, or
     /// discards) and not otherwise, so the only way to lose it is to ask.
     ///
-    /// This is the only way to end a session. The variants it replaced took
-    /// no `known_ids` and deleted every entry they were not explicitly told
-    /// to preserve — which is precisely the behaviour that lost a background
-    /// workspace's work, and is not something a caller should be able to ask
-    /// for by picking the shorter function.
+    /// The only way to end a session. The variants this replaced deleted
+    /// everything they were not told to keep — the behaviour that lost a
+    /// background workspace's work, and not something a caller should be able
+    /// to ask for by picking the shorter function.
     pub fn end_session_accounting(
         &mut self,
         preserve_ids: &[String],
@@ -266,9 +265,8 @@ impl RecoveryService {
     // Recovery operations
     // ========================================================================
 
-    /// [`Self::save_buffer`], stamping the entry with the `stable_id` of the
-    /// workspace that owns the buffer so crash recovery can put it back where
-    /// it came from (issue #3189).
+    /// Stamps the entry with the owning workspace so crash recovery can put
+    /// the buffer back where it came from (issue #3189).
     #[allow(clippy::too_many_arguments)]
     pub fn save_buffer_owned(
         &mut self,

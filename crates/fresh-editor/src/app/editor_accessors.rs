@@ -1165,40 +1165,27 @@ impl Editor {
         &self.active_window().buffers
     }
 
-    /// Every open window's id, in ascending order.
-    ///
-    /// `windows` is a `HashMap`, so iterating it directly is
-    /// order-nondeterministic. Shutdown housekeeping that touches every
-    /// workspace (saving, flushing recovery) wants a stable order so two
-    /// runs over the same state produce the same log and the same
-    /// save order.
+    /// Every open window's id, ascending. `windows` is a `HashMap`, so
+    /// shutdown work that touches every workspace needs an order of its own to
+    /// be reproducible.
     pub(crate) fn window_ids_sorted(&self) -> Vec<fresh_core::WindowId> {
         let mut ids: Vec<_> = self.windows.keys().copied().collect();
         ids.sort_by_key(|id| id.0);
         ids
     }
 
-    /// Run `f` with the active-window *pointer* temporarily retargeted to
-    /// `window_id`, restoring it afterwards.
+    /// Run `f` with the active-window pointer temporarily retargeted.
     ///
-    /// This is a raw pointer swap, deliberately not a user-visible workspace
-    /// switch: unlike [`Editor::set_active_window`] it does not checkpoint the
-    /// outgoing workspace, lazily materialize the incoming one, fire plugin
-    /// hooks, or re-run layout. It exists so the shutdown paths — which have
-    /// to save and flush recovery for *every* open workspace, not just the
-    /// one on screen (issue #3189) — can reuse the large body of per-window
-    /// helpers that are all written against `active_window`, instead of
-    /// growing a window-parameterized twin of each one.
+    /// Lets shutdown work reuse the many per-window helpers written against
+    /// `active_window` instead of growing a window-parameterized twin of each
+    /// (issue #3189). Deliberately not [`Editor::set_active_window`]: no
+    /// checkpoint, materialization, hooks or layout — none of which shutdown
+    /// wants.
     ///
-    /// Only safe for synchronous, non-rendering work: nothing between the two
-    /// pointer writes may yield to the event loop or paint a frame, or the
-    /// user would see the wrong workspace. A panic inside `f` leaves the
-    /// pointer retargeted, which is acceptable only because every caller is
-    /// on the way out of the process.
-    ///
-    /// No-op fallback: an unknown `window_id` runs `f` against the current
-    /// active window rather than panicking, matching `set_active_window`'s
-    /// treatment of unknown ids.
+    /// Only safe for synchronous, non-rendering work: nothing here may yield
+    /// to the event loop or paint, or the user sees the wrong workspace. A
+    /// panic in `f` leaves the pointer retargeted, tolerable only because
+    /// callers are on the way out of the process.
     pub(crate) fn with_window_retargeted<R>(
         &mut self,
         window_id: fresh_core::WindowId,

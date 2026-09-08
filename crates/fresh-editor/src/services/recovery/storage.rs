@@ -298,13 +298,9 @@ impl RecoveryStorage {
         )
     }
 
-    /// [`Self::save_recovery`], additionally stamping the entry with the
-    /// `stable_id` of the workspace it belongs to.
-    ///
-    /// Every workspace in a session shares one recovery store, so an entry
-    /// that does not say whose it is can only be restored into whichever
-    /// workspace happens to be in front. Stamping the owner is what lets each
-    /// workspace pick up its own on activation (issue #3189).
+    /// [`Self::save_recovery`], stamping the owning workspace. One store is
+    /// shared by every workspace, so an unstamped entry can only be restored
+    /// into whichever one is in front (issue #3189).
     #[allow(clippy::too_many_arguments)]
     pub fn save_recovery_owned(
         &self,
@@ -358,6 +354,7 @@ impl RecoveryStorage {
                     original_mtime,
                     chunked_data.chunks.len(),
                     original_file_size,
+                    workspace_id.map(|w| w.to_string()),
                 )
             })
         } else {
@@ -369,16 +366,15 @@ impl RecoveryStorage {
                 original_mtime,
                 chunked_data.chunks.len(),
                 original_file_size,
+                workspace_id.map(|w| w.to_string()),
             )
         };
 
         // Update metadata fields
         metadata.original_file_size = original_file_size;
-        // Re-stamp the owning workspace on every save. A buffer can move
-        // between workspaces (Extract Tab to New Workspace), and the entry
-        // must follow it rather than keep pointing at where it started. A
-        // caller with no workspace context leaves whatever was recorded
-        // before rather than erasing it.
+        // Re-stamped every save so an entry follows a buffer moved between
+        // workspaces (Extract Tab to New Workspace). A caller with no
+        // workspace context leaves the previous stamp rather than erasing it.
         if let Some(workspace_id) = workspace_id {
             metadata.workspace_id = Some(workspace_id.to_string());
         }
@@ -784,11 +780,8 @@ impl RecoveryStorage {
 }
 
 impl Default for RecoveryStorage {
-    /// The platform recovery directory, falling back to a temp dir when it
-    /// cannot be resolved. The scoped constructors ([`Self::with_scope`],
-    /// [`Self::with_dir`]) are what production uses; this unscoped default is
-    /// the legacy flat layout, kept for tests that only need somewhere to
-    /// write.
+    /// The legacy unscoped flat layout, kept for tests that just need
+    /// somewhere to write. Production uses the scoped constructors.
     fn default() -> Self {
         let recovery_dir = Self::get_recovery_dir()
             .unwrap_or_else(|_| std::env::temp_dir().join("fresh-recovery"));

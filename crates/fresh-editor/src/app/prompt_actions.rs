@@ -1456,13 +1456,11 @@ impl Editor {
                 self.should_quit = true;
             }
         } else if first_char == discard_first {
-            // Discard changes and quit (no recovery). Clearing the modified flag
-            // on every buffer ensures `end_recovery_session` will not preserve
-            // their recovery files when hot_exit is enabled — the user has
-            // explicitly asked to throw the changes away. Every open workspace,
-            // since the prompt counted every open workspace (issue #3189):
-            // discarding only the active one would leave the others' recovery
-            // data behind, silently resurrecting changes the user threw away.
+            // Clearing modified is what stops `end_recovery_session`
+            // preserving these under hot_exit — the user asked to throw them
+            // away. Every workspace, since the prompt counted every workspace:
+            // otherwise the others' recovery data silently resurrects the
+            // changes (issue #3189).
             for window in self.windows.values_mut() {
                 for (_, state) in &mut window.buffers {
                     state.buffer.clear_modified();

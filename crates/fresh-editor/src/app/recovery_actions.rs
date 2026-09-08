@@ -33,24 +33,18 @@ impl Editor {
         Ok(self.recovery_service.lock().unwrap().start_session()?)
     }
 
-    /// End the recovery session cleanly (call on normal shutdown)
+    /// End the recovery session cleanly (call on normal shutdown).
     ///
-    /// Everything here spans **every open workspace**, not just the active
-    /// one. Exiting closes them all, so a dirty buffer in a background
-    /// Orchestrator workspace has to be flushed to recovery and preserved
-    /// exactly like a foreground one; flushing and preserving only the active
-    /// window is what let a quit from a clean workspace delete another
-    /// workspace's unsaved work (issue #3189).
+    /// Spans every workspace: exiting closes them all, and flushing only the
+    /// active one is what let a quit from a clean workspace delete another's
+    /// unsaved work (issue #3189).
     pub fn end_recovery_session(&mut self) -> AnyhowResult<()> {
         let hot_exit = self.config.editor.hot_exit;
 
         if hot_exit {
-            // Force all modified buffers to be re-saved by marking them pending,
-            // then reuse the existing periodic recovery save logic. The flush
-            // matters most for background workspaces: the periodic auto-save
-            // only ever runs against the active window, so a buffer edited and
-            // then switched away from within the auto-save interval has
-            // nothing on disk at all until this runs.
+            // Matters most for background workspaces: a buffer edited and
+            // switched away from inside the auto-save interval has nothing on
+            // disk at all until this runs.
             for window in self.windows.values_mut() {
                 for (_, state) in &mut window.buffers {
                     if state.buffer.is_modified() {
@@ -65,13 +59,9 @@ impl Editor {
             }
         }
 
-        // Collect recovery IDs for buffers that should survive this session,
-        // plus the ids this session can account for at all. Entries in
-        // neither set belong to work no window here ever held — see
-        // `end_session_accounting`. With `hot_exit` off nothing is preserved
-        // (the quit prompt has already forced every live buffer to be saved
-        // or discarded), but the accounting still protects a workspace this
-        // session never materialized.
+        // With `hot_exit` off nothing is preserved — the quit prompt has
+        // already forced every live buffer to be saved or discarded — but the
+        // accounting still protects a workspace never materialized here.
         let preserve_ids = self.recovery_ids_to_preserve();
         let known_ids = self.live_recovery_ids();
         Ok(self
@@ -81,25 +71,16 @@ impl Editor {
             .end_session_accounting(&preserve_ids, &known_ids)?)
     }
 
-    /// Flush every modified buffer in `window_id` to recovery storage.
+    /// Flush a workspace's unsaved buffers before it is dropped.
     ///
-    /// Called just before a workspace is dropped. `close_window` tears the
-    /// `Window` down with its buffers and asks nothing about unsaved changes —
-    /// the confirmation belongs to the Orchestrator UI that drives the close
-    /// (Delete / Archive / Kill), not to a function the plugin calls after the
-    /// user has already decided. What *is* this layer's job is making sure the
-    /// content is somewhere recoverable before it goes: without this the
-    /// buffer's most recent edits exist nowhere but memory, and closing the
-    /// workspace destroys them (issue #3189). Afterwards the entry is one no
-    /// live buffer backs, which `end_session_accounting` will preserve rather
-    /// than clean up, so it survives to the next start.
+    /// `close_window` asks nothing about unsaved changes — that confirmation
+    /// belongs to the Orchestrator UI driving the close, not to a function the
+    /// plugin calls once the user has decided. This layer's job is only to
+    /// leave the content somewhere recoverable (issue #3189).
     ///
-    /// Gated on `hot_exit` to match [`Editor::end_recovery_session`]: with hot
-    /// exit off, recovery is a crash net that a clean exit clears, and writing
-    /// content nothing will offer back would only leave litter.
-    ///
-    /// Returns the number of buffers written. Never fails the close: a
-    /// recovery-write error is logged by the caller.
+    /// Gated on `hot_exit` to match [`Editor::end_recovery_session`]: with it
+    /// off, recovery is a crash net a clean exit clears, so writing content
+    /// nothing will offer back is just litter.
     pub(crate) fn flush_window_recovery(&mut self, window_id: WindowId) -> AnyhowResult<usize> {
         if !self.config.editor.hot_exit || !self.windows.contains_key(&window_id) {
             return Ok(0);
@@ -156,15 +137,10 @@ impl Editor {
         out
     }
 
-    /// Recovery ids this session actually has a live buffer for, across every
-    /// open workspace.
-    ///
-    /// This is the "accounted for" set handed to
-    /// [`RecoveryService::end_session_accounting`]: an on-disk entry in this
-    /// set that is not also being preserved was resolved during the session
-    /// (saved to disk, or discarded at the quit prompt) and is safe to delete.
-    /// An entry outside it was never in memory here, so this session has no
-    /// standing to throw it away.
+    /// The "accounted for" set for [`RecoveryService::end_session_accounting`]:
+    /// an entry here that is not preserved was resolved during the session and
+    /// is safe to delete. An entry outside it was never in memory here, so
+    /// this session has no standing to throw it away.
     fn live_recovery_ids(&self) -> Vec<String> {
         let mut out = Vec::new();
         for window in self.windows.values() {
@@ -191,19 +167,13 @@ impl Editor {
 
     /// Which open workspace a recovery entry belongs to.
     ///
-    /// The `workspace_id` stamped at save time is authoritative — it survives
-    /// a file being opened from outside its workspace root, and it separates
-    /// two Orchestrator workspaces that deliberately share one worktree.
-    /// Entries written before that field existed (and by writers with no
-    /// workspace context) fall back to the longest workspace root that is a
-    /// prefix of the original path, which is right for the ordinary case of a
-    /// file living inside its own project.
+    /// The stamp is authoritative; it survives a file opened from outside its
+    /// root and separates workspaces sharing a worktree. Unstamped entries
+    /// fall back to longest-root-prefix, right for the ordinary case.
     ///
-    /// `None` means no open workspace claims it: either it belongs to a
-    /// workspace that is not open in this session, or it is a pathless
-    /// (unnamed) legacy entry. Such an entry is left strictly alone — never
-    /// adopted into an unrelated workspace, and never deleted, since nothing
-    /// here can say the user is done with it.
+    /// `None` — no open workspace claims it — is left strictly alone: never
+    /// adopted elsewhere, never deleted, since nothing here can say the user
+    /// is done with it.
     fn recovery_entry_owner(
         &self,
         entry: &crate::services::recovery::RecoveryEntry,
@@ -223,30 +193,20 @@ impl Editor {
             .map(|(id, _)| *id)
     }
 
-    /// Restore this workspace's own leftover recovery entries into it.
+    /// Restore this workspace's own leftover recovery entries into it, on
+    /// activation, so unsaved work returns to the workspace it was done in
+    /// rather than whichever one is in front (issue #3189).
     ///
-    /// Run when a workspace becomes active — at startup for the foreground
-    /// one, and on each dive for the rest — so unsaved work returns to the
-    /// workspace it was done in instead of every entry being piled into
-    /// whichever workspace happened to be in front (issue #3189).
+    /// Reads entries rather than consuming them: each stays on disk backed by
+    /// a live modified buffer, leaving the exit accounting to decide its fate.
+    /// A workspace the user never visits is never touched, which is what keeps
+    /// its work when only some are activated.
     ///
-    /// Deliberately narrow. It only opens entries this workspace owns and
-    /// does not already have open, and it *reads* them (`load_recovery`)
-    /// rather than consuming them: the entry stays on disk, now backed by a
-    /// live modified buffer, so the ordinary accounting at exit decides its
-    /// fate. Entries belonging to a workspace the user never visits are
-    /// simply never touched, which is what keeps them from being lost when
-    /// only some workspaces are activated.
-    ///
-    /// Returns the number of buffers opened.
-    ///
-    /// `claim_unowned` widens the net to entries no open workspace claims —
-    /// pathless legacy entries, and files under no workspace root. Set only
-    /// for the one startup pass on the foreground workspace, where the old
-    /// behaviour was to open everything there and dropping them silently
-    /// would be the regression. It must stay `false` on later activations, or
-    /// each workspace in turn would adopt its own copy of the same
-    /// unattributable entry.
+    /// `claim_unowned` widens the net to entries no workspace claims. Set
+    /// only for the one startup pass, where the old behaviour opened
+    /// everything in the foreground workspace and dropping those silently
+    /// would be the regression; `false` later, or each workspace in turn would
+    /// adopt its own copy of the same unattributable entry.
     pub(crate) fn adopt_recovery_for_active_window(
         &mut self,
         claim_unowned: bool,
@@ -396,24 +356,12 @@ impl Editor {
         Ok(self.recovery_service.lock().unwrap().list_recoverable()?)
     }
 
-    /// Recover buffers left behind by a crash, into the workspace they came
-    /// from.
+    /// Recover buffers left by a crash into the workspace they came from.
     ///
-    /// The startup half of the per-workspace scheme: it restores what the
-    /// *foreground* workspace owns (plus anything no open workspace claims —
-    /// see `adopt_recovery_for_active_window`). Every other workspace's
-    /// entries stay on disk untouched until that workspace is activated, at
-    /// which point `set_active_window` adopts them there. Previously this
-    /// opened every entry into whichever workspace happened to be in front,
-    /// so a crash reshuffled unsaved work between projects (issue #3189).
-    ///
-    /// Entries are read, not consumed: each becomes a live modified buffer
-    /// that keeps writing to the same entry, and the exit accounting decides
-    /// whether it is preserved or cleaned. That is what makes it safe for the
-    /// user to quit having visited only some of their workspaces — the ones
-    /// they never opened still have their unsaved work on disk.
-    ///
-    /// Returns the number of buffers recovered.
+    /// The startup half of the per-workspace scheme: the foreground workspace
+    /// claims its own; every other one claims its own when activated. This
+    /// used to open every entry into whichever workspace was in front, so a
+    /// crash reshuffled unsaved work between projects (issue #3189).
     pub fn recover_all_buffers(&mut self) -> AnyhowResult<usize> {
         self.adopt_recovery_for_active_window(true)
     }
@@ -573,19 +521,18 @@ impl Editor {
     /// Perform auto-recovery-save for all modified buffers if needed.
     /// Called frequently (every frame); rate-limited by `auto_recovery_save_interval_secs`.
     ///
-    /// Sweeps **every** open workspace, not just the active one. A buffer
-    /// edited in one workspace and then left behind for another still holds
-    /// unsaved content, and an active-window-only sweep left it with recovery
-    /// data no newer than the last tick it was on screen for — so a crash
-    /// (where, unlike a clean exit, there is no chance to flush) lost
-    /// everything typed since (issue #3189). The sweep is close to free: a
-    /// background window's buffers cannot become `recovery_pending` again
-    /// without edits, and edits only happen while a window is active, so each
-    /// one is written once after the user switches away and then skipped.
+    /// Sweeps every workspace. An active-window-only sweep left a
+    /// backgrounded buffer with recovery data no newer than the last tick it
+    /// was on screen for, so a crash — which, unlike a clean exit, gets no
+    /// chance to flush — lost everything typed since (issue #3189).
     ///
-    /// The rate limit still reads the active window's clock — one editor-wide
-    /// tick, not one per workspace — and every window's stamp is advanced with
-    /// it so a later switch doesn't re-tick immediately on a stale timer.
+    /// Close to free: a background window's buffers cannot go
+    /// `recovery_pending` again without edits, and edits only happen while
+    /// active, so each is written once after the switch and then skipped.
+    ///
+    /// One editor-wide tick off the active window's clock, with every window's
+    /// stamp advanced together so a later switch doesn't re-tick on a stale
+    /// timer.
     pub fn auto_recovery_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {
         if !self.recovery_service.lock().unwrap().is_enabled() {
             return Ok(0);

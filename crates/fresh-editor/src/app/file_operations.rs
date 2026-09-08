@@ -23,10 +23,9 @@ use crate::state::EditorState;
 
 use super::{BufferMetadata, Editor};
 
-/// Ids of every unnamed (never-saved) buffer in `window` that holds unsaved
-/// changes — the buffers a quit-time "save everything" has to walk through
-/// Save As. Free function rather than a method so it can be called while
-/// `self.windows` is mutably borrowed one window at a time.
+/// The buffers a quit-time "save everything" must walk through Save As. Free
+/// function so it can run while `self.windows` is borrowed one window at a
+/// time.
 fn unnamed_modified_buffers_in(window: &crate::app::window::Window) -> Vec<BufferId> {
     window
         .buffers
@@ -299,27 +298,19 @@ impl Editor {
         Ok(count)
     }
 
-    /// Queue the quit-time Save-As chain for **every** open workspace, not
-    /// just the active one.
-    ///
-    /// "Save and quit" is a promise about the whole editor: an unnamed,
-    /// modified buffer sitting in a background Orchestrator workspace has to
-    /// be named too, or quitting drops it (issue #3189). The queue itself is
-    /// per-window, so each window gets its own; `start_next_quit_save_as`
-    /// walks them in turn, diving into the owning workspace so the user can
-    /// see what they are naming.
+    /// Queue the quit-time Save-As chain for every workspace: "save and quit"
+    /// is a promise about the whole editor, and dropping a background
+    /// workspace's unnamed buffer breaks it (issue #3189). The queue is
+    /// per-window; `start_next_quit_save_as` walks them in turn.
     pub(crate) fn queue_unnamed_modified_buffers_for_quit(&mut self) {
         for window in self.windows.values_mut() {
             window.pending_quit_unnamed_save = unnamed_modified_buffers_in(window);
         }
     }
 
-    /// Is a quit-time Save-As chain in flight in *any* workspace?
-    ///
-    /// The chain spans workspaces, so "did the Save-As that just completed
-    /// belong to a quit chain?" cannot be answered from the active window
-    /// alone — its own queue is empty the moment its last unnamed buffer is
-    /// named, while other workspaces are still waiting.
+    /// Is a quit-time Save-As chain in flight in any workspace? The active
+    /// window's own queue empties the moment its last buffer is named, so it
+    /// cannot answer this alone.
     pub(crate) fn has_pending_quit_unnamed_save(&self) -> bool {
         self.windows
             .values()
@@ -369,11 +360,9 @@ impl Editor {
                 return true;
             }
 
-            // This workspace is done. The chain spans every workspace
-            // (issue #3189), so dive into the next one that still owes the
-            // user a Save-As — a real `set_active_window` dive, not a silent
-            // retarget, because the user is about to name a buffer and needs
-            // to see which workspace it belongs to.
+            // Dive into the next workspace that still owes a Save-As. A real
+            // dive, not a silent retarget: the user is about to name a buffer
+            // and needs to see which workspace it belongs to (issue #3189).
             let active = self.active_window;
             let next = self
                 .windows
@@ -399,12 +388,10 @@ impl Editor {
     /// Unlike `auto_save_persistent_buffers`, this skips the interval check and only saves
     /// named file-backed buffers (not unnamed buffers).
     pub fn save_all_on_exit(&mut self) -> anyhow::Result<usize> {
-        // Every open workspace, not just the one on screen: exiting closes
-        // them all, so "save on the way out" has to mean all of them
-        // (issue #3189). Each window is saved with the active-window pointer
-        // retargeted to it, so the per-buffer finalize below (LSP didSave,
-        // event-log save marker, recovery-file deletion) lands on the right
-        // window's state.
+        // Exiting closes every workspace, so "save on the way out" must mean
+        // all of them (issue #3189). Retargeted per window so the per-buffer
+        // finalize (LSP didSave, event-log marker, recovery delete) lands on
+        // the right window's state.
         let mut count = 0;
         for window_id in self.window_ids_sorted() {
             count += self.with_window_retargeted(window_id, |editor| {

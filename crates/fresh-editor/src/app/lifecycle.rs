@@ -313,22 +313,12 @@ impl Editor {
         self.modified_buffers_needing_prompt().len()
     }
 
-    /// Human-readable "which workspaces hold the unsaved work" clause for the
-    /// quit prompt, or `None` when the prompt should stay in its plain form.
+    /// Which workspaces hold the unsaved work, for the quit prompt — or
+    /// `None` to keep the prompt plain.
     ///
-    /// `None` means every unsaved buffer is in the workspace the user is
-    /// already looking at — the tabs are right there wearing their modified
-    /// markers, and naming the workspace would be noise. As soon as *any* of
-    /// it is somewhere else, the count alone is actively misleading (that is
-    /// the whole of issue #3189), so the clause names each workspace and, when
-    /// it holds more than one, how many buffers are in it:
-    ///
-    /// ```text
-    /// 3 buffers have unsaved changes (wsA: 2, wsB-1). (s)ave and quit, …
-    /// ```
-    ///
-    /// Ordered by window id, matching `modified_buffers_needing_prompt`, so
-    /// the same state always reads the same way.
+    /// Plain when it is all in the workspace on screen: the modified markers
+    /// are already in the tab bar. Once any of it is elsewhere the count alone
+    /// misleads, which is the whole of issue #3189.
     fn unsaved_workspace_summary(&self) -> Option<String> {
         let dirty = self.modified_buffers_needing_prompt();
         if dirty.is_empty() {
@@ -363,24 +353,16 @@ impl Editor {
         Some(parts.join(", "))
     }
 
-    /// Every `(window, buffer)` pair, across **all** open Orchestrator
-    /// workspaces, whose buffer is modified and has to be resolved before the
-    /// editor may exit.
+    /// Every `(window, buffer)` that must be resolved before the editor may
+    /// exit, across all workspaces.
     ///
-    /// Cross-window on purpose. `Ctrl+Q` quits the whole editor, not the
-    /// workspace on screen, so a dirty buffer parked in a background
-    /// workspace is exactly as unsaved as one in the foreground. Looking only
-    /// at the active window let a quit from a clean workspace exit with no
-    /// prompt at all while another workspace held unsaved work — and the
-    /// exit path then deleted that workspace's recovery data on the way out,
-    /// so the edit was gone for good (issue #3189).
+    /// Cross-window because `Ctrl+Q` quits the editor, not the workspace on
+    /// screen (issue #3189).
     ///
-    /// Buffers that are not user-owned file content — composite, hidden, and
-    /// plugin-virtual buffers — are skipped: they cannot be saved to disk and
-    /// are never written to recovery, so a prompt naming them would offer the
-    /// user nothing to act on. Background workspaces are full of them (dock
-    /// and panel buffers), which is why this filter matters now that every
-    /// window is counted.
+    /// Composite, hidden and plugin-virtual buffers are skipped: they can be
+    /// neither saved nor recovered, so a prompt naming them offers nothing to
+    /// act on. Background workspaces are full of them, which is why this
+    /// matters once every window counts.
     pub(crate) fn modified_buffers_needing_prompt(&self) -> Vec<(WindowId, BufferId)> {
         let hot_exit = self.config.editor.hot_exit;
         let auto_save = self.config.editor.auto_save_enabled;
