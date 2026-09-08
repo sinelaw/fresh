@@ -2013,9 +2013,34 @@ impl Editor {
                 // `byte_start` now, so neither is stateable.
                 let clicked_byte = byte;
                 let slot = match slot {
-                    crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
+                    // **The focus half of the press, which the widget's own
+                    // hit swallows** — the same statement the `Slot::Pane`
+                    // arm below makes, for the same reason. A `hit_node`
+                    // press calls `e.stop()`, so `dock::column`'s pointer
+                    // surface (the one that raises `UiFact::DockFocus`) never
+                    // sees a press that lands *on* a widget. Only a press on
+                    // the column's dead space reached it, so clicking the
+                    // dock's filter field lit the field up — the plugin got
+                    // the hit and moved its own focus key — while the
+                    // keyboard stayed in the editor, and everything typed
+                    // next went into the buffer behind the dock.
+                    //
+                    // Before the delivery, not after: `refocus_floating_panel`
+                    // fires a `focus` event carrying the panel's *current*
+                    // focus key, and the hit is what moves that key to the
+                    // widget under the pointer. The other order would focus
+                    // the dock and then throw the click's own focus away.
+                    crate::view::shell::widgets::Slot::Dock => {
+                        if self.dock.as_ref().is_some_and(|f| !f.focused) {
+                            self.refocus_floating_panel(crate::app::PanelSlot::Dock);
+                        }
+                        crate::app::PanelSlot::Dock
+                    }
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
+                    // A sidebar section is the dock's case in another column,
+                    // down to the applier it shares with `UiFact::SectionFocus`.
                     crate::view::shell::widgets::Slot::Sidebar(i) => {
+                        self.focus_sidebar_section(i);
                         crate::app::PanelSlot::Sidebar(i)
                     }
                     // Not a plugin panel: the same `WidgetSpec`s, whose hits

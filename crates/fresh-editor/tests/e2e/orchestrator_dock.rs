@@ -4479,3 +4479,79 @@ fn dock_column_is_painted_to_its_edges() {
         h.screen_to_string()
     );
 }
+
+/// **A click on a dock widget takes the keyboard with it.** Pressing the
+/// filter field focuses it *and* moves keyboard focus into the dock, so the
+/// next keystroke narrows the list instead of being typed into the buffer
+/// behind the dock.
+///
+/// Regression: a widget's own node answers the press and calls `e.stop()`, so
+/// the column's pointer surface — the one that raises `UiFact::DockFocus` —
+/// never saw it. The plugin got the hit and moved its own focus key, which is
+/// why the field visibly lit up; the host's `focused` flag stayed false, and
+/// everything typed afterwards went to the editor. The `Slot::Pane` arm of
+/// `apply_ui_fact` had already been taught to take that focus half itself
+/// ("a `hit_node` press calls `e.stop()`, so the pane's own surface never
+/// sees it"); the dock's arm had not.
+///
+/// Driven with the mouse and asserted on rendered output: `/` reaches the
+/// same field through a host-level key (`dock_slash_filters_and_enter_...`)
+/// and would pass with the bug still in place.
+#[test]
+fn mouse_click_on_dock_filter_moves_the_keyboard_into_the_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // **Start with the keyboard in the editor**, which is the whole case:
+    // the dock mounts focused, so a click that only has to *keep* focus
+    // proves nothing.
+    let wall = dock_wall_col(&h);
+    h.mouse_click(wall + 20, 3).unwrap();
+    h.render().unwrap();
+    assert!(
+        !h.editor().is_dock_focused(),
+        "the editor click should have blurred the dock"
+    );
+
+    // The filter field, reached with the mouse rather than with "/".
+    let row = row_of(&h, "Search") as u16;
+    let col = col_in_row(&h, row, "Search") as u16;
+    h.mouse_click(col + 1, row).unwrap();
+    h.render().unwrap();
+    // Asserted before a key is sent, and deliberately: with the keyboard
+    // still in the editor, `type_text` goes to the buffer and the
+    // `wait_until` below waits forever on a dock response that never comes
+    // (the hazard `open_dock` documents). A hang is a worse failure than an
+    // assertion.
+    assert!(
+        h.editor().is_dock_focused(),
+        "clicking a dock widget must move keyboard focus into the dock"
+    );
+
+    h.type_text("gamma").unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("gamma") && !s.contains("beta")
+    })
+    .unwrap();
+
+    // ...and nothing was typed into the buffer the dock is standing beside.
+    assert_eq!(
+        h.get_buffer_content().unwrap_or_default().trim(),
+        "",
+        "the keystrokes belonged to the dock's filter, not to the editor"
+    );
+}
