@@ -41,12 +41,6 @@ impl RecoveryStorage {
     /// Session lock file name
     const SESSION_LOCK: &'static str = "session.lock";
 
-    /// Create a new recovery storage manager (legacy flat layout)
-    pub fn new() -> io::Result<Self> {
-        let recovery_dir = Self::get_recovery_dir()?;
-        Ok(Self { recovery_dir })
-    }
-
     /// Create a recovery storage with a custom directory (for testing)
     pub fn with_dir(recovery_dir: PathBuf) -> Self {
         Self { recovery_dir }
@@ -693,33 +687,6 @@ impl RecoveryStorage {
         Ok(cleaned)
     }
 
-    /// Clean up all recovery files (after successful recovery or user dismissal)
-    pub fn cleanup_all(&self) -> io::Result<usize> {
-        if !self.recovery_dir.exists() {
-            return Ok(0);
-        }
-
-        let mut cleaned = 0;
-
-        for entry in fs::read_dir(&self.recovery_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Don't delete the session lock
-                if name == Self::SESSION_LOCK {
-                    continue;
-                }
-
-                if fs::remove_file(&path).is_ok() {
-                    cleaned += 1;
-                }
-            }
-        }
-
-        Ok(cleaned)
-    }
-
     // ========================================================================
     // In-place write recovery
     // ========================================================================
@@ -817,10 +784,15 @@ impl RecoveryStorage {
 }
 
 impl Default for RecoveryStorage {
+    /// The platform recovery directory, falling back to a temp dir when it
+    /// cannot be resolved. The scoped constructors ([`Self::with_scope`],
+    /// [`Self::with_dir`]) are what production uses; this unscoped default is
+    /// the legacy flat layout, kept for tests that only need somewhere to
+    /// write.
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            recovery_dir: std::env::temp_dir().join("fresh-recovery"),
-        })
+        let recovery_dir = Self::get_recovery_dir()
+            .unwrap_or_else(|_| std::env::temp_dir().join("fresh-recovery"));
+        Self { recovery_dir }
     }
 }
 

@@ -418,16 +418,6 @@ impl Editor {
         self.adopt_recovery_for_active_window(true)
     }
 
-    /// Discard all recovery files (user decided not to recover)
-    /// Returns the number of recovery files deleted
-    pub fn discard_all_recovery(&mut self) -> AnyhowResult<usize> {
-        Ok(self
-            .recovery_service
-            .lock()
-            .unwrap()
-            .discard_all_recovery()?)
-    }
-
     /// Restore only the hot-exit content from the previous clean exit:
     /// files with unsaved modifications and unnamed buffers that held
     /// content.  Called when full session restore is opted out (via
@@ -435,11 +425,10 @@ impl Editor {
     /// the user does not lose in-progress work just because they asked
     /// to skip restoring the workspace layout.
     ///
-    /// Unlike [`Editor::recover_all_buffers`], this path uses
-    /// `load_recovery` and leaves the recovery files in place so the
-    /// current session's hot-exit pipeline keeps owning them (the files
-    /// are cleaned up on the next clean shutdown via
-    /// `end_session_preserving`).
+    /// Like [`Editor::recover_all_buffers`], this uses `load_recovery` and
+    /// leaves the recovery files in place, so the current session's hot-exit
+    /// pipeline keeps owning them and the next clean shutdown decides their
+    /// fate (`end_session_accounting`).
     ///
     /// Returns the number of buffers restored.
     pub fn try_restore_hot_exit_buffers(&mut self) -> AnyhowResult<usize> {
