@@ -238,30 +238,101 @@
      lighter chrome (invisible against the seamless Dark chrome). */
   body.macfam .pane-content,body.macfam .pane-gutter{box-shadow:inset 0 1px 0 var(--hairline)}
 
-  /* ---- orchestrator dock: a flush source list (Cosmos glass is off) ---- */
-  body.macfam:not(.mobile) .widget-surface.w-dock{
-    background:var(--mac-sidebar);border-right:1px solid var(--hairline-strong);
-    color:var(--fg);padding:12px 10px 8px}
-  /* Roomier source-list rows (macOS spacing). */
-  body.macfam .w-dock .w-tree-row,body.macfam .w-dock .w-list-row{padding:3px 8px}
-  /* Selection semantics (Big Sur source list): a soft NEUTRAL pill for rows,
-     and a soft-filled CARD with a faint accent edge — the accent blue is kept
-     for menus / buttons, not the persistent sidebar. */
-  body.macfam .w-dock .w-tree-row.sel,body.macfam .w-dock .w-list-row.sel{
-    background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg);box-shadow:none}
-  body.macfam .w-dock .w-tree-card,body.macfam .w-dock .w-list-card{
-    border-color:var(--hairline-strong);background:transparent;padding:3px 4px;margin:2px 1px}
-  body.macfam .w-dock .w-tree-card.sel,body.macfam .w-dock .w-list-card.sel{
-    background:color-mix(in srgb,var(--fg) 8%,transparent);
-    border-color:color-mix(in srgb,var(--ui-accent) 42%,transparent);color:var(--fg);box-shadow:none}
-  /* Inside a selected card the whole card IS the selection — don't re-fill the
-     primary row blue; keep the detail line muted. */
-  body.macfam .w-dock .w-tree-card.sel .w-tree-row.sel,
-  body.macfam .w-dock .w-tree-card.sel .w-tree-row{background:transparent;color:var(--fg)}
-  body.macfam .w-dock .w-tree-card.sel .w-tree-xrow{background:transparent;color:var(--muted)}
-  body.macfam .w-dock .w-button.primary{
-    background:var(--ui-accent);border:1px solid color-mix(in srgb,var(--ui-accent) 78%,#000);color:#fff;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 1px 1.5px rgba(0,0,0,.14)}
+  /* ---- orchestrator dock: a flush Finder source list ----------------------
+     Folded from the display list (72-tree.js), so the skin speaks in the theme
+     keys the items name (`data-fg` / `data-bg`) and the fold's own colours
+     stand wherever it says nothing. Big Sur semantics: a light sidebar panel,
+     a soft NEUTRAL selection pill (the accent blue is kept for menus and
+     buttons, not the persistent sidebar), system text and muted detail. */
+  body.macfam:not(.mobile) .tree-surface.dock{
+    background:var(--mac-sidebar);box-shadow:inset -1px 0 0 var(--hairline-strong)}
+  /* `:not([data-layer])` throughout: a pop-over the dock raises names the same
+     ground key the dock's body does, and a menu you can see the list through
+     is not a menu. A theme's ground rules are about the surface's own flow. */
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer]):not([data-bg]),
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.suggestion_bg"],
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.menu_bg"],
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="editor.bg"]{
+    --ink-bg:transparent}
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.suggestion_fg"],
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_fg"]{
+    --ink-fg:var(--fg)}
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:var(--muted)}
+  /* Actionable lettering (New Task…, the session name, a hint key) takes the
+     system accent; the sidebar's own selection does not. */
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.help_key_fg"]{
+    --ink-fg:var(--ui-accent)}
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
+    --ink-bg:color-mix(in srgb,var(--fg) 10%,transparent);--ink-fg:var(--fg)}
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:var(--muted)}
+  /* The search field is a recessed control, not a terminal band. */
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="editor.current_line_bg"]{
+    --ink-bg:color-mix(in srgb,var(--fg) 7%,transparent)}
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.whitespace_indicator_fg"]{
+    --ink-fg:var(--muted)}
+  /* The sidebar's edge is the panel's hairline, not a drawn wall. */
+  body.macfam:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.cursor"]{
+    --ink-fg:transparent}
+
+  /* ---- pop-overs the dock raises: a Big Sur menu -------------------------
+     A menu is a LAYER over the source list's own flow and arrives as ordinary
+     items — a `fill` for its card, a `border` over the same rectangle, then a
+     fill and a run per row. `[data-layer]` tells them from the list beneath;
+     the frame rides on the `border` item, whose rectangle is the card's. */
+  body.macfam:not(.mobile) .tree-item[data-layer][data-bg="ui.suggestion_bg"]{
+    --ink-bg:var(--bg2)}
+  body.macfam:not(.mobile) .tree-item.k-border[data-layer]{
+    --ink-fg:transparent;border-radius:8px;
+    box-shadow:inset 0 0 0 1px var(--hairline-strong),0 12px 30px rgba(0,0,0,.28)}
+  body.macfam:not(.mobile) .tree-item[data-layer][data-fg="ui.suggestion_fg"]{
+    --ink-fg:var(--fg)}
+  body.macfam:not(.mobile) .tree-item[data-layer][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:var(--muted)}
+  /* The cursor row takes the system accent, inset and rounded the way a Big
+     Sur menu highlights — the sidebar's neutral selection is for the list. */
+  body.macfam:not(.mobile) .tree-item[data-layer][data-bg="ui.popup_selection_bg"]{
+    --ink-bg:transparent;--ink-fg:#fff}
+  body.macfam:not(.mobile) .tree-item.k-fill[data-layer][data-bg="ui.popup_selection_bg"]{
+    background:var(--ui-accent);clip-path:inset(1px 4px 1px 4px round 5px)}
+
+  /* ---- controls in the source list: real push buttons --------------------
+     A button arrives as TWO items wearing one class: a `fill` over its own
+     rectangle — the box, where the terminal draws `[` and `]` — and a `lines`
+     run for its naked label. Kind AND class, always, or the button is drawn
+     twice with the label inside the second one.
+
+     `box-shadow` rather than `border`, as everything painted over the cell
+     grid must be: a border on a chrome row would slide the DOM off the cell
+     pitch. Same push button as `.w-button`, said in the one property the grid
+     allows.
+
+     `[data-surface]` is in every selector for weight, not for matching — every
+     tree item carries it. A focused button names `ui.popup_selection_bg`, and
+     the sidebar's selection rule counts one attribute more than a bare class
+     selector would; with it these tie, and being written later these win. */
+  body.macfam:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button"]{
+    background:var(--mac-btn);border-radius:5px;transform:scaleY(.8);clip-path:none;
+    box-shadow:inset 0 0 0 1px var(--hairline-strong),
+      inset 0 1px 0 rgba(255,255,255,.5),0 1px 1.5px rgba(0,0,0,.13)}
+  /* Big Sur's primary: a near-flat solid accent with a faint top sheen. */
+  body.macfam:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.primary"]{
+    background:var(--ui-accent);
+    box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ui-accent) 78%,#000),
+      inset 0 1px 0 rgba(255,255,255,.22),0 1px 1.5px rgba(0,0,0,.14)}
+  body.macfam:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.primary"]{
+    --ink-fg:#fff}
+  body.macfam:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.hover"]{
+    background:color-mix(in srgb,var(--mac-btn) 88%,var(--fg))}
+  /* Focus is the system ring, not a repaint of the face. */
+  body.macfam:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.focused"]{
+    box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ui-accent) 70%,#000),
+      0 0 0 2px color-mix(in srgb,var(--ui-accent) 45%,transparent)}
+  body.macfam:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.disabled"]{
+    background:transparent;box-shadow:inset 0 0 0 1px var(--hairline)}
+  body.macfam:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.disabled"]{
+    --ink-fg:var(--muted)}
   /* Text fields, in ONE place. The base styles `.w-text` per surface with
      background:var(--bg) — the dark BUFFER colour — so any surface macOS didn't
      explicitly repoint (e.g. the plugin dialog fields in the New Workspace modal)
@@ -273,14 +344,6 @@
   body.macfam .w-floatingModal>.w-section .w-text,
   body.macfam .trustdialog .w-text,body.macfam .auxmodal .w-text{
     background:var(--surface);border:1px solid var(--hairline-strong);color:var(--fg)}
-  /* Search field: a macOS rounded search field with a leading magnifier. */
-  body.macfam .w-dock .w-text{border-radius:7px;padding:2px 8px}
-  body.macfam .w-dock .w-text::before{content:"⌕";color:var(--muted);font-size:1.2em;line-height:1;margin-right:2px}
-  body.macfam .w-dock .w-button{background:var(--mac-btn);border:1px solid var(--hairline-strong);color:var(--mac-btn-fg)}
-  body.macfam .w-dock .w-toggle{color:var(--fg)}
-  body.macfam .w-dock .w-divider{border-color:var(--hairline)}
-  body.macfam .w-dock .w-hintbar,body.macfam .w-dock .fx-title{color:var(--muted)}
-  body.macfam .w-dock .w-hint b{color:var(--ui-accent)}
 
   /* ---- Plugin form dialogs (Run Agent &c.) → a native macOS sheet ----
      Scoped to a non-anchored floating modal that is a plain form (no
@@ -311,3 +374,23 @@
   body.macfam .w-toggle.labelfirst .w-flabel{color:var(--muted)}
   /* Buttons: give the centred group room to breathe. */
   body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-button{padding:4px 18px;border-radius:6px}
+
+  /* The source list's close affordance answers the pointer; `button.bare`
+     draws no box of its own, so hover is the whole cue. */
+  body.macfam:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.bare"][data-class~="button.hover"]{
+    background:color-mix(in srgb,var(--fg) 12%,transparent);border-radius:4px}
+
+  /* ---- the theme switcher, as a system control ---------------------------
+     `#themeswitch` is frontend furniture (js/15-theme.js) with a token-only
+     base; here it takes the same push button and menu the rest of the theme
+     uses, so it stops reading as a foreign chip on the title bar. */
+  body.macfam #themebtn{background:var(--mac-btn);border:1px solid var(--hairline-strong);
+    color:var(--mac-btn-fg);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 1px 1.5px rgba(0,0,0,.13)}
+  body.macfam #themebtn:hover{background:color-mix(in srgb,var(--mac-btn) 88%,var(--fg))}
+  body.macfam #thememenu{background:color-mix(in srgb,var(--bg2) 88%,transparent);
+    -webkit-backdrop-filter:blur(50px) saturate(1.9);backdrop-filter:blur(50px) saturate(1.9);
+    border:1px solid var(--hairline-strong);border-radius:8px}
+  body.macfam .ts-row.on,body.macfam .ts-row:hover{background:var(--ui-accent);color:#fff}
+  body.macfam .ts-row.on .ts-desc,body.macfam .ts-row:hover .ts-desc{color:rgba(255,255,255,.8)}
+  body.macfam .ts-row.on .ts-check,body.macfam .ts-row:hover .ts-check{color:#fff}

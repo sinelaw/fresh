@@ -79,40 +79,52 @@ measureMetrics();
 // getComputedStyle, so each access reflects the current (possibly overridden) var.
 const shellN=k=>parseFloat(rootCss.getPropertyValue(k))||0;
 const SHELL={ get pad(){return shellN("--shell-pad");}, get top(){return shellN("--bezel-top");},
-  get bot(){return shellN("--bezel-bot");}, get side(){return shellN("--bezel-side");},
-  get gap(){return shellN("--dock-gap");} };
+  get bot(){return shellN("--bezel-bot");}, get side(){return shellN("--bezel-side");} };
 let APPX=0, APPY=0;
 function syncAppOrigin(){ const r=document.getElementById("app").getBoundingClientRect(); APPX=r.left; APPY=r.top; }
 const appH=()=>document.getElementById("app").clientHeight;
 // Pixel width of a full-height LEFT dock (0 when the dock is hidden/absent):
-// the bezel's screen starts to its right, so the sidebar floats free of it.
+// the columns of the grid the dock's own surface covers.
 function dockWidthPx(){
   if(!scene||!scene.regions) return 0;
   return px(treeDockCells(scene.regions),CW);
 }
-// Wrap the bezel around the grid minus the dock columns. Runs after every
-// render/frame (dock width and grid size are server-driven) and on window
-// resize; on mobile (or before the first scene) the bezel is hidden.
+// Wrap the bezel around the WHOLE grid. Runs after every render/frame (the
+// grid size is server-driven) and on window resize; on mobile (or before the
+// first scene) the bezel is hidden.
+//
+// It used to start the bezel to the right of the dock, so the dock could float
+// beside the device as its own card — which worked while the dock was native
+// DOM the frontend was free to inset (a card narrower than its cell rect, a
+// gap where the bezel's left rail lands). The dock is the display list's now:
+// its items sit at the exact cells the tree laid them out at, because that is
+// what makes a click on one of them mean the same thing the terminal's click
+// means. So the dock cannot be inset, and a bezel whose left rail claimed the
+// same pixels simply had the dock painted over it — rail, legend and all. The
+// grid is one rectangle; the device wraps it, dock included.
 function layoutShell(){
   syncAppOrigin();
   const dev=document.getElementById("device");
   if(!dev) return;
   // The bezel is a shell-theme decoration (COSMOS hardware / Winamp skin
   // window); the macOS / compact web themes run full-bleed, so the device is
-  // hidden and the menubar clip (which carves out the dock↔bezel gap) is
-  // neutralised for them.
+  // hidden and the menubar clip (which the shell themes use while the dock
+  // moves) is neutralised for them.
   if(isMobile()||!scene||!shellTheme()){
     dev.classList.remove("on");
     document.documentElement.style.setProperty("--clip-left","0px");
     return;
   }
   dev.classList.add("on");
-  const dw=dockWidthPx();
-  // Clip full-grid-width chrome rows (menubar) to the screen — see the CSS.
-  document.documentElement.style.setProperty("--clip-left", dw+"px");
-  dev.style.left=(APPX+dw-SHELL.side)+"px";
+  // The menubar row spans the full grid width; the dock covers its left half,
+  // in the terminal by painting over it and here by an opaque ground on the
+  // dock's surface. The clip keeps the strip from showing through while the
+  // dock slides in and out (the FLIP in 30-render.js moves the chrome, not the
+  // dock's own items) — see the CSS.
+  document.documentElement.style.setProperty("--clip-left", dockWidthPx()+"px");
+  dev.style.left=(APPX-SHELL.side)+"px";
   dev.style.top=(APPY-SHELL.top)+"px";
-  dev.style.width=(px(scene.w||0,CW)-dw+2*SHELL.side)+"px";
+  dev.style.width=(px(scene.w||0,CW)+2*SHELL.side)+"px";
   dev.style.height=(px(scene.h||0,CH)+SHELL.top+SHELL.bot)+"px";
 }
 

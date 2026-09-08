@@ -18,7 +18,7 @@
     --sel-ring:inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 45%, transparent)}
 
   /* Frame chrome on the shell surface. */
-  .menubar,.tabbar,.fileexplorer,.widget-surface.w-dock{background:var(--shell)}
+  .menubar,.tabbar,.fileexplorer{background:var(--shell)}
   .fileexplorer .fx-title{font-weight:700;letter-spacing:.08em}
 
   /* Status bar: a quiet dark strip (no solid accent fill), muted text, and a

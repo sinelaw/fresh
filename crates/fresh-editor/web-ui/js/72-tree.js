@@ -19,35 +19,68 @@
 // forwards clicks at rectangles it recorded, and this has none to record —
 // the cell under the pointer IS the answer, because the items sit exactly
 // where the tree laid them out.
-function treeItemEl(it){
+// The item's paint, and the QUESTION behind it. The fold answers with two
+// colours; the item's `ThemeKey` says which two theme keys they came from, and
+// the server ships both (`fgKey`/`bgKey`, see `view/scene.rs`). The answer
+// goes on as `--fold-bg` / `--fold-fg` rather than as inline `background` and
+// `color`, and the names go on as `data-fg` / `data-bg` — so a *web theme*,
+// which is a chrome look layered over the editor's palette and not the palette
+// itself, can re-map the handful of keys it dresses in ordinary CSS and
+// inherit the fold's answer for everything else. Inline paint could only have
+// been overridden with `!important`, which is why the dock wore the terminal's
+// colours in every web theme.
+//
+// **The answer is the FALLBACK, not the value.** These go on inline, and an
+// inline custom property beats a stylesheet one exactly as an inline colour
+// does — so a theme setting `--fold-bg` would lose the same argument in a new
+// spelling. The stylesheet reads `var(--ink-bg, var(--fold-bg, ...))`
+// (45-tree.css): a theme states `--ink-bg`, which nothing sets inline, and the
+// fold's answer stands wherever it does not.
+function itemPaint(el,it){
+  if(it.bg) el.style.setProperty("--fold-bg",it.bg);
+  if(it.fg) el.style.setProperty("--fold-fg",it.fg);
+  if(it.fgKey) el.dataset.fg=it.fgKey;
+  if(it.bgKey) el.dataset.bg=it.bgKey;
+}
+function treeItemEl(it,kindOf){
   const el=div("tree-item k-"+it.kind);
   el.dataset.surface=it.surface;
+  // Which surface it belongs to, by name. An item is a SIBLING of its
+  // surface marker on the layer (they are both placed at absolute cell
+  // rects), so no descendant selector can say "an item of the dock" — and a
+  // web theme dressing the dock has to be able to.
+  if(kindOf) el.dataset.surfaceKind=kindOf;
+  // Painted by a LAYER the surface raised — a pop-over, a context menu — not
+  // by its own flow. A theme's ground rules are about the surface's flow ("the
+  // dock's body is the well"); a pop-over over that body has to be opaque or
+  // it is unreadable, so it must be able to opt out of them by selector.
+  if(it.layer) el.dataset.layer="";
+  // What the item IS, as opposed to how the fold painted it. Read it with
+  // `k-<kind>`: a classed node emits a `fill` over its own rect and its label
+  // arrives as a separate `lines` item wearing the same class, so
+  // `.k-fill[data-class~="button"]` is the control's box and
+  // `.k-lines[data-class~="button"]` is what it says. Matching the class alone
+  // would draw the control twice.
+  if(it.classes) el.dataset.class=it.classes;
   if(it.key) el.dataset.key=it.key;
   el.style.left=px(it.x,CW)+"px"; el.style.top=px(it.y,CH)+"px";
   el.style.width=px(it.w,CW)+"px"; el.style.height=px(it.h,CH)+"px";
+  itemPaint(el,it);
   switch(it.kind){
     case "fill":
-      if(it.bg) el.style.background=it.bg;
       break;
     case "wash":
       // A ground laid over what is under it, keeping the text there: the
       // TUI recolours the cells' backgrounds; here the ground is translucent.
-      if(it.bg) el.style.background=it.bg;
-      el.style.opacity="0.45";
       el.style.pointerEvents="none";
       break;
     case "border":
-      el.style.borderColor=it.fg||"currentColor";
-      if(it.bg) el.style.background=it.bg;
       if(it.border==="rounded") el.classList.add("rounded");
       break;
     case "scrim":
       el.classList.add(it.dim?"dim":"opaque");
-      if(!it.dim&&it.bg) el.style.background=it.bg;
       break;
     case "lines": {
-      if(it.bg) el.style.background=it.bg;
-      if(it.fg) el.style.color=it.fg;
       if(it.bold) el.style.fontWeight="bold";
       if(it.italic) el.style.fontStyle="italic";
       if(it.underline) el.style.textDecoration="underline";
@@ -58,15 +91,32 @@ function treeItemEl(it){
       (it.lines||[]).forEach((line,i)=>{
         const top=dy+px(i,CH);
         if(top+CH<=0||top>=px(it.h,CH)) return;
-        const row=div("tree-line"); row.textContent=line;
+        // Vertical box-drawing glyphs become vector rules, exactly as the cell
+        // SVG does them (VRULE, 20-cells.js): stacked at our cell height the
+        // font's own glyph leaves a gap between rows, so a wall a row tall per
+        // cell — the dock's divider is one such per row — came out dashed. The
+        // rule takes the run's colour from the item (`currentColor`) and the
+        // glyph is blanked so nothing shows behind it.
+        let shown=line;
+        if([...line].some(ch=>VRULE.includes(ch))){
+          for(let c=0;c<line.length;c++){
+            if(!VRULE.includes(line[c])) continue;
+            const hv=(line[c]==="┃"?1.8:1.1)*zoom;
+            const rule=div("tree-rule");
+            rule.style.left=(dx+px(c,CW)+CW/2-hv/2)+"px"; rule.style.top=top+"px";
+            rule.style.width=hv+"px"; rule.style.height=CH+"px";
+            el.appendChild(rule);
+          }
+          shown=[...line].map(ch=>VRULE.includes(ch)?" ":ch).join("");
+        }
+        const row=div("tree-line"); row.textContent=shown;
         row.style.left=dx+"px"; row.style.top=top+"px";
-        row.style.font=FONT; row.style.lineHeight=CH+"px"; row.style.height=CH+"px";
+        row.style.lineHeight=CH+"px"; row.style.height=CH+"px";
         el.appendChild(row);
       });
       break;
     }
     case "scrollbar": {
-      if(it.bg) el.style.background=it.bg;
       const th=div("tree-thumb");
       const [top,len]=it.thumb||[0,0];
       if(it.horizontal){
@@ -75,7 +125,6 @@ function treeItemEl(it){
       } else {
         th.style.top=px(top,CH)+"px"; th.style.height=px(len,CH)+"px";
       }
-      if(it.fg) th.style.background=it.fg;
       el.appendChild(th);
       // Marks on the track: a half-width bar in the mark's colour over the
       // thumb or track (the TUI's half-block glyph), or the whole cell.
@@ -120,8 +169,14 @@ function treeEls(t){
     if(s.section!==undefined) sd.dataset.section=s.section;
     place(sd,{x:s.x,y:s.y,w:s.w,h:s.h});
     layer.appendChild(sd);
+    // A full-height left dock is resized by dragging its last column — the
+    // cell the tree draws its wall into. The document's cell mapping already
+    // forwards the drag (the layer is not `onChrome`), so this adds only the
+    // affordance: the col-resize cursor over the one column that has it.
+    if(s.kind==="dock"&&s.x===0&&!isMobile()) layer.appendChild(borderDragHandle(s.x+s.w-1,s.y,s.h));
   });
-  for(const it of (t.items||[])) layer.appendChild(treeItemEl(it));
+  const kindOf=i=>(t.surfaces[i]||{}).kind;
+  for(const it of (t.items||[])) layer.appendChild(treeItemEl(it,kindOf(it.surface)));
   if(t.cursor){
     const c=div("tree-caret");
     c.style.left=px(t.cursor[0],CW)+"px"; c.style.top=px(t.cursor[1],CH)+"px";

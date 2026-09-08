@@ -4,13 +4,18 @@
      later files deliberately override earlier ones.) */
   /* ======================================================================
      COSMOS shell (target mock, 2026-07). The UI floats over an abstract
-     wallpaper: the orchestrator dock becomes a detached frosted-glass
-     sidebar on the left, and everything else sits inside a skeuomorphic
-     "COSMOS-991" hardware bezel — machined rim, corner screws, status
-     LEDs, silkscreened BUILD / DEPLOY chrome. Pure decoration: #device is
-     pointer-transparent and positioned by layoutShell(); the dock keeps
-     its cell rect (only its visual card is inset within it); every other
-     region is untouched. Desktop only — body.mobile switches it all off.
+     wallpaper inside a skeuomorphic "COSMOS-991" hardware bezel — machined
+     rim, corner screws, status LEDs, silkscreened BUILD / DEPLOY chrome.
+     Pure decoration: #device is pointer-transparent and positioned by
+     layoutShell() around the WHOLE grid; every region is untouched.
+     Desktop only — body.mobile switches it all off.
+
+     The mock's detached frosted-glass sidebar is gone with the renderer that
+     could draw it: the orchestrator dock is the display list's now, painted
+     at the cells the tree laid it out at (72-tree.js), so the frontend can
+     no longer inset a card inside its cell rect — and a bezel rail sharing
+     those pixels was simply painted over. The dock is a column of the grid,
+     inside the screen, like the terminal's.
      ====================================================================== */
 
   /* ---- wallpaper: vivid flowing colour fields over deep blue. The device
@@ -24,10 +29,11 @@
     radial-gradient(60rem 45rem at -8% 22%, rgba(64,140,230,.55), transparent 60%),
     radial-gradient(55rem 40rem at 55% 122%, rgba(255,130,90,.40), transparent 60%),
     linear-gradient(135deg,#12233f 0%,#1a2d4e 45%,#0c1930 100%) #0f1c33}
-  /* The pipeline's menubar row spans the FULL grid width (in the TUI the dock
-     paints over its left half); with the dock card inset, that leftover strip
-     would show in the sidebar↔device gap — clip it to the screen. layoutShell
-     keeps --clip-left at the dock's pixel width (0 when no dock). */
+  /* The pipeline's menubar row spans the FULL grid width and the dock paints
+     over its left half — in the TUI with cells, here with the opaque ground on
+     the dock's surface. The clip keeps that strip from showing through while
+     the dock slides in or out (the chrome FLIPs, the dock's items do not).
+     layoutShell keeps --clip-left at the dock's pixel width (0 when no dock). */
   body.theme-cosmos:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
 
   /* ---- the device ---- */
@@ -90,107 +96,162 @@
   #device .dv-screw.br{right:14px;bottom:17px}
   #device .dv-screw.br::after{transform:translateY(-50%) rotate(8deg)}
 
-  /* ---- the floating glass sidebar (orchestrator dock) ---- */
-  body.theme-cosmos:not(.mobile) .widget-surface.w-dock{
-    background:linear-gradient(165deg,rgba(190,211,232,.28),rgba(122,148,180,.14) 45%,rgba(70,92,124,.18));
-    -webkit-backdrop-filter:blur(30px) saturate(1.5);
-    backdrop-filter:blur(30px) saturate(1.5);
-    border:1px solid rgba(255,255,255,.30);
-    border-radius:24px;
-    box-shadow:0 50px 110px rgba(2,6,14,.6),0 12px 34px rgba(2,6,14,.4),
-      inset 0 1px 0 rgba(255,255,255,.35);
-    padding:20px 16px 14px;color:#e8eef5;overflow:hidden}
-  /* The dock's raw title row is dropped — the glass card IS the panel's
-     identity, the label was dead weight. (:first-child keeps any other raw
-     rows a future dock spec might emit.) */
-  body.theme-cosmos:not(.mobile) .w-dock>.w-col>.w-raw:first-child{display:none}
-  /* New Task: a full-width green pill; the search field wraps to its own row. */
-  body.theme-cosmos:not(.mobile) .w-dock .w-row.wrap .w-button.primary{
-    flex:1 1 100%;text-align:center;padding:9px 0;font-weight:700;font-size:1.05em;
-    background:linear-gradient(180deg,#52ca6e,#2fa04f);border:1px solid rgba(150,255,190,.5);
-    border-radius:12px;color:#f2fff6;
-    box-shadow:0 8px 22px rgba(46,190,101,.4),inset 0 1px 0 rgba(255,255,255,.45)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-text{flex:1 1 100%;background:rgba(8,14,24,.35);
-    border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:7px 12px;margin:4px 0}
-  body.theme-cosmos:not(.mobile) .w-dock .w-text::before{content:"⌕";font-size:1.2em;line-height:1;
-    color:rgba(232,240,248,.55)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-text-input::placeholder{color:rgba(232,240,248,.45)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-button{border-color:rgba(255,255,255,.18);color:#dfe8f0}
-  body.theme-cosmos:not(.mobile) .w-dock .w-toggle{color:rgba(223,232,240,.75)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-divider{border-color:rgba(255,255,255,.12)}
-  /* Tree rows / cards: light text on glass; the selection is a bright glass
-     pill (the mock's highlighted "infernu" card), not the teal editor pill. */
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-row,body.theme-cosmos:not(.mobile) .w-dock .w-list-row{
-    padding:4px 9px;border-radius:10px;color:#dbe5ee}
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-xrow{color:rgba(219,229,238,.55)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-xrow.sel{background:rgba(255,255,255,.10);color:#fff}
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-disc,body.theme-cosmos:not(.mobile) .w-dock .w-tree-check{color:rgba(223,232,240,.6)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-row.sel,body.theme-cosmos:not(.mobile) .w-dock .w-list-row.sel{
-    background:linear-gradient(90deg,rgba(255,255,255,.26),rgba(255,255,255,.10));
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);color:#fff}
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-card{border-color:rgba(255,255,255,.12);
-    background:rgba(255,255,255,.04);border-radius:12px;padding:2px 3px;margin:2px}
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-card.sel{
-    border-color:rgba(255,255,255,.35);
-    background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(255,255,255,.08));
-    box-shadow:0 6px 22px rgba(2,6,14,.35),inset 0 1px 0 rgba(255,255,255,.35)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-tree-card.sel .w-tree-xrow{color:rgba(255,255,255,.75)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-hintbar{color:rgba(223,232,240,.5)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-hint b{color:rgba(240,248,255,.8)}
-  /* Dock dropdowns (New Task… / Move to folder…): a frosted menu card in
-     place of the flat --bg2 overlay, with plain menu rows instead of the
-     editor's filled buttons. Positioning (float over content, no reflow) is
-     owned by js/65-widgets.js `layoutDockOverlays`. */
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay{background:rgba(16,26,40,.92);
-    -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
-    border:1px solid rgba(255,255,255,.22);border-radius:14px;
-    box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px;margin:0;z-index:20}
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-section{border:none;padding:2px}
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-section-label{color:rgba(232,240,248,.55);
-    text-transform:uppercase;font-size:.85em;letter-spacing:.07em;margin:2px 8px 6px}
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-row{gap:0}
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
-    background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px}
-  /* Highlight follows the mouse (hover), not the keyboard cursor: the primary
-     (cursor) row renders like any other so nothing is pre-selected on open,
-     and the hovered row lights up. */
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button.primary{
-    background:transparent;box-shadow:none;color:#e8eef5}
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.16);
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
-  /* The anchored context menu (right-click a session) wears the SAME frosted
-     card + borderless menu rows as the dock dropdowns, so the two read as one
-     component instead of the flat bordered-button box the base modal gives. */
-  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored{
-    background:rgba(16,26,40,.92);
-    -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
-    border:1px solid rgba(255,255,255,.22);border-radius:14px;
-    box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px}
-  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button{
-    border:none;background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px;
-    text-align:left;box-shadow:none}
-  /* Hover-driven highlight (see the dock dropdown above): no stuck cursor row. */
-  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button.primary{
-    background:transparent;box-shadow:none;color:#e8eef5}
-  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button:hover{
-    background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
-  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button.danger{
-    background:transparent;color:#ff9b9b}
+  /* ---- the glass sidebar (orchestrator dock) ----------------------------
+     The dock is the display list's: items at cell rects carrying the fold's
+     resolved colours as `--ink-bg` / `--ink-fg`, each naming the theme key it
+     read them from (`data-fg` / `data-bg`, see 72-tree.js). A web theme is a
+     CHROME look layered over the editor's palette, so it re-maps the handful
+     of keys the dock paints with and inherits the fold's answer for the rest.
+     The mock's card is back this way: glass ground, white hairline, the rows
+     riding on it instead of on the terminal's black.
+
+     One rule earns its place first: an item with NO name of its own — the
+     blank rows a list pads itself with — falls back to the editor's ground,
+     which would punch black holes in the glass. On a themed dock it takes the
+     panel's ground, i.e. nothing. */
+  body.theme-cosmos:not(.mobile) .tree-surface.dock{
+    background:
+      linear-gradient(165deg,rgba(216,234,255,.34),rgba(128,164,212,.16) 42%,rgba(58,88,128,.22)),
+      radial-gradient(130% 55% at 50% -12%,rgba(47,214,195,.18),transparent 70%);
+    -webkit-backdrop-filter:blur(34px) saturate(1.8);
+    backdrop-filter:blur(34px) saturate(1.8);
+    /* The corners are free to round: in this theme nothing full-width paints
+       row 0 or the last row — the title bar's slab and the wall both give way
+       to the glass below — so the card can be a card. Kept small on purpose:
+       an item is a SIBLING of this ground, not a child, so a radius does not
+       clip text — it curves the glass out from under it, and the title starts
+       at column 0 of row 0. Past ~8px the `O` of "Orchestrator" is left
+       standing off the card. */
+    border-radius:8px;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.34),
+      inset 0 1px 0 rgba(255,255,255,.50),
+      inset 0 -1px 0 rgba(255,255,255,.10),
+      0 26px 64px rgba(2,6,14,.62),0 6px 18px rgba(2,6,14,.45)}
+  /* Everything that was the terminal's ground becomes the glass: the panel
+     body, the untagged padding rows, the title bar (the card IS the panel's
+     identity — the old skin dropped the label row outright, this keeps the
+     text and drops only its slab) and the grip strip. */
+  /* `:not([data-layer])` throughout: a pop-over the dock raises names the same
+     ground key the dock's body does, and a menu you can see the list through
+     is not a menu. A theme's ground rules are about the surface's own flow. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer]):not([data-bg]),
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.suggestion_bg"],
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.menu_bg"],
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="editor.bg"]{
+    --ink-bg:transparent}
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.suggestion_fg"],
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_fg"]{
+    --ink-fg:#dbe5ee}
+  /* The wall down the last column is the card's own edge here — the ground's
+     inset hairline draws it, so the glyph would only double it. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.cursor"]{
+    --ink-fg:transparent}
+  /* Muted ink: the rule under the toolbar, the session disc, the hint bar. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:rgba(178,222,224,.42)}
+  /* The selection is a bright glass pill (the mock's highlighted card), not
+     the editor's blue fill; its text and the accent ink on it go white. */
+  /* The selection is one pill, not a band per run: the row's full-width `fill`
+     carries it (clipped inboard of the card's edges and rounded — a clip moves
+     no text and the pointer's cell is unchanged, so nothing about the hit
+     moves), and the runs riding on it go transparent so they don't re-square
+     its ends. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
+    --ink-bg:transparent;--ink-fg:#ffffff}
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
+    background:linear-gradient(90deg,rgba(47,214,195,.34),rgba(255,255,255,.17) 55%,rgba(255,255,255,.07));
+    clip-path:inset(1px 5px 1px 3px round 9px);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.30)}
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:rgba(255,255,255,.7)}
+  /* Accent ink (New Task…, the session name, the hint keys) reads as the
+     mock's bright glass lettering rather than the terminal's cyan. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.help_key_fg"]{
+    --ink-fg:var(--ui-accent)}
+  /* …but white on the selection, where the accent would sit on its own tint. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"][data-fg="ui.help_key_fg"]{
+    --ink-fg:#ffffff}
+  /* The search field: a recessed well on the glass. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="editor.current_line_bg"]{
+    --ink-bg:rgba(8,14,24,.35)}
+  body.theme-cosmos:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.whitespace_indicator_fg"]{
+    --ink-fg:rgba(232,240,248,.45)}
+
+  /* ---- pop-overs the dock raises: a glass menu card ----------------------
+     A menu is a LAYER over the dock's own flow and arrives as ordinary items —
+     a `fill` for its card, a `border` over the same rectangle, then a fill and
+     a run per row. `[data-layer]` tells them from the list underneath; the
+     frame rides on the `border` item, whose rectangle is the card's, so its
+     box-drawing glyphs give way to a hairline and a shadow. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-layer][data-bg="ui.suggestion_bg"]{
+    --ink-bg:rgba(19,29,44,.95)}
+  body.theme-cosmos:not(.mobile) .tree-item.k-border[data-layer]{
+    --ink-fg:transparent;border-radius:8px;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),
+      0 18px 44px rgba(2,6,14,.62),0 4px 12px rgba(2,6,14,.5)}
+  body.theme-cosmos:not(.mobile) .tree-item[data-layer][data-fg="ui.suggestion_fg"]{
+    --ink-fg:#dbe5ee}
+  body.theme-cosmos:not(.mobile) .tree-item[data-layer][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:rgba(219,229,238,.45)}
+  /* The cursor row is the accent glass pill the dock's selection already is,
+     inset from the card's edges so the pill reads inside the frame. */
+  body.theme-cosmos:not(.mobile) .tree-item[data-layer][data-bg="ui.popup_selection_bg"]{
+    --ink-bg:transparent;--ink-fg:#ffffff}
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-layer][data-bg="ui.popup_selection_bg"]{
+    clip-path:inset(1px 4px 1px 4px round 7px);
+    background:linear-gradient(90deg,rgba(47,214,195,.40),rgba(255,255,255,.16) 60%,rgba(255,255,255,.08));
+    box-shadow:none}
+
+  /* ---- controls on the glass -------------------------------------------
+     A button arrives as TWO items wearing one class: a `fill` over its own
+     rectangle — the box, where the terminal draws `[` and `]` — and a `lines`
+     run for its naked label. Kind AND class, always; the class alone would
+     paint the pill twice, once under the lettering and once over it.
+
+     `[data-surface]` is in every selector for weight, not for matching — every
+     tree item carries it. A focused button names `ui.popup_selection_bg`, and
+     the selection pill's rule counts one attribute more than a bare class
+     selector; with it these tie, and being written later these win. A button's
+     own face beats whatever ground its ink happens to name. */
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button"]{
+    background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05));
+    border-radius:999px;transform:scaleY(.78);clip-path:none;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.24),
+      inset 0 1px 0 rgba(255,255,255,.36),0 1px 3px rgba(2,6,14,.35)}
+  /* The affirmative action takes the accent the glass reserves for it. */
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.primary"]{
+    background:linear-gradient(180deg,rgba(47,214,195,.40),rgba(47,214,195,.14));
+    box-shadow:inset 0 0 0 1px rgba(126,244,228,.46),
+      inset 0 1px 0 rgba(255,255,255,.42),0 2px 9px rgba(47,214,195,.24)}
+  body.theme-cosmos:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.primary"]{
+    --ink-fg:#eafffb}
+  /* Hover brightens the glass; focus rings it in the accent. */
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.hover"]{
+    background:linear-gradient(180deg,rgba(255,255,255,.26),rgba(255,255,255,.11))}
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.focused"]{
+    box-shadow:inset 0 0 0 1px var(--ui-accent),
+      inset 0 1px 0 rgba(255,255,255,.4),0 0 10px rgba(47,214,195,.32)}
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.disabled"]{
+    background:rgba(255,255,255,.045);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.11)}
+  body.theme-cosmos:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.disabled"]{
+    --ink-fg:rgba(219,229,238,.34)}
 
   /* ---- COSMOS shell motion. The editor's cell-level animations are forced
      off by the bridge (config.editor.animations = false); the frontend owns
      motion instead: a quick fade/pop for the palette + a uniform full-window
-     scrim, and the dock / file explorer slide in from the left while the
-     bezel (CSS-transitioned, repositioned by layoutShell) is pushed aside.
-     Exits animate a positioned clone (.fx-clone) since the region rebuild
-     removes the real node synchronously. ---- */
+     scrim, and the file explorer slides in from the left while every region
+     the new layout displaced FLIPs into place (30-render.js). Exits animate a
+     positioned clone (.fx-clone) since the region rebuild removes the real
+     node synchronously. The dock has no entrance or exit of its own: its
+     items are siblings of its surface marker on the display-list layer, so
+     the marker is a ground with nothing on it to animate. ---- */
   body:not(.mobile) .modal-scrim{position:fixed;inset:0}
   body:not(.mobile) #device{transition:left .28s cubic-bezier(.2,.8,.25,1),
     width .28s cubic-bezier(.2,.8,.25,1),top .28s cubic-bezier(.2,.8,.25,1),
     height .28s cubic-bezier(.2,.8,.25,1)}
   @keyframes fxFade{from{opacity:0}}
   @keyframes fxPop{from{opacity:0;transform:translate(-50%,-50%) scale(.96)}}
-  @keyframes fxSlideL{from{transform:translateX(calc(-100% - 80px))}}
   /* Masked slide for the file explorer: clip-path is applied in element
      space (before the transform moves it), so keeping inset-left == -offset
      at every progress point pins the visible edge to the element's ORIGINAL
@@ -204,10 +265,9 @@
   @keyframes fxOutWipe{from{transform:none;clip-path:inset(0 0 0 0)}
     to{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}}
   @keyframes fxOutFade{to{opacity:0}}
-  @keyframes fxOutL{to{transform:translateX(calc(-100% - 80px));opacity:.4}}
-  /* One shared duration + curve for every layout-motion piece (dock slide,
-     explorer wipe, bezel transition, content FLIP slides): mixed timings let
-     the bezel's rail cross the dock mid-flight. */
+  /* One shared duration + curve for every layout-motion piece (explorer wipe,
+     bezel transition, content FLIP slides): mixed timings let the pieces cross
+     each other mid-flight. */
   .modal-scrim.fx-in{animation:fxFade .14s ease-out}
   /* Palette: slide + fade. The centered card's keyframes must restate the
      base translate(-50%,-50%) centering or the animation would strip it. */
@@ -218,7 +278,6 @@
   .palette.fx-in{animation:fxPalInSheet .18s cubic-bezier(.2,.8,.25,1)}
   .palette.centered.fx-in{animation:fxPalIn .18s cubic-bezier(.2,.8,.25,1)}
   .fx-clone.fx-out-pal{animation:fxPalOut .16s ease-in forwards}
-  .widget-surface.w-dock.fx-in{animation:fxSlideL .28s cubic-bezier(.2,.8,.25,1)}
   .fileexplorer.fx-in{animation:fxSlideWipe .28s cubic-bezier(.2,.8,.25,1)}
   /* Quick fade cut on workspace switch: a screen-toned veil fading out. */
   @keyframes fxCutFade{from{opacity:.55}to{opacity:0}}
@@ -226,8 +285,28 @@
     border-radius:8px;animation:fxCutFade .16s ease-out forwards}
   .fx-clone{position:fixed;margin:0;pointer-events:none;z-index:99}
   .fx-clone.fx-out{animation:fxOutFade .1s ease-in forwards}
-  .fx-clone.fx-out-left{animation:fxOutL .28s cubic-bezier(.2,.8,.25,1) forwards}
   .fx-clone.fx-out-wipe{animation:fxOutWipe .28s cubic-bezier(.2,.8,.25,1) forwards}
   @media (prefers-reduced-motion:reduce){
     .fx-in,.fx-clone{animation:none!important}
     body:not(.mobile) #device{transition:none!important}}
+
+  /* The dock's close affordance answers the pointer: `button.bare` draws no
+     box of its own, so hover is the whole cue. */
+  body.theme-cosmos:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.bare"][data-class~="button.hover"]{
+    background:rgba(255,255,255,.16);border-radius:4px}
+  body.theme-cosmos:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.bare"][data-class~="button.hover"]{
+    --ink-fg:#ffffff}
+
+  /* ---- the theme switcher, on the glass ---------------------------------
+     `#themeswitch` is frontend furniture (js/15-theme.js) with a token-only
+     base, so it read as a flat chip on a glass desk. Here it is glass. */
+  body.theme-cosmos #themebtn{background:rgba(255,255,255,.10);border:none;
+    color:#e8f0f8;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.26),
+      inset 0 1px 0 rgba(255,255,255,.34),0 6px 18px rgba(2,6,14,.45)}
+  body.theme-cosmos #themebtn:hover{background:rgba(255,255,255,.17)}
+  body.theme-cosmos #thememenu{background:rgba(19,29,44,.92);border:none;
+    -webkit-backdrop-filter:blur(30px) saturate(1.7);backdrop-filter:blur(30px) saturate(1.7);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 26px 64px rgba(2,6,14,.62)}
+  body.theme-cosmos .ts-row.on{background:rgba(47,214,195,.20)}
+  body.theme-cosmos .ts-row:hover{background:rgba(255,255,255,.10)}

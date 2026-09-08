@@ -14,12 +14,26 @@ the core; each frontend only renders it.
   projections** in `crates/fresh-editor/src/view/scene.rs` (`Editor::menu_view()`,
   `tab_bar_view()`, `status_view()`, `palette_view()`, `popups_view()`,
   `file_explorer_view()`, `file_browser_view()`, `trust_dialog_view()`,
-  `widgets_view()`, `context_menu_view()`, `keybinding_editor_view()`,
+  `context_menu_view()`, `keybinding_editor_view()`,
   `settings_view()`): menu bar
   + dropdowns, tabs, status bar, command palette, popups, file explorer, the
   Open File / Save As / Switch Project browser, trust
-  dialog, context menus, plugin widgets/dock, the keybinding editor and the full
+  dialog, context menus, the keybinding editor and the full
   Settings modal.
+- **Plugin panels are the display list** — the orchestrator dock, floating
+  panels and plugin sidebar sections are not projected as a spec for the
+  browser to lay out; the tree's own items (`Editor::tree_view()` →
+  `regions.tree`) are folded into DOM at the cells the tree placed them at
+  (`js/72-tree.js`), and a click comes back as a cell like a terminal click.
+  See `docs/internal/retained-mode-ui.md` §3.9.
+  Each item carries **both the fold's colours and the theme keys they were read
+  from** — `--fold-bg` / `--fold-fg` inline, `data-fg` / `data-bg` naming the
+  keys, and `data-surface-kind` naming the surface — so a web theme dresses a
+  panel by re-mapping the handful of keys it cares about
+  (`.tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{--ink-bg:…}`)
+  and inherits the fold's answer everywhere else. `--ink-*` is the theme's say
+  and always wins, because the fold's answer is the *fallback* in the `var()`
+  chain rather than an inline value.
 - **Buffer interior is SVG** — the pipeline's real, syntax-highlighted cells. The
   line-number gutter is emitted as its own block (kept out of the buffer-text
   flow), and every glyph is pinned to its exact cell column. The cell size is
@@ -94,6 +108,7 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `30-palette.css` | command palette / picker |
 | `35-editor.css` | file explorer, pane surfaces, separators, scrollbars, caret |
 | `40-widgets.css` | trust dialog, plugin widgets, Settings, keybinding editor, aux modals |
+| `45-tree.css` | the display-list layer: surface grounds, items, grid text, rules, the `--fold-*` / `--ink-*` paint chain |
 | `50-popups.css` | completion/hover/action popups, cell SVG, `#err` |
 | `60-polish.css` | visual polish pass: radii, hairlines, hovers, selection pills |
 | `70-mobile.css` | mobile / portrait touch shell |
@@ -114,6 +129,7 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `60-popups.js` | native popups |
 | `65-widgets.js` | plugin widget tree + Settings / keybinding editor / aux modals |
 | `70-panels.js` | trust dialog, file explorer, border drag handles |
+| `72-tree.js` | the plugin panels (dock, floating panels, sidebar sections), folded from the display list |
 | `75-app.js` | mobile shell + transport (WS frames, resize, clipboard) |
 | `80-input.js` | keyboard/mouse/touch input, native selection, boot |
 
@@ -128,8 +144,9 @@ in the same class as zoom / palette placement / Alt-selection — a view
 preference persisted in `localStorage` (`fresh.webtheme`), never sent to the
 editor. Four ship:
 
-- **Cosmos** (default) — the abstract wallpaper, `COSMOS-991` hardware bezel and
-  frosted-glass dock (`90-cosmos.css`). Unchanged from before the theme system.
+- **Cosmos** (default) — the abstract wallpaper, the `COSMOS-991` hardware
+  bezel around the grid, and the frosted-glass orchestrator dock
+  (`90-cosmos.css`).
 - **macOS Light / macOS Dark** — a native-feeling desktop app: a title bar with
   traffic lights + the document name, the SF system (proportional) chrome font,
   light or dark vibrancy panels, the system accent blue and a Finder-style
@@ -144,9 +161,10 @@ editor. Four ship:
 which drives all *structural* CSS (`92/94-theme-*.css`, plus the Cosmos-gated
 wallpaper/bezel/dock rules in `90-cosmos.css`) — and it layers the theme's
 *chrome colour tokens* inline over `applyTheme()`'s TUI-derived values (`--bg`
-is never overridden, so the buffer stays the TUI theme's). The buffer's
-`svg.cells` are pinned to `--mono-family`, so a theme may repoint the chrome's
-`--font-family` at a proportional stack without disturbing the monospace grid.
+is never overridden, so the buffer stays the TUI theme's). Everything drawn on the cell
+grid — the buffer's `svg.cells` and the display list's `.tree-line` runs — is
+pinned to `--mono-family` at the measured size, so a theme may repoint the
+chrome's `--font-family` at a proportional stack without disturbing the grid.
 
 Users switch it three ways, all frontend-owned: the floating **theme pill** in
 the top-right corner (a menu of the four), the **Ctrl/Cmd+Alt+T** chord
