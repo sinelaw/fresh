@@ -855,11 +855,7 @@ impl Editor {
                     } else {
                         self.set_status_message(t!("buffer.saved_and_closed").to_string());
                     }
-                } else if !self
-                    .active_window_mut()
-                    .pending_quit_unnamed_save
-                    .is_empty()
-                {
+                } else if self.has_pending_quit_unnamed_save() {
                     // Pop the buffer we just saved off the head of the queue,
                     // then either advance to the next unnamed buffer or quit.
                     let just_saved = self.active_buffer();
@@ -884,7 +880,7 @@ impl Editor {
                 // can't honor the user's intent to save everything; abandon
                 // the quit rather than silently dropping the remaining
                 // unnamed buffers.
-                self.active_window_mut().pending_quit_unnamed_save.clear();
+                self.clear_pending_quit_unnamed_save();
                 self.set_status_message(t!("file.error_saving", error = e.to_string()).to_string());
             }
         }
@@ -1455,24 +1451,21 @@ impl Editor {
             // prompt for each one before actually quitting, so the user's
             // intent ("save everything") is honored instead of silently
             // dropping their content.
-            self.active_window_mut().pending_quit_unnamed_save =
-                self.collect_unnamed_modified_buffers();
+            self.queue_unnamed_modified_buffers_for_quit();
             if !self.start_next_quit_save_as() {
                 self.should_quit = true;
             }
         } else if first_char == discard_first {
-            // Discard changes and quit (no recovery). Clearing the modified flag
-            // on every buffer ensures `end_recovery_session` will not preserve
-            // their recovery files when hot_exit is enabled — the user has
-            // explicitly asked to throw the changes away.
-            for (_, state) in self
-                .windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present")
-            {
-                state.buffer.clear_modified();
-                state.buffer.set_recovery_pending(false);
+            // Clearing modified is what stops `end_recovery_session`
+            // preserving these under hot_exit — the user asked to throw them
+            // away. Every workspace, since the prompt counted every workspace:
+            // otherwise the others' recovery data silently resurrects the
+            // changes (issue #3189).
+            for window in self.windows.values_mut() {
+                for (_, state) in &mut window.buffers {
+                    state.buffer.clear_modified();
+                    state.buffer.set_recovery_pending(false);
+                }
             }
             self.should_quit = true;
         } else if first_char == quit_first && self.config.editor.hot_exit {

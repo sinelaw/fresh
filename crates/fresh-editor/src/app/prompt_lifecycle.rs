@@ -947,12 +947,9 @@ impl Editor {
                     // explicitly chose not to name this buffer, so we'd
                     // rather keep the editor open than drop their content.
                     if matches!(prompt.prompt_type, PromptType::SaveFileAs)
-                        && !self
-                            .active_window_mut()
-                            .pending_quit_unnamed_save
-                            .is_empty()
+                        && self.has_pending_quit_unnamed_save()
                     {
-                        self.active_window_mut().pending_quit_unnamed_save.clear();
+                        self.clear_pending_quit_unnamed_save();
                         self.set_status_message(t!("buffer.close_cancelled").to_string());
                     }
                 }

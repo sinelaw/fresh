@@ -737,6 +737,18 @@ impl crate::app::Editor {
         // skipped.
         self.adopt_active_window_authority(&previous_authority_label);
 
+        // Let this workspace claim its own unsaved work from the recovery
+        // store — crash leftovers the workspace snapshot doesn't cover. Per
+        // workspace, on activation, so each buffer returns to where it was
+        // edited; a workspace never visited is never touched (issue #3189).
+        match self.adopt_recovery_for_active_window(false) {
+            Ok(n) if n > 0 => {
+                tracing::info!("Adopted {n} recovery entry/entries into window {id}")
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Recovery adopt for window {id} failed: {e}"),
+        }
+
         // If we just switched to a remote session that came back from disk
         // dormant (backend spec known, live authority still the local
         // placeholder), start reconnecting its backend now — the per-window
@@ -1434,6 +1446,17 @@ impl crate::app::Editor {
                  switch first via setActiveWindow"
             );
             return false;
+        }
+        // Last chance to keep this workspace's unsaved work: its buffers go
+        // with the window below, and nothing here asks the user (issue #3189).
+        match self.flush_window_recovery(id) {
+            Ok(n) if n > 0 => {
+                tracing::info!(
+                    "close_window: flushed {n} unsaved buffer(s) of window {id} to recovery"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("close_window: recovery flush for window {id} failed: {e}"),
         }
         if self.windows.remove(&id).is_none() {
             tracing::warn!("close_window: unknown session id {id}");

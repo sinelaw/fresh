@@ -144,6 +144,15 @@ pub struct RecoveryMetadata {
     /// Original file size (0 for new buffers, needed for reconstruction)
     #[serde(default)]
     pub original_file_size: usize,
+
+    /// Owning workspace (`Window::stable_id`), so crash recovery can restore
+    /// into the workspace the buffer came from rather than whichever one is in
+    /// front (issue #3189). Not the project root: two workspaces may share a
+    /// worktree, which makes the root ambiguous.
+    ///
+    /// `None` predates the field; readers fall back to path-prefix matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 impl RecoveryMetadata {
@@ -159,6 +168,7 @@ impl RecoveryMetadata {
         original_mtime: Option<u64>,
         chunk_count: usize,
         original_file_size: usize,
+        workspace_id: Option<String>,
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -176,6 +186,7 @@ impl RecoveryMetadata {
             format_version: Self::FORMAT_VERSION,
             chunk_count,
             original_file_size,
+            workspace_id,
         }
     }
 
@@ -479,8 +490,9 @@ mod tests {
             100,
             Some(10),
             None,
-            1, // chunk_count
-            0, // original_file_size
+            1,    // chunk_count
+            0,    // original_file_size
+            None, // workspace_id
         );
         assert_eq!(meta.format_version, RecoveryMetadata::FORMAT_VERSION);
         assert!(meta.created_at > 0);

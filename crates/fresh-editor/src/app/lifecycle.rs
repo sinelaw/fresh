@@ -3,6 +3,7 @@
 //! piping, and the should_quit confirmation flow that walks modified buffers.
 
 use super::*;
+use fresh_core::WindowId;
 
 impl Editor {
     /// Check if the editor should quit
@@ -198,9 +199,60 @@ impl Editor {
             let save_key = t!("prompt.key.save").to_string();
             let cancel_key = t!("prompt.key.cancel").to_string();
             let hot_exit = self.config.editor.hot_exit;
+            // When some of the unsaved work is in a workspace the user is not
+            // looking at, a bare count is the wrong thing to show: it says
+            // there is something to lose without saying where, and the whole
+            // failure this prompt exists to prevent is work going unnoticed in
+            // a background workspace (issue #3189). Name the workspaces then.
+            let where_clause = self.unsaved_workspace_summary();
 
             let discard_key = t!("prompt.key.discard").to_string();
-            let msg = if hot_exit {
+            let msg = if let Some(ref where_clause) = where_clause {
+                if hot_exit {
+                    let quit_key = t!("prompt.key.quit").to_string();
+                    if modified_count == 1 {
+                        t!(
+                            "prompt.quit_modified_hot_one_where",
+                            where = where_clause,
+                            save_key = save_key,
+                            discard_key = discard_key,
+                            quit_key = quit_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string()
+                    } else {
+                        t!(
+                            "prompt.quit_modified_hot_many_where",
+                            count = modified_count,
+                            where = where_clause,
+                            save_key = save_key,
+                            discard_key = discard_key,
+                            quit_key = quit_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string()
+                    }
+                } else if modified_count == 1 {
+                    t!(
+                        "prompt.quit_modified_one_where",
+                        where = where_clause,
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                } else {
+                    t!(
+                        "prompt.quit_modified_many_where",
+                        count = modified_count,
+                        where = where_clause,
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string()
+                }
+            } else if hot_exit {
                 // With hot exit: offer save, discard, quit-without-saving (recoverable), or cancel
                 let quit_key = t!("prompt.key.quit").to_string();
                 if modified_count == 1 {
@@ -258,32 +310,90 @@ impl Editor {
     /// When `auto_save_enabled` is true, file-backed buffers are excluded
     /// (they will be saved to disk on exit).
     fn count_modified_buffers_needing_prompt(&self) -> usize {
+        self.modified_buffers_needing_prompt().len()
+    }
+
+    /// Which workspaces hold the unsaved work, for the quit prompt — or
+    /// `None` to keep the prompt plain.
+    ///
+    /// Plain when it is all in the workspace on screen: the modified markers
+    /// are already in the tab bar. Once any of it is elsewhere the count alone
+    /// misleads, which is the whole of issue #3189.
+    fn unsaved_workspace_summary(&self) -> Option<String> {
+        let dirty = self.modified_buffers_needing_prompt();
+        if dirty.is_empty() {
+            return None;
+        }
+        let mut per_window: Vec<(WindowId, usize)> = Vec::new();
+        for (window_id, _) in &dirty {
+            match per_window.last_mut() {
+                Some((id, n)) if id == window_id => *n += 1,
+                _ => per_window.push((*window_id, 1)),
+            }
+        }
+        // All of it in the workspace on screen: the plain prompt is enough.
+        if per_window.len() == 1 && per_window[0].0 == self.active_window {
+            return None;
+        }
+        let parts: Vec<String> = per_window
+            .iter()
+            .map(|(window_id, count)| {
+                let label = self
+                    .windows
+                    .get(window_id)
+                    .map(|w| w.label.clone())
+                    .unwrap_or_else(|| window_id.to_string());
+                if *count > 1 {
+                    format!("{label}: {count}")
+                } else {
+                    label
+                }
+            })
+            .collect();
+        Some(parts.join(", "))
+    }
+
+    /// Every `(window, buffer)` that must be resolved before the editor may
+    /// exit, across all workspaces.
+    ///
+    /// Cross-window because `Ctrl+Q` quits the editor, not the workspace on
+    /// screen (issue #3189).
+    ///
+    /// Composite, hidden and plugin-virtual buffers are skipped: they can be
+    /// neither saved nor recovered, so a prompt naming them offers nothing to
+    /// act on. Background workspaces are full of them, which is why this
+    /// matters once every window counts.
+    pub(crate) fn modified_buffers_needing_prompt(&self) -> Vec<(WindowId, BufferId)> {
         let hot_exit = self.config.editor.hot_exit;
         let auto_save = self.config.editor.auto_save_enabled;
 
-        self.windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .iter()
-            .filter(|(buffer_id, state)| {
-                if !state.buffer.is_modified() {
-                    return false;
+        let mut out = Vec::new();
+        for window_id in self.window_ids_sorted() {
+            let Some(window) = self.windows.get(&window_id) else {
+                continue;
+            };
+            for (buffer_id, state) in window.buffers.iter() {
+                if !state.buffer.is_modified() || state.is_composite_buffer {
+                    continue;
                 }
-                if let Some(meta) = self.active_window().buffer_metadata.get(buffer_id) {
+                if let Some(meta) = window.buffer_metadata.get(buffer_id) {
+                    if meta.hidden_from_tabs || meta.is_virtual() {
+                        continue;
+                    }
                     if let Some(path) = meta.file_path() {
                         let is_unnamed = path.as_os_str().is_empty();
                         if is_unnamed && hot_exit {
-                            return false; // unnamed buffer, auto-recovered via hot exit
+                            continue; // unnamed buffer, auto-recovered via hot exit
                         }
                         if !is_unnamed && auto_save {
-                            return false; // file-backed, will be auto-saved on exit
+                            continue; // file-backed, will be auto-saved on exit
                         }
                     }
                 }
-                true
-            })
-            .count()
+                out.push((window_id, *buffer_id));
+            }
+        }
+        out
     }
 
     /// Handle terminal focus gained event

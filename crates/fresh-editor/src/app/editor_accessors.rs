@@ -1165,6 +1165,43 @@ impl Editor {
         &self.active_window().buffers
     }
 
+    /// Every open window's id, ascending. `windows` is a `HashMap`, so
+    /// shutdown work that touches every workspace needs an order of its own to
+    /// be reproducible.
+    pub(crate) fn window_ids_sorted(&self) -> Vec<fresh_core::WindowId> {
+        let mut ids: Vec<_> = self.windows.keys().copied().collect();
+        ids.sort_by_key(|id| id.0);
+        ids
+    }
+
+    /// Run `f` with the active-window pointer temporarily retargeted.
+    ///
+    /// Lets shutdown work reuse the many per-window helpers written against
+    /// `active_window` instead of growing a window-parameterized twin of each
+    /// (issue #3189). Deliberately not [`Editor::set_active_window`]: no
+    /// checkpoint, materialization, hooks or layout — none of which shutdown
+    /// wants.
+    ///
+    /// Only safe for synchronous, non-rendering work: nothing here may yield
+    /// to the event loop or paint, or the user sees the wrong workspace. A
+    /// panic in `f` leaves the pointer retargeted, tolerable only because
+    /// callers are on the way out of the process.
+    pub(crate) fn with_window_retargeted<R>(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if !self.windows.contains_key(&window_id) {
+            tracing::warn!("with_window_retargeted: unknown window id {window_id}");
+            return f(self);
+        }
+        let previous = self.active_window;
+        self.active_window = window_id;
+        let out = f(self);
+        self.active_window = previous;
+        out
+    }
+
     /// Mutable handle to the active window's buffer storage.
     /// Holds `&mut self` for the call's lifetime — at sites that
     /// need a concurrent mutable borrow on another Window field

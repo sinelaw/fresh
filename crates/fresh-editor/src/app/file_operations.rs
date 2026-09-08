@@ -23,6 +23,25 @@ use crate::state::EditorState;
 
 use super::{BufferMetadata, Editor};
 
+/// The buffers a quit-time "save everything" must walk through Save As. Free
+/// function so it can run while `self.windows` is borrowed one window at a
+/// time.
+fn unnamed_modified_buffers_in(window: &crate::app::window::Window) -> Vec<BufferId> {
+    window
+        .buffers
+        .iter()
+        .filter(|(_, state)| {
+            state.buffer.is_modified()
+                && state
+                    .buffer
+                    .file_path()
+                    .map(|p| p.as_os_str().is_empty())
+                    .unwrap_or(true)
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 impl Editor {
     /// Save the active buffer
     pub fn save(&mut self) -> anyhow::Result<()> {
@@ -279,74 +298,111 @@ impl Editor {
         Ok(count)
     }
 
-    /// Collect ids of modified unnamed (no on-disk path) buffers in tab order.
-    ///
-    /// Used by the "save and quit" flow to walk a Save-As prompt over each
-    /// unnamed buffer before the editor actually exits.
-    pub(crate) fn collect_unnamed_modified_buffers(&self) -> Vec<BufferId> {
-        let mut out = Vec::new();
-        for (id, state) in self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-        {
-            if !state.buffer.is_modified() {
-                continue;
-            }
-            let is_unnamed = state
-                .buffer
-                .file_path()
-                .map(|p| p.as_os_str().is_empty())
-                .unwrap_or(true);
-            if is_unnamed {
-                out.push(*id);
-            }
+    /// Queue the quit-time Save-As chain for every workspace: "save and quit"
+    /// is a promise about the whole editor, and dropping a background
+    /// workspace's unnamed buffer breaks it (issue #3189). The queue is
+    /// per-window; `start_next_quit_save_as` walks them in turn.
+    pub(crate) fn queue_unnamed_modified_buffers_for_quit(&mut self) {
+        for window in self.windows.values_mut() {
+            window.pending_quit_unnamed_save = unnamed_modified_buffers_in(window);
         }
-        out
+    }
+
+    /// Is a quit-time Save-As chain in flight in any workspace? The active
+    /// window's own queue empties the moment its last buffer is named, so it
+    /// cannot answer this alone.
+    pub(crate) fn has_pending_quit_unnamed_save(&self) -> bool {
+        self.windows
+            .values()
+            .any(|w| !w.pending_quit_unnamed_save.is_empty())
+    }
+
+    /// Abandon the quit-time Save-As chain in every workspace.
+    pub(crate) fn clear_pending_quit_unnamed_save(&mut self) {
+        for window in self.windows.values_mut() {
+            window.pending_quit_unnamed_save.clear();
+        }
     }
 
     /// Pop the next id from `pending_quit_unnamed_save` and start a Save-As
     /// prompt for it. Returns true when a prompt was opened (and the editor
     /// must keep running until the user finishes the chain).
     pub(crate) fn start_next_quit_save_as(&mut self) -> bool {
-        while let Some(buffer_id) = self
-            .active_window_mut()
-            .pending_quit_unnamed_save
-            .first()
-            .copied()
-        {
-            // Skip ids that vanished or were already saved out from under us.
-            let still_dirty_unnamed = self
-                .buffers()
-                .get(&buffer_id)
-                .map(|s| {
-                    s.buffer.is_modified()
-                        && s.buffer
-                            .file_path()
-                            .map(|p| p.as_os_str().is_empty())
-                            .unwrap_or(true)
-                })
-                .unwrap_or(false);
-            if !still_dirty_unnamed {
-                self.active_window_mut().pending_quit_unnamed_save.remove(0);
-                continue;
+        loop {
+            while let Some(buffer_id) = self
+                .active_window_mut()
+                .pending_quit_unnamed_save
+                .first()
+                .copied()
+            {
+                // Skip ids that vanished or were already saved out from under us.
+                let still_dirty_unnamed = self
+                    .buffers()
+                    .get(&buffer_id)
+                    .map(|s| {
+                        s.buffer.is_modified()
+                            && s.buffer
+                                .file_path()
+                                .map(|p| p.as_os_str().is_empty())
+                                .unwrap_or(true)
+                    })
+                    .unwrap_or(false);
+                if !still_dirty_unnamed {
+                    self.active_window_mut().pending_quit_unnamed_save.remove(0);
+                    continue;
+                }
+
+                self.set_active_buffer(buffer_id);
+                self.start_prompt(
+                    t!("file.save_as_prompt").to_string(),
+                    PromptType::SaveFileAs,
+                );
+                return true;
             }
 
-            self.set_active_buffer(buffer_id);
-            self.start_prompt(
-                t!("file.save_as_prompt").to_string(),
-                PromptType::SaveFileAs,
-            );
-            return true;
+            // Dive into the next workspace that still owes a Save-As. A real
+            // dive, not a silent retarget: the user is about to name a buffer
+            // and needs to see which workspace it belongs to (issue #3189).
+            let active = self.active_window;
+            let next = self
+                .windows
+                .iter()
+                .filter(|(id, w)| **id != active && !w.pending_quit_unnamed_save.is_empty())
+                .map(|(id, _)| *id)
+                .min_by_key(|id| id.0);
+            match next {
+                Some(id) => {
+                    self.set_active_window(id);
+                    if self.active_window != id {
+                        // The dive was refused (unknown id). Bail rather than
+                        // spin on the same window forever.
+                        return false;
+                    }
+                }
+                None => return false,
+            }
         }
-        false
     }
 
     /// Save all modified file-backed buffers to disk (called on exit when auto_save is enabled).
     /// Unlike `auto_save_persistent_buffers`, this skips the interval check and only saves
     /// named file-backed buffers (not unnamed buffers).
     pub fn save_all_on_exit(&mut self) -> anyhow::Result<usize> {
+        // Exiting closes every workspace, so "save on the way out" must mean
+        // all of them (issue #3189). Retargeted per window so the per-buffer
+        // finalize (LSP didSave, event-log marker, recovery delete) lands on
+        // the right window's state.
+        let mut count = 0;
+        for window_id in self.window_ids_sorted() {
+            count += self.with_window_retargeted(window_id, |editor| {
+                editor.save_all_on_exit_in_active_window()
+            })?;
+        }
+        Ok(count)
+    }
+
+    /// The single-workspace half of [`Editor::save_all_on_exit`].
+    fn save_all_on_exit_in_active_window(&mut self) -> anyhow::Result<usize> {
         let mut to_save = Vec::new();
         for (id, state) in self
             .windows

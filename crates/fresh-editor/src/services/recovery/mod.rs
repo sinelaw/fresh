@@ -34,7 +34,7 @@
 //! use fresh::services::recovery::RecoveryService;
 //!
 //! // On startup
-//! let mut recovery = RecoveryService::new()?;
+//! let mut recovery = RecoveryService::with_scope(config, &base_dir, &scope);
 //! if recovery.should_offer_recovery()? {
 //!     let entries = recovery.list_recoverable()?;
 //!     // Show recovery prompt to user
@@ -43,10 +43,12 @@
 //!
 //! // During editing (call periodically)
 //! // For small files/new buffers:
-//! recovery.save_buffer("id", chunks, Some(&path), None, Some(10), 0, content_len)?;
+//! recovery.save_buffer_owned("id", chunks, Some(&path), None, Some(10), 0, content_len, Some(workspace_id))?;
 //!
-//! // On clean shutdown
-//! recovery.end_session()?;
+//! // On clean shutdown. `preserve_ids` are the buffers still holding unsaved
+//! // content; `known_ids` is every entry this session had a live buffer for.
+//! // Entries in neither are work this session never held, and are kept.
+//! recovery.end_session_accounting(&preserve_ids, &known_ids)?;
 //! ```
 
 mod storage;
@@ -71,16 +73,11 @@ use std::time::Instant;
 pub struct RecoveryConfig {
     /// Whether recovery is enabled
     pub enabled: bool,
-    /// Maximum age of recovery files before cleanup (in seconds)
-    pub max_recovery_age_secs: u64,
 }
 
 impl Default for RecoveryConfig {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            max_recovery_age_secs: 7 * 24 * 60 * 60, // 7 days
-        }
+        Self { enabled: true }
     }
 }
 
@@ -101,37 +98,6 @@ pub struct RecoveryService {
 }
 
 impl RecoveryService {
-    /// Create a new recovery service
-    pub fn new() -> io::Result<Self> {
-        Ok(Self {
-            storage: RecoveryStorage::new()?,
-            config: RecoveryConfig::default(),
-            last_save_times: HashMap::new(),
-            session_started: false,
-        })
-    }
-
-    /// Create a new recovery service with custom config
-    pub fn with_config(config: RecoveryConfig) -> io::Result<Self> {
-        Ok(Self {
-            storage: RecoveryStorage::new()?,
-            config,
-            last_save_times: HashMap::new(),
-            session_started: false,
-        })
-    }
-
-    /// Create a new recovery service with a custom storage directory
-    /// This is useful for testing with isolated temporary directories
-    pub fn with_storage_dir(storage_dir: PathBuf) -> Self {
-        Self {
-            storage: RecoveryStorage::with_dir(storage_dir),
-            config: RecoveryConfig::default(),
-            last_save_times: HashMap::new(),
-            session_started: false,
-        }
-    }
-
     /// Create a new recovery service with custom config and storage directory
     pub fn with_config_and_dir(config: RecoveryConfig, storage_dir: PathBuf) -> Self {
         Self {
@@ -167,11 +133,6 @@ impl RecoveryService {
         self.config.enabled
     }
 
-    /// Get the storage backend
-    pub fn storage(&self) -> &RecoveryStorage {
-        &self.storage
-    }
-
     // ========================================================================
     // Session management
     // ========================================================================
@@ -204,47 +165,70 @@ impl RecoveryService {
         Ok(())
     }
 
-    /// End the session cleanly (call on normal editor shutdown)
+    /// End the session cleanly (call on normal editor shutdown), deleting
+    /// only recovery data this session can actually account for.
     ///
-    /// When `preserve_ids` is provided, recovery files matching those IDs
-    /// are kept (used to persist unnamed buffer contents across sessions).
-    pub fn end_session_preserving(&mut self, preserve_ids: &[String]) -> io::Result<()> {
+    /// * `preserve_ids` — entries behind live buffers that still hold unsaved
+    ///   content. Kept, so hot exit can restore them next launch.
+    /// * `known_ids` — every entry id this session held a live buffer for. An
+    ///   id in `known_ids` but not in `preserve_ids` is *resolved*: that
+    ///   buffer was written to disk, or the user explicitly discarded it, so
+    ///   its recovery data has done its job and is deleted.
+    ///
+    /// Anything in neither list is **unaccounted for**: recovery data for work
+    /// that no window in this session ever held in memory. The common source
+    /// is a background Orchestrator workspace that was never materialized —
+    /// its unsaved content was never shown to the user, never offered in a
+    /// quit prompt, and deleting it destroys the edit with no warning at any
+    /// point (issue #3189). It is kept, unconditionally and indefinitely.
+    ///
+    /// Not aged out, deliberately. Any age threshold is a guess at when the
+    /// user stopped caring, and being wrong once means silently destroying
+    /// work — the exact failure this function exists to prevent. Unsaved
+    /// content leaves the store when the user resolves it (saves, or
+    /// discards) and not otherwise, so the only way to lose it is to ask.
+    ///
+    /// The only way to end a session. The variants this replaced deleted
+    /// everything they were not told to keep — the behaviour that lost a
+    /// background workspace's work, and not something a caller should be able
+    /// to ask for by picking the shorter function.
+    pub fn end_session_accounting(
+        &mut self,
+        preserve_ids: &[String],
+        known_ids: &[String],
+    ) -> io::Result<()> {
         if !self.config.enabled || !self.session_started {
             return Ok(());
         }
 
-        if preserve_ids.is_empty() {
-            // No IDs to preserve - clean up everything (original behavior)
-            let cleaned = self.storage.cleanup_all()?;
-            tracing::info!("Cleaned up {} recovery files", cleaned);
-        } else {
-            // Selectively clean up, preserving unnamed buffer recovery files
-            let entries = self.storage.list_entries()?;
-            let mut cleaned = 0;
-            for entry in entries {
-                if !preserve_ids.contains(&entry.id)
-                    && self.storage.delete_recovery(&entry.id).is_ok()
-                {
+        let entries = self.storage.list_entries()?;
+        let mut cleaned = 0;
+        let mut preserved = 0;
+        let mut kept_unaccounted = 0;
+        for entry in entries {
+            if preserve_ids.contains(&entry.id) {
+                preserved += 1;
+            } else if known_ids.contains(&entry.id) {
+                if self.storage.delete_recovery(&entry.id).is_ok() {
                     cleaned += 1;
                 }
+            } else {
+                kept_unaccounted += 1;
             }
-            tracing::info!(
-                "Cleaned up {} recovery files, preserved {} unnamed buffer(s)",
-                cleaned,
-                preserve_ids.len()
-            );
         }
+        tracing::info!(
+            "Cleaned up {} recovery files, preserved {} unsaved buffer(s) \
+             and {} entry/entries this session never held",
+            cleaned,
+            preserved,
+            kept_unaccounted,
+        );
 
         // Remove session lock
         self.storage.remove_session_lock()?;
         self.session_started = false;
         tracing::info!("Recovery session ended");
         Ok(())
-    }
-
-    /// End the session cleanly (call on normal editor shutdown)
-    pub fn end_session(&mut self) -> io::Result<()> {
-        self.end_session_preserving(&[])
     }
 
     /// Update session heartbeat (call periodically)
@@ -281,24 +265,10 @@ impl RecoveryService {
     // Recovery operations
     // ========================================================================
 
-    /// Save a buffer's content for recovery
-    ///
-    /// All recovery uses the chunked format:
-    /// - For small files/new buffers: pass a single chunk containing full content
-    ///   with offset=0, original_len=0, original_file_size=0
-    /// - For large files: pass only the modified chunks with their offsets
-    ///
-    /// ## Parameters
-    ///
-    /// - `buffer_id`: Unique identifier for the buffer
-    /// - `chunks`: The content chunks to save
-    /// - `original_path`: Path to the original file (None for new buffers)
-    /// - `buffer_name`: Display name for the buffer
-    /// - `line_count`: Number of lines in the buffer
-    /// - `original_file_size`: Size of the original file (0 for new buffers)
-    /// - `final_size`: Total size after applying all modifications
+    /// Stamps the entry with the owning workspace so crash recovery can put
+    /// the buffer back where it came from (issue #3189).
     #[allow(clippy::too_many_arguments)]
-    pub fn save_buffer(
+    pub fn save_buffer_owned(
         &mut self,
         buffer_id: &str,
         chunks: Vec<RecoveryChunk>,
@@ -307,12 +277,13 @@ impl RecoveryService {
         line_count: Option<usize>,
         original_file_size: usize,
         final_size: usize,
+        workspace_id: Option<&str>,
     ) -> io::Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
 
-        self.storage.save_recovery(
+        self.storage.save_recovery_owned(
             buffer_id,
             chunks,
             original_path,
@@ -320,6 +291,7 @@ impl RecoveryService {
             line_count,
             original_file_size,
             final_size,
+            workspace_id,
         )?;
         self.last_save_times
             .insert(buffer_id.to_string(), Instant::now());
@@ -427,87 +399,6 @@ impl RecoveryService {
             })
         }
     }
-
-    /// Load recovery with a provided original file path
-    ///
-    /// Use this when the original file has moved or you want to specify a different source.
-    pub fn load_recovery_with_original(
-        &self,
-        entry: &RecoveryEntry,
-        original_file: &Path,
-    ) -> io::Result<RecoveryResult> {
-        let content = self
-            .storage
-            .reconstruct_from_chunks(&entry.id, original_file)?;
-        Ok(RecoveryResult::Recovered {
-            original_path: Some(original_file.to_path_buf()),
-            content,
-        })
-    }
-
-    /// Accept recovery for an entry (load and delete recovery file)
-    pub fn accept_recovery(&mut self, entry: &RecoveryEntry) -> io::Result<RecoveryResult> {
-        let result = self.load_recovery(entry)?;
-        // Delete the recovery file after successful load
-        if matches!(result, RecoveryResult::Recovered { .. }) {
-            self.storage.delete_recovery(&entry.id)?;
-        }
-        Ok(result)
-    }
-
-    /// Discard recovery for an entry
-    pub fn discard_recovery(&mut self, entry: &RecoveryEntry) -> io::Result<()> {
-        self.storage.delete_recovery(&entry.id)
-    }
-
-    /// Discard all recovery files
-    pub fn discard_all_recovery(&mut self) -> io::Result<usize> {
-        self.storage.cleanup_all()
-    }
-
-    // ========================================================================
-    // Maintenance
-    // ========================================================================
-
-    /// Clean up old recovery files (older than max_recovery_age_secs)
-    pub fn cleanup_old(&self) -> io::Result<usize> {
-        if !self.config.enabled {
-            return Ok(0);
-        }
-
-        let entries = self.storage.list_entries()?;
-        let mut cleaned = 0;
-
-        for entry in entries {
-            if entry.age_seconds() > self.config.max_recovery_age_secs
-                && self.storage.delete_recovery(&entry.id).is_ok()
-            {
-                cleaned += 1;
-            }
-        }
-
-        if cleaned > 0 {
-            tracing::info!("Cleaned up {} old recovery files", cleaned);
-        }
-
-        Ok(cleaned)
-    }
-
-    /// Clean up orphaned files
-    pub fn cleanup_orphans(&self) -> io::Result<usize> {
-        self.storage.cleanup_orphans()
-    }
-}
-
-impl Default for RecoveryService {
-    fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            storage: RecoveryStorage::default(),
-            config: RecoveryConfig::default(),
-            last_save_times: HashMap::new(),
-            session_started: false,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -536,8 +427,102 @@ mod tests {
         assert!(service.session_started);
 
         // End session
-        service.end_session().unwrap();
+        service.end_session_accounting(&[], &[]).unwrap();
         assert!(!service.session_started);
+    }
+
+    /// Issue #3189: a clean exit must not delete recovery data this session
+    /// never had in memory. Such an entry belongs to a workspace that was
+    /// never materialized, so its unsaved content was never offered to the
+    /// user; wiping it destroys the edit with no warning at any point.
+    #[test]
+    fn end_session_accounting_keeps_entries_this_session_never_held() {
+        let (mut service, _temp) = create_test_service();
+        service.start_session().unwrap();
+
+        let save = |service: &mut RecoveryService, path: &str| -> String {
+            let path = Path::new(path);
+            let id = service.get_buffer_id(Some(path));
+            let chunks = vec![RecoveryChunk::new(0, 0, b"unsaved work".to_vec())];
+            service
+                .save_buffer_owned(&id, chunks, Some(path), None, Some(1), 0, 12, None)
+                .unwrap();
+            id
+        };
+
+        let still_dirty = save(&mut service, "/test/dirty.txt");
+        let resolved = save(&mut service, "/test/saved.txt");
+        let unaccounted = save(&mut service, "/test/other-workspace.txt");
+
+        service
+            .end_session_accounting(
+                &[still_dirty.clone()],
+                &[still_dirty.clone(), resolved.clone()],
+            )
+            .unwrap();
+
+        let surviving: Vec<String> = service
+            .storage
+            .list_entries()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert!(
+            surviving.contains(&still_dirty),
+            "an explicitly preserved entry must survive"
+        );
+        assert!(
+            !surviving.contains(&resolved),
+            "an entry this session accounted for and did not preserve was saved \
+             or discarded, so it is cleaned up"
+        );
+        assert!(
+            surviving.contains(&unaccounted),
+            "an entry no live buffer backed must survive — this session has no \
+             standing to decide the user is done with it"
+        );
+    }
+
+    /// The keep-what-you-cannot-account-for rule has no expiry. An entry no
+    /// live buffer backed survives however old it is: an age threshold is a
+    /// guess at when the user stopped caring, and being wrong once destroys
+    /// work nobody asked to delete.
+    #[test]
+    fn end_session_accounting_never_ages_out_unaccounted_entries() {
+        let (mut service, temp) = create_test_service();
+        service.start_session().unwrap();
+
+        let path = Path::new("/test/ancient.txt");
+        let id = service.get_buffer_id(Some(path));
+        let chunks = vec![RecoveryChunk::new(0, 0, b"old".to_vec())];
+        service
+            .save_buffer_owned(&id, chunks, Some(path), None, Some(1), 0, 3, None)
+            .unwrap();
+
+        // Backdate the entry far past any plausible threshold — the epoch.
+        let meta_path = temp.path().join(format!("{id}.meta.json"));
+        let mut meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
+        meta["updated_at"] = serde_json::json!(1u64);
+        std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap()).unwrap();
+
+        // Nothing preserved, nothing accounted for: unaccounted, and ancient.
+        service.end_session_accounting(&[], &[]).unwrap();
+
+        let surviving: Vec<String> = service
+            .storage
+            .list_entries()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(
+            surviving,
+            vec![id],
+            "unsaved work this session never held must survive regardless of \
+             age — it leaves the store only when the user resolves it"
+        );
     }
 
     #[test]
@@ -552,7 +537,16 @@ mod tests {
         // Save recovery - create a single chunk with full content (new buffer style)
         let chunks = vec![RecoveryChunk::new(0, 0, content.to_vec())];
         service
-            .save_buffer(&id, chunks, Some(path), None, Some(1), 0, content.len())
+            .save_buffer_owned(
+                &id,
+                chunks,
+                Some(path),
+                None,
+                Some(1),
+                0,
+                content.len(),
+                None,
+            )
             .unwrap();
 
         // List recoverable
@@ -600,7 +594,7 @@ mod tests {
         // save_buffer doesn't error when disabled
         let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
         service
-            .save_buffer("test", chunks, None, None, None, 0, 7)
+            .save_buffer_owned("test", chunks, None, None, None, 0, 7, None)
             .unwrap();
     }
 
@@ -622,7 +616,7 @@ mod tests {
         // Chunk: insert "PREFIX: " at offset 0
         let chunks = vec![RecoveryChunk::new(0, 0, b"PREFIX: ".to_vec())];
         service
-            .save_buffer(
+            .save_buffer_owned(
                 &id,
                 chunks,
                 Some(&original_path),
@@ -630,6 +624,7 @@ mod tests {
                 Some(1),
                 original_content.len(), // original_file_size > 0
                 original_content.len() + 8,
+                None,
             )
             .unwrap();
 
