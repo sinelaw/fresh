@@ -188,6 +188,40 @@ underneath. That is what the clip's switch beats are, and why they carry no
 `transition` of their own: the motion in them is the editor's, not the
 renderer's.
 
+**Say it in the frame, not in a bar under it.** A beat with `head`/`sub` puts a
+caption bar across the foot of the video, and a bar under a screen is read last
+or not at all. A beat with `note` instead points *at* something: the rect it
+names is framed, everything else dims, and a few words sit on a plate with a
+leader running back to the frame. Three or four words — "agent is running",
+"switch between sessions" — beat a sentence, because the picture is doing the
+explaining. A clip whose beats all carry notes has no caption bar at all (the
+renderer only builds one for `head`/`sub`), so its `size` is `header_height`
+plus the capture, with nothing reserved at the bottom.
+
+Notes need the band, though: they are drawn with it, so `band: false` hides
+them. A beat whose point is *motion* — the wipe across a workspace switch —
+therefore carries no note, and the note goes on the beat either side of it.
+
+**The dock's width is a drag, not a setting.** It defaults to 28% of the
+terminal, clamped to 24-40 columns, and a user drag overrides it
+(`Editor::handle_dock_resize_drag` sets `dock_width`, which the plugin's
+responsive re-issue then loses to). There is no config key and no action, so the
+clip narrows it the way a person would — `{"drag": {"from_col": 38, "to_col":
+24, "row": 12}}` — which buys the agent fourteen columns.
+
+**A workspace whose only pane is a terminal eats your keys.** The clip opens on
+one — an agent with the workspace to itself — and every key the spec pressed to
+focus the dock went to the agent instead, so nothing switched and two beats
+filmed the same screen twice. `editor.executeAction("toggle_dock_focus")` from
+the setup plugin is not routed through the keymap, so it lands.
+
+**Render a draft before rendering the clip.** The capture is the slow half and
+it does not need repeating: copy the spec, halve `size`, drop `fps` to 30 and
+`encode` to `{"crf": 30, "preset": "ultrafast"}`, and render that against the
+same frames with `--skip-capture`. Forty seconds against several minutes, and
+every framing decision — what a note points at, whether a pane is wide enough —
+is legible at half size.
+
 **Put the agent on the left, and what checks it on the right.** Every session
 in this clip is arranged that way, and one of them has **Review Diff** in the
 right-hand pane rather than a file — the agent that is waiting for an answer,

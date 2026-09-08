@@ -30,9 +30,15 @@ frames per recorded run — so the spec stays an ordinary tui-clips spec and the
 upstream capture still works on it, just less well.
 
 Steps understood, from `capture.keys`: `key` (with `repeat`), `type`, `sleep`,
-`shot`, and `record` — the last is the interesting one, a burst of frames at
-its `fps`, running *alongside* the steps that follow it, which is what puts a
-keystroke and the animation it causes inside one run.
+`shot`, `drag`, and `record` — the last is the interesting one, a burst of
+frames at its `fps`, running *alongside* the steps that follow it, which is what
+puts a keystroke and the animation it causes inside one run.
+
+`drag` is the mouse: `{"drag": {"from_col": 38, "to_col": 24, "row": 10}}`
+presses at one cell and releases at another, in cells rather than pixels
+because a spec is written in cells. It exists for the things a program only
+lets you do with a pointer — the width of the orchestrator's dock, say, which
+has no setting and no key.
 """
 from __future__ import annotations
 
@@ -76,6 +82,8 @@ class Session:
         # wraps every line; the spec carries the locale, but default it too.
         self.env.setdefault("LANG", "C.UTF-8")
         self.env.setdefault("LC_ALL", "C.UTF-8")
+        self.cell_w = 10.0               # measured once the window is up
+        self.cell_h = 20.0
         self.frames: list[str] = []      # xwd files still to convert
         self.pending: list[tuple[str, str]] = []   # (xwd, png)
 
@@ -139,7 +147,11 @@ class Session:
                      capture_output=True, text=True).stdout
         dims = dict(line.split("=", 1) for line in geo.strip().splitlines()
                     if "=" in line)
-        print(f"  window {dims.get('WIDTH')}x{dims.get('HEIGHT')}", flush=True)
+        cols, rows = (int(n) for n in self.cap["geometry"].split("x"))
+        self.cell_w = int(dims.get("WIDTH", 0)) / cols
+        self.cell_h = int(dims.get("HEIGHT", 0)) / rows
+        print(f"  window {dims.get('WIDTH')}x{dims.get('HEIGHT')}"
+              f"  cell {self.cell_w:.2f}x{self.cell_h:.2f}", flush=True)
 
     def stop(self) -> None:
         subprocess.run(["pkill", "-f", "xfce4-terminal --disable-server"],
@@ -151,6 +163,31 @@ class Session:
     def grab(self, path_xwd: str) -> None:
         """One forced repaint, straight to disk as the server's own bytes."""
         self.x("xwd", "-silent", "-id", self.wid, "-out", path_xwd)
+
+    def drag(self, spec: dict) -> None:
+        """Press at one cell, release at another. Motion goes in steps: a
+        press-and-teleport is one motion event, and a program tracking a drag
+        wants to be told where the pointer went on the way."""
+        cw = self.cell_w
+        ch = self.cell_h
+        y = int((float(spec.get("row", 5)) + 0.5) * ch)
+        x0 = int((float(spec["from_col"]) + 0.5) * cw)
+        x1 = int((float(spec["to_col"]) + 0.5) * cw)
+        self.x("xdotool", "mousemove", "--window", self.wid, str(x0), str(y))
+        time.sleep(0.2)
+        self.x("xdotool", "mousedown", "1")
+        time.sleep(0.2)
+        steps = 8
+        for k in range(1, steps + 1):
+            self.x("xdotool", "mousemove", "--window", self.wid,
+                   str(int(x0 + (x1 - x0) * k / steps)), str(y))
+            time.sleep(0.05)
+        self.x("xdotool", "mouseup", "1")
+        time.sleep(0.4)
+        # Park the pointer out of the frame: a cursor left over the dock
+        # leaves a hover highlight on whatever row it landed on.
+        self.x("xdotool", "mousemove", "--window", self.wid, "10", "10")
+        time.sleep(0.2)
 
     def shot(self, name: str) -> None:
         raw = os.path.join(self.raw, f"shot-{name}.xwd")
@@ -215,6 +252,8 @@ class Session:
                 time.sleep(TYPE_SETTLE)
             elif "sleep" in step:
                 time.sleep(float(step["sleep"]))
+            elif "drag" in step:
+                self.drag(step["drag"])
             elif "shot" in step:
                 self.shot(step["shot"])
             elif "record" in step:

@@ -23,32 +23,39 @@
     },
     "keys": [
       {
-        "key": "F8"
-      },
-      {
-        "sleep": 2
-      },
-      {
-        "record": "a",
-        "seconds": 1.0,
-        "fps": 30
-      },
-      {
-        "sleep": 1.2
-      },
-      {
-        "record": "b",
-        "seconds": 2.2,
-        "fps": 30
+        "drag": {
+          "from_col": 38,
+          "to_col": 24,
+          "row": 12
+        }
       },
       {
         "sleep": 0.5
       },
       {
-        "key": "Down"
+        "sleep": 1.5
       },
       {
-        "sleep": 1.8000000000000003
+        "record": "a",
+        "seconds": 2.2,
+        "fps": 30
+      },
+      {
+        "sleep": 2.4
+      },
+      {
+        "record": "b",
+        "seconds": 1.6,
+        "fps": 30
+      },
+      {
+        "sleep": 0.4
+      },
+      {
+        "key": "Up"
+      },
+      {
+        "sleep": 1.3
       },
       {
         "record": "c",
@@ -56,38 +63,26 @@
         "fps": 30
       },
       {
-        "sleep": 0.5
-      },
-      {
-        "key": "Down"
-      },
-      {
-        "sleep": 1.4
+        "sleep": 2.0
       },
       {
         "record": "d",
-        "seconds": 2.0,
+        "seconds": 1.6,
         "fps": 30
       },
       {
-        "sleep": 0.5
+        "sleep": 0.4
       },
       {
-        "key": "Down"
+        "key": "Up"
       },
       {
-        "sleep": 1.6
+        "sleep": 1.3
       },
       {
         "record": "e",
-        "seconds": 2.6,
+        "seconds": 2.0,
         "fps": 30
-      },
-      {
-        "sleep": 0.5
-      },
-      {
-        "key": "Down"
       },
       {
         "sleep": 2.2
@@ -106,7 +101,7 @@
   "render": {
     "size": [
       1822,
-      1058
+      940
     ],
     "fps": 60,
     "rows": 29,
@@ -167,59 +162,64 @@
     },
     "annotations": [
       {
+        "shots": "a",
+        "hold": 2.2,
         "rows": [
-          0,
-          29
+          4,
+          16
         ],
-        "band": false,
-        "hold": 1.0,
-        "head": "Every worktree is a workspace",
-        "sub": "its own tabs, splits, terminals \u2014 and the agent working it",
-        "shots": "a"
+        "cols": [
+          27,
+          110
+        ],
+        "note": "agent is running",
+        "note_at": "below-right"
       },
       {
         "shots": "b",
+        "hold": 1.6,
         "rows": [
           0,
           29
         ],
-        "band": false,
-        "hold": 2.2,
-        "head": "\u2193 walks the dock, and the editor follows",
-        "sub": "nothing is torn down: the agent, the split and the tabs were already there"
+        "band": false
       },
       {
         "shots": "c",
-        "rows": [
-          0,
-          29
-        ],
-        "band": false,
         "hold": 1.8,
-        "head": "The ones you are not looking at keep working",
-        "sub": "quill on one branch, marlin on the next, each in its own worktree"
+        "rows": [
+          4,
+          10
+        ],
+        "cols": [
+          0,
+          25
+        ],
+        "note": "switch between sessions",
+        "note_at": "below-right"
       },
       {
         "shots": "d",
+        "hold": 1.6,
         "rows": [
           0,
           29
         ],
-        "band": false,
-        "hold": 2.0,
-        "head": "The one that is waiting, with its work open beside it",
-        "sub": "three still running \u00b7 this one wants an answer, and its diff is right there"
+        "band": false
       },
       {
         "shots": "e",
+        "hold": 2.0,
         "rows": [
-          0,
-          29
+          3,
+          15
         ],
-        "band": false,
-        "hold": 2.6,
-        "head": "An agent can have the whole workspace",
-        "sub": "filmed frame by frame \u2014 this is its own pace, not a speed-up"
+        "cols": [
+          84,
+          139
+        ],
+        "note": "diff and full IDE",
+        "note_at": "below-left"
       }
     ],
     "title_card": {
@@ -239,7 +239,8 @@
     "vignette": {
       "edge": 0.012,
       "side": 0.0
-    }
+    },
+    "note_size": 34
   },
   "encode": {
     "crf": 18,
