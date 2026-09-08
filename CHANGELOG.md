@@ -1,82 +1,106 @@
 # Release Notes
 
-## 0.4.11
+## 0.5.0
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
-> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+A **massive** refactoring is included in this release, hopefully without any regression in usability. Please open issues on GitHub if you encounter any breakage. The refactoring paves the way to new features like the new Markdown Table of Contents in the side-panel.
+
+> Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
 ### Features
 
+* **Interactive Welcome screen** on startup, in a background tab (#3147). The content is still in the works, suggestions welcome!
 * **Search previews now open the real file** as a preview tab - full syntax colours, gutter, folds and scrolling (#3196, #3200; #836, requested by @66RED99)
 * **Review Diff opens large diffs almost instantly** - a 500+ file review now opens in ~2s instead of ~16s (#3056)
-* **Sidebar sections** - the explorer sidebar can hold multiple collapsible sections, starting with a Markdown Table of Contents (#3045, requested by @mruff-aeq)
-* **Interactive Welcome screen** on startup, in a background tab (#3147)
+* **Sidebar sections** - the explorer sidebar can hold multiple collapsible sections, starting with a **Markdown Table of Contents** (#3045, requested by @mruff-aeq)
+* **Markdown types brackets and quotes literally** instead of auto-pairing them. Typing backticks or quote marks is not annoying now!
+* **Markdown Compose reflows hard-wrapped text** - a paragraph, list item or quote written over several source lines lays out as one block against the page measure, instead of one row per source line. Also, many bugs fixed in markdown compose mode (see below)
+* **Syntax-highlighting in Review Diff and Git Log modes** (#3104, reported by @tinchoz49; #2871)
 * **Shaded pane edges** - text fades out at the top/bottom instead of cutting mid-line (`editor.viewport_edge_fade`)
 * **Smooth wheel scrolling**, a line at a time instead of jumpy notches (`editor.smooth_scroll`, #3091)
 * **Git Blame readability** - better contrast, and blame keeps your place on `b`/`q` (#3088)
-* **Markdown types brackets and quotes literally** instead of auto-pairing them
 
 ### Bug Fixes
 
 * **Review Diff & Git Log**
-    * Syntax-highlight the code inside diffs (#3104, reported by @tinchoz49; #2871)
-    * Commands grouped under `Review Diff:` / `Git Log:` palette prefixes (#3098)
-    * Review Diff works with an external difftool instead of showing an empty diff (#3066, by @asukaminato0721)
-    * Review Diff's `D` on a fully staged file now actually discards it (#2318)
-    * Review Diff follows the working tree and no longer stacks a duplicate panel on re-run (#3126, reported by @asukaminato0721)
-    * Review Diff's files sidebar scrolls properly on large reviews, shows full filenames, and a click moves the highlight and keyboard focus together (#3063, #3188)
-    * Review Diff, Git Log & Side-by-Side Diff parse `git`'s output correctly under more git configs - quoted paths, blank context lines, `diff.relative`, submodules, signed commits (#3199)
-    * Review Diff no longer freezes on a huge file - an untracked or committed file over 1 MiB is listed and marked instead of being expanded into a multi-million-line patch, and binary files now appear in a range review instead of vanishing from it. Every `git diff` the editor runs takes the same cap, so the orchestrator's session poll and the file explorer's status tooltip no longer diff a multi-megabyte blob in full either
+    * Ambiguous commands renamed and grouped under `Review Diff:` / `Git Log:` palette prefixes (#3098)
+    * Works with an external difftool instead of showing an empty diff (#3066, by @asukaminato0721)
+    * `D` on a fully staged file discards it (#2318)
+    * Follows the working tree, and re-running no longer stacks a duplicate panel (#3126, reported by @asukaminato0721)
+    * The files sidebar scrolls on large reviews, shows full filenames, and a click moves highlight and focus together (#3063, #3188)
+    * `git`'s output parses under more configs - quoted paths, blank context lines, `diff.relative`, submodules, signed commits (#3199)
+    * A file over 1 MiB is listed and marked instead of expanded into a multi-million-line patch, and binary files show up in a range review instead of vanishing
+* **Orchestrator**
+    * `Ctrl+Q` from a clean workspace no longer skips the unsaved-work prompt for another workspace, or deletes that workspace's recovery files on the way out (#3189, reported by @sdecima; #3221)
+    * The dock paints its own background, instead of showing the terminal's through the gaps
+    * "Move to Folder…" keeps the keyboard, so `Down` no longer dismisses it and switches the live workspace (#3163, #3137)
+    * A deep repo path plus a long workspace name no longer overruns the terminal directory's name
+    * Archiving names the worktree after the workspace, not its display label, and a repeat archive takes the next free suffix
+    * A workspace whose window is still being created no longer freezes the picker
 * **Multi-cursor editing**
-    * A keystroke that only moves the cursor no longer vanishes, and a plain click collapses cursors back to one (#3125, reported by @X-Ryl669)
-    * A skip-over now lands past its delimiter even when another cursor's edit shifts it (#3166)
+    * A keystroke that only moves the cursor is no longer dropped, and a plain click collapses cursors to one (#3125, reported by @X-Ryl669)
+    * A skip-over lands past its delimiter even when another cursor's edit shifts it (#3166)
+    * The status bar's line number follows an added or removed cursor (#3167)
 * **Integrated terminal**
     * Dim text is dim again (#3123, reported by @fiatcode-gh)
-    * A multi-line paste now arrives whole instead of only its last line (#3215)
-    * A killed editor leaves it usable instead of exiting straight out of raw mode and the alternate screen (#3197)
-    * No longer loses recent scrollback (#3151)
+    * A multi-line paste arrives whole instead of only its last line (#3215)
+    * A killed editor leaves the terminal usable, not stuck in raw mode (#3197)
+    * Recent scrollback is no longer lost (#3151)
 * **Large single-line files (minified JSON and friends)**
     * Opening one no longer loops or stalls for cursor movement, scrolling and paging (#1806)
-    * Very large binary/zip files open instantly instead of freezing or risking an out-of-memory crash (#3142, reported by @mommysgoodpuppy)
-    * **Editing one is no longer slow.** A frame, a keystroke and an arrow press now cost the size of the screen rather than the size of the line: on a 19 MB one-line JSON a frame reads ~150 KB instead of ~12 MB, and a keystroke ~180 KB instead of ~14 MB. The scans behind that — where a line starts, where it ends, how many lines are below this one — are bounded, and a stretch already found to hold no line break is remembered rather than re-walked on every frame
-    * With **soft wrap off**, a logical line is now one visual row, so a file with no line breaks draws one row and `Down` has nowhere to go — turn soft wrap on to read such a file vertically. Rows used to be chopped at a fixed 10,000 columns, which put ~400,000 characters through layout to draw ~4,800 and left the viewport and the renderer counting rows differently
-    * Plugin decorations that consume source lines (blame, live diff, compose reflow) are bounded to the visible text on such a file, so a plugin can no longer make a frame read the line
-* **Wave screensaver** now ends when you return to the window (or the GUI window), not just on the next keypress (#3204)
-* **`deno.json`** no longer disables TypeScript on a project without Deno (#2981, reported by @atk)
-* **Keymap chords** - a single-key binding on a chord prefix now fires, and deleting a keybinding frees the key (#3171)
-* **LSP timeouts** are reported instead of silently showing "no results"; a stuck server shows `LSP (stuck)` (#2197)
-* **Inlay hints** no longer jump to the next line while typing at their anchor (#722)
-* **`curl | install.sh`** no longer fails behind a shared IP or silently on error (#3070)
-* **Status bar line number** follows an added/removed cursor immediately (#3167)
-* **Divider dragging** keeps up with the pointer (#3140)
-* **The space below the last line** follows the theme background (#779)
-* **LSP diagnostics** no longer get stuck reporting errors you already fixed (#3038, reported by @thedadams)
-* **Settings dialog** - `Delete` works again in the Edit Item text field (#2875, reported by @asukaminato0721)
-* **Quitting** no longer panics while plugin work is still in flight
-* **Rendering fixes** - whitespace markers, indent guides, block-selection rectangles, misread angle brackets; File Explorer got a scrollbar (#3077, #3079, #3148, #3090, reported by @Korkman; #2859, reported by @asukaminato0721)
-* **The block cursor no longer swallows the character under it** - the editor used to tell the terminal exactly what colour to paint the cursor, which sets the block but not the letter inside it, so the letter vanished whenever it was close to that one colour (black on black in the light theme). It now leaves the cursor's colour to the terminal, whose own rule is per-cell and cannot collide - the same thing a `fresh` session under the daemon has always looked like. Past the end of a line, where nothing is drawn, the editor's ground now names its foreground too, so the cursor there inverts to the theme's own colours instead of vanishing into the terminal's (a white-on-white caret in the light theme)
-* **The Orchestrator dock takes the keyboard when you click a widget in it** - clicking its filter field lit the field up but left every keystroke going into the buffer behind the dock. Sidebar panel sections had the same gap
-* **The Orchestrator dock paints its own background** - the gaps around its toolbar buttons and the whole band below the session list used to show the terminal's default colour straight through the column. Every theme, and unmissable in the light one
-* **The Welcome screen reads and quotes like a document** - text can be selected with `Shift`+movement or the mouse and copied with `Ctrl+C` (its mode was hiding the editor's own bindings, and a selection on it was never painted), a control takes focus only where the caret actually is instead of anywhere on its row, the framed cards sit on the page's axis, and the syntax-highlighting sample no longer grows a scrollbar over a listing that fits
-* **The block-selection highlight is exactly what a block copy takes** - the rectangle used to be painted one column wider than `Ctrl+C` copied, and a zero-width block (Alt+Shift+Down with no sideways movement) painted a column it did not select, then copied a bare newline per line (#3150, reported by @Korkman)
-* **Conceals spanning a line break** no longer crash the editor (#3139)
-* **New file/folder names with slashes** create their missing parent directories (#2640, requested by @akarinotomoshibi)
-* **`fresh --cmd update`** no longer fails on GitHub's shared API rate limit - resolves releases the way `install.sh` does, honours `GITHUB_TOKEN`, and adds `--skip-attestation` as a fallback (#3198)
-* **SSH remote sessions** no longer hang when the target machine is Windows (#3145, by @mommysgoodpuppy)
-* **Search & Replace results scroll horizontally** to reveal a long match, accept a pasted query, and `Ctrl`+arrow no longer moves a hidden buffer cursor (#3154, #3184; #1960, reported by @mandolyte; #1580, #3186)
-* **More keys can be bound by name** - numpad, media and modifier keys now parse, fixing `asterisk`/`kp_multiply` bindings that silently failed before (#1128, reported by @michelpado)
-* **Shift+wheel scrolls sideways** everywhere, instead of scrolling vertically like a plain wheel notch (#1580)
-* **Dragging the scrollbar** leaves the text cursor where it is, like the wheel already did - it no longer silently relocates to the top of the scrolled view, so the next character you type still lands where you were (#3192, reported by @akarinotomoshibi)
-* **Daemon locale** now follows `config.json` instead of the environment (#3149, reported by @kirinriki7777-sys)
-* **`Ctrl+C`/`kill`** end the editor promptly instead of occasionally deadlocking or crashing
-* **Piped-in text** (`... | fresh -`) no longer leaves a temp file behind in `/tmp` (#3134, reported by @Korkman)
-* **Enter on a blank last line** keeps the cursor's own column instead of indenting to the block above (#3165)
-* **Markdown Compose fixes** - a code block keeps its gutter in a Source-mode split instead of drawing compose's rails; dragging a composing tab into a new split keeps it composing; composing one split no longer forces line wrap on in a sibling; a hand-aligned table's padding and wrapped rows render correctly (#3206)
+    * Very large binary/zip files open instantly instead of freezing or running out of memory (#3142, reported by @mommysgoodpuppy)
+    * Editing one costs the size of the screen, not the size of the line - a keystroke in a 19 MB one-line JSON reads ~180 KB instead of ~14 MB
+    * With **soft wrap off**, a logical line is one visual row, so a file with no line breaks draws one row and `Down` has nowhere to go - turn soft wrap on to read it vertically
+    * Plugin decorations (blame, live diff, compose reflow) are bounded to the visible text, so a plugin can no longer make a frame read the whole line
+* **Markdown Compose** (#3206)
+    * A code block keeps its gutter in a Source-mode split
+    * Dragging a composing tab into a new split keeps it composing
+    * Composing one split no longer forces line wrap on in a sibling
+    * A hand-aligned table's padding and wrapped rows render correctly
+* **Language servers**
+    * Timeouts are reported instead of showing "no results"; a stuck server shows `LSP (stuck)` (#2197)
+    * Diagnostics no longer get stuck reporting errors you already fixed (#3038, reported by @thedadams)
+    * A server too slow to drain its input no longer loses an edit and then reports errors against text you never wrote (#3100)
+    * Inlay hints no longer jump to the next line while you type at their anchor (#722)
+    * `deno.json` no longer disables TypeScript on a project without Deno (#2981, reported and fixed by @atk)
+* **Editing**
+    * `auto_surround` works with `auto_close` off, so the per-language override is usable
+    * `Enter` on a blank last line keeps the cursor's column instead of indenting to the block above (#3165)
+    * The block-selection highlight is exactly what a block copy takes - it used to paint a column it did not select (#3150, reported by @Korkman)
+    * Conceals spanning a line break no longer crash the editor (#3139)
+    * `Down` moves off the first line under a Git Blame header (#3088)
+* **Keys, mouse and scrolling**
+    * A single-key binding on a chord prefix fires, and deleting a keybinding frees the key (#3171)
+    * Numpad, media and modifier keys parse by name, fixing `asterisk`/`kp_multiply` bindings (#1128, reported by @michelpado)
+    * `Shift`+wheel scrolls sideways everywhere (#1580)
+    * Dragging the scrollbar leaves the text cursor where it is, like the wheel already did (#3192, reported by @akarinotomoshibi)
+    * Dragging a divider keeps up with the pointer (#3140)
+* **Rendering**
+    * Whitespace markers, indent guides, block-selection rectangles and misread angle brackets; the File Explorer got a scrollbar (#3077, #3079, #3148, #3090, reported by @Korkman; #2859, reported by @asukaminato0721)
+    * The block cursor no longer swallows the character under it - the cursor's colour is the terminal's to pick, and past the end of a line it inverts to the theme's colours rather than the terminal's
+    * The space below the last line follows the theme background (#779, #3087)
+* **Dialogs and settings**
+    * `Delete` works again in the Settings dialog's Edit Item text field (#2875, reported by @asukaminato0721, fixed by @56steve)
+    * A single-line field scrolls to the start of a long value instead of pinning its tail, so a long name or path can be seen and edited
+* **Starting, quitting and updating**
+    * `Ctrl+C`/`kill` end the editor promptly instead of occasionally deadlocking or crashing
+    * Quitting no longer panics while plugin work is still in flight
+    * `... | fresh -` no longer leaves a temp file behind in `/tmp` (#3134, reported by @Korkman)
+    * The daemon's locale follows `config.json` instead of the environment (#3149, reported by @kirinriki7777-sys)
+    * SSH remote sessions no longer hang when the target is Windows (#3145, by @mommysgoodpuppy)
+    * `curl | install.sh` no longer fails behind a shared IP or silently on error (#3070)
+    * `fresh --cmd update` no longer fails on GitHub's shared API rate limit, and honours `GITHUB_TOKEN` (#3198)
+* **The Welcome screen reads like a document** - text selects with `Shift`+movement or the mouse and copies with `Ctrl+C`, and focus follows the caret rather than the whole row
+* **Search & Replace results scroll horizontally** to reveal a long match, accept a pasted query, and no longer move a hidden buffer cursor on `Ctrl`+arrow (#3154, #3184; #1960, reported by @mandolyte; #1580, #3186)
+* **New file/folder names with slashes** create their missing parent directories (#2640, requested by @akarinotomoshibi, by @asukaminato0721)
+* **Wave screensaver** ends when you return to the window, not just on the next keypress (#3204)
+* **The file explorer does less filesystem work** on a large project, so a repo with thousands of changed files no longer stalls the editor (#3103, reported by @asukaminato0721; #3127, by @atirna)
 
 ### Internals
 
 * **Twelve fewer crates in the build**, from replacing `rust-i18n` with an in-tree library (#3102).
+* **Plugin dialogs and panels handle focus and typing correctly** - fifteen widget-runtime fixes, and three new options a plugin can ask for: a focused text field wins printable keys over the mode's own bindings, a panel can keep "nothing focused" as a real state, and a scroll command can reveal a widget rather than jump it to the top.
 * A large rewrite moves the editor's chrome onto a retained-mode layout tree; continued flaky-test stabilization.
 
 ## 0.4.10
