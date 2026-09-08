@@ -33,7 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
-| `fresh-orchestrator-dock.json` | solo | four worktrees, four agents, one editor — switched from the dock |
+| `fresh-orchestrator-dock.json` | solo, stepped | four worktrees, four agents, one editor — switched from the dock, ending on one agent at full size |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -139,6 +139,43 @@ never set), so `shift+Tab` back onto the row you want and check with a still
 before filming 200 shots against the guess; and a `Tab` that leaves a card
 scrolls the page to the next one, which ends the shot you were composing.
 
+**The window only repaints when something asks it to, and `--shot` is what
+asks.** Filming an agent working — a program that animates on its own clock,
+with nobody typing — an eight-second `--record` at 30fps produced 240 frames
+containing *three* distinct images, and all three landed at the moment an
+`import` happened to be taken. Stills taken four seconds apart, meanwhile,
+differ by 160,000 pixels. So on this stack (Xvfb + xfce4-terminal) a recording
+films what the keyboard causes and little else, and the screenshot that looks
+like the slow, primitive option is the one that makes a frame exist at all.
+Anything self-animating is therefore filmed with `--shot`, one per frame.
+
+**Then slow the program down to the rate the camera samples at.** A screenshot
+of a full window costs 300-500ms, so a filmed pane is sampled about three times
+a second. Playing those frames at thirty is a ten-times fast-forward — which
+for a coding agent reads as a parody of one. The fix is to give the *subject* a
+slower clock instead: `coding_agent.py --dilate 8` stretches its spinner and its
+pauses by eight, so three samples a second of dilated time is thirty frames a
+second of natural motion, and `--warm 9` prints the backlog a pane at
+one-eighth speed would not otherwise have by the time filming starts. Measured
+in the finished clip: 4.8 visible changes a second, which is what an agent's
+spinner actually does.
+
+**Do not fake a transition the program does not have.** The dock's live switch
+was filmed at 60fps with animations enabled, to catch the slide: it has none.
+One frame holds the old workspace, the next holds the new one, with nothing in
+between and no frames either side. So the clip cuts, because the editor cuts —
+a `push` transition in the spec would have been the renderer inventing motion
+the feature does not have, over the one claim it does make, which is that the
+switch is instant.
+
+**Keep the scaled capture off a half-pixel.** The renderer caches scaled
+screens under the scale factor rounded to four decimals, so two frames whose
+scale differs in the fifth can share a key — harmless until the scaled height
+lands on exactly `.5`, where the two round to heights one pixel apart and the
+cross-fade between two beats dies with `ValueError: images do not match`. A
+140x30 capture at 1920 wide is exactly that case (1142 × 1920/2382 = 920.5);
+140x29 is not. Worth knowing before blaming the capture.
+
 **Stage a multi-window clip with a plugin, not with keystrokes.** Cutting three
 worktrees through the New Workspace dialogue is thirty keystrokes, thirty
 chances for a capture to desync, and none of them the thing being filmed. The
@@ -154,11 +191,13 @@ exists".
 
 **The agents are `tests/fixtures/coding_agent.py`, aliased by a shim.** It is a
 scripted fake — a transcript, tool calls, diff hunks, a todo list and a spinner,
-none of it real — and `--as <name>` makes it rename its own process so the tab
-and the dock card read `claude` or `codex` the way a real launch would. `--ask`
-stops one of them on a permission prompt and leaves it there, which is what the
-dock's "which session is waiting on you" is *for*: with it, three cards carry
-the working mark and the fourth does not.
+none of it real — and `--as <name>` makes it rename its own process, so the tab
+and the dock card read the agent's name the way a real launch would. The names
+are invented (`quill`, `marlin`, `tern`, `scout`): a staged transcript filmed
+under a real agent's name is a picture of that agent saying things it never
+said. `--ask` stops one of them on a permission prompt and leaves it there,
+which is what the dock's "which session is waiting on you" is *for*: with it,
+three cards carry the working mark and the fourth does not.
 
 **Give the capture a UTF-8 locale.** `LANG=C.UTF-8`, or xfce4-terminal decodes
 the pane's box-drawing and bullet glyphs as latin-1 — three columns per

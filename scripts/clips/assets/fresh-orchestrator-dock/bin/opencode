@@ -1,6 +1,0 @@
-#!/bin/sh
-# A stand-in for the real `opencode`, so the clip can film the orchestrator
-# without an API key, a network, or a nondeterministic transcript. It renders
-# the shape of an agent session and nothing else — see the fixture's docstring.
-AGENT="${FRESH_CLIP_AGENT:-$HOME/repos/fresh/crates/fresh-editor/tests/fixtures/coding_agent.py}"
-exec python3 "$AGENT" --as opencode --ask 3 rate-limit "$@"
