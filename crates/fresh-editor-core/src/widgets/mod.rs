@@ -16,6 +16,7 @@
 //! design.
 
 mod actions;
+pub mod frame;
 pub mod kinds;
 pub mod layout_box;
 mod registry;

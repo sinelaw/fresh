@@ -253,7 +253,18 @@ pub fn fold_band(
         }
 
         match &item.draw {
-            Draw::Fill => fill(buf, rect, ' ', style, clip),
+            Draw::Fill => {
+                fill(buf, rect, ' ', style, clip);
+                // **The class's box, drawn on the item that is the box.** A
+                // node that names a class emits this fill over its own
+                // rectangle, and the columns its rule reserves were kept clear
+                // by the description that built it — so the glyph goes in a
+                // cell nothing else claims. This is where `[ Label ]` comes
+                // from now; the web draws its own frame on the same item.
+                if !item.classes.is_empty() {
+                    sides(buf, item.rect, style, clip, item.classes.as_str());
+                }
+            }
             // A wash keeps the text it covers: the theme's ground over the
             // cells, their symbols and foregrounds as they were.
             Draw::Wash => wash(buf, rect, style, clip),
@@ -541,6 +552,20 @@ fn wash(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
         for x in area.x..area.x.saturating_add(area.width) {
             buf[(x, y)].set_bg(bg);
         }
+    }
+}
+
+/// The glyphs a class puts on the sides of its own box — `[` and `]` for a
+/// button. **Where** they go is [`Rule::side_glyphs`], shared with the mirror
+/// the widget tests fold with, so the two cannot spell the frame differently.
+///
+/// [`Rule::side_glyphs`]: crate::app::shell_style::Rule::side_glyphs
+fn sides(buf: &mut Buffer, r: fresh_ui::Rect, style: Style, clip: Rect, classes: &str) {
+    for (x, y, g) in crate::app::shell_style::cascade(classes).side_glyphs(r) {
+        let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else {
+            continue;
+        };
+        put_symbol(buf, x, y, g, fresh_ui::glyph::width(g), style, clip);
     }
 }
 

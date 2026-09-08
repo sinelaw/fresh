@@ -1132,28 +1132,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 crate::widgets::fill_button_label(label, *bare, cx.marker_gutter, width as u32)
             });
             let label = filled.as_deref().unwrap_or(label);
-            let entry = match bare {
-                true => crate::widgets::render_bare_button(
-                    label,
-                    is_focused,
-                    *intent,
-                    *disabled,
-                    hover,
-                    hovered,
-                    style.as_ref(),
-                ),
-                false => crate::widgets::render_button(
-                    label,
-                    is_focused,
-                    *intent,
-                    *disabled,
-                    cx.marker_gutter,
-                    hover,
-                    hovered,
-                    style.as_ref(),
-                ),
-            };
-            let n = entry_row(&entry, &cx.surface);
+            let n = button_node(
+                label,
+                *intent,
+                *bare,
+                is_focused,
+                hovered,
+                *disabled,
+                cx.marker_gutter,
+                hover,
+                style.as_ref(),
+                &cx.surface,
+            );
             match disabled {
                 true => n,
                 false => hit_node(
@@ -3405,6 +3395,102 @@ fn extended_ground(entry: &TextPropertyEntry, base: &Ink) -> Option<Ink> {
         .map(|o| ink_of(&o.style, base))
 }
 
+/// A button, built from its **naked label** and the classes that say what it
+/// is.
+///
+/// **The frame is not text.** `render_button` composed `"{marker}[ {label} ]"`
+/// and handed it down as one string, which is why the web could neither find a
+/// button nor tell its label from its brackets, and why a theme could only
+/// re-colour the whole run. Here the description says *button, primary,
+/// focused*, and its content is the word; the terminal's fold draws `[` and
+/// `]` in the columns the rule reserved, and the web draws whatever CSS says a
+/// button is on the very same item.
+///
+/// The focus-marker gutter stays outside the box, because it is the **row's**
+/// and not the button's: every focusable kind in a marker-gutter panel reserves
+/// the same two columns, so a row never reflows as focus moves between controls
+/// of different kinds. It wears the button's ink so the focus band still runs
+/// unbroken from the marker to the closing bracket.
+#[allow(clippy::too_many_arguments)]
+fn button_node(
+    label: &str,
+    intent: fresh_core::api::ButtonKind,
+    bare: bool,
+    focused: bool,
+    hovered: bool,
+    disabled: bool,
+    marker_gutter: bool,
+    declared_hover: Option<&OverlayOptions>,
+    resting: Option<&OverlayOptions>,
+    surface: &Ink,
+) -> Node<UiMsg> {
+    use crate::app::shell_style;
+
+    let classes = shell_style::button_classes(intent, bare, focused, hovered, disabled);
+    let resting_ink = resting.map(|o| ink_of(o, surface));
+    let hover_ink = declared_hover.map(|o| ink_of(o, surface));
+    let ink = shell_style::button_ink(&classes, surface, resting_ink.as_ref(), hover_ink.as_ref());
+    let name = ink.to_string();
+
+    // **The box is exactly as wide as the frame plus the label.** Stated, not
+    // left to the cross-axis default: a `col` inside a `col` stretches, and a
+    // stretched button paints its focus band across the whole panel instead of
+    // hugging the word. The width comes from the same `reserved_x` the padding
+    // does, so the frame, the room made for it, and the box all move together.
+    let reserved = shell_style::cascade(&classes).reserved_x();
+    let inner = fresh_ui::glyph::width(label);
+    let boxed = col()
+        .classes(&classes)
+        .theme(name.clone())
+        .h(Sizing::Cells(1))
+        .w(Sizing::Cells(
+            inner.saturating_add(reserved.saturating_mul(2)),
+        ))
+        .pad(reserved, 0)
+        .child(text(label));
+
+    // `bare` never took the gutter: the marker exists to give a *word* the
+    // shape of a focused control, and a glyph affordance already has one.
+    let marker =
+        crate::widgets::render::focus_gutter_prefix(focused && !disabled, marker_gutter && !bare);
+    let n = match marker.is_empty() {
+        true => boxed,
+        false => {
+            let gutter = fresh_ui::glyph::width(marker);
+            row()
+                .h(Sizing::Cells(1))
+                .w(Sizing::Cells(
+                    gutter
+                        .saturating_add(inner)
+                        .saturating_add(reserved.saturating_mul(2)),
+                ))
+                // The gutter wears the button's ink, so a focus band runs
+                // unbroken from the marker to the closing bracket.
+                .child(text(marker).theme(name))
+                .child(boxed)
+        }
+    };
+
+    // A declared style may ask for its background to run to the end of the
+    // line — the same claim `extended_ground` reads off an entry's overlays,
+    // and the same answer: flexed as well as themed, because a fill only
+    // reaches the end of the line if the node does.
+    match [declared_hover, resting]
+        .into_iter()
+        .flatten()
+        .filter(|o| o.extend_to_line_end && o.bg.is_some())
+        .next_back()
+        .filter(|_| !disabled)
+    {
+        Some(o) => row()
+            .h(Sizing::Cells(1))
+            .w(Sizing::Flex(1))
+            .theme(ink_of(o, surface).to_string())
+            .child(n),
+        None => n,
+    }
+}
+
 /// One styled row, from a `TextPropertyEntry`.
 /// One styled row, from a `TextPropertyEntry`.
 ///
@@ -4252,6 +4338,23 @@ mod tests {
                     put(&mut grid, &mut bottom, right, r.y, tr);
                     put(&mut grid, &mut bottom, r.x, low, bl);
                     put(&mut grid, &mut bottom, right, low, br);
+                }
+                // The frame a class draws on the box it names — `fold::sides`,
+                // through the very same placement, so the mirror cannot spell
+                // `[ Label ]` differently from the terminal it is mirroring.
+                //
+                // **On the fill, and only the fill.** The label run wears the
+                // same class — it has to, in a flat list, or nothing would say
+                // which control it belongs to — so a mirror that matched the
+                // class alone would draw the brackets twice, and put one of
+                // them through the first letter of the label.
+                fresh_ui::Draw::Fill if !item.classes.is_empty() => {
+                    let rule = crate::app::shell_style::cascade(item.classes.as_str());
+                    for (x, y, g) in rule.side_glyphs(r) {
+                        for (j, c) in g.chars().enumerate() {
+                            put(&mut grid, &mut bottom, x + j as i32, y, c);
+                        }
+                    }
                 }
                 _ => {}
             }
