@@ -33,7 +33,7 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download pre-built binary
         uses: actions/download-artifact@v7
